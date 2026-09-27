@@ -4,6 +4,7 @@ export type DomainErrorCode =
   | "INVALID_FARM"
   | "INVALID_ROLE"
   | "INVALID_TILE"
+  | "INVALID_CROP"
   | "CONFLICT_STALE_STATE";
 
 export class DomainError extends Error {

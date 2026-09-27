@@ -9,6 +9,7 @@
   "dependencies": {
     "@happy-farm/application": "0.1.0",
     "@happy-farm/contracts": "0.1.0",
-    "@happy-farm/domain": "0.1.0"
+    "@happy-farm/domain": "0.1.0",
+    "@happy-farm/game-data": "0.1.0"
   }
 }

@@ -3,7 +3,11 @@ export type ApplicationErrorCode =
   | "NOT_AUTHENTICATED"
   | "NOT_AUTHORIZED"
   | "RESOURCE_NOT_FOUND"
+  | "CROP_DEFINITION_NOT_FOUND"
+  | "TILE_NOT_PLANTABLE"
+  | "TILE_OCCUPIED"
   | "CONFLICT_STALE_STATE"
+  | "IDEMPOTENCY_CONFLICT"
   | "INTERNAL_ERROR";
 
 export class ApplicationError extends Error {

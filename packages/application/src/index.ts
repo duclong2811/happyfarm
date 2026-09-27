@@ -1,4 +1,5 @@
 export * from "./create-farm";
+export * from "./crops";
 export * from "./errors";
 export * from "./get-farm";
 export * from "./ports";

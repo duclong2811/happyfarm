@@ -21,6 +21,12 @@ class NodeD1PreparedStatement implements D1PreparedStatementLike {
     return Promise.resolve(row === undefined ? null : (row as T));
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+  all<T>(): Promise<{ readonly results: T[] }> {
+    const rows = this.statement.all(...(this.values as readonly SQLInputValue[]));
+    return Promise.resolve({ results: rows as T[] });
+  }
+
   run(): Promise<D1RunResultLike> {
     const result = this.statement.run(...(this.values as readonly SQLInputValue[]));
     return Promise.resolve({ success: true, meta: { changes: Number(result.changes) } });
@@ -29,6 +35,7 @@ class NodeD1PreparedStatement implements D1PreparedStatementLike {
 
 export class NodeD1Database implements D1DatabaseLike {
   readonly sqlite = new DatabaseSync(":memory:");
+  private batchTail: Promise<void> = Promise.resolve();
 
   constructor(migrationSql: string) {
     this.sqlite.exec(migrationSql);
@@ -39,17 +46,25 @@ export class NodeD1Database implements D1DatabaseLike {
     return new NodeD1PreparedStatement(this.sqlite.prepare(query));
   }
 
-  async batch(statements: readonly D1PreparedStatementLike[]): Promise<readonly D1RunResultLike[]> {
-    this.sqlite.exec("BEGIN IMMEDIATE");
-    try {
-      const results: D1RunResultLike[] = [];
-      for (const statement of statements) results.push(await statement.run());
-      this.sqlite.exec("COMMIT");
-      return results;
-    } catch (error: unknown) {
-      this.sqlite.exec("ROLLBACK");
-      throw error;
-    }
+  batch(statements: readonly D1PreparedStatementLike[]): Promise<readonly D1RunResultLike[]> {
+    const run = async (): Promise<readonly D1RunResultLike[]> => {
+      this.sqlite.exec("BEGIN IMMEDIATE");
+      try {
+        const results: D1RunResultLike[] = [];
+        for (const statement of statements) results.push(await statement.run());
+        this.sqlite.exec("COMMIT");
+        return results;
+      } catch (error: unknown) {
+        this.sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    };
+    const result = this.batchTail.then(run, run);
+    this.batchTail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
   }
 
   close(): void {

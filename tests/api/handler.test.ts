@@ -2,15 +2,15 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
-import type { FarmId } from "@happy-farm/domain";
+import { parseCropInstanceId, type CropInstanceId, type FarmId } from "@happy-farm/domain";
 import { createHandler } from "../../workers/api/src/handler";
+import { GameDataCropDefinitions, Sha256Fingerprint } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migrationPath = fileURLToPath(
-  new URL("../../database/migrations/0001_phase_1_foundation.sql", import.meta.url)
-);
-const migration = readFileSync(migrationPath, "utf8");
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql"]
+  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
+  .join("\n");
 
 class FixedAuth implements AuthenticationPort<Request> {
   constructor(private actor: ActorContext | null) {}
@@ -32,6 +32,9 @@ class FixedIds implements IdGenerator {
   newFarmId(): FarmId {
     return FARM_ONE_ID;
   }
+  newCropInstanceId(): CropInstanceId {
+    return parseCropInstanceId("cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  }
 }
 
 describe("Worker API foundation", () => {
@@ -47,7 +50,14 @@ describe("Worker API foundation", () => {
       )
       .run(PLAYER_ONE_ID, "https://identity.test", "subject-one", "Player One", NOW, NOW);
     auth = new FixedAuth({ playerId: PLAYER_ONE_ID });
-    handle = createHandler({ db, authenticator: auth, ids: new FixedIds(), clock: new FixedClock() });
+    handle = createHandler({
+      db,
+      authenticator: auth,
+      ids: new FixedIds(),
+      fingerprints: new Sha256Fingerprint(),
+      cropDefinitions: new GameDataCropDefinitions(),
+      clock: new FixedClock()
+    });
   });
 
   afterEach(() => {
@@ -119,5 +129,106 @@ describe("Worker API foundation", () => {
     const bodyText = await response.text();
     expect(bodyText).not.toContain("SQLITE");
     expect(bodyText).not.toContain("stack");
+  });
+
+  it("plants and reads server-derived crop state without accepting client time", async () => {
+    await handle(
+      new Request("https://api.test/farms", {
+        method: "POST",
+        body: JSON.stringify({ name: "Starter Farm" }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    db.sqlite
+      .prepare(
+        "INSERT INTO farm_tiles (farm_id, x, y, terrain_type, tile_state, version, updated_at) VALUES (?, 0, 0, 'SOIL', 'IDLE', 1, ?)"
+      )
+      .run(FARM_ONE_ID, NOW);
+
+    const rejectedTime = await handle(
+      new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
+        method: "POST",
+        body: JSON.stringify({
+          requestId: "request_api_001",
+          cropDefinitionId: "crop_carrot",
+          x: 0,
+          y: 0,
+          expectedTileVersion: 1,
+          plantedAt: "2000-01-01T00:00:00.000Z"
+        }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(rejectedTime.status).toBe(400);
+
+    const request = {
+      requestId: "request_api_001",
+      cropDefinitionId: "crop_carrot",
+      x: 0,
+      y: 0,
+      expectedTileVersion: 1
+    };
+    const planted = await handle(
+      new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
+        method: "POST",
+        body: JSON.stringify(request),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(planted.status).toBe(201);
+    expect(await planted.json()).toMatchObject({
+      ok: true,
+      data: { crop: { cropInstanceId: "cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc", plantedAt: NOW } }
+    });
+
+    const retry = await handle(
+      new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
+        method: "POST",
+        body: JSON.stringify(request),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(retry.status).toBe(201);
+
+    const crops = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`));
+    expect(crops.status).toBe(200);
+    expect(await crops.json()).toMatchObject({ ok: true, data: { crops: [{ definitionId: "crop_carrot" }] } });
+
+    auth.setActor({ playerId: PLAYER_TWO_ID });
+    const unauthorized = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`));
+    expect(unauthorized.status).toBe(403);
+  });
+
+  it("returns a stable idempotency conflict for payload mismatch", async () => {
+    await handle(
+      new Request("https://api.test/farms", {
+        method: "POST",
+        body: JSON.stringify({ name: "Starter Farm" }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    db.sqlite
+      .prepare(
+        "INSERT INTO farm_tiles (farm_id, x, y, terrain_type, tile_state, version, updated_at) VALUES (?, 0, 0, 'SOIL', 'IDLE', 1, ?)"
+      )
+      .run(FARM_ONE_ID, NOW);
+    const post = (cropDefinitionId: string) =>
+      handle(
+        new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
+          method: "POST",
+          body: JSON.stringify({
+            requestId: "request_api_002",
+            cropDefinitionId,
+            x: 0,
+            y: 0,
+            expectedTileVersion: 1
+          }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+    expect((await post("crop_carrot")).status).toBe(201);
+    const conflict = await post("crop_wheat");
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ ok: false, error: { code: "IDEMPOTENCY_CONFLICT" } });
   });
 });

@@ -1,5 +1,11 @@
 import { createHandler } from "./handler";
-import { CryptoIdGenerator, SystemClock, UnconfiguredAuthenticator } from "./runtime";
+import {
+  CryptoIdGenerator,
+  GameDataCropDefinitions,
+  Sha256Fingerprint,
+  SystemClock,
+  UnconfiguredAuthenticator
+} from "./runtime";
 import type { D1DatabaseLike } from "./d1-types";
 
 interface Env {
@@ -12,6 +18,8 @@ export default {
       db: env.DB,
       authenticator: new UnconfiguredAuthenticator(),
       ids: new CryptoIdGenerator(),
+      fingerprints: new Sha256Fingerprint(),
+      cropDefinitions: new GameDataCropDefinitions(),
       clock: new SystemClock()
     })(request);
   }

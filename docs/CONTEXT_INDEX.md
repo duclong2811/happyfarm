@@ -19,6 +19,16 @@ Then read only what matches the task:
 
 Do not automatically inspect the renderer, assets, unrelated domains, economy, animals, trees, fish, or final multiplayer gameplay.
 
+## Phase 2 crop simulation task
+- `docs/architecture.md` offline simulation and boundaries
+- crop/tile/idempotency sections of `docs/DATA_MODEL.md`
+- crop/time sections of `docs/PROJECT_SPEC.md`
+- relevant contracts in `docs/protocols.md`
+- `.agents/skills/security-review/SKILL.md`
+- only crop domain/application/game-data, D1 adapters, current crop migration, and related tests
+
+Do not inspect economy, inventory settlement, renderer, multiplayer, or unrelated content domains unless a concrete contract requires it.
+
 ## Farming/domain task
 - `docs/architecture.md`
 - `docs/PROJECT_SPEC.md` relevant section

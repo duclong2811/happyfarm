@@ -1,4 +1,15 @@
-import type { Farm, FarmId, FarmMember, FarmTile, Player, PlayerId } from "@happy-farm/domain";
+import type {
+  CropDefinition,
+  CropDefinitionId,
+  CropInstance,
+  CropInstanceId,
+  Farm,
+  FarmId,
+  FarmMember,
+  FarmTile,
+  Player,
+  PlayerId
+} from "@happy-farm/domain";
 
 export interface ActorContext {
   readonly playerId: PlayerId;
@@ -14,6 +25,14 @@ export interface Clock {
 
 export interface IdGenerator {
   newFarmId(): FarmId;
+}
+
+export interface CropIdGenerator {
+  newCropInstanceId(): CropInstanceId;
+}
+
+export interface PayloadFingerprint {
+  hash(canonicalPayload: string): Promise<string>;
 }
 
 export interface PlayerRepository {
@@ -33,4 +52,34 @@ export interface FarmTileRepository {
   insert(tile: FarmTile): Promise<void>;
   find(farmId: FarmId, x: number, y: number): Promise<FarmTile | null>;
   updateVersion(tile: FarmTile, expectedVersion: number): Promise<boolean>;
+}
+
+export interface CropDefinitionRepository {
+  findById(id: CropDefinitionId): CropDefinition | null;
+}
+
+export interface IdempotencyRecord {
+  readonly actorPlayerId: PlayerId;
+  readonly operation: string;
+  readonly requestId: string;
+  readonly payloadFingerprint: string;
+  readonly resourceId: string;
+  readonly responseJson: string;
+  readonly status: "COMPLETED";
+  readonly createdAt: string;
+}
+
+export interface IdempotencyRepository {
+  find(actorPlayerId: PlayerId, operation: string, requestId: string): Promise<IdempotencyRecord | null>;
+}
+
+export interface CropInstanceRepository {
+  findById(id: CropInstanceId): Promise<CropInstance | null>;
+  findAtTile(farmId: FarmId, x: number, y: number): Promise<CropInstance | null>;
+  listByFarm(farmId: FarmId): Promise<readonly CropInstance[]>;
+  plantAtomically(
+    crop: CropInstance,
+    expectedTileVersion: number,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
 }

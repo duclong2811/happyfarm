@@ -94,11 +94,15 @@ If no row is updated, return the stable `CONFLICT_STALE_STATE` error. Client ver
 - tile_y
 - crop_definition_id
 - planted_at
-- last_watered_at nullable
+- planted_by_player_id FK
 - version
-- created_by
 - created_at
 - updated_at
+
+`crop_instances` is the single source of truth for crop occupancy. Do not duplicate crop identity or occupancy on `farm_tiles`. `UNIQUE(farm_id,tile_x,tile_y)` prevents concurrent double planting while Phase 2A crop rows represent active crops.
+
+Crop definition IDs reference the validated game-data registry, not a fake D1 table. `planted_at` is assigned from server time. Growth percentage, stage, maturity, and `mature_at` are derived and are not persisted.
+
 Constraints: at most one active crop per valid tile; definition ID validated by application/game-data.
 Indexes: farm_id; (farm_id,tile_x,tile_y)
 
@@ -155,10 +159,14 @@ UNIQUE: player + quest definition + applicable cycle/version
 - request_id
 - operation
 - status
-- response_hash or stored response metadata
+- payload_fingerprint
+- resource_id nullable
+- response_json or stored response metadata
 - created_at
 - expires_at nullable
 UNIQUE: (actor_player_id, request_id, operation)
+
+Only successful Phase 2A planting commands are recorded. A retry by the same actor with the same operation, request ID, and payload fingerprint returns the original crop. Reusing that identity with a different payload returns `IDEMPOTENCY_CONFLICT`. Failed validation is not recorded and may be corrected and retried.
 
 ### audit_events
 - id PK

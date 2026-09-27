@@ -4,18 +4,23 @@ import type {
   FarmMember,
   FarmRole,
   FarmTile,
+  CropInstance,
+  CropInstanceId,
   Player,
   PlayerId,
   PlayerStatus,
   TerrainType,
   TileState
 } from "@happy-farm/domain";
-import { parseFarmId, parsePlayerId } from "@happy-farm/domain";
+import { parseCropDefinitionId, parseCropInstanceId, parseFarmId, parsePlayerId } from "@happy-farm/domain";
 import type {
+  CropInstanceRepository,
   FarmMemberRepository,
   FarmRepository,
   FarmTileRepository,
-  PlayerRepository
+  PlayerRepository,
+  IdempotencyRecord,
+  IdempotencyRepository
 } from "@happy-farm/application";
 import type { D1DatabaseLike } from "./d1-types";
 
@@ -52,6 +57,45 @@ interface FarmTileRow {
   tile_state: TileState;
   version: number;
   updated_at: string;
+}
+
+interface CropInstanceRow {
+  id: string;
+  farm_id: string;
+  tile_x: number;
+  tile_y: number;
+  crop_definition_id: string;
+  planted_by_player_id: string;
+  planted_at: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface IdempotencyRow {
+  actor_player_id: string;
+  operation: string;
+  request_id: string;
+  payload_fingerprint: string;
+  resource_id: string;
+  response_json: string;
+  status: "COMPLETED";
+  created_at: string;
+}
+
+function mapCrop(row: CropInstanceRow): CropInstance {
+  return {
+    id: parseCropInstanceId(row.id),
+    farmId: parseFarmId(row.farm_id),
+    tileX: row.tile_x,
+    tileY: row.tile_y,
+    cropDefinitionId: parseCropDefinitionId(row.crop_definition_id),
+    plantedByPlayerId: parsePlayerId(row.planted_by_player_id),
+    plantedAt: row.planted_at,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
 }
 
 export class D1PlayerRepository implements PlayerRepository {
@@ -176,5 +220,106 @@ export class D1FarmTileRepository implements FarmTileRepository {
       .bind(tile.state, tile.updatedAt, tile.farmId, tile.x, tile.y, expectedVersion)
       .run();
     return result.success && result.meta.changes === 1;
+  }
+}
+
+export class D1CropRepository implements CropInstanceRepository, IdempotencyRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async findById(id: CropInstanceId): Promise<CropInstance | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at FROM crop_instances WHERE id = ?"
+      )
+      .bind(id)
+      .first<CropInstanceRow>();
+    return row === null ? null : mapCrop(row);
+  }
+
+  async findAtTile(farmId: FarmId, x: number, y: number): Promise<CropInstance | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at FROM crop_instances WHERE farm_id = ? AND tile_x = ? AND tile_y = ?"
+      )
+      .bind(farmId, x, y)
+      .first<CropInstanceRow>();
+    return row === null ? null : mapCrop(row);
+  }
+
+  async listByFarm(farmId: FarmId): Promise<readonly CropInstance[]> {
+    const result = await this.db
+      .prepare(
+        "SELECT id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at FROM crop_instances WHERE farm_id = ? ORDER BY tile_y, tile_x"
+      )
+      .bind(farmId)
+      .all<CropInstanceRow>();
+    return result.results.map(mapCrop);
+  }
+
+  async find(actorPlayerId: PlayerId, operation: string, requestId: string): Promise<IdempotencyRecord | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT actor_player_id, operation, request_id, payload_fingerprint, resource_id, response_json, status, created_at FROM idempotency_keys WHERE actor_player_id = ? AND operation = ? AND request_id = ?"
+      )
+      .bind(actorPlayerId, operation, requestId)
+      .first<IdempotencyRow>();
+    return row === null
+      ? null
+      : {
+          actorPlayerId: parsePlayerId(row.actor_player_id),
+          operation: row.operation,
+          requestId: row.request_id,
+          payloadFingerprint: row.payload_fingerprint,
+          resourceId: row.resource_id,
+          responseJson: row.response_json,
+          status: row.status,
+          createdAt: row.created_at
+        };
+  }
+
+  async plantAtomically(
+    crop: CropInstance,
+    expectedTileVersion: number,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    const results = await this.db.batch([
+      this.db
+        .prepare(
+          "INSERT INTO crop_instances (id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM farm_tiles WHERE farm_id = ? AND x = ? AND y = ? AND version = ? AND terrain_type = 'SOIL' AND tile_state = 'IDLE'"
+        )
+        .bind(
+          crop.id,
+          crop.farmId,
+          crop.tileX,
+          crop.tileY,
+          crop.cropDefinitionId,
+          crop.plantedByPlayerId,
+          crop.plantedAt,
+          crop.version,
+          crop.createdAt,
+          crop.updatedAt,
+          crop.farmId,
+          crop.tileX,
+          crop.tileY,
+          expectedTileVersion
+        ),
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        )
+    ]);
+    if (results.length !== 2 || results.some((result) => !result.success)) {
+      throw new Error("Atomic crop planting failed");
+    }
   }
 }
