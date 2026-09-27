@@ -1,0 +1,30 @@
+{
+  "name": "happy-farm",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "workers/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @happy-farm/web && npm run build --workspace @happy-farm/api",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "db:migrate:local": "wrangler d1 migrations apply happy-farm-local --local --config workers/api/wrangler.toml",
+    "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\" \"workers/**/*.ts\" \"tests/**/*.ts\" \"vitest.config.ts\" --max-warnings=0",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260927.1",
+    "@eslint/js": "^9.36.0",
+    "@types/node": "^24.5.2",
+    "eslint": "^9.36.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.1",
+    "vite": "^7.1.7",
+    "vitest": "^5.0.2",
+    "wrangler": "^4.40.2"
+  }
+}

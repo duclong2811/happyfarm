@@ -1,0 +1,14 @@
+{
+  "name": "@happy-farm/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir ../../dist/worker --config wrangler.toml"
+  },
+  "dependencies": {
+    "@happy-farm/application": "0.1.0",
+    "@happy-farm/contracts": "0.1.0",
+    "@happy-farm/domain": "0.1.0"
+  }
+}
