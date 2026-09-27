@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createCropRegistry, validateDefinitions } from "@happy-farm/game-data";
+import {
+  createCropRegistry,
+  createItemRegistry,
+  validateCropItemReferences,
+  validateDefinitions
+} from "@happy-farm/game-data";
 
 describe("game-data validation", () => {
   it("accepts stable semantic IDs and rejects malformed definitions", () => {
@@ -21,5 +26,28 @@ describe("game-data validation", () => {
     expect(() => createCropRegistry([{ ...valid, id: "Radish" }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, harvest: { ...valid.harvest, baseQuantity: 0 } }])).toThrow();
     expect(() => createCropRegistry([valid, valid])).toThrow("Duplicate crop definition");
+  });
+
+  it("validates item definitions and crop harvest references", () => {
+    const items = createItemRegistry([
+      { id: "item_radish", displayNameKey: "item.radish.name", category: "CROP", stackable: true, maxStack: 100 }
+    ]);
+    const crops = createCropRegistry([
+      {
+        id: "crop_radish",
+        displayNameKey: "crop.radish.name",
+        growthDurationSeconds: 60,
+        growthStages: 2,
+        harvest: { itemDefinitionId: "item_missing", baseQuantity: 1 }
+      }
+    ]);
+    expect(() => {
+      validateCropItemReferences(crops, items);
+    }).toThrow("Unknown harvest item definition");
+    expect(() =>
+      createItemRegistry([
+        { id: "item_bad", displayNameKey: "bad", category: "CROP", stackable: true, maxStack: 0 }
+      ])
+    ).toThrow();
   });
 });

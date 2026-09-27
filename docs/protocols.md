@@ -76,6 +76,11 @@ Initial set:
 - TILE_NOT_PLANTABLE
 - CROP_DEFINITION_NOT_FOUND
 - CROP_NOT_READY
+- CROP_NOT_FOUND
+- CROP_NOT_MATURE
+- CROP_ALREADY_HARVESTED
+- ITEM_DEFINITION_NOT_FOUND
+- INVENTORY_LIMIT_EXCEEDED
 - INSUFFICIENT_ITEMS
 - INSUFFICIENT_FUNDS
 - REQUEST_ALREADY_PROCESSED
@@ -89,3 +94,9 @@ Client may retry network requests. High-value commands use a request ID. A dupli
 
 ## Client authority restrictions
 Never accept authoritative balance, reward, maturity, price, level, XP, ownership, or permission values from clients.
+
+## Phase 2B HTTP commands
+
+- `POST /farms/:farmId/crops/:cropInstanceId/harvest` accepts only `requestId` and `expectedCropVersion`. Reward item, quantity, maturity, and time are server-derived.
+- `GET /inventory` returns only the authenticated player's `{ itemDefinitionId, quantity }` entries.
+- There is no generic client inventory mutation route.

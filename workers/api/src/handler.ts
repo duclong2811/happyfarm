@@ -3,6 +3,9 @@ import {
   CropStateProjector,
   GetFarmCrops,
   GetFarm,
+  GetInventory,
+  HarvestCrop,
+  InventoryService,
   PlantCrop,
   ApplicationError,
   type ActorContext,
@@ -11,23 +14,30 @@ import {
   type CropDefinitionRepository,
   type CropIdGenerator,
   type IdGenerator,
+  type ItemDefinitionRepository,
   type PayloadFingerprint
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
   FarmIdSchema,
+  CropInstanceIdSchema,
+  HarvestCropRequestSchema,
   PlantCropRequestSchema,
   type ApiFailure,
   type ApiSuccess,
   type ErrorCode,
   type FarmDTO,
   type FarmMemberDTO,
-  type CropStateDTO
+  type CropStateDTO,
+  type HarvestResultDTO,
+  type InventoryEntryDTO
 } from "@happy-farm/contracts";
 import { parseFarmId } from "@happy-farm/domain";
 import type { D1DatabaseLike } from "./d1-types";
 import {
   D1CropRepository,
+  D1HarvestSettlementRepository,
+  D1InventoryRepository,
   D1FarmMemberRepository,
   D1FarmRepository,
   D1FarmTileRepository,
@@ -42,6 +52,7 @@ export interface HandlerDependencies {
   readonly ids: IdGenerator & CropIdGenerator;
   readonly fingerprints: PayloadFingerprint;
   readonly cropDefinitions: CropDefinitionRepository;
+  readonly itemDefinitions: ItemDefinitionRepository;
   readonly clock: Clock;
 }
 
@@ -96,12 +107,17 @@ function errorStatus(code: ErrorCode): number {
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
+    case "CROP_NOT_FOUND":
+    case "ITEM_DEFINITION_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
     case "REQUEST_ALREADY_PROCESSED":
     case "TILE_OCCUPIED":
     case "TILE_NOT_PLANTABLE":
     case "IDEMPOTENCY_CONFLICT":
+    case "CROP_NOT_MATURE":
+    case "CROP_ALREADY_HARVESTED":
+    case "INVENTORY_LIMIT_EXCEEDED":
       return 409;
     case "RATE_LIMITED":
       return 429;
@@ -121,6 +137,8 @@ export function createHandler(dependencies: HandlerDependencies) {
   const members = new D1FarmMemberRepository(dependencies.db);
   const tiles = new D1FarmTileRepository(dependencies.db);
   const crops = new D1CropRepository(dependencies.db);
+  const inventory = new D1InventoryRepository(dependencies.db);
+  const harvestSettlement = new D1HarvestSettlementRepository(dependencies.db);
   const unlockedLand = {
     async isUnlocked(farmId: Parameters<typeof tiles.find>[0], coordinate: { x: number; y: number }) {
       return (await tiles.find(farmId, coordinate.x, coordinate.y)) !== null;
@@ -142,6 +160,20 @@ export function createHandler(dependencies: HandlerDependencies) {
     dependencies.clock
   );
   const getFarmCrops = new GetFarmCrops(farms, members, crops, projector);
+  const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
+  const harvestCrop = new HarvestCrop(
+    farms,
+    members,
+    crops,
+    inventory,
+    crops,
+    harvestSettlement,
+    dependencies.cropDefinitions,
+    inventoryService,
+    dependencies.fingerprints,
+    dependencies.clock
+  );
+  const getInventory = new GetInventory(inventory);
 
   return async function handle(request: Request): Promise<Response> {
     const requestId = crypto.randomUUID();
@@ -165,6 +197,29 @@ export function createHandler(dependencies: HandlerDependencies) {
           data: { farm: toFarmDTO(result.farm), membership: toMemberDTO(result.ownerMembership) }
         };
         return jsonResponse(body, 201);
+      }
+
+      if (request.method === "GET" && url.pathname === "/inventory") {
+        const items = await getInventory.execute(actor);
+        const body: ApiSuccess<{ items: InventoryEntryDTO[] }> = { ok: true, data: { items: [...items] } };
+        return jsonResponse(body);
+      }
+
+      const harvestRoute = /^\/farms\/([^/]+)\/crops\/([^/]+)\/harvest$/.exec(url.pathname);
+      if (request.method === "POST" && harvestRoute?.[1] !== undefined && harvestRoute[2] !== undefined) {
+        const decodedFarmId = decodeURIComponent(harvestRoute[1]);
+        const decodedCropId = decodeURIComponent(harvestRoute[2]);
+        if (!FarmIdSchema.safeParse(decodedFarmId).success || !CropInstanceIdSchema.safeParse(decodedCropId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const parsed = HarvestCropRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const harvest = await harvestCrop.execute(actor, parseFarmId(decodedFarmId), {
+          ...parsed.data,
+          cropInstanceId: decodedCropId
+        });
+        const body: ApiSuccess<{ harvest: HarvestResultDTO }> = { ok: true, data: { harvest } };
+        return jsonResponse(body);
       }
 
       const cropRoute = /^\/farms\/([^/]+)\/crops$/.exec(url.pathname);

@@ -2,10 +2,13 @@ import {
   cropInstanceIdFromUuid,
   farmIdFromUuid,
   parseCropDefinitionId,
+  parseItemDefinitionId,
   type CropDefinition,
   type CropDefinitionId,
   type CropInstanceId,
-  type FarmId
+  type FarmId,
+  type ItemDefinition,
+  type ItemDefinitionId
 } from "@happy-farm/domain";
 import type {
   ActorContext,
@@ -14,9 +17,10 @@ import type {
   CropDefinitionRepository,
   CropIdGenerator,
   IdGenerator,
+  ItemDefinitionRepository,
   PayloadFingerprint
 } from "@happy-farm/application";
-import { cropRegistry } from "@happy-farm/game-data";
+import { cropRegistry, itemRegistry } from "@happy-farm/game-data";
 
 export class SystemClock implements Clock {
   now(): string {
@@ -51,7 +55,10 @@ export class GameDataCropDefinitions implements CropDefinitionRepository {
           displayNameKey: definition.displayNameKey,
           growthDurationSeconds: definition.growthDurationSeconds,
           growthStages: definition.growthStages,
-          harvest: definition.harvest
+          harvest: {
+            itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
+            baseQuantity: definition.harvest.baseQuantity
+          }
         }
       : {
           id: parseCropDefinitionId(definition.id),
@@ -59,7 +66,25 @@ export class GameDataCropDefinitions implements CropDefinitionRepository {
           growthDurationSeconds: definition.growthDurationSeconds,
           growthStages: definition.growthStages,
           requiredFarmLevel: definition.requiredFarmLevel,
-          harvest: definition.harvest
+          harvest: {
+            itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
+            baseQuantity: definition.harvest.baseQuantity
+          }
+        };
+  }
+}
+
+export class GameDataItemDefinitions implements ItemDefinitionRepository {
+  findById(id: ItemDefinitionId): ItemDefinition | null {
+    const definition = itemRegistry.get(id);
+    return definition === undefined
+      ? null
+      : {
+          id: parseItemDefinitionId(definition.id),
+          displayNameKey: definition.displayNameKey,
+          category: definition.category,
+          stackable: definition.stackable,
+          maxStack: definition.maxStack
         };
   }
 }

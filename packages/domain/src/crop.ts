@@ -1,5 +1,5 @@
 import { DomainError } from "./errors";
-import type { CropDefinitionId, CropInstanceId, FarmId, PlayerId } from "./ids";
+import type { CropDefinitionId, CropInstanceId, FarmId, ItemDefinitionId, PlayerId } from "./ids";
 import type { FarmTile } from "./tile";
 
 export interface CropDefinition {
@@ -9,7 +9,7 @@ export interface CropDefinition {
   readonly growthStages: number;
   readonly requiredFarmLevel?: number;
   readonly harvest: {
-    readonly itemDefinitionId: string;
+    readonly itemDefinitionId: ItemDefinitionId;
     readonly baseQuantity: number;
   };
 }

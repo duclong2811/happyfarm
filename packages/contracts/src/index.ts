@@ -6,6 +6,7 @@ export const PlayerIdSchema = z.string().regex(new RegExp(`^player_${UUID_PATTER
 export const FarmIdSchema = z.string().regex(new RegExp(`^farm_${UUID_PATTERN}$`, "i"));
 export const CropInstanceIdSchema = z.string().regex(new RegExp(`^cropinst_${UUID_PATTERN}$`, "i"));
 export const CropDefinitionIdSchema = z.string().regex(/^crop_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+export const ItemDefinitionIdSchema = z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const RequestIdSchema = z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/);
 export const FarmRoleSchema = z.enum(["OWNER", "EDITOR", "HELPER", "VISITOR"]);
 export const TerrainTypeSchema = z.enum(["GRASS", "SOIL", "WATER", "BLOCKED"]);
@@ -95,6 +96,28 @@ export const CropStateDTOSchema = z
 export const PlantCropResponseSchema = z.object({ crop: CropStateDTOSchema }).strict();
 export const GetFarmCropsResponseSchema = z.object({ crops: z.array(CropStateDTOSchema) }).strict();
 
+export const HarvestCropRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedCropVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const HarvestResultDTOSchema = z
+  .object({
+    cropInstanceId: CropInstanceIdSchema,
+    itemDefinitionId: ItemDefinitionIdSchema,
+    quantityAdded: z.number().int().positive()
+  })
+  .strict();
+
+export const InventoryEntryDTOSchema = z
+  .object({ itemDefinitionId: ItemDefinitionIdSchema, quantity: z.number().int().nonnegative() })
+  .strict();
+
+export const HarvestCropResponseSchema = z.object({ harvest: HarvestResultDTOSchema }).strict();
+export const GetInventoryResponseSchema = z.object({ items: z.array(InventoryEntryDTOSchema) }).strict();
+
 export const ErrorCodeSchema = z.enum([
   "INVALID_INPUT",
   "NOT_AUTHENTICATED",
@@ -105,6 +128,11 @@ export const ErrorCodeSchema = z.enum([
   "TILE_OCCUPIED",
   "TILE_NOT_PLANTABLE",
   "CROP_DEFINITION_NOT_FOUND",
+  "CROP_NOT_FOUND",
+  "CROP_NOT_MATURE",
+  "CROP_ALREADY_HARVESTED",
+  "ITEM_DEFINITION_NOT_FOUND",
+  "INVENTORY_LIMIT_EXCEEDED",
   "CROP_NOT_READY",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
@@ -122,6 +150,9 @@ export type FarmTileDTO = z.infer<typeof FarmTileDTOSchema>;
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export type PlantCropRequest = z.infer<typeof PlantCropRequestSchema>;
 export type CropStateDTO = z.infer<typeof CropStateDTOSchema>;
+export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;
+export type HarvestResultDTO = z.infer<typeof HarvestResultDTOSchema>;
+export type InventoryEntryDTO = z.infer<typeof InventoryEntryDTOSchema>;
 
 export type ApiSuccess<T> = { readonly ok: true; readonly data: T };
 export type ApiFailure = {

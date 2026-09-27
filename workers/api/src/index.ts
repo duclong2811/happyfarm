@@ -2,6 +2,7 @@ import { createHandler } from "./handler";
 import {
   CryptoIdGenerator,
   GameDataCropDefinitions,
+  GameDataItemDefinitions,
   Sha256Fingerprint,
   SystemClock,
   UnconfiguredAuthenticator
@@ -20,6 +21,7 @@ export default {
       ids: new CryptoIdGenerator(),
       fingerprints: new Sha256Fingerprint(),
       cropDefinitions: new GameDataCropDefinitions(),
+      itemDefinitions: new GameDataItemDefinitions(),
       clock: new SystemClock()
     })(request);
   }

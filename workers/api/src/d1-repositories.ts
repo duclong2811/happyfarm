@@ -6,13 +6,22 @@ import type {
   FarmTile,
   CropInstance,
   CropInstanceId,
+  InventoryAddition,
+  InventoryItem,
+  ItemDefinitionId,
   Player,
   PlayerId,
   PlayerStatus,
   TerrainType,
   TileState
 } from "@happy-farm/domain";
-import { parseCropDefinitionId, parseCropInstanceId, parseFarmId, parsePlayerId } from "@happy-farm/domain";
+import {
+  parseCropDefinitionId,
+  parseCropInstanceId,
+  parseFarmId,
+  parseItemDefinitionId,
+  parsePlayerId
+} from "@happy-farm/domain";
 import type {
   CropInstanceRepository,
   FarmMemberRepository,
@@ -20,7 +29,9 @@ import type {
   FarmTileRepository,
   PlayerRepository,
   IdempotencyRecord,
-  IdempotencyRepository
+  IdempotencyRepository,
+  HarvestSettlementRepository,
+  InventoryRepository
 } from "@happy-farm/application";
 import type { D1DatabaseLike } from "./d1-types";
 
@@ -81,6 +92,14 @@ interface IdempotencyRow {
   response_json: string;
   status: "COMPLETED";
   created_at: string;
+}
+
+interface InventoryItemRow {
+  player_id: string;
+  item_definition_id: string;
+  quantity: number;
+  updated_at: string;
+  version: number;
 }
 
 function mapCrop(row: CropInstanceRow): CropInstance {
@@ -322,4 +341,81 @@ export class D1CropRepository implements CropInstanceRepository, IdempotencyRepo
       throw new Error("Atomic crop planting failed");
     }
   }
+}
+
+export class D1InventoryRepository implements InventoryRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async find(playerId: PlayerId, itemDefinitionId: ItemDefinitionId): Promise<InventoryItem | null> {
+    const row = await this.db
+      .prepare("SELECT player_id, item_definition_id, quantity, updated_at, version FROM inventory_items WHERE player_id = ? AND item_definition_id = ?")
+      .bind(playerId, itemDefinitionId)
+      .first<InventoryItemRow>();
+    return row === null ? null : mapInventoryItem(row);
+  }
+
+  async listByPlayer(playerId: PlayerId): Promise<readonly InventoryItem[]> {
+    const rows = await this.db
+      .prepare("SELECT player_id, item_definition_id, quantity, updated_at, version FROM inventory_items WHERE player_id = ? ORDER BY item_definition_id")
+      .bind(playerId)
+      .all<InventoryItemRow>();
+    return rows.results.map(mapInventoryItem);
+  }
+}
+
+export class D1HarvestSettlementRepository implements HarvestSettlementRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async settleHarvestAtomically(
+    crop: CropInstance,
+    addition: InventoryAddition,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    const results = await this.db.batch([
+      this.db
+        .prepare(
+          "INSERT INTO harvest_settlements (actor_player_id, operation, request_id, farm_id, crop_instance_id, crop_version, crop_definition_id, item_definition_id, quantity, max_quantity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          addition.playerId,
+          idempotency.operation,
+          idempotency.requestId,
+          crop.farmId,
+          crop.id,
+          crop.version,
+          crop.cropDefinitionId,
+          addition.itemDefinitionId,
+          addition.quantity,
+          addition.maxQuantity,
+          addition.timestamp
+        ),
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        )
+    ]);
+    if (results.length !== 2 || results.some((result) => !result.success)) {
+      throw new Error("Atomic harvest settlement failed");
+    }
+  }
+}
+
+function mapInventoryItem(row: InventoryItemRow): InventoryItem {
+  return {
+    playerId: parsePlayerId(row.player_id),
+    itemDefinitionId: parseItemDefinitionId(row.item_definition_id),
+    quantity: row.quantity,
+    updatedAt: row.updated_at,
+    version: row.version
+  };
 }

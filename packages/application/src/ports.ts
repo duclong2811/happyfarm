@@ -7,6 +7,10 @@ import type {
   FarmId,
   FarmMember,
   FarmTile,
+  InventoryAddition,
+  InventoryItem,
+  ItemDefinition,
+  ItemDefinitionId,
   Player,
   PlayerId
 } from "@happy-farm/domain";
@@ -58,6 +62,15 @@ export interface CropDefinitionRepository {
   findById(id: CropDefinitionId): CropDefinition | null;
 }
 
+export interface ItemDefinitionRepository {
+  findById(id: ItemDefinitionId): ItemDefinition | null;
+}
+
+export interface InventoryRepository {
+  find(playerId: PlayerId, itemDefinitionId: ItemDefinitionId): Promise<InventoryItem | null>;
+  listByPlayer(playerId: PlayerId): Promise<readonly InventoryItem[]>;
+}
+
 export interface IdempotencyRecord {
   readonly actorPlayerId: PlayerId;
   readonly operation: string;
@@ -80,6 +93,14 @@ export interface CropInstanceRepository {
   plantAtomically(
     crop: CropInstance,
     expectedTileVersion: number,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+}
+
+export interface HarvestSettlementRepository {
+  settleHarvestAtomically(
+    crop: CropInstance,
+    addition: InventoryAddition,
     idempotency: IdempotencyRecord
   ): Promise<void>;
 }

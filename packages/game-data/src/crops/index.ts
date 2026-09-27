@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DefinitionIdSchema } from "../schema";
+import { itemRegistry } from "../items";
 
 export const CropDefinitionSchema = z
   .object({
@@ -52,5 +53,18 @@ export const cropRegistry = createCropRegistry([
     harvest: { itemDefinitionId: "item_corn", baseQuantity: 2 }
   }
 ]);
+
+export function validateCropItemReferences(
+  cropDefinitions: ReadonlyMap<string, CropDefinitionData>,
+  itemDefinitions: ReadonlyMap<string, unknown>
+): void {
+  for (const crop of cropDefinitions.values()) {
+    if (!itemDefinitions.has(crop.harvest.itemDefinitionId)) {
+      throw new Error(`Unknown harvest item definition: ${crop.harvest.itemDefinitionId}`);
+    }
+  }
+}
+
+validateCropItemReferences(cropRegistry, itemRegistry);
 
 export const crops = [...cropRegistry.values()];

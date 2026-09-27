@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CreateFarmRequestSchema,
   FarmRoleSchema,
+  HarvestCropRequestSchema,
   MAX_TILE_X,
   PlantCropRequestSchema,
   TileCoordinateSchema
@@ -33,5 +34,13 @@ describe("Phase 1 runtime validation", () => {
     expect(PlantCropRequestSchema.safeParse({ ...valid, requestId: "short" }).success).toBe(false);
     expect(PlantCropRequestSchema.safeParse({ ...valid, plantedAt: "2000-01-01T00:00:00.000Z" }).success).toBe(false);
     expect(PlantCropRequestSchema.safeParse({ ...valid, expectedTileVersion: 0 }).success).toBe(false);
+  });
+
+  it("rejects client-authored harvest rewards and invalid versions", () => {
+    const valid = { requestId: "harvest_123", expectedCropVersion: 1 };
+    expect(HarvestCropRequestSchema.safeParse(valid).success).toBe(true);
+    expect(HarvestCropRequestSchema.safeParse({ ...valid, expectedCropVersion: 0 }).success).toBe(false);
+    expect(HarvestCropRequestSchema.safeParse({ ...valid, quantityAdded: 999 }).success).toBe(false);
+    expect(HarvestCropRequestSchema.safeParse({ ...valid, itemDefinitionId: "item_gold" }).success).toBe(false);
   });
 });

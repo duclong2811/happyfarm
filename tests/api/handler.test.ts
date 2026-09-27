@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
 import { parseCropInstanceId, type CropInstanceId, type FarmId } from "@happy-farm/domain";
 import { createHandler } from "../../workers/api/src/handler";
-import { GameDataCropDefinitions, Sha256Fingerprint } from "../../workers/api/src/runtime";
+import { GameDataCropDefinitions, GameDataItemDefinitions, Sha256Fingerprint } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -56,6 +56,7 @@ describe("Worker API foundation", () => {
       ids: new FixedIds(),
       fingerprints: new Sha256Fingerprint(),
       cropDefinitions: new GameDataCropDefinitions(),
+      itemDefinitions: new GameDataItemDefinitions(),
       clock: new FixedClock()
     });
   });
@@ -230,5 +231,38 @@ describe("Worker API foundation", () => {
     const conflict = await post("crop_wheat");
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({ ok: false, error: { code: "IDEMPOTENCY_CONFLICT" } });
+  });
+
+  it("harvests through an explicit command and exposes only the actor inventory", async () => {
+    await handle(new Request("https://api.test/farms", {
+      method: "POST",
+      body: JSON.stringify({ name: "Starter Farm" }),
+      headers: { "content-type": "application/json" }
+    }));
+    db.sqlite.prepare("INSERT INTO farm_tiles (farm_id, x, y, terrain_type, tile_state, version, updated_at) VALUES (?, 0, 0, 'SOIL', 'IDLE', 1, ?)").run(FARM_ONE_ID, NOW);
+    db.sqlite.prepare("INSERT INTO crop_instances (id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at) VALUES ('cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc', ?, 0, 0, 'crop_carrot', ?, '2026-09-26T23:55:00.000Z', 1, ?, ?)").run(FARM_ONE_ID, PLAYER_ONE_ID, NOW, NOW);
+
+    const rejectedReward = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops/cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc/harvest`, {
+      method: "POST",
+      body: JSON.stringify({ requestId: "harvest_api_001", expectedCropVersion: 1, quantity: 999 }),
+      headers: { "content-type": "application/json" }
+    }));
+    expect(rejectedReward.status).toBe(400);
+
+    const harvested = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops/cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc/harvest`, {
+      method: "POST",
+      body: JSON.stringify({ requestId: "harvest_api_001", expectedCropVersion: 1 }),
+      headers: { "content-type": "application/json" }
+    }));
+    expect(harvested.status).toBe(200);
+    expect(await harvested.json()).toMatchObject({ ok: true, data: { harvest: { itemDefinitionId: "item_carrot", quantityAdded: 2 } } });
+
+    db.sqlite.prepare("INSERT INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'issuer', 'subject-two', 'Player Two', 'ACTIVE', ?, ?)").run(PLAYER_TWO_ID, NOW, NOW);
+    db.sqlite.prepare("INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, 'item_wheat', 9, ?, 1)").run(PLAYER_TWO_ID, NOW);
+    const response = await handle(new Request("https://api.test/inventory"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, data: { items: [{ itemDefinitionId: "item_carrot", quantity: 2 }] } });
+    auth.setActor(null);
+    expect((await handle(new Request("https://api.test/inventory"))).status).toBe(401);
   });
 });

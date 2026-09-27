@@ -114,8 +114,23 @@ Follow the same pattern: stable instance ID, farm ID, definition ID, logical pos
 - item_definition_id
 - quantity
 - updated_at
+- version
 UNIQUE: (player_id, item_definition_id)
-Constraint: quantity >= 0 unless a specific design says otherwise.
+Constraint: quantity is an integer from 0 through 2,147,483,647. Each player/item pair has one authoritative stack. Mutations are created through the centralized inventory service; gameplay systems do not issue ad hoc quantity updates.
+
+Item definition IDs are validated against static game data and intentionally have no fake D1 foreign key. Crop harvest item references are validated against that registry at game-data load time.
+
+### harvest_settlements
+- actor_player_id
+- operation + request_id
+- farm_id
+- crop_instance_id UNIQUE per harvest operation
+- crop_version + crop_definition_id
+- item_definition_id
+- quantity + max_quantity
+- created_at
+
+The settlement row is an immutable receipt and concurrency claim. Its database trigger atomically increments inventory and removes the matching authoritative crop. The settlement and generic idempotency row commit in one D1 batch; any failure rolls back all effects. Concurrent additions use an atomic upsert rather than a read/modify/write sequence.
 
 ### wallets
 - player_id FK
@@ -166,7 +181,7 @@ UNIQUE: player + quest definition + applicable cycle/version
 - expires_at nullable
 UNIQUE: (actor_player_id, request_id, operation)
 
-Only successful Phase 2A planting commands are recorded. A retry by the same actor with the same operation, request ID, and payload fingerprint returns the original crop. Reusing that identity with a different payload returns `IDEMPOTENCY_CONFLICT`. Failed validation is not recorded and may be corrected and retried.
+Only successful planting and harvest commands are recorded. A retry by the same actor with the same operation, request ID, and payload fingerprint returns the original result after current resource access is re-authorized. Reusing that identity with a different payload returns `IDEMPOTENCY_CONFLICT`. Failed validation is not recorded and may be corrected and retried.
 
 ### audit_events
 - id PK

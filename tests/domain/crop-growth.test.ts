@@ -3,7 +3,8 @@ import {
   calculateCropGrowth,
   canHarvest,
   createCropInstance,
-  parseCropDefinitionId
+  parseCropDefinitionId,
+  parseItemDefinitionId
 } from "@happy-farm/domain";
 import { CROP_ONE_ID, FARM_ONE_ID, PLAYER_ONE_ID } from "../support/fixtures";
 
@@ -12,7 +13,7 @@ const definition = {
   displayNameKey: "crop.test.name",
   growthDurationSeconds: 400,
   growthStages: 4,
-  harvest: { itemDefinitionId: "item_test", baseQuantity: 1 }
+  harvest: { itemDefinitionId: parseItemDefinitionId("item_test"), baseQuantity: 1 }
 };
 const plantedAt = "2026-01-01T12:00:00.000Z";
 

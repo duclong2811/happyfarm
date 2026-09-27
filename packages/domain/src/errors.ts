@@ -5,6 +5,8 @@ export type DomainErrorCode =
   | "INVALID_ROLE"
   | "INVALID_TILE"
   | "INVALID_CROP"
+  | "INVALID_INVENTORY_MUTATION"
+  | "INVENTORY_LIMIT_EXCEEDED"
   | "CONFLICT_STALE_STATE";
 
 export class DomainError extends Error {

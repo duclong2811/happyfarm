@@ -42,6 +42,8 @@ Do not inspect economy, inventory settlement, renderer, multiplayer, or unrelate
 - `.agents/skills/security-review/SKILL.md`
 - only affected services/repositories/tests
 
+For Phase 2B harvest settlement, also read `docs/decisions/0003-crop-simulation-and-idempotency.md` and `docs/decisions/0004-inventory-and-harvest-settlement.md`; do not inspect wallet/shop/economy implementation unless explicitly requested.
+
 ## Database/migration task
 - `docs/DATA_MODEL.md`
 - affected repository interfaces/implementations
