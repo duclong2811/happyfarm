@@ -4,15 +4,19 @@ import {
   calculateCropGrowth,
   createCropInstance,
   DomainError,
+  isCropUnlocked,
   parseCropDefinitionId,
   parseCropInstanceId,
+  requiredLevelFor,
   type CropDefinition,
   type CropInstance,
   type FarmId,
+  type ProgressionDefinition,
   type TileCoordinate,
   type UnlockedLandPolicy
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { storedLevel } from "./progression";
 import type {
   ActorContext,
   Clock,
@@ -24,7 +28,8 @@ import type {
   FarmTileRepository,
   IdempotencyRecord,
   IdempotencyRepository,
-  PayloadFingerprint
+  PayloadFingerprint,
+  ProgressionRepository
 } from "./ports";
 
 const PLANT_OPERATION = "PLANT_CROP";
@@ -58,9 +63,8 @@ export class CropStateProjector {
     if (definition === null) {
       throw new ApplicationError("CROP_DEFINITION_NOT_FOUND", "Crop definition was not found");
     }
-    if (definition.requiredFarmLevel !== undefined) {
-      throw new ApplicationError("INVALID_INPUT", "Crop level requirements are not available in Phase 2A");
-    }
+    // The level requirement gates planting, not reading. A crop already in the ground keeps
+    // reporting its growth even if a later curve would have locked it.
     const growth = calculateCropGrowth(definition, crop.plantedAt, serverTime);
     return {
       cropInstanceId: crop.id,
@@ -89,6 +93,8 @@ export class PlantCrop {
     private readonly crops: CropInstanceRepository,
     private readonly idempotency: IdempotencyRepository,
     private readonly definitions: CropDefinitionRepository,
+    private readonly progression: ProgressionRepository,
+    private readonly progressionDefinition: ProgressionDefinition,
     private readonly unlockedLand: UnlockedLandPolicy,
     private readonly ids: CropIdGenerator,
     private readonly fingerprints: PayloadFingerprint,
@@ -152,6 +158,17 @@ export class PlantCrop {
     const definition = this.definitions.findById(definitionId);
     if (definition === null) {
       throw new ApplicationError("CROP_DEFINITION_NOT_FOUND", "Crop definition was not found");
+    }
+    // Game data is a module constant for the life of a deployment, so the requirement read here is
+    // the one this Worker enforces and there is no version to guard. The level comes from the same
+    // authoritative row the harvest writes, derived from experience rather than from the cached
+    // column, and a player with no row is level 1 exactly as `GET /progression` reports.
+    const level = storedLevel(this.progressionDefinition, await this.progression.find(actor.playerId));
+    if (!isCropUnlocked(definition, level)) {
+      throw new ApplicationError(
+        "CROP_LEVEL_REQUIRED",
+        `Crop ${definition.id} requires level ${String(requiredLevelFor(definition))}; player is level ${String(level)}`
+      );
     }
 
     const now = this.clock.now();
@@ -225,5 +242,40 @@ export class GetFarmCrops {
       throw new ApplicationError("NOT_AUTHORIZED", "Farm access is not allowed");
     }
     return this.projector.projectMany(await this.crops.listByFarm(farmId));
+  }
+}
+
+/** One crop, in the shape the client needs to offer it as a planting choice. */
+export interface CropDefinitionView {
+  readonly cropDefinitionId: string;
+  readonly growthDurationSeconds: number;
+  readonly harvestItemDefinitionId: string;
+  readonly baseQuantity: number;
+  readonly harvestXp: number;
+  /** Resolved, never absent: "no requirement" reads as level 1, the level every player starts at. */
+  readonly requiredLevel: number;
+}
+
+/**
+ * The crop catalogue.
+ *
+ * A pure projection of game data: no repository read, no player state, no mutation. It exists so the
+ * client renders its planting choices from what this deployment can actually plant, instead of from
+ * a list compiled into the client, and so a crop the player has not unlocked is still listed — with
+ * the level it needs — rather than silently missing.
+ */
+export class ListCropDefinitions {
+  constructor(private readonly definitions: CropDefinitionRepository) {}
+
+  execute(actor: ActorContext | null): readonly CropDefinitionView[] {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    return this.definitions.list().map((definition) => ({
+      cropDefinitionId: definition.id,
+      growthDurationSeconds: definition.growthDurationSeconds,
+      harvestItemDefinitionId: definition.harvest.itemDefinitionId,
+      baseQuantity: definition.harvest.baseQuantity,
+      harvestXp: definition.harvest.xp,
+      requiredLevel: requiredLevelFor(definition)
+    }));
   }
 }

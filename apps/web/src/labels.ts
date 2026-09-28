@@ -20,8 +20,6 @@ const CURRENCY_LABELS: Record<string, string> = {
   currency_gold: "Gold"
 };
 
-export const PLANTABLE_CROPS = ["crop_carrot", "crop_wheat", "crop_corn"] as const;
-
 export function cropLabel(definitionId: string): string {
   return CROP_LABELS[definitionId] ?? definitionId;
 }
@@ -39,6 +37,7 @@ const ERROR_LABELS: Record<string, string> = {
   INSUFFICIENT_ITEMS: "You do not have that many items.",
   CROP_NOT_MATURE: "That crop is still growing.",
   CROP_ALREADY_HARVESTED: "That crop was already harvested.",
+  CROP_LEVEL_REQUIRED: "That crop needs a higher level than this player has.",
   TILE_OCCUPIED: "That tile is already planted.",
   TILE_NOT_PLANTABLE: "That tile cannot be planted.",
   CONFLICT_STALE_STATE: "The server state moved on; refresh and retry.",

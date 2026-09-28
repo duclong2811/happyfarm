@@ -7,7 +7,15 @@ export interface CropDefinition {
   readonly displayNameKey: string;
   readonly growthDurationSeconds: number;
   readonly growthStages: number;
-  readonly requiredFarmLevel?: number;
+  /**
+   * The player level at which this crop becomes plantable. Absent means no requirement, which is
+   * the starting crop's case.
+   *
+   * This is authoritative game data, never a client input, and `isCropUnlocked` below is the only
+   * rule that interprets it. It is deliberately named for the *player's* level: a farm has no level
+   * of its own, and progression is the single source of one.
+   */
+  readonly requiredLevel?: number;
   readonly harvest: {
     readonly itemDefinitionId: ItemDefinitionId;
     readonly baseQuantity: number;
@@ -40,6 +48,23 @@ export function assertTilePlantable(tile: FarmTile): void {
   if (tile.terrainType !== "SOIL") {
     throw new DomainError("INVALID_CROP", "Tile is not plantable");
   }
+}
+
+/** The level a player must have reached before this crop can be planted. */
+export function requiredLevelFor(definition: CropDefinition): number {
+  return definition.requiredLevel ?? 1;
+}
+
+/**
+ * Whether a player at `level` may plant this crop.
+ *
+ * A level that is not a safe integer — negative, fractional, `NaN`, infinite — compares as
+ * insufficient, so a malformed reading locks every crop rather than unlocking every crop. The
+ * refusal is the safe direction: a player who should have been allowed can retry, a player who
+ * should not have been cannot un-plant.
+ */
+export function isCropUnlocked(definition: CropDefinition, level: number): boolean {
+  return Number.isSafeInteger(level) && level >= requiredLevelFor(definition);
 }
 
 export function createCropInstance(

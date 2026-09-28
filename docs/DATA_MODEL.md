@@ -120,6 +120,8 @@ harvest, and replant cycles.
 
 Crop definition IDs reference the validated game-data registry, not a fake D1 table. `planted_at` is assigned from server time. Growth percentage, stage, maturity, and `mature_at` are derived and are not persisted.
 
+A crop definition's level requirement (`requiredLevel`, absent meaning level 1) is part of that game-data registry and is enforced when a crop is planted. It is not stored per row and is deliberately not applied to reads, so a crop already in the ground keeps reporting its growth even if a later curve would have locked it.
+
 Constraints: at most one active crop per valid tile; definition ID validated by application/game-data.
 Indexes: farm_id; (farm_id,tile_x,tile_y)
 

@@ -79,6 +79,7 @@ Initial set:
 - CROP_NOT_FOUND
 - CROP_NOT_MATURE
 - CROP_ALREADY_HARVESTED
+- CROP_LEVEL_REQUIRED
 - ITEM_DEFINITION_NOT_FOUND
 - INVENTORY_LIMIT_EXCEEDED
 - INSUFFICIENT_ITEMS
@@ -173,3 +174,28 @@ Phase 3D exposes `POST /shop/buy` and `POST /shop/sell`. Both authenticate the a
   the API error vocabulary and never reach a client: a stored row this curve could not have produced
   is refused as `INTERNAL_ERROR` rather than written forward. A concurrent-award race is
   `PROGRESSION_CONFLICT` (409), which the server retries internally before answering.
+
+## Phase 4B crop catalogue and level-gated unlocks
+
+- `GET /crop-definitions` requires authentication and returns
+  `{ "definitions": [ { "cropDefinitionId", "growthDurationSeconds", "harvestItemDefinitionId",
+  "baseQuantity", "harvestXp", "requiredLevel" } ] }` for every crop this deployment can plant. It is
+  a pure projection of game data: it reads no database, mutates nothing, and reveals no player state.
+  `requiredLevel` is always present, with 1 meaning "no requirement", so a client never infers a rule
+  from a missing field.
+- Crops a player has not unlocked are **listed**, not filtered out. The client needs them to explain
+  what to work towards; the server is what refuses the command.
+- `POST /farms/:farmId/crops` now enforces the requirement. A crop above the actor's level is refused
+  as `CROP_LEVEL_REQUIRED` (403) — a new code, chosen because `NOT_AUTHORIZED` means "not allowed on
+  this farm" and 400 would call a well-formed command malformed. The refusal names neither a level
+  nor a curve in the response body, which stays `{ "code", "requestId" }`; the client already knows
+  its own level from `GET /progression` and the requirement from the catalogue.
+- The requirement has gained no input. `POST /farms/:farmId/crops` still accepts only `requestId`,
+  `cropDefinitionId`, `x`, `y`, and `expectedTileVersion`, and no route accepts `level`, `xp`, or a
+  crop's requirement from the path, query string, body, or headers.
+- A refused plant is not a processed request: it writes no crop row and no idempotency record, so the
+  same request id stays usable once the player reaches the level.
+- Reading is never gated. `GET /farms/:farmId/crops` still reports every planted crop, including one
+  a retuned curve would no longer let the player plant, and `GetFarmCrops` filters nothing by level.
+- Unlocks are permanent: a level only ever rises, so a crop that has been unlocked stays unlocked.
+  Expiring or consumable unlocks are deliberately out of scope.

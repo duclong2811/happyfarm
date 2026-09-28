@@ -1,6 +1,7 @@
 import {
   BuyItemResultDTOSchema,
   CreateFarmResponseSchema,
+  GetCropDefinitionsResponseSchema,
   GetFarmCropsResponseSchema,
   GetFarmResponseSchema,
   GetFarmTilesResponseSchema,
@@ -14,6 +15,7 @@ import {
 } from "@happy-farm/contracts";
 import type {
   BuyItemResultDTO,
+  CropDefinitionDTO,
   CropStateDTO,
   FarmDTO,
   FarmMemberDTO,
@@ -181,6 +183,11 @@ export class ApiClient {
 
   getCrops(farmId: string): Promise<{ readonly crops: CropStateDTO[] }> {
     return this.get(`/farms/${encodeURIComponent(farmId)}/crops`, GetFarmCropsResponseSchema);
+  }
+
+  /** The crops this deployment can plant, which is what the planting control is built from. */
+  getCropDefinitions(): Promise<{ readonly definitions: CropDefinitionDTO[] }> {
+    return this.get("/crop-definitions", GetCropDefinitionsResponseSchema);
   }
 
   plantCrop(farmId: string, body: PlantCropBody): Promise<{ readonly crop: CropStateDTO }> {

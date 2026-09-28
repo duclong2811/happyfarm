@@ -37,7 +37,8 @@ import {
   currencyRegistry,
   itemRegistry,
   playerProgression,
-  shopRegistry
+  shopRegistry,
+  type CropDefinitionData
 } from "@happy-farm/game-data";
 
 /**
@@ -115,34 +116,39 @@ export class Sha256Fingerprint implements PayloadFingerprint {
 }
 
 export class GameDataCropDefinitions implements CropDefinitionRepository {
+  list(): readonly CropDefinition[] {
+    return [...cropRegistry.values()].map(toCropDefinition);
+  }
+
   findById(id: CropDefinitionId): CropDefinition | null {
     const definition = cropRegistry.get(id);
-    if (definition === undefined) return null;
-    return definition.requiredFarmLevel === undefined
-      ? {
-          id: parseCropDefinitionId(definition.id),
-          displayNameKey: definition.displayNameKey,
-          growthDurationSeconds: definition.growthDurationSeconds,
-          growthStages: definition.growthStages,
-          harvest: {
-            itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
-            baseQuantity: definition.harvest.baseQuantity,
-            xp: definition.harvest.xp
-          }
-        }
-      : {
-          id: parseCropDefinitionId(definition.id),
-          displayNameKey: definition.displayNameKey,
-          growthDurationSeconds: definition.growthDurationSeconds,
-          growthStages: definition.growthStages,
-          requiredFarmLevel: definition.requiredFarmLevel,
-          harvest: {
-            itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
-            baseQuantity: definition.harvest.baseQuantity,
-            xp: definition.harvest.xp
-          }
-        };
+    return definition === undefined ? null : toCropDefinition(definition);
   }
+}
+
+/**
+ * Translates one game-data crop into the domain shape.
+ *
+ * Game data always carries `requiredLevel` as an optional key, while the domain type is compiled
+ * with `exactOptionalPropertyTypes`, so the field is added only when game data sets it. Collapsing
+ * "absent" and "1" here would erase the distinction game data is allowed to make, and the domain's
+ * `requiredLevelFor` is the function that decides what an absent requirement means.
+ */
+function toCropDefinition(definition: CropDefinitionData): CropDefinition {
+  const base = {
+    id: parseCropDefinitionId(definition.id),
+    displayNameKey: definition.displayNameKey,
+    growthDurationSeconds: definition.growthDurationSeconds,
+    growthStages: definition.growthStages,
+    harvest: {
+      itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
+      baseQuantity: definition.harvest.baseQuantity,
+      xp: definition.harvest.xp
+    }
+  };
+  return definition.requiredLevel === undefined
+    ? base
+    : { ...base, requiredLevel: definition.requiredLevel };
 }
 
 export class GameDataItemDefinitions implements ItemDefinitionRepository {

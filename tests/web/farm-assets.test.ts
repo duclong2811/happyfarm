@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { PLANTABLE_CROPS } from "../../apps/web/src/labels";
+import { crops } from "@happy-farm/game-data";
 import { CROP_MODEL_IDS, cropModelId } from "../../apps/web/src/render/assets";
 
 describe("crop model manifest", () => {
-  it("has a model for every crop the client can plant", () => {
-    for (const definitionId of PLANTABLE_CROPS) {
-      expect(cropModelId(definitionId), definitionId).toBe(definitionId);
+  it("has a model for every crop the server can be asked to plant", () => {
+    // The client no longer holds a plantable-crop list of its own: the server's crop catalogue is the
+    // source, so the model manifest has to cover exactly that catalogue.
+    for (const crop of crops) {
+      expect(cropModelId(crop.id), crop.id).toBe(crop.id);
     }
   });
 

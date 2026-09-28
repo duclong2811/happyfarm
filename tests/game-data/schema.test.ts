@@ -33,6 +33,15 @@ describe("game-data validation", () => {
     expect(() => createCropRegistry([{ ...valid, growthDurationSeconds: 0 }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, growthStages: 1 }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, id: "Radish" }])).toThrow();
+    // A requirement is a player level, so it is a positive whole number or nothing at all.
+    expect(createCropRegistry([{ ...valid, requiredLevel: 2 }]).get("crop_radish")?.requiredLevel).toBe(2);
+    expect(createCropRegistry([valid]).get("crop_radish")?.requiredLevel).toBeUndefined();
+    expect(() => createCropRegistry([{ ...valid, requiredLevel: 0 }])).toThrow();
+    expect(() => createCropRegistry([{ ...valid, requiredLevel: 1.5 }])).toThrow();
+    // Bounded by the level ceiling the API contract also validates against: a requirement above it is
+    // unreachable data, and would be rejected by the client's own catalogue validator at runtime.
+    expect(createCropRegistry([{ ...valid, requiredLevel: 10_000 }]).get("crop_radish")?.requiredLevel).toBe(10_000);
+    expect(() => createCropRegistry([{ ...valid, requiredLevel: 10_001 }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, harvest: { ...valid.harvest, baseQuantity: 0 } }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, harvest: { ...valid.harvest, xp: 0 } }])).toThrow();
     expect(() =>
@@ -180,5 +189,16 @@ describe("game-data validation", () => {
     if (carrot !== undefined && corn !== undefined) {
       expect(corn.harvest.xp).toBeGreaterThan(carrot.harvest.xp);
     }
+    // Every unlock has to be reachable, and exactly one crop has to be available at level 1 so a
+    // player who has never earned experience is never stuck with nothing to plant.
+    for (const crop of crops) {
+      const requiredLevel = crop.requiredLevel ?? 1;
+      expect(Number.isSafeInteger(requiredLevel), crop.id).toBe(true);
+      expect(requiredLevel, crop.id).toBeGreaterThanOrEqual(1);
+      expect(requiredLevel, crop.id).toBeLessThanOrEqual(playerProgression.maxLevel);
+    }
+    expect(crops.filter((crop) => (crop.requiredLevel ?? 1) === 1).map((crop) => crop.id)).toEqual([
+      "crop_carrot"
+    ]);
   });
 });

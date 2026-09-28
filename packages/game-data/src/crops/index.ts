@@ -8,7 +8,17 @@ export const CropDefinitionSchema = z
     displayNameKey: z.string().regex(/^crop\.[a-z0-9_]+\.name$/),
     growthDurationSeconds: z.number().int().positive().max(31_536_000),
     growthStages: z.number().int().min(2).max(16),
-    requiredFarmLevel: z.number().int().positive().optional(),
+    /**
+     * The player level that unlocks this crop. Absent means the starting crop: no requirement.
+     *
+     * A farm has no level of its own, so this is the *player's* level. `requiredLevelFor` in
+     * `packages/domain/src/crop.ts` is the single rule that reads it, so designers set a number here
+     * and cannot invent a second interpretation of it.
+     */
+    // Bounded by the same level ceiling the progression schema and `player_progression` use, so game
+    // data cannot define a crop no level could ever satisfy — and cannot define one the API contract
+    // would reject later, which would take the whole crop catalogue down with it.
+    requiredLevel: z.number().int().positive().max(10_000).optional(),
     harvest: z
       .object({
         itemDefinitionId: DefinitionIdSchema.refine((id) => id.startsWith("item_")),
@@ -44,6 +54,7 @@ export const cropRegistry = createCropRegistry([
     displayNameKey: "crop.wheat.name",
     growthDurationSeconds: 900,
     growthStages: 5,
+    requiredLevel: 2,
     harvest: { itemDefinitionId: "item_wheat", baseQuantity: 3, xp: 12 }
   },
   {
@@ -51,6 +62,7 @@ export const cropRegistry = createCropRegistry([
     displayNameKey: "crop.corn.name",
     growthDurationSeconds: 1800,
     growthStages: 4,
+    requiredLevel: 3,
     harvest: { itemDefinitionId: "item_corn", baseQuantity: 2, xp: 24 }
   }
 ]);

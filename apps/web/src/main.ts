@@ -1,4 +1,5 @@
 import type {
+  CropDefinitionDTO,
   CropStateDTO,
   FarmTileDTO,
   InventoryEntryDTO,
@@ -7,7 +8,7 @@ import type {
   WalletDTO
 } from "@happy-farm/contracts";
 import { ApiClient, ApiError } from "./api";
-import { PLANTABLE_CROPS, cropLabel, currencyLabel, errorLabel, itemLabel } from "./labels";
+import { cropLabel, currencyLabel, errorLabel, itemLabel } from "./labels";
 import { progressionSummary } from "./progression";
 import {
   buildFarmSceneInput,
@@ -31,12 +32,14 @@ interface AppState {
   farmName: string;
   tiles: readonly FarmTileDTO[];
   crops: readonly CropStateDTO[];
+  /** The server's crop catalogue: the only list of crops this page offers to plant. */
+  cropDefinitions: readonly CropDefinitionDTO[];
   inventory: readonly InventoryEntryDTO[];
   shop: readonly ShopEntryDTO[];
   wallet: readonly WalletDTO[];
   progression: PlayerProgressionDTO | null;
   selected: SelectedTile | null;
-  selectedCrop: string;
+  selectedCrop: string | null;
   status: string;
   statusIsError: boolean;
 }
@@ -46,12 +49,13 @@ const state: AppState = {
   farmName: "",
   tiles: [],
   crops: [],
+  cropDefinitions: [],
   inventory: [],
   shop: [],
   wallet: [],
   progression: null,
   selected: null,
-  selectedCrop: PLANTABLE_CROPS[0],
+  selectedCrop: null,
   status: "Enter the development token, then bootstrap and create a farm.",
   statusIsError: false
 };
@@ -154,6 +158,67 @@ function renderProgression(): void {
   bar.appendChild(fill);
   node.appendChild(bar);
   node.appendChild(make("p", "muted", summary.detail));
+}
+
+/**
+ * Whether the server-reported level is below this crop's requirement.
+ *
+ * An unknown level — signed out, or no account read yet — locks nothing. Guessing "locked" would
+ * hide an option the player has actually unlocked, and the server is the one that decides anyway.
+ */
+function cropIsLocked(definition: CropDefinitionDTO): boolean {
+  const level = state.progression?.level ?? null;
+  return level !== null && level < definition.requiredLevel;
+}
+
+/** Keeps the planting selection valid: the first crop this player can actually plant. */
+function ensurePlantableSelection(): void {
+  const plantable = (definition: CropDefinitionDTO): boolean =>
+    definition.cropDefinitionId === state.selectedCrop && !cropIsLocked(definition);
+  if (state.cropDefinitions.some(plantable)) return;
+  state.selectedCrop =
+    state.cropDefinitions.find((definition) => !cropIsLocked(definition))?.cropDefinitionId ?? null;
+}
+
+// The planting control is this page's only <select>, and it is rebuilt from the server's catalogue.
+// Replacing its options while the list is open would collapse the dropdown, and this page re-renders
+// after every action and on every growth poll, so the options are only replaced when they differ.
+let renderedCropOptions: string | null = null;
+
+function renderCrops(): void {
+  const level = state.progression?.level ?? null;
+  const signature = JSON.stringify([
+    state.cropDefinitions.map((definition) => [definition.cropDefinitionId, definition.requiredLevel]),
+    level,
+    state.selectedCrop
+  ]);
+  if (signature === renderedCropOptions) return;
+  renderedCropOptions = signature;
+
+  const select = element<HTMLSelectElement>("crop-select");
+  select.replaceChildren();
+  if (state.cropDefinitions.length === 0) {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Sign in to load crops";
+    select.appendChild(placeholder);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  for (const definition of state.cropDefinitions) {
+    const option = document.createElement("option");
+    option.value = definition.cropDefinitionId;
+    // A locked crop is offered with the level it needs rather than hidden, so the player can see what
+    // to work towards and why the option is unavailable.
+    option.disabled = cropIsLocked(definition);
+    option.textContent =
+      definition.requiredLevel > 1
+        ? `${cropLabel(definition.cropDefinitionId)} (level ${String(definition.requiredLevel)})`
+        : cropLabel(definition.cropDefinitionId);
+    select.appendChild(option);
+  }
+  select.value = state.selectedCrop ?? "";
 }
 
 function renderSelection(): void {
@@ -283,6 +348,7 @@ function render(): void {
   renderFarm();
   renderWallet();
   renderProgression();
+  renderCrops();
   renderField();
   renderSelection();
   renderInventory();
@@ -291,16 +357,19 @@ function render(): void {
 
 async function refreshAccount(): Promise<void> {
   const client = api();
-  const [inventory, wallet, shop, progression] = await Promise.all([
+  const [inventory, wallet, shop, progression, cropDefinitions] = await Promise.all([
     client.getInventory(),
     client.getWallet(),
     client.getShop(),
-    client.getProgression()
+    client.getProgression(),
+    client.getCropDefinitions()
   ]);
   state.inventory = inventory.items;
   state.wallet = wallet.wallets;
   state.shop = shop.entries;
   state.progression = progression.progression;
+  state.cropDefinitions = cropDefinitions.definitions;
+  ensurePlantableSelection();
 }
 
 function setSceneState(text: string): void {
@@ -410,6 +479,11 @@ async function plant(): Promise<void> {
     setStatus("Select a tile first.", true);
     return;
   }
+  const cropDefinitionId = state.selectedCrop;
+  if (cropDefinitionId === null) {
+    setStatus("No crop is available to plant yet.", true);
+    return;
+  }
   if (cropAt(tile.x, tile.y) !== null) {
     setStatus("That tile already has a crop.", true);
     return;
@@ -417,14 +491,14 @@ async function plant(): Promise<void> {
   const client = api();
   await client.plantCrop(state.farmId, {
     requestId: newRequestId("plant"),
-    cropDefinitionId: state.selectedCrop,
+    cropDefinitionId,
     x: tile.x,
     y: tile.y,
     expectedTileVersion: tile.version
   });
   await refreshFarm();
   await refreshAccount();
-  setStatus(`Planted ${cropLabel(state.selectedCrop)} on (${String(tile.x)}, ${String(tile.y)}).`);
+  setStatus(`Planted ${cropLabel(cropDefinitionId)} on (${String(tile.x)}, ${String(tile.y)}).`);
 }
 
 async function harvestCrop(cropInstanceId: string, expectedCropVersion: number): Promise<void> {
@@ -472,13 +546,8 @@ function wire(): void {
   const storedFarm = localStorage.getItem(FARM_KEY);
   if (storedFarm !== null) element<HTMLInputElement>("load-farm-id").value = storedFarm;
 
+  // The options are built by renderCrops from the server's crop catalogue, not compiled in here.
   const cropSelect = element<HTMLSelectElement>("crop-select");
-  for (const definitionId of PLANTABLE_CROPS) {
-    const option = document.createElement("option");
-    option.value = definitionId;
-    option.textContent = cropLabel(definitionId);
-    cropSelect.appendChild(option);
-  }
   cropSelect.addEventListener("change", () => {
     state.selectedCrop = cropSelect.value;
   });

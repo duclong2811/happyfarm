@@ -81,6 +81,14 @@ export interface FarmTileRepository {
 
 export interface CropDefinitionRepository {
   findById(id: CropDefinitionId): CropDefinition | null;
+  /**
+   * Every crop this deployment can be asked to plant, in game-data order.
+   *
+   * The catalogue is projected to clients from here so no build has to hardcode a crop list, and a
+   * crop the player cannot plant yet is still listed: the client needs to be able to say why it is
+   * locked rather than hide it.
+   */
+  list(): readonly CropDefinition[];
 }
 
 export interface ItemDefinitionRepository {

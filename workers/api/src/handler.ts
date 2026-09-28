@@ -7,6 +7,7 @@ import {
   GetProgression,
   HarvestCrop,
   InventoryService,
+  ListCropDefinitions,
   ListFarmTiles,
   PlantCrop,
   ApplicationError,
@@ -40,6 +41,7 @@ import {
   type FarmTileDTO,
   type FarmMemberDTO,
   type CropStateDTO,
+  type CropDefinitionDTO,
   type HarvestResultDTO,
   type InventoryEntryDTO,
   type PlayerProgressionDTO,
@@ -159,6 +161,7 @@ function errorStatus(code: ErrorCode): number {
       return 401;
     case "NOT_AUTHORIZED":
     case "FARM_PERMISSION_DENIED":
+    case "CROP_LEVEL_REQUIRED":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -219,12 +222,15 @@ export function createHandler(dependencies: HandlerDependencies) {
     crops,
     crops,
     dependencies.cropDefinitions,
+    progressions,
+    dependencies.progressionDefinition,
     unlockedLand,
     dependencies.ids,
     dependencies.fingerprints,
     dependencies.clock
   );
   const getFarmCrops = new GetFarmCrops(farms, members, crops, projector);
+  const listCropDefinitions = new ListCropDefinitions(dependencies.cropDefinitions);
   const listFarmTiles = new ListFarmTiles(farms, members, tiles);
   const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
   const harvestCrop = new HarvestCrop(
@@ -312,6 +318,16 @@ export function createHandler(dependencies: HandlerDependencies) {
         const body: ApiSuccess<{ progression: PlayerProgressionDTO }> = {
           ok: true,
           data: { progression: view }
+        };
+        return jsonResponse(body);
+      }
+
+      if (request.method === "GET" && url.pathname === "/crop-definitions") {
+        if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
+        const definitions: CropDefinitionDTO[] = [...listCropDefinitions.execute(actor)];
+        const body: ApiSuccess<{ definitions: CropDefinitionDTO[] }> = {
+          ok: true,
+          data: { definitions }
         };
         return jsonResponse(body);
       }

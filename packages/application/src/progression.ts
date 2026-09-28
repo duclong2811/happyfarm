@@ -1,4 +1,5 @@
 import {
+  levelForXp,
   levelProgress,
   type PlayerProgression,
   type ProgressionDefinition
@@ -49,6 +50,23 @@ export function progressionView(definition: ProgressionDefinition, xp: number): 
     xpForNextLevel: progress.xpForNextLevel,
     maxLevel: definition.maxLevel
   };
+}
+
+/**
+ * The level a stored progression row represents, treating "no row yet" as level 1.
+ *
+ * The level is derived from the stored experience rather than read from the row's cached `level`
+ * column, so a row whose cache disagrees with its experience cannot unlock anything. A row the curve
+ * could not have produced is refused instead of compared, because a damaged read must never be the
+ * thing that grants access.
+ */
+export function storedLevel(definition: ProgressionDefinition, stored: PlayerProgression | null): number {
+  if (stored === null) return 1;
+  try {
+    return levelForXp(definition, stored.xp);
+  } catch {
+    throw new ApplicationError("INTERNAL_ERROR", "Stored player progression is invalid");
+  }
 }
 
 /** Reads a player's progression. A player who has never earned experience reads as level 1. */

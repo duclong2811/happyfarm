@@ -3,7 +3,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
-import { GetFarmTilesResponseSchema, GetShopResponseSchema, GetWalletResponseSchema } from "@happy-farm/contracts";
+import {
+  GetCropDefinitionsResponseSchema,
+  GetFarmTilesResponseSchema,
+  GetShopResponseSchema,
+  GetWalletResponseSchema
+} from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE, parseCropInstanceId, parseEconomyTransactionId, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
 import { shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
@@ -18,6 +23,9 @@ const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0
 const ShopEnvelopeSchema = z.object({ ok: z.literal(true), data: GetShopResponseSchema }).strict();
 const WalletEnvelopeSchema = z.object({ ok: z.literal(true), data: GetWalletResponseSchema }).strict();
 const TilesEnvelopeSchema = z.object({ ok: z.literal(true), data: GetFarmTilesResponseSchema }).strict();
+const CropDefinitionsEnvelopeSchema = z
+  .object({ ok: z.literal(true), data: GetCropDefinitionsResponseSchema })
+  .strict();
 
 class FixedAuth implements AuthenticationPort<Request> {
   constructor(private actor: ActorContext | null) {}
@@ -290,9 +298,84 @@ describe("Worker API foundation", () => {
         })
       );
     expect((await post("crop_carrot")).status).toBe(201);
-    const conflict = await post("crop_wheat");
+    // A different crop is not the difference that matters, and the gated crops are refused before
+    // the replay is consulted, so the conflict is provoked with an ungated crop at a new coordinate.
+    const conflict = await handle(
+      new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
+        method: "POST",
+        body: JSON.stringify({
+          requestId: "request_api_002",
+          cropDefinitionId: "crop_carrot",
+          x: 1,
+          y: 0,
+          expectedTileVersion: 1
+        }),
+        headers: { "content-type": "application/json" }
+      })
+    );
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toMatchObject({ ok: false, error: { code: "IDEMPOTENCY_CONFLICT" } });
+  });
+
+  it("serves the crop catalogue and gates planting by the level it reports", async () => {
+    await handle(
+      new Request("https://api.test/farms", {
+        method: "POST",
+        body: JSON.stringify({ name: "Starter Farm" }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    const plant = (cropDefinitionId: string, x: number, requestId: string) =>
+      handle(
+        new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
+          method: "POST",
+          body: JSON.stringify({ requestId, cropDefinitionId, x, y: 0, expectedTileVersion: 1 }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+
+    const catalogue = await handle(new Request("https://api.test/crop-definitions"));
+    expect(catalogue.status).toBe(200);
+    const body = CropDefinitionsEnvelopeSchema.parse(await catalogue.json());
+    expect(body.data.definitions.map((entry) => [entry.cropDefinitionId, entry.requiredLevel])).toEqual([
+      ["crop_carrot", 1],
+      ["crop_wheat", 2],
+      ["crop_corn", 3]
+    ]);
+    // Only the planting decision travels: no display keys, no registry, no player state.
+    for (const entry of body.data.definitions) {
+      expect(Object.keys(entry).sort()).toEqual([
+        "baseQuantity",
+        "cropDefinitionId",
+        "growthDurationSeconds",
+        "harvestItemDefinitionId",
+        "harvestXp",
+        "requiredLevel"
+      ]);
+    }
+
+    auth.setActor(null);
+    expect((await handle(new Request("https://api.test/crop-definitions"))).status).toBe(401);
+    auth.setActor({ playerId: PLAYER_ONE_ID });
+
+    const locked = await plant("crop_wheat", 0, "request_api_locked_wheat");
+    expect(locked.status).toBe(403);
+    expect(await locked.json()).toMatchObject({ ok: false, error: { code: "CROP_LEVEL_REQUIRED" } });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances").get()).toEqual({ count: 0 });
+
+    // The catalogue is a promise the API keeps: a player who reached level 2 can plant the crop the
+    // catalogue said level 2 unlocks.
+    db.sqlite
+      .prepare(
+        "INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 2, 120, 1, ?, ?)"
+      )
+      .run(PLAYER_ONE_ID, NOW, NOW);
+    const unlocked = await plant("crop_wheat", 0, "request_api_unlocked_wheat");
+    expect(unlocked.status).toBe(201);
+    expect(await unlocked.json()).toMatchObject({ ok: true, data: { crop: { definitionId: "crop_wheat" } } });
+    const stillLocked = await plant("crop_corn", 1, "request_api_locked_corn");
+    expect(stillLocked.status).toBe(403);
+    expect(await stillLocked.json()).toMatchObject({ ok: false, error: { code: "CROP_LEVEL_REQUIRED" } });
   });
 
   it("harvests through an explicit command and exposes only the actor inventory", async () => {

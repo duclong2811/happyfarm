@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   CreateFarmRequestSchema,
   BuyItemRequestSchema,
+  CropDefinitionDTOSchema,
   FarmRoleSchema,
+  GetCropDefinitionsResponseSchema,
   GetShopResponseSchema,
   GetWalletResponseSchema,
   HarvestCropRequestSchema,
@@ -99,5 +101,36 @@ describe("Phase 1 runtime validation", () => {
     }
     expect(GetWalletResponseSchema.safeParse({ wallets: [{ balance: 1 }] }).success).toBe(false);
     expect(GetWalletResponseSchema.safeParse({ wallets: [{ currencyId: "currency_gold", balance: 1 }], items: [] }).success).toBe(false);
+  });
+
+  it("validates the crop catalogue and rejects any field the server does not own", () => {
+    const definition = {
+      cropDefinitionId: "crop_wheat",
+      growthDurationSeconds: 900,
+      harvestItemDefinitionId: "item_wheat",
+      baseQuantity: 3,
+      harvestXp: 12,
+      requiredLevel: 2
+    };
+    expect(CropDefinitionDTOSchema.safeParse(definition).success).toBe(true);
+    expect(GetCropDefinitionsResponseSchema.safeParse({ definitions: [definition] }).success).toBe(true);
+    expect(GetCropDefinitionsResponseSchema.safeParse({ definitions: [] }).success).toBe(true);
+    for (const injected of [
+      { requiredLevel: 0 },
+      { requiredLevel: 1.5 },
+      { cropDefinitionId: "wheat" },
+      { growthDurationSeconds: 0 },
+      { baseQuantity: 0 },
+      { harvestXp: 0 },
+      { harvestItemDefinitionId: "wheat" },
+      { displayNameKey: "crop.wheat.name" },
+      { growthStages: 5 },
+      { harvest: { baseQuantity: 3 } },
+      { playerId: "player_11111111-1111-4111-8111-111111111111" },
+      { level: 1 }
+    ]) {
+      expect(CropDefinitionDTOSchema.safeParse({ ...definition, ...injected }).success, JSON.stringify(injected)).toBe(false);
+    }
+    expect(GetCropDefinitionsResponseSchema.safeParse({ definitions: [definition], level: 2 }).success).toBe(false);
   });
 });

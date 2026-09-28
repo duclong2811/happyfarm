@@ -8,9 +8,14 @@ import {
   D1CropRepository,
   D1FarmMemberRepository,
   D1FarmRepository,
-  D1FarmTileRepository
+  D1FarmTileRepository,
+  D1ProgressionRepository
 } from "../../workers/api/src/d1-repositories";
-import { GameDataCropDefinitions, Sha256Fingerprint } from "../../workers/api/src/runtime";
+import {
+  GameDataCropDefinitions,
+  Sha256Fingerprint,
+  gameDataProgressionDefinition
+} from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import {
   CROP_ONE_ID,
@@ -22,7 +27,7 @@ import {
   PLAYER_TWO_ID
 } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0005_player_progression.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -64,6 +69,7 @@ describe("PlantCrop", () => {
   let members: D1FarmMemberRepository;
   let tiles: D1FarmTileRepository;
   let crops: D1CropRepository;
+  let progressions: D1ProgressionRepository;
 
   beforeEach(async () => {
     db = new NodeD1Database(migration);
@@ -73,6 +79,7 @@ describe("PlantCrop", () => {
     members = new D1FarmMemberRepository(db);
     tiles = new D1FarmTileRepository(db);
     crops = new D1CropRepository(db);
+    progressions = new D1ProgressionRepository(db);
     const farm = createOwnedFarm(FARM_ONE_ID, PLAYER_ONE_ID, "Farm One", NOW);
     await farms.createWithOwner(farm.farm, farm.ownerMembership, []);
     await tiles.insert(createFarmTile(FARM_ONE_ID, { x: 0, y: 0 }, "SOIL", NOW));
@@ -90,6 +97,8 @@ describe("PlantCrop", () => {
       crops,
       crops,
       new GameDataCropDefinitions(),
+      progressions,
+      gameDataProgressionDefinition,
       new ConfiguredUnlockedLand(unlocked),
       ids,
       new Sha256Fingerprint(),
@@ -168,9 +177,75 @@ describe("PlantCrop", () => {
   it("rejects payload mismatch for the same actor and request ID", async () => {
     const service = useCase();
     await service.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    // A different coordinate, not a different crop: the gated crops are refused before the
+    // idempotency replay in some orderings, so a payload the gate would reject is a weak witness.
     await expect(
-      service.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { ...command, cropDefinitionId: "crop_wheat" })
+      service.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { ...command, x: 1 })
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  });
+
+  it("refuses a crop above the player's level without writing anything", async () => {
+    const counts = () => ({
+      crops: db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances").get(),
+      idempotency: db.sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_keys").get()
+    });
+    const before = counts();
+    for (const [requestId, cropDefinitionId] of [
+      ["request_plant_locked_wheat", "crop_wheat"],
+      ["request_plant_locked_corn", "crop_corn"]
+    ] as const) {
+      await expect(
+        useCase().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { ...command, requestId, cropDefinitionId })
+      ).rejects.toMatchObject({ code: "CROP_LEVEL_REQUIRED" });
+    }
+    // A refusal is not a processed request: no crop and no idempotency row, so the same request id
+    // stays usable once the player is allowed to plant.
+    expect(counts()).toEqual(before);
+    expect(await crops.findAtTile(FARM_ONE_ID, 0, 0)).toBeNull();
+  });
+
+  it("unlocks wheat at level 2 and keeps corn locked until level 3", async () => {
+    await tiles.insert(createFarmTile(FARM_ONE_ID, { x: 1, y: 0 }, "SOIL", NOW));
+    await tiles.insert(createFarmTile(FARM_ONE_ID, { x: 2, y: 0 }, "SOIL", NOW));
+    db.sqlite
+      .prepare(
+        "INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 2, 120, 1, ?, ?)"
+      )
+      .run(PLAYER_ONE_ID, NOW, NOW);
+    const service = useCase(true, new SequenceCropIds());
+    await expect(
+      service.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, {
+        ...command,
+        requestId: "request_plant_wheat_001",
+        cropDefinitionId: "crop_wheat",
+        x: 1
+      })
+    ).resolves.toMatchObject({ definitionId: "crop_wheat", tileX: 1, tileY: 0 });
+    await expect(
+      service.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, {
+        ...command,
+        requestId: "request_plant_corn_001",
+        cropDefinitionId: "crop_corn",
+        x: 2
+      })
+    ).rejects.toMatchObject({ code: "CROP_LEVEL_REQUIRED" });
+  });
+
+  it("derives the level from experience rather than trusting the stored level column", async () => {
+    // A row whose cached level disagrees with its experience must never unlock anything. The gate
+    // reads the same authoritative experience the harvest writes and re-derives the level from it.
+    db.sqlite
+      .prepare(
+        "INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 25, 0, 1, ?, ?)"
+      )
+      .run(PLAYER_ONE_ID, NOW, NOW);
+    await expect(
+      useCase().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, {
+        ...command,
+        requestId: "request_plant_cached_level",
+        cropDefinitionId: "crop_wheat"
+      })
+    ).rejects.toMatchObject({ code: "CROP_LEVEL_REQUIRED" });
   });
 
   it("rechecks resource access before replaying a completed request", async () => {

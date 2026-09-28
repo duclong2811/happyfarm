@@ -150,6 +150,30 @@ export const HarvestCropResponseSchema = z
 export const GetProgressionResponseSchema = z
   .object({ progression: PlayerProgressionDTOSchema })
   .strict();
+
+/**
+ * One crop the server can be asked to plant.
+ *
+ * `requiredLevel` is always present rather than optional: "no requirement" is level 1, the level
+ * every player starts at, so the client never has to infer a rule from a missing field. Crops the
+ * player has not unlocked are still sent, because the client has to be able to show why they are
+ * unavailable instead of hiding them.
+ */
+export const CropDefinitionDTOSchema = z
+  .object({
+    cropDefinitionId: CropDefinitionIdSchema,
+    growthDurationSeconds: z.number().int().positive().max(31_536_000),
+    harvestItemDefinitionId: ItemDefinitionIdSchema,
+    baseQuantity: z.number().int().positive().max(1_000_000),
+    harvestXp: z.number().int().positive().max(1_000_000),
+    requiredLevel: z.number().int().positive().max(MAX_PROGRESSION_LEVEL)
+  })
+  .strict();
+
+export const GetCropDefinitionsResponseSchema = z
+  .object({ definitions: z.array(CropDefinitionDTOSchema) })
+  .strict();
+
 export const GetInventoryResponseSchema = z.object({ items: z.array(InventoryEntryDTOSchema) }).strict();
 
 export const MAX_SHOP_COMMAND_QUANTITY = 1_000_000;
@@ -220,6 +244,7 @@ export const ErrorCodeSchema = z.enum([
   "CROP_NOT_FOUND",
   "CROP_NOT_MATURE",
   "CROP_ALREADY_HARVESTED",
+  "CROP_LEVEL_REQUIRED",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
   "CURRENCY_DEFINITION_NOT_FOUND",
@@ -249,6 +274,7 @@ export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;
 export type HarvestResultDTO = z.infer<typeof HarvestResultDTOSchema>;
 export type PlayerProgressionDTO = z.infer<typeof PlayerProgressionDTOSchema>;
 export type XpAwardDTO = z.infer<typeof XpAwardDTOSchema>;
+export type CropDefinitionDTO = z.infer<typeof CropDefinitionDTOSchema>;
 export type InventoryEntryDTO = z.infer<typeof InventoryEntryDTOSchema>;
 export type BuyItemRequest = z.infer<typeof BuyItemRequestSchema>;
 export type SellItemRequest = z.infer<typeof SellItemRequestSchema>;

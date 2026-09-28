@@ -66,6 +66,25 @@ Experience is never accepted from a client, and a level is never computed outsid
 `packages/domain/src/progression.ts`. Do not add a second way to award experience: the award belongs
 to the harvest settlement so that a replay cannot pay it twice.
 
+## Crop unlocks by level (Phase 4B)
+
+Read `docs/decisions/0009-crop-unlocks-by-level.md` before editing crop definitions, the planting
+gate, the crop catalogue, or the client's planting control.
+
+- The requirement and its only rule: `requiredLevel` on `CropDefinition`, plus `requiredLevelFor` and
+  `isCropUnlocked`, in `packages/domain/src/crop.ts`; `tests/domain/crop-unlock.test.ts`.
+- Values: `packages/game-data/src/crops/index.ts`. Translation to the domain shape:
+  `GameDataCropDefinitions.list()` / `findById()` in `workers/api/src/runtime.ts`.
+- Enforcement: `PlantCrop` in `packages/application/src/crops.ts`. The read-only catalogue is
+  `ListCropDefinitions` in the same file, served as `GET /crop-definitions` in
+  `workers/api/src/handler.ts`.
+- The client: `apps/web/src/{api,main,labels}.ts`. The planting control is built from the catalogue
+  and holds no crop list of its own; `tests/web/farm-assets.test.ts` ties the model manifest to game
+  data rather than to a client constant.
+
+Never gate a read: `CropStateProjector` and `GetFarmCrops` keep reporting crops a player could not
+plant today, and no route accepts a level, an experience total, or a crop requirement from a client.
+
 ## Local development / playable UI task
 
 Read `docs/development.md` first, then `docs/decisions/0006-starter-land-and-node-dev-host.md`.

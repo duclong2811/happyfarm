@@ -95,7 +95,9 @@ the development Worker entrypoint. Open the printed URL and:
 1. Paste the `DEV_AUTH_TOKEN` from `workers/api/.dev.vars` into **Development token** and save it.
    The token stays in this browser's storage and is never written to a URL or a cookie.
 2. Press **Bootstrap dev player**, then **Create farm** (or **Load farm** by id).
-3. Select a tile in **Field**, choose a crop, and press **Plant on selected tile**.
+3. Select a tile in **Field**, choose a crop, and press **Plant on selected tile**. The list comes
+   from `GET /crop-definitions`, not from the page: wheat needs level 2 and corn level 3, and a crop
+   this player has not unlocked yet is listed with the level it needs rather than hidden.
 4. Wait for the crop to mature (carrot 5 min, wheat 15 min, corn 30 min of server time), then press
    **Harvest** on the tile. The field refreshes every two seconds from the server.
 5. Use **Sell** in **Shop** to turn harvested items into gold, and **Buy** to spend it.
@@ -105,6 +107,11 @@ harvest is the only thing that moves it, because the award is written inside the
 itself; the status line names the experience a harvest earned and says so when a level was reached.
 The panel is a projection of `GET /progression` and recomputes no threshold of its own, so it cannot
 disagree with the curve the server applied.
+
+The planting control is bound to the same server answers: an option is disabled while the reported
+level is below the catalogue's requirement, and it re-renders when a harvest awards a level, so the
+crop a level unlocks becomes selectable without a reload. Disabling an option is a courtesy, not a
+boundary — the server refuses the command with `CROP_LEVEL_REQUIRED` either way.
 
 The UI computes nothing authoritative: prices, rewards, maturity, and balances all come from the
 API, and every response is validated against the `@happy-farm/contracts` schemas before it is used.
