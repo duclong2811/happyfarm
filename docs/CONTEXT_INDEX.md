@@ -86,7 +86,12 @@ Read `docs/decisions/0007-renderer-foundation-and-plain-typescript-client.md`, t
 - Pure geometry and its tests: `apps/web/src/render/layout.ts`, `tests/web/farm-layout.test.ts`.
 - Pure state-to-descriptor mapping and its tests: `apps/web/src/render/view-model.ts`,
   `tests/web/farm-view-model.test.ts`.
-- three.js, canvas, sizing, picking, disposal: `apps/web/src/render/scene.ts`.
+- Crop model manifest and its tests: `apps/web/src/render/assets.ts`,
+  `tests/web/farm-assets.test.ts`. Model files, the generator, and the authoring contract they are
+  held to: `apps/web/src/assets/models/`, `apps/web/tools/generate-placeholder-models.mjs`,
+  `tests/integration/crop-model-assets.test.ts`. Bundled model URLs live in
+  `apps/web/src/render/model-urls.ts`, the one client module a unit test cannot load.
+- three.js, canvas, sizing, picking, disposal, the model cache: `apps/web/src/render/scene.ts`.
 - Only `FarmSceneHandle` crosses into `apps/web/src/main.ts`. Do not import three anywhere else in
   the client, and do not let the renderer fetch or compute game state; new rendering rules belong in
   `view-model.ts`, where they can be tested without a WebGL context.

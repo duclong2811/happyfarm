@@ -107,12 +107,12 @@ Because planting is free and only harvested produce is tradeable, the first usef
 plant → harvest → sell → buy. A brand-new player has no wallet row and therefore no gold, so
 `Buy` returns `INSUFFICIENT_FUNDS` until something has been sold.
 
-## 3D view (Phase 3.6A and 3.6C)
+## 3D view (Phase 3.6A, 3.6B, and 3.6C)
 
 The **Field: 3D prototype** panel starts a Three.js renderer on an explicit click and draws the
-authoritative farm: one slab per unlocked tile coloured by `terrainType`, one placeholder crop mesh
-per planted tile, and a ring around the selected tile. The art is still placeholder geometry and
-flat colours; textures and models arrive with the asset pipeline (3.6B).
+authoritative farm: one slab per unlocked tile coloured by `terrainType`, one crop mesh per planted
+tile, and a ring around the selected tile. The art is placeholder throughout — flat slab colours and
+small generated models — and replacing it is a file swap, not a code change.
 
 - `apps/web/src/render/layout.ts` is pure geometry, tile coordinates to world positions, and is unit
   tested in `tests/web/farm-layout.test.ts`.
@@ -121,7 +121,8 @@ flat colours; textures and models arrive with the asset pipeline (3.6B).
   rules — a crop is drawn only when the server also returned its tile as unlocked land, and growth
   is taken from the server rather than inferred from the local clock.
 - `apps/web/src/render/scene.ts` owns three.js, the canvas, `ResizeObserver` sizing, picking,
-  on-demand frames, and disposal. It never fetches and decides nothing about the game.
+  on-demand frames, disposal, and the model cache. It never fetches authoritative state and decides
+  nothing about the game.
 - Clicking a slab or a crop in the 3D view selects that tile, which is the same selection the 2D
   **Field** grid uses: `main.ts` keeps one selection and pushes it to both views.
 - The panel follows the field's two-second refresh, so planting, growth, and harvesting show up in
@@ -129,6 +130,29 @@ flat colours; textures and models arrive with the asset pipeline (3.6B).
   because nothing animates yet.
 - A session without WebGL is unaffected until the button is pressed, and then reports
   `FarmRendererUnavailableError` instead of failing silently.
+
+### Crop models
+
+Models are glTF 2.0 binaries in `apps/web/src/assets/models/`, imported through Vite's `?url` so a
+missing file fails the build. A crop draws its model once loaded and placeholder geometry before
+that, so nothing waits on a download, and a model that fails to load leaves its placeholder in place
+and reports the reason on the status line.
+
+Every model must be one world unit tall with its base on y = 0 and its footprint inside a 1 x 1
+square; the renderer scales uniformly by the crop's display height, so those two come out right
+without any per-model factor. `tests/integration/crop-model-assets.test.ts` parses each shipped file
+and fails one that breaks the contract.
+
+The committed models are placeholders, generated deterministically by
+`apps/web/tools/generate-placeholder-models.mjs`:
+
+```text
+npm run assets:generate --workspace @happy-farm/web
+```
+
+Rerun it after changing the generator; replace the files by name to use real art. A new crop needs
+an entry in `apps/web/src/render/assets.ts` and a file with a matching name, and two tests will say
+so if only one of the two happened.
 
 ## Live backend without `workerd`
 

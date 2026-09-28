@@ -7,6 +7,7 @@ export {
   type TileCoordinate,
   type TilePlacement
 } from "./layout";
+export { CROP_MODEL_IDS, cropModelId, type CropModelId } from "./assets";
 export {
   CROP_MAX_HEIGHT,
   createFarmScene,

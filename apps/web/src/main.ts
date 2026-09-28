@@ -312,6 +312,12 @@ function enable3D(): void {
     scene ??= createFarmScene(element<HTMLCanvasElement>("scene"), {
       onTileSelected: (coordinate) => {
         selectTile(coordinate.x, coordinate.y);
+      },
+      onAssetProblem: (assetId, error) => {
+        // The crop keeps its placeholder art, so this is information rather than a failure the page
+        // has to recover from. Reported on the main status line because the scene status is
+        // rewritten by the next refresh.
+        setStatus(`${assetId} model unavailable, using placeholder art: ${describe(error)}`, true);
       }
     });
     refreshScene();

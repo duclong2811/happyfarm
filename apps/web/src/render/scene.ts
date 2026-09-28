@@ -1,10 +1,12 @@
 import {
   AmbientLight,
   BoxGeometry,
+  type BufferGeometry,
   Color,
   ConeGeometry,
   DirectionalLight,
   Group,
+  type Material,
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
@@ -16,24 +18,33 @@ import {
   WebGLRenderer,
   type Object3D
 } from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { cropModelId, type CropModelId } from "./assets";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
+import { CROP_MODEL_URLS } from "./model-urls";
 import type { FarmSceneInput, SceneTile } from "./view-model";
 
 /**
  * Three.js view of the farm.
  *
- * This module owns rendering mechanics only: camera, lights, ground, one slab per unlocked tile, a
- * placeholder crop mesh per planted tile, a selection marker, sizing, picking, and disposal. It
- * never fetches and never decides anything about the game. It receives descriptors that
- * `view-model.ts` derived from authoritative state, so "what is planted" and "how grown it is" are
- * decided by the server and by pure code, not here.
+ * This module owns rendering mechanics only: camera, lights, ground, one slab per unlocked tile, one
+ * mesh per planted crop, a selection marker, sizing, picking, disposal, and the model cache behind
+ * those crop meshes. It never fetches authoritative state and never decides anything about the game.
+ * It receives descriptors that `view-model.ts` derived from server state, so "what is planted" and
+ * "how grown it is" are decided by the server and by pure code, not here.
  *
- * Rendering is on demand: a frame is drawn when the state changes, when the canvas is resized, and
- * when the caller asks. Nothing animates yet, so an unconditional `requestAnimationFrame` loop would
- * redraw an identical image and hold a GPU wake-up open for the whole session. The loop arrives with
- * the first animated content (3.6B assets). Reworking `applyState` into an instance pool or
- * `InstancedMesh` is the follow-up to do at the same time: a rebuilt scene graph is fine for 36
- * tiles, but not once a farm grows or assets become expensive.
+ * A crop draws a shipped model when this build has one for its definition and placeholder geometry
+ * when it does not, so a crop the server knows about but the client has no art for still appears.
+ * Models load once per session, off the critical path: the placeholder is drawn first and replaced
+ * when the file arrives, and a model that fails to load leaves its placeholder in place rather than
+ * blanking the tile.
+ *
+ * Rendering is on demand: a frame is drawn when the state changes, when the caller asks, when a
+ * canvas resize is observed, and when a model finishes loading. Nothing animates yet, so an
+ * unconditional `requestAnimationFrame` loop would redraw an identical image and hold a GPU wake-up
+ * open for the whole session. Moving `applyState` to an instance pool or `InstancedMesh` is now the
+ * one remaining follow-up: it still rebuilds the scene graph, with a clone per planted tile, on
+ * every refresh. That is fine for 36 starter tiles and wrong once farms grow or models get heavy.
  */
 
 /** World units of ground kept around the tile area so the farm does not run to the horizon. */
@@ -44,6 +55,9 @@ export const TILE_THICKNESS = 0.08;
 export const CROP_MAX_HEIGHT = 0.75;
 /** A just-planted crop still has to be visible, so growth never scales below this. */
 export const MIN_CROP_HEIGHT = 0.06;
+
+/** Warm tint applied to a loaded model once the server calls the crop mature. Placeholder art. */
+const READY_EMISSIVE_COLOR = 0x4a3410;
 
 const CAMERA_FOV = 50;
 const CAMERA_DISTANCE_FACTOR = 2.4;
@@ -81,6 +95,11 @@ export interface FarmSceneOptions {
    * the coordinate only; selecting it, and what that means, stays with the caller.
    */
   readonly onTileSelected?: (coordinate: TileCoordinate) => void;
+  /**
+   * Called when a crop model could not be loaded. The scene keeps drawing that crop's placeholder,
+   * so this is a diagnosis for the caller to report, not a failure the caller has to recover from.
+   */
+  readonly onAssetProblem?: (assetId: string, error: unknown) => void;
 }
 
 export interface FarmSceneHandle {
@@ -91,6 +110,60 @@ export interface FarmSceneHandle {
   resize(): void;
   /** Releases GPU resources, detaches observers and listeners, and leaves the canvas unusable. */
   dispose(): void;
+}
+
+interface ModelVariants {
+  /** The authored model, drawn while the crop is still growing. */
+  readonly growing: Group;
+  /** The same shape carrying tinted material clones, drawn once the crop is mature. */
+  readonly ready: Group;
+}
+
+/**
+ * A mesh as this module needs to see one. `instanceof Mesh` alone narrows the type arguments to
+ * `any`, because TypeScript instantiates a generic class without its defaults in that check, so the
+ * shape is spelled out here and every traversal in this file goes through the guard.
+ */
+interface MeshLike extends Object3D {
+  geometry: BufferGeometry;
+  material: Material | Material[];
+}
+
+function isMeshLike(object: Object3D): object is MeshLike {
+  return object instanceof Mesh;
+}
+
+/**
+ * Placeholder art direction: a ripe crop keeps its model and gains a warm emissive tint. The tinted
+ * material is a cache entry rather than a per-tile allocation, so a multi-material model costs one
+ * clone per source material for the whole scene.
+ */
+function toReadyMaterial(material: Material, cache: Map<Material, Material>): Material {
+  const cached = cache.get(material);
+  if (cached !== undefined) return cached;
+  const ready = material.clone();
+  if (ready instanceof MeshStandardMaterial) ready.emissive.setHex(READY_EMISSIVE_COLOR);
+  cache.set(material, ready);
+  return ready;
+}
+
+function toReadyMaterials(
+  material: Material | Material[],
+  cache: Map<Material, Material>
+): Material | Material[] {
+  return Array.isArray(material)
+    ? material.map((entry) => toReadyMaterial(entry, cache))
+    : toReadyMaterial(material, cache);
+}
+
+/** Releases the geometry and materials a loaded model owns. The two variants share them on purpose. */
+function disposeModelResources(root: Object3D): void {
+  root.traverse((child) => {
+    if (!isMeshLike(child)) return;
+    child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) material.dispose();
+  });
 }
 
 /** Places the camera on a fixed three-quarter view that contains the whole tile area. */
@@ -150,6 +223,80 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const pointer = new Vector2();
   let state: FarmSceneInput = { layout: layoutFarmTiles([]), tiles: [] };
 
+  // Models load once per session and are reused out of this cache. `unavailableModels` also records
+  // failures, so a broken asset is requested once rather than on every two-second refresh.
+  const loader = new GLTFLoader();
+  const models = new Map<CropModelId, ModelVariants>();
+  const loadingModels = new Set<CropModelId>();
+  const unavailableModels = new Set<CropModelId>();
+  let disposed = false;
+
+  /**
+   * The loaded model pair for a crop definition, or undefined when there is nothing to draw yet:
+   * this build ships no model for the definition, or it is still loading, or it failed. The caller
+   * draws placeholder geometry in that case, so a missing asset degrades instead of blanking a tile.
+   */
+  function modelVariants(definitionId: string): ModelVariants | undefined {
+    const modelId = cropModelId(definitionId);
+    if (modelId === null) return undefined;
+    const variants = models.get(modelId);
+    if (variants !== undefined) return variants;
+    requestModel(modelId);
+    return undefined;
+  }
+
+  function requestModel(modelId: CropModelId): void {
+    if (disposed || loadingModels.has(modelId) || unavailableModels.has(modelId)) return;
+    loadingModels.add(modelId);
+    loader.load(
+      CROP_MODEL_URLS[modelId],
+      (gltf) => {
+        loadingModels.delete(modelId);
+        if (disposed) {
+          disposeModelResources(gltf.scene);
+          return;
+        }
+        models.set(modelId, prepareVariants(gltf.scene));
+        // Redraw at once, so the placeholder on screen is replaced by the real model rather than
+        // waiting for the next refresh.
+        applyState(state);
+        draw();
+      },
+      undefined,
+      (error: unknown) => {
+        loadingModels.delete(modelId);
+        unavailableModels.add(modelId);
+        // A scene torn down while the request was in flight has nobody left to report to.
+        if (disposed) return;
+        options.onAssetProblem?.(modelId, error);
+      }
+    );
+  }
+
+  function prepareVariants(source: Object3D): ModelVariants {
+    const growing = new Group();
+    growing.add(source);
+
+    const readyMaterials = new Map<Material, Material>();
+    const readySource = source.clone(true);
+    readySource.traverse((child) => {
+      if (isMeshLike(child)) child.material = toReadyMaterials(child.material, readyMaterials);
+    });
+    const ready = new Group();
+    ready.add(readySource);
+
+    return { growing, ready };
+  }
+
+  /** Puts a loaded model on a tile, scaling its authored one-unit height up to `height`. */
+  function modelPlant(tile: SceneTile, variants: ModelVariants, mature: boolean, height: number): Group {
+    const plant = new Group();
+    plant.add((mature ? variants.ready : variants.growing).clone(true));
+    plant.position.set(tile.worldX, TILE_THICKNESS, tile.worldZ);
+    plant.scale.setScalar(height);
+    return plant;
+  }
+
   function draw(): void {
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
@@ -184,27 +331,32 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     pickTargets.clear();
 
     for (const tile of state.tiles) {
+      const coordinate = { x: tile.tileX, y: tile.tileY };
       // The slab rests on the ground, so its top face sits exactly at TILE_THICKNESS. That is the
       // height crops stand at and where the selection ring floats just above the surface.
       const slab = tileMesh(tile, tileGeometry, terrainMaterials[tile.terrainType], 0, TILE_THICKNESS);
       tileGroup.add(slab);
-      pickTargets.set(slab, { x: tile.tileX, y: tile.tileY });
+      pickTargets.set(slab, coordinate);
 
       const crop = tile.crop;
       if (crop !== null) {
         // A crop the server has just planted reports zero growth. MIN_CROP_HEIGHT draws it as a
         // sprout rather than leaving the tile bare until the next refresh reports real progress.
         const height = Math.max(crop.heightFraction * CROP_MAX_HEIGHT, MIN_CROP_HEIGHT);
-        const plant = tileMesh(
-          tile,
-          cropGeometry,
-          crop.mature ? matureCropMaterial : growingCropMaterial,
-          TILE_THICKNESS,
-          height
-        );
+        const variants = modelVariants(crop.definitionId);
+        const plant: Object3D =
+          variants === undefined
+            ? tileMesh(
+                tile,
+                cropGeometry,
+                crop.mature ? matureCropMaterial : growingCropMaterial,
+                TILE_THICKNESS,
+                height
+              )
+            : modelPlant(tile, variants, crop.mature, height);
         tileGroup.add(plant);
         // Clicking the crop selects its tile too; the plant is not a separate target.
-        pickTargets.set(plant, { x: tile.tileX, y: tile.tileY });
+        pickTargets.set(plant, coordinate);
       }
     }
 
@@ -234,11 +386,17 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       -((event.clientY - bounds.top) / bounds.height) * 2 + 1
     );
     raycaster.setFromCamera(pointer, camera);
-    for (const intersection of raycaster.intersectObjects([...pickTargets.keys()], false)) {
-      const coordinate = pickTargets.get(intersection.object);
-      if (coordinate !== undefined) {
-        handler(coordinate);
-        return;
+    // A loaded model is a subtree rather than a single mesh, so a hit is matched against the closest
+    // mapped ancestor instead of against the mesh that was actually hit.
+    for (const intersection of raycaster.intersectObjects([...pickTargets.keys()], true)) {
+      let node: Object3D | null = intersection.object;
+      while (node !== null) {
+        const coordinate = pickTargets.get(node);
+        if (coordinate !== undefined) {
+          handler(coordinate);
+          return;
+        }
+        node = node.parent;
       }
     }
   }
@@ -257,10 +415,16 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     },
     resize: draw,
     dispose(): void {
+      disposed = true;
       canvas.removeEventListener("pointerdown", pickTile);
       observer?.disconnect();
       tileGroup.clear();
       pickTargets.clear();
+      for (const variants of models.values()) {
+        disposeModelResources(variants.growing);
+        disposeModelResources(variants.ready);
+      }
+      models.clear();
       tileGeometry.dispose();
       cropGeometry.dispose();
       selectionGeometry.dispose();
