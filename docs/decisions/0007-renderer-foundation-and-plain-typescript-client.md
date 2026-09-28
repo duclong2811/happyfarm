@@ -48,6 +48,40 @@ server-authoritative state the UI already holds.
 - Deliberately out of scope: crop visuals and materials (3.6B asset pipeline), mapping crop state,
   growth progress, and selection into the scene (3.6C), and any animation.
 
+### A pure view model sits between API state and the renderer (3.6C)
+
+- `view-model.ts` turns the `GET /farms/:farmId/tiles` and `GET /farms/:farmId/crops` payloads into
+  render descriptors. It is pure: no three, no DOM, no clock, no network. What the 3D view shows is
+  therefore assertable in a unit test, which `scene.ts` itself cannot be without a WebGL context.
+- Two rules live there rather than in the renderer. A crop is drawn only when the server also
+  returned its tile as unlocked land, so a stale or unknown crop row cannot invent land. And growth
+  is display only: `growthProgress` and `mature` are taken from the server, and maturity is never
+  derived from a client clock, so a wrong or tampered local clock cannot make a crop look ripe.
+- Duplicate coordinates collapse to the first row, and `layoutFarmTiles` collapses them too, so
+  re-rendering a farm cannot stack overlapping meshes or reshuffle them between refreshes.
+
+### Scope of 3.6C
+
+- In scope: `view-model.ts`, one crop mesh per planted tile with server-reported height and a
+  mature colour, terrain colours per `terrainType`, a selection ring, raycast picking that reports
+  the clicked tile back to the UI, and one shared selection state driving both the 2D grid and the
+  3D view.
+- Deliberately out of scope: real art, textures, and GLB/GLTF assets (3.6B), animation, and any
+  renderer-side gameplay decision.
+- Follow-up for when farm size or asset cost grows: replace the rebuilt scene graph in `applyState`
+  with an instance pool or `InstancedMesh`. Rebuilding per refresh is fine for the 36 starter tiles
+  and wrong later; `applyState` is the single place that has to change.
+
+### Open question: the renderer's coordinate domain
+
+`layoutFarmTiles` rejects negative tile coordinates and derives its extent from `maxX + 1`, while
+`packages/contracts` allows `x` and `y` anywhere between `-1_000_000` and `1_000_000`. Today every
+farm starts at the origin, so the two only agree by accident. Before land can be expanded off the
+origin, decide one of two things: make the layout origin-agnostic (`columns = maxX - minX + 1`,
+centred on `(minX + maxX) / 2`), or state "tile coordinates are non-negative" as an explicit
+precondition the server guarantees. Leaving the contract advertising a range the renderer cannot
+draw is the one option that should not survive.
+
 ## Consequences
 
 - The 3D view is opt-in behind a button. Creating a WebGL context is the one thing the page cannot
@@ -55,8 +89,9 @@ server-authoritative state the UI already holds.
 - `three` (`^0.186.1`) becomes a runtime dependency of `@happy-farm/web` and therefore part of the
   browser bundle. Tree-shaken named imports keep the foundation small; the asset pipeline will
   dominate bundle size later, and that is the right moment to measure it.
-- Scene geometry has unit coverage (`tests/web/farm-layout.test.ts`). `scene.ts` does not, because it
-  needs a real WebGL context; it is covered by typecheck, lint, and manual use until a headless GL
-  harness is justified.
+- `layout.ts` (world positions) and `view-model.ts` (what to draw and how grown it is) have unit
+  coverage in `tests/web/farm-layout.test.ts` and `tests/web/farm-view-model.test.ts`. `scene.ts`
+  does not, because it needs a real WebGL context; it is covered by typecheck, lint, and manual use
+  until a headless GL harness is justified. Every decision worth asserting was pushed out of it.
 - `AGENTS.md` keeps React + R3F as the primary stack target and now points here for the current
   deviation, so the mismatch is recorded rather than discovered.

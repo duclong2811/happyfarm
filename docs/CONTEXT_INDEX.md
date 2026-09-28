@@ -80,12 +80,16 @@ Do not inspect backend internals unless the contract is insufficient.
 ### 3D renderer work (Phase 3.6A and later)
 
 Read `docs/decisions/0007-renderer-foundation-and-plain-typescript-client.md`, then
-`apps/web/src/render/layout.ts` before `apps/web/src/render/scene.ts`.
+`apps/web/src/render/layout.ts`, then `apps/web/src/render/view-model.ts`, before
+`apps/web/src/render/scene.ts`.
 
 - Pure geometry and its tests: `apps/web/src/render/layout.ts`, `tests/web/farm-layout.test.ts`.
-- three.js, canvas, sizing, disposal: `apps/web/src/render/scene.ts`.
+- Pure state-to-descriptor mapping and its tests: `apps/web/src/render/view-model.ts`,
+  `tests/web/farm-view-model.test.ts`.
+- three.js, canvas, sizing, picking, disposal: `apps/web/src/render/scene.ts`.
 - Only `FarmSceneHandle` crosses into `apps/web/src/main.ts`. Do not import three anywhere else in
-  the client, and do not let the renderer fetch or compute game state.
+  the client, and do not let the renderer fetch or compute game state; new rendering rules belong in
+  `view-model.ts`, where they can be tested without a WebGL context.
 
 ## Game-data/content task
 - relevant schema/type in `packages/game-data`

@@ -7,7 +7,12 @@ import type {
 } from "@happy-farm/contracts";
 import { ApiClient, ApiError } from "./api";
 import { PLANTABLE_CROPS, cropLabel, currencyLabel, errorLabel, itemLabel } from "./labels";
-import { createFarmScene, FarmRendererUnavailableError, type FarmSceneHandle } from "./render";
+import {
+  buildFarmSceneInput,
+  createFarmScene,
+  FarmRendererUnavailableError,
+  type FarmSceneHandle
+} from "./render";
 import "./styles.css";
 
 const TOKEN_KEY = "happy-farm.dev.token";
@@ -172,9 +177,7 @@ function tileNode(tile: FarmTileDTO): HTMLDivElement {
   }
 
   const select = (): void => {
-    state.selected = { x: tile.x, y: tile.y };
-    renderField();
-    renderSelection();
+    selectTile(tile.x, tile.y);
   };
   node.addEventListener("click", select);
   node.addEventListener("keydown", (event) => {
@@ -277,16 +280,40 @@ function setSceneState(text: string): void {
   element<HTMLSpanElement>("render-3d-state").textContent = text;
 }
 
-/** Pushes authoritative tile coordinates into the renderer. The renderer invents no land. */
+/** Applies a selection from either the 2D grid or the 3D view; both read and write this one state. */
+function selectTile(x: number, y: number): void {
+  state.selected = { x, y };
+  renderField();
+  renderSelection();
+  refreshScene();
+}
+
+/** Pushes authoritative farm state into the renderer. The renderer invents no land and no crops. */
 function refreshScene(): void {
   if (scene === null) return;
-  scene.setTiles(state.tiles.map((tile) => ({ x: tile.x, y: tile.y })));
-  setSceneState(`Renderer active (${String(state.tiles.length)} tiles).`);
+  try {
+    scene.setState(
+      buildFarmSceneInput({ tiles: state.tiles, crops: state.crops, selected: state.selected })
+    );
+  } catch (error: unknown) {
+    // The 3D view is a projection of state the rest of the page owns. A renderer problem must not
+    // abort the authoritative refresh that called this, because the 2D field and the polling that
+    // keeps it current do not depend on the 3D view working.
+    setSceneState(`Renderer error: ${describe(error)}`);
+    return;
+  }
+  setSceneState(
+    `Renderer active (${String(state.tiles.length)} tiles, ${String(state.crops.length)} crops).`
+  );
 }
 
 function enable3D(): void {
   try {
-    scene ??= createFarmScene(element<HTMLCanvasElement>("scene"));
+    scene ??= createFarmScene(element<HTMLCanvasElement>("scene"), {
+      onTileSelected: (coordinate) => {
+        selectTile(coordinate.x, coordinate.y);
+      }
+    });
     refreshScene();
     setStatus("3D view ready.");
   } catch (error: unknown) {
@@ -313,6 +340,9 @@ async function loadFarm(farmId: string): Promise<void> {
   const result = await client.getFarm(farmId);
   state.farmId = result.farm.id;
   state.farmName = result.farm.name;
+  // A coordinate selected on the previous farm means nothing here, and clearing it matches what
+  // creating a farm already does.
+  state.selected = null;
   localStorage.setItem(FARM_KEY, result.farm.id);
   element<HTMLInputElement>("load-farm-id").value = result.farm.id;
   await refreshFarm();

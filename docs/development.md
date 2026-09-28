@@ -107,18 +107,26 @@ Because planting is free and only harvested produce is tradeable, the first usef
 plant → harvest → sell → buy. A brand-new player has no wallet row and therefore no gold, so
 `Buy` returns `INSUFFICIENT_FUNDS` until something has been sold.
 
-## 3D view (Phase 3.6A)
+## 3D view (Phase 3.6A and 3.6C)
 
-The **Field: 3D prototype** panel starts a Three.js renderer on an explicit click and draws one
-placeholder slab per authoritative unlocked tile. It is a renderer foundation: camera, lights,
-ground, sizing, and disposal are real, while crop visuals, materials, and models belong to the asset
-pipeline (3.6B) and the live-state pass (3.6C).
+The **Field: 3D prototype** panel starts a Three.js renderer on an explicit click and draws the
+authoritative farm: one slab per unlocked tile coloured by `terrainType`, one placeholder crop mesh
+per planted tile, and a ring around the selected tile. The art is still placeholder geometry and
+flat colours; textures and models arrive with the asset pipeline (3.6B).
 
 - `apps/web/src/render/layout.ts` is pure geometry, tile coordinates to world positions, and is unit
   tested in `tests/web/farm-layout.test.ts`.
-- `apps/web/src/render/scene.ts` owns three.js, the canvas, `ResizeObserver` sizing, on-demand
-  frames, and disposal. It never fetches and decides nothing about the game.
-- Frames are drawn on demand rather than from a free-running loop, because nothing animates yet.
+- `apps/web/src/render/view-model.ts` is pure as well: it turns the tiles and crops payloads into
+  render descriptors, and is unit tested in `tests/web/farm-view-model.test.ts`. It encodes two
+  rules — a crop is drawn only when the server also returned its tile as unlocked land, and growth
+  is taken from the server rather than inferred from the local clock.
+- `apps/web/src/render/scene.ts` owns three.js, the canvas, `ResizeObserver` sizing, picking,
+  on-demand frames, and disposal. It never fetches and decides nothing about the game.
+- Clicking a slab or a crop in the 3D view selects that tile, which is the same selection the 2D
+  **Field** grid uses: `main.ts` keeps one selection and pushes it to both views.
+- The panel follows the field's two-second refresh, so planting, growth, and harvesting show up in
+  3D without a manual reload. Frames are still drawn on demand rather than from a free-running loop,
+  because nothing animates yet.
 - A session without WebGL is unaffected until the button is pressed, and then reports
   `FarmRendererUnavailableError` instead of failing silently.
 
