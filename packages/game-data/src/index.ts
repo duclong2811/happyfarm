@@ -1,6 +1,7 @@
 export * from "./animals";
 export * from "./buildings";
 export * from "./crops";
+export * from "./economy";
 export * from "./fish";
 export * from "./items";
 export * from "./progression";

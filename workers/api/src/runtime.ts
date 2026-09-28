@@ -1,14 +1,22 @@
 import {
   cropInstanceIdFromUuid,
+  economyTransactionIdFromUuid,
   farmIdFromUuid,
   parseCropDefinitionId,
+  parseCurrencyDefinitionId,
   parseItemDefinitionId,
+  parseShopEntryId,
   type CropDefinition,
   type CropDefinitionId,
   type CropInstanceId,
   type FarmId,
+  type CurrencyDefinition,
+  type CurrencyDefinitionId,
+  type EconomyTransactionId,
   type ItemDefinition,
-  type ItemDefinitionId
+  type ItemDefinitionId,
+  type ShopEntry,
+  type ShopEntryId
 } from "@happy-farm/domain";
 import type {
   ActorContext,
@@ -16,11 +24,14 @@ import type {
   Clock,
   CropDefinitionRepository,
   CropIdGenerator,
+  CurrencyDefinitionRepository,
+  EconomyTransactionIdGenerator,
   IdGenerator,
   ItemDefinitionRepository,
-  PayloadFingerprint
+  PayloadFingerprint,
+  ShopEntryRepository
 } from "@happy-farm/application";
-import { cropRegistry, itemRegistry } from "@happy-farm/game-data";
+import { cropRegistry, currencyRegistry, itemRegistry, shopRegistry } from "@happy-farm/game-data";
 
 export class SystemClock implements Clock {
   now(): string {
@@ -28,7 +39,7 @@ export class SystemClock implements Clock {
   }
 }
 
-export class CryptoIdGenerator implements IdGenerator, CropIdGenerator {
+export class CryptoIdGenerator implements IdGenerator, CropIdGenerator, EconomyTransactionIdGenerator {
   newFarmId(): FarmId {
     return farmIdFromUuid(crypto.randomUUID());
   }
@@ -36,6 +47,46 @@ export class CryptoIdGenerator implements IdGenerator, CropIdGenerator {
   newCropInstanceId(): CropInstanceId {
     return cropInstanceIdFromUuid(crypto.randomUUID());
   }
+
+  newEconomyTransactionId(): EconomyTransactionId {
+    return economyTransactionIdFromUuid(crypto.randomUUID());
+  }
+}
+
+export class GameDataCurrencyDefinitions implements CurrencyDefinitionRepository {
+  findById(id: CurrencyDefinitionId): CurrencyDefinition | null {
+    const definition = currencyRegistry.get(id);
+    return definition === undefined ? null : { ...definition, id };
+  }
+}
+
+export class GameDataShopEntries implements ShopEntryRepository {
+  list(): readonly ShopEntry[] {
+    return [...shopRegistry.values()].map(toShopEntry);
+  }
+
+  findById(id: ShopEntryId): ShopEntry | null {
+    const entry = shopRegistry.get(id);
+    return entry === undefined ? null : toShopEntry(entry);
+  }
+}
+
+function toShopEntry(entry: {
+  readonly id: string;
+  readonly itemDefinitionId: string;
+  readonly currencyDefinitionId: string;
+  readonly buyPrice: number;
+  readonly sellPrice: number;
+  readonly maxQuantityPerRequest: number;
+}): ShopEntry {
+  return {
+    id: parseShopEntryId(entry.id),
+    itemDefinitionId: parseItemDefinitionId(entry.itemDefinitionId),
+    currencyDefinitionId: parseCurrencyDefinitionId(entry.currencyDefinitionId),
+    buyPrice: entry.buyPrice,
+    sellPrice: entry.sellPrice,
+    maxQuantityPerRequest: entry.maxQuantityPerRequest
+  };
 }
 
 export class Sha256Fingerprint implements PayloadFingerprint {

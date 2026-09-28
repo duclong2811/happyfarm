@@ -12,6 +12,8 @@ describe("InventoryService", () => {
     expect(() => service.prepareAddition(PLAYER_ONE_ID, "item_unknown", 1)).toThrow();
     expect(() => service.prepareAddition(PLAYER_ONE_ID, "item_carrot", 0)).toThrow();
     expect(() => service.prepareAddition(PLAYER_ONE_ID, "item_carrot", -1)).toThrow();
+    expect(service.prepareRemoval(PLAYER_ONE_ID, "item_carrot", 2)).toMatchObject({ kind: "REMOVE", quantity: 2 });
+    expect(() => service.prepareRemoval(PLAYER_ONE_ID, "item_carrot", 0)).toThrow();
   });
 
   it("requires authentication for inventory reads", async () => {

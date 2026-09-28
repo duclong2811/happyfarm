@@ -74,7 +74,7 @@ describe("PlantCrop", () => {
     tiles = new D1FarmTileRepository(db);
     crops = new D1CropRepository(db);
     const farm = createOwnedFarm(FARM_ONE_ID, PLAYER_ONE_ID, "Farm One", NOW);
-    await farms.createWithOwner(farm.farm, farm.ownerMembership);
+    await farms.createWithOwner(farm.farm, farm.ownerMembership, []);
     await tiles.insert(createFarmTile(FARM_ONE_ID, { x: 0, y: 0 }, "SOIL", NOW));
   });
 
@@ -185,7 +185,7 @@ describe("PlantCrop", () => {
 
   it("isolates the same request ID between actors", async () => {
     const secondFarm = createOwnedFarm(FARM_TWO_ID, PLAYER_TWO_ID, "Farm Two", NOW);
-    await farms.createWithOwner(secondFarm.farm, secondFarm.ownerMembership);
+    await farms.createWithOwner(secondFarm.farm, secondFarm.ownerMembership, []);
     await tiles.insert(createFarmTile(FARM_TWO_ID, { x: 0, y: 0 }, "SOIL", NOW));
     const service = useCase(true, new SequenceCropIds());
     const first = await service.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);

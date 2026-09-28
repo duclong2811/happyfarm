@@ -6,37 +6,53 @@ import {
   GetInventory,
   HarvestCrop,
   InventoryService,
+  ListFarmTiles,
   PlantCrop,
   ApplicationError,
+  BuyItem,
+  EconomyService,
+  SellItem,
   type ActorContext,
   type AuthenticationPort,
   type Clock,
   type CropDefinitionRepository,
   type CropIdGenerator,
+  type CurrencyDefinitionRepository,
+  type EconomyTransactionIdGenerator,
   type IdGenerator,
   type ItemDefinitionRepository,
-  type PayloadFingerprint
+  type PayloadFingerprint,
+  type ShopEntryRepository
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
   FarmIdSchema,
   CropInstanceIdSchema,
   HarvestCropRequestSchema,
+  BuyItemRequestSchema,
+  SellItemRequestSchema,
   PlantCropRequestSchema,
   type ApiFailure,
   type ApiSuccess,
   type ErrorCode,
   type FarmDTO,
+  type FarmTileDTO,
   type FarmMemberDTO,
   type CropStateDTO,
   type HarvestResultDTO,
-  type InventoryEntryDTO
+  type InventoryEntryDTO,
+  type BuyItemResultDTO,
+  type SellItemResultDTO,
+  type ShopEntryDTO,
+  type WalletDTO
 } from "@happy-farm/contracts";
-import { parseFarmId } from "@happy-farm/domain";
+import { parseFarmId, type ShopEntry, type Wallet } from "@happy-farm/domain";
 import type { D1DatabaseLike } from "./d1-types";
 import {
   D1CropRepository,
   D1HarvestSettlementRepository,
+  D1EconomySettlementRepository,
+  D1WalletRepository,
   D1InventoryRepository,
   D1FarmMemberRepository,
   D1FarmRepository,
@@ -49,10 +65,12 @@ const MAX_JSON_BODY_BYTES = 16_384;
 export interface HandlerDependencies {
   readonly db: D1DatabaseLike;
   readonly authenticator: AuthenticationPort<Request>;
-  readonly ids: IdGenerator & CropIdGenerator;
+  readonly ids: IdGenerator & CropIdGenerator & EconomyTransactionIdGenerator;
   readonly fingerprints: PayloadFingerprint;
   readonly cropDefinitions: CropDefinitionRepository;
   readonly itemDefinitions: ItemDefinitionRepository;
+  readonly currencyDefinitions: CurrencyDefinitionRepository;
+  readonly shopEntries: ShopEntryRepository;
   readonly clock: Clock;
 }
 
@@ -79,6 +97,36 @@ function toMemberDTO(member: {
   return { ...member };
 }
 
+function toShopEntryDTO(entry: ShopEntry): ShopEntryDTO {
+  return {
+    shopEntryId: entry.id,
+    itemDefinitionId: entry.itemDefinitionId,
+    currencyId: entry.currencyDefinitionId,
+    buyPrice: entry.buyPrice,
+    sellPrice: entry.sellPrice,
+    maxQuantityPerRequest: entry.maxQuantityPerRequest
+  };
+}
+
+function toWalletDTO(wallet: Wallet): WalletDTO {
+  return { currencyId: wallet.currencyDefinitionId, balance: wallet.balance };
+}
+
+/**
+ * Decodes a single percent-encoded path segment.
+ *
+ * decodeURIComponent throws URIError for malformed input such as a lone "%". That is a client
+ * error, so it must be reported as INVALID_INPUT instead of escaping to the outer catch and
+ * surfacing as INTERNAL_ERROR.
+ */
+function decodePathSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
 async function parseJson(request: Request): Promise<unknown> {
   const declaredLength = Number(request.headers.get("content-length") ?? "0");
   if (!Number.isFinite(declaredLength) || declaredLength > MAX_JSON_BODY_BYTES) {
@@ -99,6 +147,7 @@ function errorStatus(code: ErrorCode): number {
   switch (code) {
     case "INVALID_INPUT":
     case "TILE_INVALID":
+    case "INVALID_QUANTITY":
       return 400;
     case "NOT_AUTHENTICATED":
       return 401;
@@ -109,6 +158,8 @@ function errorStatus(code: ErrorCode): number {
     case "CROP_DEFINITION_NOT_FOUND":
     case "CROP_NOT_FOUND":
     case "ITEM_DEFINITION_NOT_FOUND":
+    case "CURRENCY_DEFINITION_NOT_FOUND":
+    case "SHOP_ENTRY_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
     case "REQUEST_ALREADY_PROCESSED":
@@ -118,6 +169,10 @@ function errorStatus(code: ErrorCode): number {
     case "CROP_NOT_MATURE":
     case "CROP_ALREADY_HARVESTED":
     case "INVENTORY_LIMIT_EXCEEDED":
+    case "INSUFFICIENT_ITEMS":
+    case "INSUFFICIENT_FUNDS":
+    case "WALLET_LIMIT_EXCEEDED":
+    case "ECONOMY_CONFLICT":
       return 409;
     case "RATE_LIMITED":
       return 429;
@@ -139,6 +194,8 @@ export function createHandler(dependencies: HandlerDependencies) {
   const crops = new D1CropRepository(dependencies.db);
   const inventory = new D1InventoryRepository(dependencies.db);
   const harvestSettlement = new D1HarvestSettlementRepository(dependencies.db);
+  const wallets = new D1WalletRepository(dependencies.db);
+  const economySettlement = new D1EconomySettlementRepository(dependencies.db);
   const unlockedLand = {
     async isUnlocked(farmId: Parameters<typeof tiles.find>[0], coordinate: { x: number; y: number }) {
       return (await tiles.find(farmId, coordinate.x, coordinate.y)) !== null;
@@ -160,6 +217,7 @@ export function createHandler(dependencies: HandlerDependencies) {
     dependencies.clock
   );
   const getFarmCrops = new GetFarmCrops(farms, members, crops, projector);
+  const listFarmTiles = new ListFarmTiles(farms, members, tiles);
   const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
   const harvestCrop = new HarvestCrop(
     farms,
@@ -174,6 +232,20 @@ export function createHandler(dependencies: HandlerDependencies) {
     dependencies.clock
   );
   const getInventory = new GetInventory(inventory);
+  const shopDependencies = {
+    shops: dependencies.shopEntries,
+    currencies: dependencies.currencyDefinitions,
+    wallets,
+    inventory,
+    idempotency: crops,
+    settlement: economySettlement,
+    economyService: new EconomyService(dependencies.ids, dependencies.clock),
+    inventoryService,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  };
+  const buyItem = new BuyItem(shopDependencies);
+  const sellItem = new SellItem(shopDependencies);
 
   return async function handle(request: Request): Promise<Response> {
     const requestId = crypto.randomUUID();
@@ -205,11 +277,42 @@ export function createHandler(dependencies: HandlerDependencies) {
         return jsonResponse(body);
       }
 
+      if (request.method === "GET" && url.pathname === "/shop") {
+        if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
+        const entries: ShopEntryDTO[] = dependencies.shopEntries.list().map(toShopEntryDTO);
+        const body: ApiSuccess<{ entries: ShopEntryDTO[] }> = { ok: true, data: { entries } };
+        return jsonResponse(body);
+      }
+
+      if (request.method === "GET" && url.pathname === "/wallet") {
+        if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
+        const balances: WalletDTO[] = (await wallets.listByPlayer(actor.playerId)).map(toWalletDTO);
+        const body: ApiSuccess<{ wallets: WalletDTO[] }> = { ok: true, data: { wallets: balances } };
+        return jsonResponse(body);
+      }
+
+      if (request.method === "POST" && (url.pathname === "/shop/buy" || url.pathname === "/shop/sell")) {
+        const schema = url.pathname === "/shop/buy" ? BuyItemRequestSchema : SellItemRequestSchema;
+        const parsed = schema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        if (url.pathname === "/shop/buy") {
+          const settlement: BuyItemResultDTO = await buyItem.execute(actor, parsed.data);
+          return jsonResponse({ ok: true, data: { settlement } });
+        }
+        const settlement: SellItemResultDTO = await sellItem.execute(actor, parsed.data);
+        return jsonResponse({ ok: true, data: { settlement } });
+      }
+
       const harvestRoute = /^\/farms\/([^/]+)\/crops\/([^/]+)\/harvest$/.exec(url.pathname);
       if (request.method === "POST" && harvestRoute?.[1] !== undefined && harvestRoute[2] !== undefined) {
-        const decodedFarmId = decodeURIComponent(harvestRoute[1]);
-        const decodedCropId = decodeURIComponent(harvestRoute[2]);
-        if (!FarmIdSchema.safeParse(decodedFarmId).success || !CropInstanceIdSchema.safeParse(decodedCropId).success) {
+        const decodedFarmId = decodePathSegment(harvestRoute[1]);
+        const decodedCropId = decodePathSegment(harvestRoute[2]);
+        if (
+          decodedFarmId === null ||
+          decodedCropId === null ||
+          !FarmIdSchema.safeParse(decodedFarmId).success ||
+          !CropInstanceIdSchema.safeParse(decodedCropId).success
+        ) {
           return failure("INVALID_INPUT", requestId);
         }
         const parsed = HarvestCropRequestSchema.safeParse(await parseJson(request));
@@ -224,8 +327,10 @@ export function createHandler(dependencies: HandlerDependencies) {
 
       const cropRoute = /^\/farms\/([^/]+)\/crops$/.exec(url.pathname);
       if (cropRoute?.[1] !== undefined) {
-        const decodedId = decodeURIComponent(cropRoute[1]);
-        if (!FarmIdSchema.safeParse(decodedId).success) return failure("INVALID_INPUT", requestId);
+        const decodedId = decodePathSegment(cropRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
         const farmId = parseFarmId(decodedId);
         if (request.method === "POST") {
           const parsed = PlantCropRequestSchema.safeParse(await parseJson(request));
@@ -242,9 +347,20 @@ export function createHandler(dependencies: HandlerDependencies) {
       }
 
       const match = /^\/farms\/([^/]+)$/.exec(url.pathname);
+      const tilesRoute = /^\/farms\/([^/]+)\/tiles$/.exec(url.pathname);
+      if (request.method === "GET" && tilesRoute?.[1] !== undefined) {
+        const decodedId = decodePathSegment(tilesRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const farmTiles = await listFarmTiles.execute(actor, parseFarmId(decodedId));
+        const body: ApiSuccess<{ tiles: FarmTileDTO[] }> = { ok: true, data: { tiles: [...farmTiles] } };
+        return jsonResponse(body);
+      }
+
       if (request.method === "GET" && match?.[1] !== undefined) {
-        const decodedId = decodeURIComponent(match[1]);
-        if (!FarmIdSchema.safeParse(decodedId).success) {
+        const decodedId = decodePathSegment(match[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
           return failure("INVALID_INPUT", requestId);
         }
         const result = await getFarm.execute(actor, parseFarmId(decodedId));

@@ -1,0 +1,26 @@
+# DEVELOPMENT-ONLY Worker configuration.
+#
+# Isolation: `main` points at `src/dev-index.ts`. The production configuration
+# (`wrangler.toml`) is untouched and still points at `src/index.ts`.
+#
+# Only variable NAMES and non-secret placeholders belong in this committed file.
+# The real DEV_AUTH_TOKEN lives in the gitignored `workers/api/.dev.vars`.
+
+name = "happy-farm-api-dev"
+main = "src/dev-index.ts"
+compatibility_date = "2026-09-27"
+
+[vars]
+# Fail-closed placeholder. Set DEV_AUTH_ENABLED = "true" and provide DEV_AUTH_TOKEN
+# in workers/api/.dev.vars for local development.
+DEV_AUTH_ENABLED = "false"
+DEV_PLAYER_ID = "player_11111111-1111-4111-8111-111111111111"
+DEV_AUTH_ISSUER = "https://dev.happy-farm.local"
+DEV_AUTH_SUBJECT = "dev-player-one"
+DEV_PLAYER_DISPLAY_NAME = "Dev Player One"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "happy-farm-local"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../database/migrations"

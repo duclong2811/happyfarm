@@ -4,7 +4,9 @@ import {
   assertOwnershipInvariant,
   assertValidCoordinate,
   createFarmTile,
+  createInitialFarmTiles,
   createOwnedFarm,
+  INITIAL_LAND_SIZE,
   MAX_TILE_X,
   parseFarmRole,
   parseTerrainType
@@ -46,5 +48,19 @@ describe("Phase 1 domain invariants", () => {
     expect(tile.version).toBe(1);
     expect(applyTileMutation(tile, 1, NOW).version).toBe(2);
     expect(() => applyTileMutation(tile, 2, NOW)).toThrow("Tile version does not match");
+  });
+
+  it("creates starter land as SOIL tiles at version one", () => {
+    const tiles = createInitialFarmTiles(FARM_ONE_ID, NOW);
+    expect(tiles).toHaveLength(INITIAL_LAND_SIZE * INITIAL_LAND_SIZE);
+    expect(tiles[0]).toMatchObject({
+      terrainType: "SOIL",
+      state: "IDLE",
+      version: 1,
+      updatedAt: NOW
+    });
+    expect(tiles.some((tile) => tile.x === INITIAL_LAND_SIZE - 1 && tile.y === INITIAL_LAND_SIZE - 1)).toBe(true);
+    expect(new Set(tiles.map((tile) => `${String(tile.x)}:${String(tile.y)}`)).size).toBe(tiles.length);
+    expect(() => createInitialFarmTiles(FARM_ONE_ID, NOW, 0)).toThrow("Initial land size is invalid");
   });
 });

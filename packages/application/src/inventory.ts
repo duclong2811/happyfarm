@@ -1,9 +1,11 @@
 import {
   createInventoryAddition,
+  createInventoryRemoval,
   DomainError,
   parseItemDefinitionId,
   type InventoryAddition,
   type InventoryItem,
+  type InventoryRemoval,
   type PlayerId
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
@@ -21,6 +23,29 @@ export class InventoryService {
   ) {}
 
   prepareAddition(playerId: PlayerId, itemDefinitionId: string, quantity: number): InventoryAddition {
+    const definition = this.requireDefinition(itemDefinitionId);
+    try {
+      return createInventoryAddition(playerId, definition, quantity, this.clock.now());
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === "INVENTORY_LIMIT_EXCEEDED") {
+        throw new ApplicationError("INVENTORY_LIMIT_EXCEEDED", error.message);
+      }
+      if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
+      throw error;
+    }
+  }
+
+  prepareRemoval(playerId: PlayerId, itemDefinitionId: string, quantity: number): InventoryRemoval {
+    const definition = this.requireDefinition(itemDefinitionId);
+    try {
+      return createInventoryRemoval(playerId, definition, quantity, this.clock.now());
+    } catch (error: unknown) {
+      if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
+      throw error;
+    }
+  }
+
+  private requireDefinition(itemDefinitionId: string) {
     let parsedId;
     try {
       parsedId = parseItemDefinitionId(itemDefinitionId);
@@ -31,15 +56,7 @@ export class InventoryService {
     if (definition === null) {
       throw new ApplicationError("ITEM_DEFINITION_NOT_FOUND", "Item definition was not found");
     }
-    try {
-      return createInventoryAddition(playerId, definition, quantity, this.clock.now());
-    } catch (error: unknown) {
-      if (error instanceof DomainError && error.code === "INVENTORY_LIMIT_EXCEEDED") {
-        throw new ApplicationError("INVENTORY_LIMIT_EXCEEDED", error.message);
-      }
-      if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
-      throw error;
-    }
+    return definition;
   }
 }
 

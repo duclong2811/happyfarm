@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   createCropRegistry,
+  createCurrencyRegistry,
   createItemRegistry,
+  createShopRegistry,
+  currencies,
+  currencyRegistry,
+  itemRegistry,
+  shops,
   validateCropItemReferences,
   validateDefinitions
 } from "@happy-farm/game-data";
@@ -49,5 +55,104 @@ describe("game-data validation", () => {
         { id: "item_bad", displayNameKey: "bad", category: "CROP", stackable: true, maxStack: 0 }
       ])
     ).toThrow();
+  });
+
+  it("validates currency and server-owned shop pricing definitions", () => {
+    expect(
+      createCurrencyRegistry([
+        { id: "currency_gold", displayNameKey: "currency.gold.name", maxBalance: Number.MAX_SAFE_INTEGER }
+      ]).size
+    ).toBe(1);
+    expect(() =>
+      createCurrencyRegistry([
+        { id: "currency_gold", displayNameKey: "currency.gold.name", maxBalance: Number.MAX_SAFE_INTEGER + 1 }
+      ])
+    ).toThrow();
+    expect(() =>
+      createShopRegistry([
+        { id: "shop_bad", itemDefinitionId: "item_missing", currencyDefinitionId: "currency_gold", buyPrice: 4, sellPrice: 2, maxQuantityPerRequest: 10 }
+      ])
+    ).toThrow("Unknown shop item definition");
+    expect(() =>
+      createShopRegistry([
+        { id: "shop_bad", itemDefinitionId: "item_carrot", currencyDefinitionId: "currency_gold", buyPrice: 2, sellPrice: 4, maxQuantityPerRequest: 10 }
+      ])
+    ).toThrow("Sell price cannot exceed buy price");
+    expect(() =>
+      createShopRegistry([
+        { id: "shop_bad", itemDefinitionId: "item_carrot", currencyDefinitionId: "currency_gold", buyPrice: Number.MAX_SAFE_INTEGER, sellPrice: 1, maxQuantityPerRequest: 2 }
+      ])
+    ).toThrow("Maximum shop total must be a safe integer");
+  });
+
+  it("accepts a valid gameplay currency and rejects invalid currency IDs", () => {
+    const registry = createCurrencyRegistry([
+      { id: "currency_gold", displayNameKey: "currency.gold.name", maxBalance: Number.MAX_SAFE_INTEGER }
+    ]);
+    expect(registry.get("currency_gold")?.id).toBe("currency_gold");
+    expect(() =>
+      createCurrencyRegistry([{ id: "gold", displayNameKey: "currency.gold.name", maxBalance: Number.MAX_SAFE_INTEGER }])
+    ).toThrow();
+    expect(() =>
+      createCurrencyRegistry([{ id: "Currency_Gold", displayNameKey: "currency.gold.name", maxBalance: Number.MAX_SAFE_INTEGER }])
+    ).toThrow();
+  });
+
+  it("accepts a valid development shop entry and rejects unknown cross-references", () => {
+    const valid = {
+      id: "shop_dev_carrot",
+      itemDefinitionId: "item_carrot",
+      currencyDefinitionId: "currency_gold",
+      buyPrice: 4,
+      sellPrice: 2,
+      maxQuantityPerRequest: 100
+    };
+    expect(createShopRegistry([valid]).get("shop_dev_carrot")?.buyPrice).toBe(4);
+    expect(() => createShopRegistry([{ ...valid, itemDefinitionId: "item_missing" }])).toThrow(
+      "Unknown shop item definition"
+    );
+    expect(() => createShopRegistry([{ ...valid, currencyDefinitionId: "currency_missing" }])).toThrow(
+      "Unknown shop currency definition"
+    );
+  });
+
+  it("rejects negative, zero, and fractional shop prices", () => {
+    const base = {
+      id: "shop_dev_carrot",
+      itemDefinitionId: "item_carrot",
+      currencyDefinitionId: "currency_gold",
+      buyPrice: 4,
+      sellPrice: 2,
+      maxQuantityPerRequest: 100
+    };
+    expect(() => createShopRegistry([{ ...base, buyPrice: -1 }])).toThrow();
+    expect(() => createShopRegistry([{ ...base, buyPrice: 0 }])).toThrow();
+    expect(() => createShopRegistry([{ ...base, sellPrice: 0 }])).toThrow();
+    expect(() => createShopRegistry([{ ...base, sellPrice: 2.5 }])).toThrow();
+  });
+
+  it("rejects duplicate currency and shop entry IDs", () => {
+    const currency = { id: "currency_gold", displayNameKey: "currency.gold.name", maxBalance: Number.MAX_SAFE_INTEGER };
+    expect(() => createCurrencyRegistry([currency, currency])).toThrow("Duplicate currency definition");
+    const shop = {
+      id: "shop_dev_carrot",
+      itemDefinitionId: "item_carrot",
+      currencyDefinitionId: "currency_gold",
+      buyPrice: 4,
+      sellPrice: 2,
+      maxQuantityPerRequest: 100
+    };
+    expect(() => createShopRegistry([shop, shop])).toThrow("Duplicate shop entry");
+  });
+
+  it("ships a small, internally consistent development fixture set", () => {
+    expect(currencies.map((currency) => currency.id)).toContain("currency_gold");
+    expect(shops.length).toBeGreaterThanOrEqual(2);
+    expect(shops.length).toBeLessThanOrEqual(4);
+    for (const entry of shops) {
+      expect(itemRegistry.has(entry.itemDefinitionId)).toBe(true);
+      expect(currencyRegistry.has(entry.currencyDefinitionId)).toBe(true);
+      expect(entry.sellPrice).toBeLessThanOrEqual(entry.buyPrice);
+    }
   });
 });

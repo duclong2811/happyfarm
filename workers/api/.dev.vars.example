@@ -1,0 +1,9 @@
+# Copy this file to `workers/api/.dev.vars` (gitignored) and fill in local-only values.
+# Never commit a real token. `.dev.vars` overrides the placeholders in wrangler.dev.toml.
+
+DEV_AUTH_ENABLED=true
+DEV_AUTH_TOKEN=replace-with-a-long-random-local-dev-token
+DEV_PLAYER_ID=player_11111111-1111-4111-8111-111111111111
+DEV_AUTH_ISSUER=https://dev.happy-farm.local
+DEV_AUTH_SUBJECT=dev-player-one
+DEV_PLAYER_DISPLAY_NAME=Dev Player One

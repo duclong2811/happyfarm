@@ -52,7 +52,7 @@ Indexes: player_id
 1. Validate the authenticated player.
 2. Insert the farm with that player as `owner_player_id`.
 3. Insert the matching `farm_members` row with role `OWNER`.
-4. Create all required initial farm metadata/state.
+4. Create all required initial farm metadata/state, including the farm's starter land tiles.
 5. Commit.
 
 If any step fails, roll back the entire transaction. A partially created farm must never be observable.
@@ -70,6 +70,16 @@ Indexes: farm_id
 
 Coordinates must be validated against implementation configuration constants `MIN_TILE_X`, `MAX_TILE_X`, `MIN_TILE_Y`, and `MAX_TILE_Y`. These bounds must support the intended logical world and must not be replaced by an unnecessarily small hard-coded limit. A tile may be mutated only when it belongs to land currently unlocked by the farm.
 
+#### Starter land
+
+An existing tile row *is* unlocked land (`UnlockedLandPolicy`), so a farm with no tile rows has no
+plantable land. `CreateFarm` therefore inserts a `6 x 6` square of `SOIL` tiles anchored at the
+origin (`(0,0)` through `(5,5)`), all at `tile_state = IDLE` and `version = 1`, in the same
+transaction as the farm row and its `OWNER` membership. `INITIAL_LAND_SIZE` in `packages/domain`
+is the single source of the side length; `createInitialFarmTiles` is the only producer. A farm is
+never observable with a partial starter square. Reading that land back requires the authenticated
+`GET /farms/:farmId/tiles` route, which returns each tile's authoritative `version`.
+
 `terrain_type` uses the initial stable enum-like values `GRASS`, `SOIL`, `WATER`, and `BLOCKED`. Terrain and mutable tile state are separate concepts. Phase 1 uses the minimal `tile_state` value `IDLE`; later states require an explicit schema/game-data change. Runtime validation and database constraints where practical must reject arbitrary client-provided terrain or state strings.
 
 Each successful tile state mutation increments `version` monotonically by one. Operations that require optimistic concurrency accept a validated `expectedVersion` and conceptually update with:
@@ -86,6 +96,13 @@ WHERE farm_id = ?
 ```
 
 If no row is updated, return the stable `CONFLICT_STALE_STATE` error. Client versions are not required for operations that cannot affect authoritative mutable tile state.
+
+Planting is the documented exception: `PlantCrop` accepts `expectedTileVersion` as an optimistic
+guard on the tile row it is about to occupy, but it does not rewrite that row and therefore does
+not increment `version`. Crop occupancy is canonical in `crop_instances`, whose
+`UNIQUE(farm_id,tile_x,tile_y)` is what actually prevents double planting. A tile's `version`
+therefore tracks terrain mutation only, and stays at `1` across an arbitrary number of plant,
+harvest, and replant cycles.
 
 ### crop_instances
 - id PK
@@ -134,24 +151,31 @@ The settlement row is an immutable receipt and concurrency claim. Its database t
 
 ### wallets
 - player_id FK
-- currency_type
+- currency_id
 - balance
+- created_at
 - updated_at
-UNIQUE: (player_id, currency_type)
+- version
+PRIMARY KEY/UNIQUE: (player_id, currency_id)
+
+Balances are safe integers in the inclusive range `0..9,007,199,254,740,991`. Phase 3C uses race-safe lazy creation at zero balance and version 1. Every successful authoritative mutation increments the version and appends its ledger row in the same transaction. Static currency metadata is validated through game data and is not duplicated in D1.
 
 ### economy_ledger
 - id PK
 - player_id FK
-- currency_type
+- currency_id
 - delta
 - reason
-- reference_id nullable
-- request_id nullable
+- reference_type
+- reference_id
+- request_id
 - balance_before
 - balance_after
 - created_at
 Indexes: player_id+created_at; request_id
 Never delete or rewrite normal ledger history as part of routine gameplay.
+
+The ledger records transaction ID, exact integer delta, stable reason/reference, request ID, balance before/after, expected wallet version, and timestamp. A database check enforces `balance_after = balance_before + delta`; update/delete triggers make normal history append-only. Corrections use compensating entries rather than editing history.
 
 ### player_progression
 - player_id PK/FK

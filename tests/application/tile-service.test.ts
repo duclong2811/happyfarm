@@ -43,6 +43,9 @@ class MemoryTiles implements FarmTileRepository {
   find(): Promise<FarmTile | null> {
     return Promise.resolve(this.tile);
   }
+  listByFarm(): Promise<readonly FarmTile[]> {
+    return Promise.resolve(this.tile === null ? [] : [this.tile]);
+  }
   updateVersion(tile: FarmTile, expectedVersion: number): Promise<boolean> {
     if (this.tile?.version !== expectedVersion) return Promise.resolve(false);
     this.tile = tile;

@@ -7,6 +7,9 @@ export type DomainErrorCode =
   | "INVALID_CROP"
   | "INVALID_INVENTORY_MUTATION"
   | "INVENTORY_LIMIT_EXCEEDED"
+  | "INVALID_ECONOMY_MUTATION"
+  | "INSUFFICIENT_FUNDS"
+  | "WALLET_LIMIT_EXCEEDED"
   | "CONFLICT_STALE_STATE";
 
 export class DomainError extends Error {

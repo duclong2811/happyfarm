@@ -43,7 +43,7 @@ describe("D1 Phase 1 migration and repositories", () => {
 
   it("enforces role, membership uniqueness, owner matching, and one OWNER", async () => {
     const aggregate = createOwnedFarm(FARM_ONE_ID, PLAYER_ONE_ID, "Starter Farm", NOW);
-    await new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership);
+    await new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership, []);
 
     expect(() =>
       db.sqlite
@@ -66,7 +66,7 @@ describe("D1 Phase 1 migration and repositories", () => {
 
   it("enforces foreign-key deletion behavior", async () => {
     const aggregate = createOwnedFarm(FARM_ONE_ID, PLAYER_ONE_ID, "Starter Farm", NOW);
-    await new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership);
+    await new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership, []);
     expect(() => db.sqlite.prepare("DELETE FROM players WHERE id = ?").run(PLAYER_ONE_ID)).toThrow();
     db.sqlite.prepare("DELETE FROM farms WHERE id = ?").run(FARM_ONE_ID);
     const memberCount = db.sqlite
@@ -80,14 +80,14 @@ describe("D1 Phase 1 migration and repositories", () => {
       "CREATE TRIGGER fail_owner_insert BEFORE INSERT ON farm_members BEGIN SELECT RAISE(ABORT, 'test failure'); END"
     );
     const aggregate = createOwnedFarm(FARM_ONE_ID, PLAYER_ONE_ID, "Starter Farm", NOW);
-    await expect(new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership)).rejects.toThrow();
+    await expect(new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership, [])).rejects.toThrow();
     const farmCount = db.sqlite.prepare("SELECT COUNT(*) AS count FROM farms").get() as { count: number };
     expect(farmCount.count).toBe(0);
   });
 
   it("enforces unique coordinates and optimistic tile versions", async () => {
     const aggregate = createOwnedFarm(FARM_ONE_ID, PLAYER_ONE_ID, "Starter Farm", NOW);
-    await new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership);
+    await new D1FarmRepository(db).createWithOwner(aggregate.farm, aggregate.ownerMembership, []);
     const tiles = new D1FarmTileRepository(db);
     const tile = createFarmTile(FARM_ONE_ID, { x: 0, y: 0 }, "GRASS", NOW);
     await tiles.insert(tile);

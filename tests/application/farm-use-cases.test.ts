@@ -8,7 +8,8 @@ import type {
   IdGenerator,
   PlayerRepository
 } from "@happy-farm/application";
-import type { Farm, FarmId, FarmMember, Player } from "@happy-farm/domain";
+import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
+import type { Farm, FarmId, FarmMember, FarmTile, Player } from "@happy-farm/domain";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
 const player: Player = {
@@ -42,12 +43,18 @@ class MemoryPlayers implements PlayerRepository {
 class MemoryFarms implements FarmRepository, FarmMemberRepository {
   farm: Farm | null = null;
   owner: FarmMember | null = null;
+  tiles: readonly FarmTile[] = [];
   failMembership = false;
 
-  createWithOwner(farm: Farm, ownerMembership: FarmMember): Promise<void> {
+  createWithOwner(
+    farm: Farm,
+    ownerMembership: FarmMember,
+    initialTiles: readonly FarmTile[]
+  ): Promise<void> {
     if (this.failMembership) return Promise.reject(new Error("membership insert failed"));
     this.farm = farm;
     this.owner = ownerMembership;
+    this.tiles = initialTiles;
     return Promise.resolve();
   }
 
@@ -72,6 +79,17 @@ describe("farm application use cases", () => {
     expect(storage.farm).not.toBeNull();
   });
 
+  it("persists starter land with the farm so planting has unlocked tiles", async () => {
+    const storage = new MemoryFarms();
+    await new CreateFarm(new MemoryPlayers(), storage, new FixedIds(), new FixedClock()).execute(
+      { playerId: PLAYER_ONE_ID },
+      { name: "Starter Farm" }
+    );
+    expect(storage.tiles).toHaveLength(INITIAL_LAND_SIZE * INITIAL_LAND_SIZE);
+    expect(storage.tiles.every((tile) => tile.terrainType === "SOIL" && tile.version === 1)).toBe(true);
+    expect(storage.tiles.some((tile) => tile.x === 0 && tile.y === 0)).toBe(true);
+  });
+
   it("does not expose a partial farm when atomic owner persistence fails", async () => {
     const storage = new MemoryFarms();
     storage.failMembership = true;
@@ -82,6 +100,7 @@ describe("farm application use cases", () => {
       )
     ).rejects.toThrow("membership insert failed");
     expect(storage.farm).toBeNull();
+    expect(storage.tiles).toHaveLength(0);
   });
 
   it("never accepts a requested owner and always uses the actor", async () => {

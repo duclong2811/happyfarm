@@ -64,3 +64,31 @@ export function applyTileMutation(tile: FarmTile, expectedVersion: number, times
   }
   return { ...tile, version: tile.version + 1, updatedAt: timestamp };
 }
+
+/** Side length of the square of SOIL tiles a farm owns immediately after creation. */
+export const INITIAL_LAND_SIZE = 6;
+
+/**
+ * Starter land (PROJECT_SPEC MVP step 2, "Unlock starter land").
+ *
+ * A farm is created together with its initially unlocked land: every tile of a
+ * `size` x `size` square anchored at the origin, as SOIL at version 1. Because an
+ * existing tile row *is* unlocked land (`UnlockedLandPolicy`), only tiles created here
+ * (or by later land expansion) can be planted.
+ */
+export function createInitialFarmTiles(
+  farmId: FarmId,
+  timestamp: string,
+  size: number = INITIAL_LAND_SIZE
+): readonly FarmTile[] {
+  if (!Number.isInteger(size) || size < 1 || size > 64) {
+    throw new DomainError("INVALID_TILE", "Initial land size is invalid");
+  }
+  const tiles: FarmTile[] = [];
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      tiles.push(createFarmTile(farmId, { x, y }, "SOIL", timestamp));
+    }
+  }
+  return tiles;
+}

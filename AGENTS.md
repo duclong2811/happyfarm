@@ -38,6 +38,10 @@ infrastructure adapters -> ports/interfaces owned by application/domain
 ```
 
 The browser communicates with Workers and Durable Objects through HTTPS/WebSocket contracts. Frontend code must never import server application services or repositories.
+One deliberate exception exists outside the browser bundle: `apps/web/vite.config.ts` (Node-side
+development tooling, never shipped) may reference the development-only Worker host in
+`workers/api/dev/` in order to forward same-origin `/api/*` requests during local development. This
+is a `devDependency`-style edge and must not grow into runtime browser imports of server code.
 
 `packages/domain` must not depend on React, Three.js, Cloudflare APIs, D1, Durable Objects, browser APIs, transport code, or frontend code. `packages/contracts` must not depend on application or infrastructure.
 

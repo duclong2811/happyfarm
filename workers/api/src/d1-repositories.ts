@@ -6,21 +6,30 @@ import type {
   FarmTile,
   CropInstance,
   CropInstanceId,
+  CurrencyDefinitionId,
+  EconomyLedgerEntry,
+  EconomyMutation,
+  EconomyTransactionId,
   InventoryAddition,
   InventoryItem,
+  InventoryMutation,
   ItemDefinitionId,
   Player,
   PlayerId,
   PlayerStatus,
   TerrainType,
-  TileState
+  TileState,
+  Wallet
 } from "@happy-farm/domain";
 import {
   parseCropDefinitionId,
   parseCropInstanceId,
+  parseCurrencyDefinitionId,
+  parseEconomyTransactionId,
   parseFarmId,
   parseItemDefinitionId,
-  parsePlayerId
+  parsePlayerId,
+  parseShopEntryId
 } from "@happy-farm/domain";
 import type {
   CropInstanceRepository,
@@ -31,9 +40,14 @@ import type {
   IdempotencyRecord,
   IdempotencyRepository,
   HarvestSettlementRepository,
-  InventoryRepository
+  InventoryRepository,
+  EconomyLedgerRepository,
+  EconomyMutationRepository,
+  EconomySettlementRepository,
+  WalletRepository
 } from "@happy-farm/application";
-import type { D1DatabaseLike } from "./d1-types";
+import { ApplicationError } from "@happy-farm/application";
+import type { D1DatabaseLike, D1PreparedStatementLike } from "./d1-types";
 
 interface PlayerRow {
   id: string;
@@ -102,6 +116,29 @@ interface InventoryItemRow {
   version: number;
 }
 
+interface WalletRow {
+  player_id: string;
+  currency_id: string;
+  balance: number;
+  version: number;
+  updated_at: string;
+}
+
+interface EconomyLedgerRow {
+  id: string;
+  player_id: string;
+  currency_id: string;
+  delta: number;
+  balance_before: number;
+  balance_after: number;
+  expected_wallet_version: number;
+  reason: EconomyLedgerEntry["reason"];
+  reference_type: EconomyLedgerEntry["referenceType"];
+  reference_id: string;
+  request_id: string;
+  created_at: string;
+}
+
 function mapCrop(row: CropInstanceRow): CropInstance {
   return {
     id: parseCropInstanceId(row.id),
@@ -144,8 +181,12 @@ export class D1PlayerRepository implements PlayerRepository {
 export class D1FarmRepository implements FarmRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
-  async createWithOwner(farm: Farm, ownerMembership: FarmMember): Promise<void> {
-    const results = await this.db.batch([
+  async createWithOwner(
+    farm: Farm,
+    ownerMembership: FarmMember,
+    initialTiles: readonly FarmTile[]
+  ): Promise<void> {
+    const statements: D1PreparedStatementLike[] = [
       this.db
         .prepare("INSERT INTO farms (id, owner_player_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
         .bind(farm.id, farm.ownerPlayerId, farm.name, farm.createdAt, farm.updatedAt),
@@ -156,9 +197,17 @@ export class D1FarmRepository implements FarmRepository {
           ownerMembership.playerId,
           ownerMembership.role,
           ownerMembership.createdAt
-        )
-    ]);
-    if (results.length !== 2 || results.some((result) => !result.success)) {
+        ),
+      ...initialTiles.map((tile) =>
+        this.db
+          .prepare(
+            "INSERT INTO farm_tiles (farm_id, x, y, terrain_type, tile_state, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(tile.farmId, tile.x, tile.y, tile.terrainType, tile.state, tile.version, tile.updatedAt)
+      )
+    ];
+    const results = await this.db.batch(statements);
+    if (results.length !== statements.length || results.some((result) => !result.success)) {
       throw new Error("Atomic farm creation failed");
     }
   }
@@ -199,6 +248,18 @@ export class D1FarmMemberRepository implements FarmMemberRepository {
   }
 }
 
+function mapFarmTile(row: FarmTileRow): FarmTile {
+  return {
+    farmId: parseFarmId(row.farm_id),
+    x: row.x,
+    y: row.y,
+    terrainType: row.terrain_type,
+    state: row.tile_state,
+    version: row.version,
+    updatedAt: row.updated_at
+  };
+}
+
 export class D1FarmTileRepository implements FarmTileRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
@@ -218,17 +279,17 @@ export class D1FarmTileRepository implements FarmTileRepository {
       )
       .bind(farmId, x, y)
       .first<FarmTileRow>();
-    return row === null
-      ? null
-      : {
-          farmId: parseFarmId(row.farm_id),
-          x: row.x,
-          y: row.y,
-          terrainType: row.terrain_type,
-          state: row.tile_state,
-          version: row.version,
-          updatedAt: row.updated_at
-        };
+    return row === null ? null : mapFarmTile(row);
+  }
+
+  async listByFarm(farmId: FarmId): Promise<readonly FarmTile[]> {
+    const result = await this.db
+      .prepare(
+        "SELECT farm_id, x, y, terrain_type, tile_state, version, updated_at FROM farm_tiles WHERE farm_id = ? ORDER BY y, x"
+      )
+      .bind(farmId)
+      .all<FarmTileRow>();
+    return result.results.map(mapFarmTile);
   }
 
   async updateVersion(tile: FarmTile, expectedVersion: number): Promise<boolean> {
@@ -363,6 +424,160 @@ export class D1InventoryRepository implements InventoryRepository {
   }
 }
 
+export class D1WalletRepository implements WalletRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async find(playerId: PlayerId, currencyDefinitionId: CurrencyDefinitionId): Promise<Wallet | null> {
+    const row = await this.db
+      .prepare("SELECT player_id, currency_id, balance, version, updated_at FROM wallets WHERE player_id = ? AND currency_id = ?")
+      .bind(playerId, currencyDefinitionId)
+      .first<WalletRow>();
+    return row === null ? null : mapWallet(row);
+  }
+
+  async listByPlayer(playerId: PlayerId): Promise<readonly Wallet[]> {
+    const rows = await this.db
+      .prepare("SELECT player_id, currency_id, balance, version, updated_at FROM wallets WHERE player_id = ? ORDER BY currency_id")
+      .bind(playerId)
+      .all<WalletRow>();
+    return rows.results.map(mapWallet);
+  }
+}
+
+function mapWallet(row: WalletRow): Wallet {
+  return {
+    playerId: parsePlayerId(row.player_id),
+    currencyDefinitionId: parseCurrencyDefinitionId(row.currency_id),
+    balance: row.balance,
+    version: row.version,
+    updatedAt: row.updated_at
+  };
+}
+
+export class D1EconomyLedgerRepository implements EconomyLedgerRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async findByTransactionId(transactionId: EconomyTransactionId): Promise<EconomyLedgerEntry | null> {
+    const row = await this.db
+      .prepare("SELECT id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at FROM economy_ledger WHERE id = ?")
+      .bind(transactionId)
+      .first<EconomyLedgerRow>();
+    return row === null ? null : mapLedger(row);
+  }
+
+  async listByPlayer(playerId: PlayerId, limit: number): Promise<readonly EconomyLedgerEntry[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new ApplicationError("INVALID_INPUT", "Ledger query limit is invalid");
+    }
+    const rows = await this.db
+      .prepare("SELECT id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at FROM economy_ledger WHERE player_id = ? ORDER BY created_at DESC, id DESC LIMIT ?")
+      .bind(playerId, limit)
+      .all<EconomyLedgerRow>();
+    return rows.results.map(mapLedger);
+  }
+}
+
+export class D1EconomyMutationRepository implements EconomyMutationRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async applyAtomically(mutation: EconomyMutation): Promise<void> {
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+          .bind(mutation.playerId, mutation.currencyDefinitionId, mutation.createdAt, mutation.createdAt),
+        this.db
+          .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(
+            mutation.transactionId,
+            mutation.playerId,
+            mutation.currencyDefinitionId,
+            mutation.delta,
+            mutation.balanceBefore,
+            mutation.balanceAfter,
+            mutation.expectedWalletVersion,
+            mutation.reason,
+            mutation.referenceType,
+            mutation.referenceId,
+            mutation.requestId,
+            mutation.createdAt
+          )
+      ]);
+      if (results.length !== 2 || results.some((result) => !result.success)) {
+        throw new Error("Atomic economy mutation failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("economy conflict")) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "Wallet changed concurrently");
+      }
+      throw error;
+    }
+  }
+}
+
+export class D1EconomySettlementRepository implements EconomySettlementRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async settleShopAtomically(
+    economy: EconomyMutation,
+    inventory: InventoryMutation,
+    expectedInventory: InventoryItem | null,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    if (economy.playerId !== inventory.playerId || economy.playerId !== idempotency.actorPlayerId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Settlement ownership does not match");
+    }
+    const expectedQuantity = expectedInventory?.quantity ?? 0;
+    const expectedVersion = expectedInventory?.version ?? 0;
+    const afterQuantity = inventory.kind === "ADD"
+      ? expectedQuantity + inventory.quantity
+      : expectedQuantity - inventory.quantity;
+    const afterVersion = expectedVersion + 1;
+    const inventoryStatement = inventory.kind === "ADD"
+      ? expectedInventory === null
+        ? this.db
+            .prepare("INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) SELECT ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ?)")
+            .bind(inventory.playerId, inventory.itemDefinitionId, inventory.quantity, inventory.timestamp, inventory.playerId, inventory.itemDefinitionId)
+        : this.db
+            .prepare("UPDATE inventory_items SET quantity = quantity + ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity <= ? - ?")
+            .bind(inventory.quantity, inventory.timestamp, inventory.playerId, inventory.itemDefinitionId, expectedQuantity, expectedVersion, inventory.maxQuantity, inventory.quantity)
+      : this.db
+          .prepare("UPDATE inventory_items SET quantity = quantity - ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity >= ?")
+          .bind(inventory.quantity, inventory.timestamp, inventory.playerId, inventory.itemDefinitionId, expectedQuantity, expectedVersion, inventory.quantity);
+
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+          .bind(economy.playerId, economy.currencyDefinitionId, economy.createdAt, economy.createdAt),
+        this.db
+          .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(economy.transactionId, economy.playerId, economy.currencyDefinitionId, economy.delta, economy.balanceBefore, economy.balanceAfter, economy.expectedWalletVersion, economy.reason, economy.referenceType, economy.referenceId, economy.requestId, economy.createdAt),
+        inventoryStatement,
+        this.db
+          .prepare("INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(
+            economy.playerId, economy.currencyDefinitionId, economy.balanceAfter, economy.expectedWalletVersion + 1,
+            economy.transactionId, economy.playerId,
+            inventory.playerId, inventory.itemDefinitionId, afterQuantity, afterVersion,
+            idempotency.actorPlayerId, idempotency.operation, idempotency.requestId,
+            idempotency.payloadFingerprint, idempotency.status, idempotency.resourceId,
+            idempotency.responseJson, idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 4 || results.some((result) => !result.success)) {
+        throw new Error("Atomic shop settlement failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error &&
+          (error.message.includes("economy conflict") || error.message.includes("idempotency_keys.actor_player_id"))) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "Economy state changed concurrently");
+      }
+      throw error;
+    }
+  }
+}
+
 export class D1HarvestSettlementRepository implements HarvestSettlementRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
@@ -417,5 +632,22 @@ function mapInventoryItem(row: InventoryItemRow): InventoryItem {
     quantity: row.quantity,
     updatedAt: row.updated_at,
     version: row.version
+  };
+}
+
+function mapLedger(row: EconomyLedgerRow): EconomyLedgerEntry {
+  return {
+    transactionId: parseEconomyTransactionId(row.id),
+    playerId: parsePlayerId(row.player_id),
+    currencyDefinitionId: parseCurrencyDefinitionId(row.currency_id),
+    delta: row.delta,
+    balanceBefore: row.balance_before,
+    balanceAfter: row.balance_after,
+    expectedWalletVersion: row.expected_wallet_version,
+    reason: row.reason,
+    referenceType: row.reference_type,
+    referenceId: parseShopEntryId(row.reference_id),
+    requestId: row.request_id,
+    createdAt: row.created_at
   };
 }

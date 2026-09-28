@@ -7,6 +7,8 @@ export const FarmIdSchema = z.string().regex(new RegExp(`^farm_${UUID_PATTERN}$`
 export const CropInstanceIdSchema = z.string().regex(new RegExp(`^cropinst_${UUID_PATTERN}$`, "i"));
 export const CropDefinitionIdSchema = z.string().regex(/^crop_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const ItemDefinitionIdSchema = z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+export const CurrencyDefinitionIdSchema = z.string().regex(/^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+export const ShopEntryIdSchema = z.string().regex(/^shop_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const RequestIdSchema = z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/);
 export const FarmRoleSchema = z.enum(["OWNER", "EDITOR", "HELPER", "VISITOR"]);
 export const TerrainTypeSchema = z.enum(["GRASS", "SOIL", "WATER", "BLOCKED"]);
@@ -65,6 +67,7 @@ export const CreateFarmResponseSchema = z
   .object({ farm: FarmDTOSchema, membership: FarmMemberDTOSchema })
   .strict();
 export const GetFarmResponseSchema = CreateFarmResponseSchema;
+export const GetFarmTilesResponseSchema = z.object({ tiles: z.array(FarmTileDTOSchema) }).strict();
 export const HealthResponseSchema = z
   .object({ ok: z.literal(true), data: z.object({ status: z.literal("ok") }).strict() })
   .strict();
@@ -118,6 +121,61 @@ export const InventoryEntryDTOSchema = z
 export const HarvestCropResponseSchema = z.object({ harvest: HarvestResultDTOSchema }).strict();
 export const GetInventoryResponseSchema = z.object({ items: z.array(InventoryEntryDTOSchema) }).strict();
 
+export const MAX_SHOP_COMMAND_QUANTITY = 1_000_000;
+
+const ShopItemCommandSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    shopEntryId: ShopEntryIdSchema,
+    quantity: z.number().int().positive().max(MAX_SHOP_COMMAND_QUANTITY)
+  })
+  .strict();
+
+export const BuyItemRequestSchema = ShopItemCommandSchema;
+export const SellItemRequestSchema = ShopItemCommandSchema;
+
+export const BuyItemResultDTOSchema = z
+  .object({
+    itemDefinitionId: ItemDefinitionIdSchema,
+    quantity: z.number().int().positive(),
+    currencyId: CurrencyDefinitionIdSchema,
+    amountSpent: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    newBalance: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+  })
+  .strict();
+
+export const SellItemResultDTOSchema = z
+  .object({
+    itemDefinitionId: ItemDefinitionIdSchema,
+    quantity: z.number().int().positive(),
+    currencyId: CurrencyDefinitionIdSchema,
+    amountReceived: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    newBalance: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+  })
+  .strict();
+
+export const ShopEntryDTOSchema = z
+  .object({
+    shopEntryId: ShopEntryIdSchema,
+    itemDefinitionId: ItemDefinitionIdSchema,
+    currencyId: CurrencyDefinitionIdSchema,
+    buyPrice: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    sellPrice: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    maxQuantityPerRequest: z.number().int().positive().max(MAX_SHOP_COMMAND_QUANTITY)
+  })
+  .strict();
+
+export const GetShopResponseSchema = z.object({ entries: z.array(ShopEntryDTOSchema) }).strict();
+
+export const WalletDTOSchema = z
+  .object({
+    currencyId: CurrencyDefinitionIdSchema,
+    balance: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+  })
+  .strict();
+
+export const GetWalletResponseSchema = z.object({ wallets: z.array(WalletDTOSchema) }).strict();
+
 export const ErrorCodeSchema = z.enum([
   "INVALID_INPUT",
   "NOT_AUTHENTICATED",
@@ -133,6 +191,11 @@ export const ErrorCodeSchema = z.enum([
   "CROP_ALREADY_HARVESTED",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
+  "CURRENCY_DEFINITION_NOT_FOUND",
+  "SHOP_ENTRY_NOT_FOUND",
+  "INVALID_QUANTITY",
+  "WALLET_LIMIT_EXCEEDED",
+  "ECONOMY_CONFLICT",
   "CROP_NOT_READY",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
@@ -153,6 +216,12 @@ export type CropStateDTO = z.infer<typeof CropStateDTOSchema>;
 export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;
 export type HarvestResultDTO = z.infer<typeof HarvestResultDTOSchema>;
 export type InventoryEntryDTO = z.infer<typeof InventoryEntryDTOSchema>;
+export type BuyItemRequest = z.infer<typeof BuyItemRequestSchema>;
+export type SellItemRequest = z.infer<typeof SellItemRequestSchema>;
+export type BuyItemResultDTO = z.infer<typeof BuyItemResultDTOSchema>;
+export type SellItemResultDTO = z.infer<typeof SellItemResultDTOSchema>;
+export type ShopEntryDTO = z.infer<typeof ShopEntryDTOSchema>;
+export type WalletDTO = z.infer<typeof WalletDTOSchema>;
 
 export type ApiSuccess<T> = { readonly ok: true; readonly data: T };
 export type ApiFailure = {

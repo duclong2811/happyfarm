@@ -1,4 +1,9 @@
-import { assertActivePlayer, createOwnedFarm, DomainError } from "@happy-farm/domain";
+import {
+  assertActivePlayer,
+  createInitialFarmTiles,
+  createOwnedFarm,
+  DomainError
+} from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
 import type { ActorContext, Clock, FarmRepository, IdGenerator, PlayerRepository } from "./ports";
 
@@ -21,8 +26,15 @@ export class CreateFarm {
     const player = await this.players.findById(actor.playerId);
     try {
       assertActivePlayer(player);
-      const aggregate = createOwnedFarm(this.ids.newFarmId(), actor.playerId, command.name, this.clock.now());
-      await this.farms.createWithOwner(aggregate.farm, aggregate.ownerMembership);
+      const now = this.clock.now();
+      const aggregate = createOwnedFarm(this.ids.newFarmId(), actor.playerId, command.name, now);
+      // Starter land is persisted in the same transaction as the farm and OWNER membership,
+      // so a partially created farm is never observable.
+      await this.farms.createWithOwner(
+        aggregate.farm,
+        aggregate.ownerMembership,
+        createInitialFarmTiles(aggregate.farm.id, now)
+      );
       return aggregate;
     } catch (error: unknown) {
       if (error instanceof DomainError) {

@@ -37,7 +37,13 @@ export class NodeD1Database implements D1DatabaseLike {
   readonly sqlite = new DatabaseSync(":memory:");
   private batchTail: Promise<void> = Promise.resolve();
 
-  constructor(migrationSql: string) {
+  constructor(
+    migrationSql: string,
+    private readonly failures: {
+      readonly afterStatement?: (statementIndex: number) => void;
+      readonly beforeCommit?: () => void;
+    } = {}
+  ) {
     this.sqlite.exec(migrationSql);
     this.sqlite.exec("PRAGMA foreign_keys = ON");
   }
@@ -51,7 +57,11 @@ export class NodeD1Database implements D1DatabaseLike {
       this.sqlite.exec("BEGIN IMMEDIATE");
       try {
         const results: D1RunResultLike[] = [];
-        for (const statement of statements) results.push(await statement.run());
+        for (const [index, statement] of statements.entries()) {
+          results.push(await statement.run());
+          this.failures.afterStatement?.(index);
+        }
+        this.failures.beforeCommit?.();
         this.sqlite.exec("COMMIT");
         return results;
       } catch (error: unknown) {

@@ -3,16 +3,25 @@ import type {
   CropDefinitionId,
   CropInstance,
   CropInstanceId,
+  CurrencyDefinition,
+  CurrencyDefinitionId,
+  EconomyLedgerEntry,
+  EconomyMutation,
+  EconomyTransactionId,
   Farm,
   FarmId,
   FarmMember,
   FarmTile,
   InventoryAddition,
   InventoryItem,
+  InventoryMutation,
   ItemDefinition,
   ItemDefinitionId,
   Player,
-  PlayerId
+  PlayerId,
+  ShopEntry,
+  ShopEntryId,
+  Wallet
 } from "@happy-farm/domain";
 
 export interface ActorContext {
@@ -39,12 +48,21 @@ export interface PayloadFingerprint {
   hash(canonicalPayload: string): Promise<string>;
 }
 
+export interface EconomyTransactionIdGenerator {
+  newEconomyTransactionId(): EconomyTransactionId;
+}
+
 export interface PlayerRepository {
   findById(id: PlayerId): Promise<Player | null>;
 }
 
 export interface FarmRepository {
-  createWithOwner(farm: Farm, ownerMembership: FarmMember): Promise<void>;
+  /** Atomically creates the farm, its OWNER membership, and its starter land tiles. */
+  createWithOwner(
+    farm: Farm,
+    ownerMembership: FarmMember,
+    initialTiles: readonly FarmTile[]
+  ): Promise<void>;
   findById(id: FarmId): Promise<Farm | null>;
 }
 
@@ -55,6 +73,7 @@ export interface FarmMemberRepository {
 export interface FarmTileRepository {
   insert(tile: FarmTile): Promise<void>;
   find(farmId: FarmId, x: number, y: number): Promise<FarmTile | null>;
+  listByFarm(farmId: FarmId): Promise<readonly FarmTile[]>;
   updateVersion(tile: FarmTile, expectedVersion: number): Promise<boolean>;
 }
 
@@ -64,6 +83,30 @@ export interface CropDefinitionRepository {
 
 export interface ItemDefinitionRepository {
   findById(id: ItemDefinitionId): ItemDefinition | null;
+}
+
+export interface CurrencyDefinitionRepository {
+  findById(id: CurrencyDefinitionId): CurrencyDefinition | null;
+}
+
+export interface ShopEntryRepository {
+  findById(id: ShopEntryId): ShopEntry | null;
+  list(): readonly ShopEntry[];
+}
+
+export interface WalletRepository {
+  find(playerId: PlayerId, currencyDefinitionId: CurrencyDefinitionId): Promise<Wallet | null>;
+  listByPlayer(playerId: PlayerId): Promise<readonly Wallet[]>;
+}
+
+export interface EconomyLedgerRepository {
+  findByTransactionId(transactionId: EconomyTransactionId): Promise<EconomyLedgerEntry | null>;
+  listByPlayer(playerId: PlayerId, limit: number): Promise<readonly EconomyLedgerEntry[]>;
+}
+
+/** The sole Phase 3C write boundary for a wallet mutation and its ledger row. */
+export interface EconomyMutationRepository {
+  applyAtomically(mutation: EconomyMutation): Promise<void>;
 }
 
 export interface InventoryRepository {
@@ -101,6 +144,15 @@ export interface HarvestSettlementRepository {
   settleHarvestAtomically(
     crop: CropInstance,
     addition: InventoryAddition,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+}
+
+export interface EconomySettlementRepository {
+  settleShopAtomically(
+    economy: EconomyMutation,
+    inventory: InventoryMutation,
+    expectedInventory: InventoryItem | null,
     idempotency: IdempotencyRecord
   ): Promise<void>;
 }

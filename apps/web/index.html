@@ -3,12 +3,69 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Happy Farm</title>
+    <title>Happy Farm — development</title>
   </head>
   <body>
+    <header>
+      <h1>Happy Farm <span class="tag">development</span></h1>
+      <p class="hint">
+        Server-authoritative loop: create farm → plant → grow → harvest → inventory → sell → gold.
+        Every reward, price, and timer comes from the API.
+      </p>
+    </header>
     <main>
-      <h1>Happy Farm</h1>
-      <p id="status">Checking API foundation…</p>
+      <section class="panel">
+        <h2>Session</h2>
+        <label for="token">Development token</label>
+        <input id="token" type="password" autocomplete="off" placeholder="DEV_AUTH_TOKEN" />
+        <div class="row">
+          <button id="save-token" type="button">Save token</button>
+          <button id="bootstrap" type="button">Bootstrap dev player</button>
+        </div>
+        <p class="muted">The token stays in this browser and is sent as a bearer header. Identity is server-side.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Farm</h2>
+        <div class="row">
+          <input id="farm-name" type="text" value="Starter Farm" maxlength="80" />
+          <button id="create-farm" type="button">Create farm</button>
+        </div>
+        <div class="row">
+          <input id="load-farm-id" type="text" placeholder="farm_..." />
+          <button id="load-farm" type="button">Load farm</button>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+        <p id="farm-info" class="muted">No farm loaded.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Wallet</h2>
+        <p id="wallet" class="big">0 gold</p>
+      </section>
+
+      <section class="panel">
+        <h2>Inventory</h2>
+        <ul id="inventory"></ul>
+      </section>
+
+      <section class="panel wide">
+        <h2>Field</h2>
+        <div class="row">
+          <label for="crop-select">Crop</label>
+          <select id="crop-select"></select>
+          <button id="plant" type="button">Plant on selected tile</button>
+          <span id="selection" class="muted">No tile selected.</span>
+        </div>
+        <div id="field"></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>Shop</h2>
+        <div id="shop"></div>
+      </section>
+
+      <p id="status" class="status">Ready.</p>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
