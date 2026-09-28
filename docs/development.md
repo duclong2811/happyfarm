@@ -107,6 +107,21 @@ Because planting is free and only harvested produce is tradeable, the first usef
 plant → harvest → sell → buy. A brand-new player has no wallet row and therefore no gold, so
 `Buy` returns `INSUFFICIENT_FUNDS` until something has been sold.
 
+## 3D view (Phase 3.6A)
+
+The **Field: 3D prototype** panel starts a Three.js renderer on an explicit click and draws one
+placeholder slab per authoritative unlocked tile. It is a renderer foundation: camera, lights,
+ground, sizing, and disposal are real, while crop visuals, materials, and models belong to the asset
+pipeline (3.6B) and the live-state pass (3.6C).
+
+- `apps/web/src/render/layout.ts` is pure geometry, tile coordinates to world positions, and is unit
+  tested in `tests/web/farm-layout.test.ts`.
+- `apps/web/src/render/scene.ts` owns three.js, the canvas, `ResizeObserver` sizing, on-demand
+  frames, and disposal. It never fetches and decides nothing about the game.
+- Frames are drawn on demand rather than from a free-running loop, because nothing animates yet.
+- A session without WebGL is unaffected until the button is pressed, and then reports
+  `FarmRendererUnavailableError` instead of failing silently.
+
 ## Live backend without `workerd`
 
 On some Windows hosts the native Worker runtime crashes with

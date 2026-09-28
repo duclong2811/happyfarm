@@ -7,6 +7,7 @@ import type {
 } from "@happy-farm/contracts";
 import { ApiClient, ApiError } from "./api";
 import { PLANTABLE_CROPS, cropLabel, currencyLabel, errorLabel, itemLabel } from "./labels";
+import { createFarmScene, FarmRendererUnavailableError, type FarmSceneHandle } from "./render";
 import "./styles.css";
 
 const TOKEN_KEY = "happy-farm.dev.token";
@@ -45,6 +46,10 @@ const state: AppState = {
   status: "Enter the development token, then bootstrap and create a farm.",
   statusIsError: false
 };
+
+// The 3D view is opt-in. Creating a WebGL context is the one thing this page cannot take back, so
+// it happens on an explicit click instead of during load.
+let scene: FarmSceneHandle | null = null;
 
 // The repository typechecks with both the DOM and `@cloudflare/workers-types` libraries, which
 // declare conflicting `append`/`remove` signatures. The cast keeps this tiny id lookup usable.
@@ -268,12 +273,39 @@ async function refreshAccount(): Promise<void> {
   state.shop = shop.entries;
 }
 
+function setSceneState(text: string): void {
+  element<HTMLSpanElement>("render-3d-state").textContent = text;
+}
+
+/** Pushes authoritative tile coordinates into the renderer. The renderer invents no land. */
+function refreshScene(): void {
+  if (scene === null) return;
+  scene.setTiles(state.tiles.map((tile) => ({ x: tile.x, y: tile.y })));
+  setSceneState(`Renderer active (${String(state.tiles.length)} tiles).`);
+}
+
+function enable3D(): void {
+  try {
+    scene ??= createFarmScene(element<HTMLCanvasElement>("scene"));
+    refreshScene();
+    setStatus("3D view ready.");
+  } catch (error: unknown) {
+    if (error instanceof FarmRendererUnavailableError) {
+      setSceneState("Unavailable.");
+      setStatus("This browser session has no WebGL context, so the 3D view cannot start.", true);
+      return;
+    }
+    setStatus(describe(error), true);
+  }
+}
+
 async function refreshFarm(): Promise<void> {
   if (state.farmId === null) return;
   const client = api();
   const [tiles, crops] = await Promise.all([client.getTiles(state.farmId), client.getCrops(state.farmId)]);
   state.tiles = tiles.tiles;
   state.crops = crops.crops;
+  refreshScene();
 }
 
 async function loadFarm(farmId: string): Promise<void> {
@@ -412,6 +444,14 @@ function wire(): void {
   });
   element<HTMLButtonElement>("plant").addEventListener("click", () => {
     void run(plant);
+  });
+  element<HTMLButtonElement>("render-3d").addEventListener("click", enable3D);
+  // A page restored from the back/forward cache would otherwise return with a disposed renderer and
+  // a blank canvas, so the handle is dropped and the button starts a fresh one.
+  window.addEventListener("pagehide", () => {
+    scene?.dispose();
+    scene = null;
+    setSceneState("Renderer idle.");
   });
 
   window.setInterval(() => {

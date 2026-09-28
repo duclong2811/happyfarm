@@ -177,6 +177,15 @@ ul {
   color: var(--muted);
 }
 
+.scene {
+  display: block;
+  width: 100%;
+  height: 20rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: #0b1220;
+}
+
 .shop-row {
   display: flex;
   align-items: center;

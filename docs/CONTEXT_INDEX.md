@@ -77,6 +77,16 @@ Do not read economy settlement internals unless the task changes shop behaviour,
 - only target `apps/web` modules
 Do not inspect backend internals unless the contract is insufficient.
 
+### 3D renderer work (Phase 3.6A and later)
+
+Read `docs/decisions/0007-renderer-foundation-and-plain-typescript-client.md`, then
+`apps/web/src/render/layout.ts` before `apps/web/src/render/scene.ts`.
+
+- Pure geometry and its tests: `apps/web/src/render/layout.ts`, `tests/web/farm-layout.test.ts`.
+- three.js, canvas, sizing, disposal: `apps/web/src/render/scene.ts`.
+- Only `FarmSceneHandle` crosses into `apps/web/src/main.ts`. Do not import three anywhere else in
+  the client, and do not let the renderer fetch or compute game state.
+
 ## Game-data/content task
 - relevant schema/type in `packages/game-data`
 - validation tests

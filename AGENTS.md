@@ -10,6 +10,10 @@ Primary stack:
 - Persistent data: Cloudflare D1
 - Large assets: Cloudflare R2
 
+Current client deviation: `apps/web` is plain TypeScript + Vite and uses `three` directly, with no
+React yet. See `docs/decisions/0007-renderer-foundation-and-plain-typescript-client.md` for why, and
+for what would justify introducing React.
+
 Game logic, data, economy, security, and persistence must be implemented before final 3D polish.
 
 ## Non-negotiable architecture rules
