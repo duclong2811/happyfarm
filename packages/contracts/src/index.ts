@@ -118,7 +118,38 @@ export const InventoryEntryDTOSchema = z
   .object({ itemDefinitionId: ItemDefinitionIdSchema, quantity: z.number().int().nonnegative() })
   .strict();
 
-export const HarvestCropResponseSchema = z.object({ harvest: HarvestResultDTOSchema }).strict();
+export const MAX_PROGRESSION_LEVEL = 10_000;
+
+/**
+ * A player's level and the experience behind it.
+ *
+ * level, xpIntoLevel, and xpForNextLevel are all derived by the server from `xp`; they are sent so
+ * the client never has to reimplement the curve, and never has to guess how far the next level is.
+ */
+export const PlayerProgressionDTOSchema = z
+  .object({
+    level: z.number().int().positive().max(MAX_PROGRESSION_LEVEL),
+    xp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    xpIntoLevel: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    xpForNextLevel: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    maxLevel: z.number().int().min(2).max(MAX_PROGRESSION_LEVEL)
+  })
+  .strict();
+
+export const XpAwardDTOSchema = z
+  .object({
+    xpAwarded: z.number().int().positive().max(1_000_000),
+    leveledUp: z.boolean(),
+    progression: PlayerProgressionDTOSchema
+  })
+  .strict();
+
+export const HarvestCropResponseSchema = z
+  .object({ harvest: HarvestResultDTOSchema, progression: XpAwardDTOSchema })
+  .strict();
+export const GetProgressionResponseSchema = z
+  .object({ progression: PlayerProgressionDTOSchema })
+  .strict();
 export const GetInventoryResponseSchema = z.object({ items: z.array(InventoryEntryDTOSchema) }).strict();
 
 export const MAX_SHOP_COMMAND_QUANTITY = 1_000_000;
@@ -196,6 +227,7 @@ export const ErrorCodeSchema = z.enum([
   "INVALID_QUANTITY",
   "WALLET_LIMIT_EXCEEDED",
   "ECONOMY_CONFLICT",
+  "PROGRESSION_CONFLICT",
   "CROP_NOT_READY",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
@@ -215,6 +247,8 @@ export type PlantCropRequest = z.infer<typeof PlantCropRequestSchema>;
 export type CropStateDTO = z.infer<typeof CropStateDTOSchema>;
 export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;
 export type HarvestResultDTO = z.infer<typeof HarvestResultDTOSchema>;
+export type PlayerProgressionDTO = z.infer<typeof PlayerProgressionDTOSchema>;
+export type XpAwardDTO = z.infer<typeof XpAwardDTOSchema>;
 export type InventoryEntryDTO = z.infer<typeof InventoryEntryDTOSchema>;
 export type BuyItemRequest = z.infer<typeof BuyItemRequestSchema>;
 export type SellItemRequest = z.infer<typeof SellItemRequestSchema>;

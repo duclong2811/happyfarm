@@ -13,12 +13,14 @@ import {
   D1FarmMemberRepository,
   D1FarmRepository,
   D1HarvestSettlementRepository,
-  D1InventoryRepository
+  D1InventoryRepository,
+  D1ProgressionRepository
 } from "../../workers/api/src/d1-repositories";
 import {
   GameDataCropDefinitions,
   GameDataItemDefinitions,
-  Sha256Fingerprint
+  Sha256Fingerprint,
+  gameDataProgressionDefinition
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import {
@@ -30,7 +32,12 @@ import {
   PLAYER_TWO_ID
 } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql"]
+const migration = [
+  "0001_phase_1_foundation.sql",
+  "0002_crop_simulation.sql",
+  "0003_inventory_and_harvest.sql",
+  "0005_player_progression.sql"
+]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -100,6 +107,8 @@ describe("HarvestCrop", () => {
       new D1HarvestSettlementRepository(db),
       cropDefinitions,
       new InventoryService(new GameDataItemDefinitions(), clock),
+      new D1ProgressionRepository(db),
+      gameDataProgressionDefinition,
       new Sha256Fingerprint(),
       clock
     );
@@ -110,8 +119,7 @@ describe("HarvestCrop", () => {
   it("settles a mature crop atomically and makes the tile available", async () => {
     seedCrop();
     await expect(service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).resolves.toMatchObject({
-      itemDefinitionId: "item_carrot",
-      quantityAdded: 2
+      harvest: { itemDefinitionId: "item_carrot", quantityAdded: 2 }
     });
     expect(await crops.findById(CROP_ONE_ID)).toBeNull();
     expect((await inventory.listByPlayer(PLAYER_ONE_ID))[0]).toMatchObject({ itemDefinitionId: "item_carrot", quantity: 2 });
@@ -218,5 +226,78 @@ describe("HarvestCrop", () => {
     members.allowed = true;
     db.sqlite.prepare("DELETE FROM farms WHERE id = ?").run(FARM_ONE_ID);
     await expect(harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+  });
+
+  it("awards the crop's experience in the same settlement as the harvest", async () => {
+    seedCrop();
+    const result = await service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    expect(result.progression).toEqual({
+      xpAwarded: 4,
+      leveledUp: false,
+      progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 }
+    });
+    expect(
+      db.sqlite
+        .prepare("SELECT xp, level, progression_version FROM player_progression WHERE player_id = ?")
+        .get(PLAYER_ONE_ID)
+    ).toMatchObject({ xp: 4, level: 1, progression_version: 2 });
+  });
+
+  it("creates the progression row on the first award rather than with the player", async () => {
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM player_progression").get()).toMatchObject({
+      count: 0
+    });
+    seedCrop();
+    await service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM player_progression").get()).toMatchObject({
+      count: 1
+    });
+  });
+
+  it("accumulates experience across harvests and levels up exactly on the threshold", async () => {
+    db.sqlite
+      .prepare(
+        "INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 116, 1, ?, ?)"
+      )
+      .run(PLAYER_ONE_ID, NOW, NOW);
+    seedCrop();
+    seedCrop(CROP_TWO_ID, 1);
+    const harvest = service();
+    const first = await harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    expect(first.progression).toMatchObject({
+      xpAwarded: 4,
+      leveledUp: true,
+      progression: { level: 2, xp: 120, xpIntoLevel: 0, xpForNextLevel: 240 }
+    });
+    const second = await harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, {
+      ...command,
+      cropInstanceId: CROP_TWO_ID,
+      requestId: "harvest_request_002"
+    });
+    expect(second.progression.progression).toMatchObject({ level: 2, xp: 124, xpIntoLevel: 4 });
+  });
+
+  it("returns the stored award on replay instead of recomputing it", async () => {
+    seedCrop();
+    seedCrop(CROP_TWO_ID, 1);
+    const harvest = service();
+    const first = await harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    await harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, {
+      ...command,
+      cropInstanceId: CROP_TWO_ID,
+      requestId: "harvest_request_002"
+    });
+    // The replay must still report the level the first call reached, not the level now.
+    await expect(harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).resolves.toEqual(first);
+    expect(first.progression.progression.level).toBe(1);
+  });
+
+  it("rolls the experience award back with the rest of the settlement", async () => {
+    seedCrop();
+    db.sqlite.exec("CREATE TRIGGER fail_harvest_idempotency BEFORE INSERT ON idempotency_keys WHEN NEW.operation = 'HARVEST_CROP' BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+    await expect(service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).rejects.toThrow();
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM player_progression").get()).toMatchObject({
+      count: 0
+    });
   });
 });

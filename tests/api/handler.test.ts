@@ -7,11 +7,11 @@ import { GetFarmTilesResponseSchema, GetShopResponseSchema, GetWalletResponseSch
 import { INITIAL_LAND_SIZE, parseCropInstanceId, parseEconomyTransactionId, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
 import { shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
-import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataShopEntries, Sha256Fingerprint } from "../../workers/api/src/runtime";
+import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataShopEntries, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -70,6 +70,7 @@ describe("Worker API foundation", () => {
       itemDefinitions: new GameDataItemDefinitions(),
       currencyDefinitions: new GameDataCurrencyDefinitions(),
       shopEntries: new GameDataShopEntries(),
+      progressionDefinition: gameDataProgressionDefinition,
       clock: new FixedClock()
     });
   });
@@ -324,6 +325,61 @@ describe("Worker API foundation", () => {
     expect(await response.json()).toEqual({ ok: true, data: { items: [{ itemDefinitionId: "item_carrot", quantity: 2 }] } });
     auth.setActor(null);
     expect((await handle(new Request("https://api.test/inventory"))).status).toBe(401);
+  });
+
+  it("reports derived levelling for the actor and answers a harvest replay from the stored award", async () => {
+    await handle(new Request("https://api.test/farms", {
+      method: "POST",
+      body: JSON.stringify({ name: "Starter Farm" }),
+      headers: { "content-type": "application/json" }
+    }));
+    db.sqlite.prepare("INSERT INTO crop_instances (id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at) VALUES ('cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc', ?, 0, 0, 'crop_carrot', ?, '2026-09-26T23:55:00.000Z', 1, ?, ?)").run(FARM_ONE_ID, PLAYER_ONE_ID, NOW, NOW);
+
+    // A player who has never earned experience reads as level 1, and reading stores nothing.
+    expect(await (await handle(new Request("https://api.test/progression"))).json()).toEqual({
+      ok: true,
+      data: { progression: { level: 1, xp: 0, xpIntoLevel: 0, xpForNextLevel: 120, maxLevel: 50 } }
+    });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM player_progression").get()).toEqual({ count: 0 });
+
+    const harvestUrl = `https://api.test/farms/${FARM_ONE_ID}/crops/cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc/harvest`;
+    const harvested = await handle(new Request(harvestUrl, {
+      method: "POST",
+      body: JSON.stringify({ requestId: "harvest_progression_001", expectedCropVersion: 1 }),
+      headers: { "content-type": "application/json" }
+    }));
+    const award = await harvested.json();
+    expect(award).toEqual({
+      ok: true,
+      data: {
+        harvest: { cropInstanceId: "cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc", itemDefinitionId: "item_carrot", quantityAdded: 2 },
+        progression: { xpAwarded: 4, leveledUp: false, progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 } }
+      }
+    });
+
+    // Reading afterwards agrees with the award the harvest already reported.
+    expect(await (await handle(new Request("https://api.test/progression"))).json()).toEqual({
+      ok: true,
+      data: { progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 } }
+    });
+
+    // The replay is answered from the stored award rather than recomputed, and the crop it names no
+    // longer exists, so a harvest can never pay its experience twice.
+    expect(await (await handle(new Request(harvestUrl, {
+      method: "POST",
+      body: JSON.stringify({ requestId: "harvest_progression_001", expectedCropVersion: 1 }),
+      headers: { "content-type": "application/json" }
+    }))).json()).toEqual(award);
+    expect(db.sqlite.prepare("SELECT xp, level, progression_version FROM player_progression WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ xp: 4, level: 1, progression_version: 2 });
+
+    // Ownership, and any levelling input a client could name, are ignored exactly as for wallets.
+    expect(await (await handle(new Request(`https://api.test/progression?playerId=${PLAYER_TWO_ID}&level=99&xp=147000`))).json()).toEqual({
+      ok: true,
+      data: { progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 } }
+    });
+
+    auth.setActor(null);
+    expect((await handle(new Request("https://api.test/progression"))).status).toBe(401);
   });
 
   it("settles explicit Buy/Sell commands and rejects client-authored authority fields", async () => {

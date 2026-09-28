@@ -5,4 +5,5 @@ export * from "./farm";
 export * from "./ids";
 export * from "./inventory";
 export * from "./player";
+export * from "./progression";
 export * from "./tile";

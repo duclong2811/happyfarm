@@ -2,11 +2,13 @@ import type {
   CropStateDTO,
   FarmTileDTO,
   InventoryEntryDTO,
+  PlayerProgressionDTO,
   ShopEntryDTO,
   WalletDTO
 } from "@happy-farm/contracts";
 import { ApiClient, ApiError } from "./api";
 import { PLANTABLE_CROPS, cropLabel, currencyLabel, errorLabel, itemLabel } from "./labels";
+import { progressionSummary } from "./progression";
 import {
   buildFarmSceneInput,
   createFarmScene,
@@ -32,6 +34,7 @@ interface AppState {
   inventory: readonly InventoryEntryDTO[];
   shop: readonly ShopEntryDTO[];
   wallet: readonly WalletDTO[];
+  progression: PlayerProgressionDTO | null;
   selected: SelectedTile | null;
   selectedCrop: string;
   status: string;
@@ -46,6 +49,7 @@ const state: AppState = {
   inventory: [],
   shop: [],
   wallet: [],
+  progression: null,
   selected: null,
   selectedCrop: PLANTABLE_CROPS[0],
   status: "Enter the development token, then bootstrap and create a farm.",
@@ -130,6 +134,26 @@ function renderWallet(): void {
   node.textContent = state.wallet
     .map((entry) => `${String(entry.balance)} ${currencyLabel(entry.currencyId).toLowerCase()}`)
     .join(" · ");
+}
+
+function renderProgression(): void {
+  const node = element<HTMLDivElement>("progression");
+  node.replaceChildren();
+  const progression = state.progression;
+  if (progression === null) {
+    node.appendChild(make("p", "muted", "Sign in to load levelling state."));
+    return;
+  }
+  // The bar's width is the only value on this page the server does not send; it is the fraction the
+  // server already derived, turned into pixels. No level or threshold is recomputed here.
+  const summary = progressionSummary(progression);
+  node.appendChild(make("p", "big", summary.title));
+  const bar = make("div", "xp-bar");
+  const fill = make("div", "xp-fill");
+  fill.style.width = `${String(Math.round(summary.fraction * 100))}%`;
+  bar.appendChild(fill);
+  node.appendChild(bar);
+  node.appendChild(make("p", "muted", summary.detail));
 }
 
 function renderSelection(): void {
@@ -258,6 +282,7 @@ function renderShop(): void {
 function render(): void {
   renderFarm();
   renderWallet();
+  renderProgression();
   renderField();
   renderSelection();
   renderInventory();
@@ -266,14 +291,16 @@ function render(): void {
 
 async function refreshAccount(): Promise<void> {
   const client = api();
-  const [inventory, wallet, shop] = await Promise.all([
+  const [inventory, wallet, shop, progression] = await Promise.all([
     client.getInventory(),
     client.getWallet(),
-    client.getShop()
+    client.getShop(),
+    client.getProgression()
   ]);
   state.inventory = inventory.items;
   state.wallet = wallet.wallets;
   state.shop = shop.entries;
+  state.progression = progression.progression;
 }
 
 function setSceneState(text: string): void {
@@ -409,8 +436,10 @@ async function harvestCrop(cropInstanceId: string, expectedCropVersion: number):
   });
   await refreshFarm();
   await refreshAccount();
+  // Levelling state comes from the refresh, not from the award, so the page and the server agree
+  // even if another harvest landed in between. The award is used for the message only.
   setStatus(
-    `Harvested ${String(result.harvest.quantityAdded)} × ${itemLabel(result.harvest.itemDefinitionId)}.`
+    `Harvested ${String(result.harvest.quantityAdded)} × ${itemLabel(result.harvest.itemDefinitionId)} · +${String(result.progression.xpAwarded)} XP${result.progression.leveledUp ? ` · reached level ${String(result.progression.progression.level)}` : ""}.`
   );
 }
 

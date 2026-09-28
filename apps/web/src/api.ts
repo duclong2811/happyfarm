@@ -5,6 +5,7 @@ import {
   GetFarmResponseSchema,
   GetFarmTilesResponseSchema,
   GetInventoryResponseSchema,
+  GetProgressionResponseSchema,
   GetShopResponseSchema,
   GetWalletResponseSchema,
   HarvestCropResponseSchema,
@@ -19,8 +20,10 @@ import type {
   FarmTileDTO,
   HarvestResultDTO,
   InventoryEntryDTO,
+  PlayerProgressionDTO,
   SellItemResultDTO,
   ShopEntryDTO,
+  XpAwardDTO,
   WalletDTO
 } from "@happy-farm/contracts";
 
@@ -103,6 +106,12 @@ export interface ShopCommandBody {
   readonly quantity: number;
 }
 
+/** Everything a harvest returns: what it produced, and the experience it earned. */
+export interface HarvestOutcome {
+  readonly harvest: HarvestResultDTO;
+  readonly progression: XpAwardDTO;
+}
+
 /**
  * Browser client for the development API.
  *
@@ -182,7 +191,7 @@ export class ApiClient {
     farmId: string,
     cropInstanceId: string,
     body: HarvestBody
-  ): Promise<{ readonly harvest: HarvestResultDTO }> {
+  ): Promise<HarvestOutcome> {
     return this.post(
       `/farms/${encodeURIComponent(farmId)}/crops/${encodeURIComponent(cropInstanceId)}/harvest`,
       body,
@@ -192,6 +201,10 @@ export class ApiClient {
 
   getInventory(): Promise<{ readonly items: InventoryEntryDTO[] }> {
     return this.get("/inventory", GetInventoryResponseSchema);
+  }
+
+  getProgression(): Promise<{ readonly progression: PlayerProgressionDTO }> {
+    return this.get("/progression", GetProgressionResponseSchema);
   }
 
   getShop(): Promise<{ readonly entries: ShopEntryDTO[] }> {

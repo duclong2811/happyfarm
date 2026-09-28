@@ -16,9 +16,11 @@ import type {
   ItemDefinitionId,
   Player,
   PlayerId,
+  PlayerProgression,
   PlayerStatus,
   TerrainType,
   TileState,
+  XpAward,
   Wallet
 } from "@happy-farm/domain";
 import {
@@ -44,6 +46,7 @@ import type {
   EconomyLedgerRepository,
   EconomyMutationRepository,
   EconomySettlementRepository,
+  ProgressionRepository,
   WalletRepository
 } from "@happy-farm/application";
 import { ApplicationError } from "@happy-farm/application";
@@ -584,44 +587,130 @@ export class D1HarvestSettlementRepository implements HarvestSettlementRepositor
   async settleHarvestAtomically(
     crop: CropInstance,
     addition: InventoryAddition,
+    award: XpAward,
     idempotency: IdempotencyRecord
   ): Promise<void> {
-    const results = await this.db.batch([
-      this.db
-        .prepare(
-          "INSERT INTO harvest_settlements (actor_player_id, operation, request_id, farm_id, crop_instance_id, crop_version, crop_definition_id, item_definition_id, quantity, max_quantity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(
-          addition.playerId,
-          idempotency.operation,
-          idempotency.requestId,
-          crop.farmId,
-          crop.id,
-          crop.version,
-          crop.cropDefinitionId,
-          addition.itemDefinitionId,
-          addition.quantity,
-          addition.maxQuantity,
-          addition.timestamp
-        ),
-      this.db
-        .prepare(
-          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(
-          idempotency.actorPlayerId,
-          idempotency.operation,
-          idempotency.requestId,
-          idempotency.payloadFingerprint,
-          idempotency.status,
-          idempotency.resourceId,
-          idempotency.responseJson,
-          idempotency.createdAt
-        )
-    ]);
-    if (results.length !== 2 || results.some((result) => !result.success)) {
-      throw new Error("Atomic harvest settlement failed");
+    if (award.playerId !== idempotency.actorPlayerId || award.playerId !== addition.playerId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Settlement ownership does not match");
     }
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "INSERT INTO harvest_settlements (actor_player_id, operation, request_id, farm_id, crop_instance_id, crop_version, crop_definition_id, item_definition_id, quantity, max_quantity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            addition.playerId,
+            idempotency.operation,
+            idempotency.requestId,
+            crop.farmId,
+            crop.id,
+            crop.version,
+            crop.cropDefinitionId,
+            addition.itemDefinitionId,
+            addition.quantity,
+            addition.maxQuantity,
+            addition.timestamp
+          ),
+        // Seeds the row for a player who has never earned experience, exactly as the wallet path
+        // seeds a wallet, so one guarded update serves the first award and every later one alike.
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 0, 1, ?, ?)"
+          )
+          .bind(award.playerId, award.timestamp, award.timestamp),
+        // Tests the state the caller read *before* the award is applied, and the award is applied
+        // after it. The pre-award state is the unambiguous choice: `xp` and `progression_version`
+        // only ever increase, so a caller whose read has been overtaken can never match the current
+        // row, while an after-state check cannot tell such a caller apart from one whose own award
+        // already landed — both predict the same `xp` and the same next version.
+        //
+        // SQLite cannot fail an `UPDATE` that matches no rows, so the guard is the `CASE` below:
+        // it yields NULL when the row is not where the caller left it. The database then reports
+        // whichever constraint it reaches first, because a NULL actor matches no settlement in the
+        // harvest idempotency trigger and aborts there, before any NOT NULL check would.
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          ),
+        // Applies the award against the very state the guard just matched. Both statements test the
+        // same predicate inside one transaction, so they cannot disagree about which revision the
+        // caller read.
+        this.db
+          .prepare(
+            "UPDATE player_progression SET level = ?, xp = ?, progression_version = progression_version + 1, updated_at = ? WHERE player_id = ? AND xp = ? AND progression_version = ?"
+          )
+          .bind(
+            award.levelAfter,
+            award.xpAfter,
+            award.timestamp,
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion
+          )
+      ]);
+      if (results.length !== 4 || results.some((result) => !result.success)) {
+        throw new Error("Atomic harvest settlement failed");
+      }
+    } catch (error: unknown) {
+      // Three messages mean the same thing: the guard did not match, so the caller read progression
+      // before another award moved it. The caller re-reads and retries.
+      if (
+        error instanceof Error &&
+        (error.message.includes("player progression") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys") ||
+          error.message.includes("completed harvest idempotency requires settlement"))
+      ) {
+        throw new ApplicationError("PROGRESSION_CONFLICT", "Player progression changed concurrently");
+      }
+      throw error;
+    }
+  }
+}
+
+interface PlayerProgressionRow {
+  player_id: string;
+  level: number;
+  xp: number;
+  progression_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapPlayerProgression(row: PlayerProgressionRow): PlayerProgression {
+  return {
+    playerId: parsePlayerId(row.player_id),
+    level: row.level,
+    xp: row.xp,
+    progressionVersion: row.progression_version,
+    updatedAt: row.updated_at
+  };
+}
+
+export class D1ProgressionRepository implements ProgressionRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async find(playerId: PlayerId): Promise<PlayerProgression | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT player_id, level, xp, progression_version, created_at, updated_at FROM player_progression WHERE player_id = ?"
+      )
+      .bind(playerId)
+      .first<PlayerProgressionRow>();
+    return row === null ? null : mapPlayerProgression(row);
   }
 }
 

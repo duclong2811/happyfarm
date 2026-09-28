@@ -19,8 +19,10 @@ import type {
   ItemDefinitionId,
   Player,
   PlayerId,
+  PlayerProgression,
   ShopEntry,
   ShopEntryId,
+  XpAward,
   Wallet
 } from "@happy-farm/domain";
 
@@ -141,11 +143,22 @@ export interface CropInstanceRepository {
 }
 
 export interface HarvestSettlementRepository {
+  /**
+   * Writes the harvest, its experience award, and the idempotency record as one transaction.
+   *
+   * The award is absolute after-values plus the pre-state they must replace, so a concurrent award
+   * either applies against the state the caller read or fails the whole settlement.
+   */
   settleHarvestAtomically(
     crop: CropInstance,
     addition: InventoryAddition,
+    award: XpAward,
     idempotency: IdempotencyRecord
   ): Promise<void>;
+}
+
+export interface ProgressionRepository {
+  find(playerId: PlayerId): Promise<PlayerProgression | null>;
 }
 
 export interface EconomySettlementRepository {

@@ -12,7 +12,8 @@ export const CropDefinitionSchema = z
     harvest: z
       .object({
         itemDefinitionId: DefinitionIdSchema.refine((id) => id.startsWith("item_")),
-        baseQuantity: z.number().int().positive().max(1_000_000)
+        baseQuantity: z.number().int().positive().max(1_000_000),
+        xp: z.number().int().positive().max(1_000_000)
       })
       .strict()
   })
@@ -36,21 +37,21 @@ export const cropRegistry = createCropRegistry([
     displayNameKey: "crop.carrot.name",
     growthDurationSeconds: 300,
     growthStages: 4,
-    harvest: { itemDefinitionId: "item_carrot", baseQuantity: 2 }
+    harvest: { itemDefinitionId: "item_carrot", baseQuantity: 2, xp: 4 }
   },
   {
     id: "crop_wheat",
     displayNameKey: "crop.wheat.name",
     growthDurationSeconds: 900,
     growthStages: 5,
-    harvest: { itemDefinitionId: "item_wheat", baseQuantity: 3 }
+    harvest: { itemDefinitionId: "item_wheat", baseQuantity: 3, xp: 12 }
   },
   {
     id: "crop_corn",
     displayNameKey: "crop.corn.name",
     growthDurationSeconds: 1800,
     growthStages: 4,
-    harvest: { itemDefinitionId: "item_corn", baseQuantity: 2 }
+    harvest: { itemDefinitionId: "item_corn", baseQuantity: 2, xp: 24 }
   }
 ]);
 

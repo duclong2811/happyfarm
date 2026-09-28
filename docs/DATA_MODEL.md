@@ -182,7 +182,12 @@ The ledger records transaction ID, exact integer delta, stable reason/reference,
 - level
 - xp
 - progression_version
+- created_at
 - updated_at
+
+PK/FK: `player_id` -> `players(id)`, `ON UPDATE RESTRICT ON DELETE RESTRICT`. Constraints: `level` is an integer from 1 through 10,000, `xp` is an integer from 0 through `Number.MAX_SAFE_INTEGER`, and `progression_version` is at least 1.
+
+`level` is a cache of the level curve applied to `xp`, not an independent value. The curve lives in `packages/game-data` and the arithmetic in `packages/domain`; `assertProgression` refuses a row where the two disagree rather than writing the disagreement forward. The trigger `player_progression_monotonic_update` rejects any update that would lower `xp`, lower `level`, or leave `progression_version` unchanged, so progression cannot be moved into an earlier state by a later code path. Rows are created lazily by the first experience award, exactly as `wallets` rows are created by the first settlement; a player who has never earned experience has no row and reads as level 1.
 
 ### quest_progress (post-MVP)
 - player_id

@@ -7,6 +7,7 @@ import {
   GameDataShopEntries,
   Sha256Fingerprint,
   SystemClock,
+  gameDataProgressionDefinition,
   UnconfiguredAuthenticator
 } from "./runtime";
 import type { D1DatabaseLike } from "./d1-types";
@@ -26,6 +27,7 @@ export default {
       itemDefinitions: new GameDataItemDefinitions(),
       currencyDefinitions: new GameDataCurrencyDefinitions(),
       shopEntries: new GameDataShopEntries(),
+      progressionDefinition: gameDataProgressionDefinition,
       clock: new SystemClock()
     })(request);
   }

@@ -11,6 +11,8 @@ export interface CropDefinition {
   readonly harvest: {
     readonly itemDefinitionId: ItemDefinitionId;
     readonly baseQuantity: number;
+    /** Experience granted on harvesting this crop. Authoritative; the client never supplies it. */
+    readonly xp: number;
   };
 }
 

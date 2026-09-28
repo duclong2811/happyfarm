@@ -4,6 +4,7 @@ import {
   GetFarmCrops,
   GetFarm,
   GetInventory,
+  GetProgression,
   HarvestCrop,
   InventoryService,
   ListFarmTiles,
@@ -41,12 +42,14 @@ import {
   type CropStateDTO,
   type HarvestResultDTO,
   type InventoryEntryDTO,
+  type PlayerProgressionDTO,
+  type XpAwardDTO,
   type BuyItemResultDTO,
   type SellItemResultDTO,
   type ShopEntryDTO,
   type WalletDTO
 } from "@happy-farm/contracts";
-import { parseFarmId, type ShopEntry, type Wallet } from "@happy-farm/domain";
+import { parseFarmId, type ProgressionDefinition, type ShopEntry, type Wallet } from "@happy-farm/domain";
 import type { D1DatabaseLike } from "./d1-types";
 import {
   D1CropRepository,
@@ -57,7 +60,8 @@ import {
   D1FarmMemberRepository,
   D1FarmRepository,
   D1FarmTileRepository,
-  D1PlayerRepository
+  D1PlayerRepository,
+  D1ProgressionRepository
 } from "./d1-repositories";
 
 const MAX_JSON_BODY_BYTES = 16_384;
@@ -71,6 +75,8 @@ export interface HandlerDependencies {
   readonly itemDefinitions: ItemDefinitionRepository;
   readonly currencyDefinitions: CurrencyDefinitionRepository;
   readonly shopEntries: ShopEntryRepository;
+  /** The levelling curve. Passed in rather than imported, so application code stays game-data free. */
+  readonly progressionDefinition: ProgressionDefinition;
   readonly clock: Clock;
 }
 
@@ -173,6 +179,7 @@ function errorStatus(code: ErrorCode): number {
     case "INSUFFICIENT_FUNDS":
     case "WALLET_LIMIT_EXCEEDED":
     case "ECONOMY_CONFLICT":
+    case "PROGRESSION_CONFLICT":
       return 409;
     case "RATE_LIMITED":
       return 429;
@@ -196,6 +203,7 @@ export function createHandler(dependencies: HandlerDependencies) {
   const harvestSettlement = new D1HarvestSettlementRepository(dependencies.db);
   const wallets = new D1WalletRepository(dependencies.db);
   const economySettlement = new D1EconomySettlementRepository(dependencies.db);
+  const progressions = new D1ProgressionRepository(dependencies.db);
   const unlockedLand = {
     async isUnlocked(farmId: Parameters<typeof tiles.find>[0], coordinate: { x: number; y: number }) {
       return (await tiles.find(farmId, coordinate.x, coordinate.y)) !== null;
@@ -228,7 +236,14 @@ export function createHandler(dependencies: HandlerDependencies) {
     harvestSettlement,
     dependencies.cropDefinitions,
     inventoryService,
+    progressions,
+    dependencies.progressionDefinition,
     dependencies.fingerprints,
+    dependencies.clock
+  );
+  const getProgression = new GetProgression(
+    dependencies.progressionDefinition,
+    progressions,
     dependencies.clock
   );
   const getInventory = new GetInventory(inventory);
@@ -291,6 +306,16 @@ export function createHandler(dependencies: HandlerDependencies) {
         return jsonResponse(body);
       }
 
+      if (request.method === "GET" && url.pathname === "/progression") {
+        if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
+        const view: PlayerProgressionDTO = await getProgression.execute(actor);
+        const body: ApiSuccess<{ progression: PlayerProgressionDTO }> = {
+          ok: true,
+          data: { progression: view }
+        };
+        return jsonResponse(body);
+      }
+
       if (request.method === "POST" && (url.pathname === "/shop/buy" || url.pathname === "/shop/sell")) {
         const schema = url.pathname === "/shop/buy" ? BuyItemRequestSchema : SellItemRequestSchema;
         const parsed = schema.safeParse(await parseJson(request));
@@ -317,11 +342,14 @@ export function createHandler(dependencies: HandlerDependencies) {
         }
         const parsed = HarvestCropRequestSchema.safeParse(await parseJson(request));
         if (!parsed.success) return failure("INVALID_INPUT", requestId);
-        const harvest = await harvestCrop.execute(actor, parseFarmId(decodedFarmId), {
+        const result = await harvestCrop.execute(actor, parseFarmId(decodedFarmId), {
           ...parsed.data,
           cropInstanceId: decodedCropId
         });
-        const body: ApiSuccess<{ harvest: HarvestResultDTO }> = { ok: true, data: { harvest } };
+        const body: ApiSuccess<{ harvest: HarvestResultDTO; progression: XpAwardDTO }> = {
+          ok: true,
+          data: result
+        };
         return jsonResponse(body);
       }
 

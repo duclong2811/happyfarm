@@ -7,5 +7,6 @@ export * from "./harvest";
 export * from "./inventory";
 export * from "./list-farm-tiles";
 export * from "./ports";
+export * from "./progression";
 export * from "./shop";
 export * from "./tile-service";

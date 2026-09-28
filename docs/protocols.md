@@ -141,3 +141,35 @@ Phase 3D exposes `POST /shop/buy` and `POST /shop/sell`. Both authenticate the a
   identity value of its own; growth and wallet values are rendered exactly as returned.
 - The UI talks to `/api/*` on its own origin. That prefix is a development-only convenience mapped
   by the Vite dev server; the production API base URL is a deployment decision that remains open.
+
+## Phase 4A experience and levelling
+
+- `POST /farms/:farmId/crops/:cropInstanceId/harvest` now returns `{ "harvest": { ... },
+  "progression": { ... } }`. Both objects are strict, and the endpoint has gained no input: the
+  request still accepts only `requestId` and `expectedCropVersion`.
+- The `progression` member of a harvest response is the award that settlement paid:
+
+  ```json
+  {
+    "xpAwarded": 4,
+    "leveledUp": false,
+    "progression": { "level": 1, "xp": 4, "xpIntoLevel": 4, "xpForNextLevel": 120, "maxLevel": 50 }
+  }
+  ```
+
+  `xpAwarded` comes from the harvested crop's definition, never from the request. `level`,
+  `xpIntoLevel`, `xpForNextLevel`, and `maxLevel` are derived by the server, so no client
+  reimplements the curve or guesses how far the next level is.
+- A replayed harvest returns the stored award exactly as the original call returned it, including
+  the level at that moment. The response is not recomputed, so a replay never reports a level it did
+  not cause.
+- `GET /progression` requires authentication and returns
+  `{ "progression": { "level", "xp", "xpIntoLevel", "xpForNextLevel", "maxLevel" } }` for the
+  authenticated actor only. A player who has never earned experience reads as level 1 with `xp` 0.
+  The route is a projection: it creates no progression row and writes no state.
+- Neither route accepts `playerId`, `userId`, `level`, `xp`, or any other levelling input from the
+  path, query string, body, or headers.
+- The progression domain codes (`INVALID_PROGRESSION`, `PROGRESSION_LIMIT_EXCEEDED`) are not part of
+  the API error vocabulary and never reach a client: a stored row this curve could not have produced
+  is refused as `INTERNAL_ERROR` rather than written forward. A concurrent-award race is
+  `PROGRESSION_CONFLICT` (409), which the server retries internally before answering.

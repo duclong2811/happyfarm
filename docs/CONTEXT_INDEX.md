@@ -46,6 +46,26 @@ For Phase 2B harvest settlement, also read `docs/decisions/0003-crop-simulation-
 
 For Phase 3 economy work, read `docs/decisions/0005-phase-3-economy-architecture.md` before editing types, ports, game data, contracts, settlement, or persistence.
 
+## Progression / levelling task (Phase 4A)
+
+Read `docs/decisions/0008-player-progression-and-levelling.md` before editing experience, levels,
+the curve, the harvest settlement, or the `player_progression` table.
+
+- Curve values: `packages/game-data/src/progression/index.ts`. Curve arithmetic:
+  `packages/domain/src/progression.ts` and `tests/domain/progression.test.ts`.
+- Award amounts: `CropDefinition.harvest.xp` in `packages/domain/src/crop.ts`,
+  `packages/game-data/src/crops/index.ts`, and `tests/game-data/schema.test.ts`.
+- The only write path: `packages/application/src/harvest.ts` and
+  `D1HarvestSettlementRepository` in `workers/api/src/d1-repositories.ts`.
+- Persistence: `database/migrations/0005_player_progression.sql` and
+  `tests/integration/progression-migration.test.ts`.
+- Reads and display: `packages/application/src/progression.ts`, the `Phase 4A` section of
+  `docs/protocols.md`, and `apps/web/src/progression.ts`.
+
+Experience is never accepted from a client, and a level is never computed outside
+`packages/domain/src/progression.ts`. Do not add a second way to award experience: the award belongs
+to the harvest settlement so that a replay cannot pay it twice.
+
 ## Local development / playable UI task
 
 Read `docs/development.md` first, then `docs/decisions/0006-starter-land-and-node-dev-host.md`.

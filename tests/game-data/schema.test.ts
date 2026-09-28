@@ -4,9 +4,12 @@ import {
   createCurrencyRegistry,
   createItemRegistry,
   createShopRegistry,
+  crops,
   currencies,
   currencyRegistry,
   itemRegistry,
+  playerProgression,
+  playerProgressionRegistry,
   shops,
   validateCropItemReferences,
   validateDefinitions
@@ -24,13 +27,17 @@ describe("game-data validation", () => {
       displayNameKey: "crop.radish.name",
       growthDurationSeconds: 120,
       growthStages: 3,
-      harvest: { itemDefinitionId: "item_radish", baseQuantity: 2 }
+      harvest: { itemDefinitionId: "item_radish", baseQuantity: 2, xp: 3 }
     };
     expect(createCropRegistry([valid]).size).toBe(1);
     expect(() => createCropRegistry([{ ...valid, growthDurationSeconds: 0 }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, growthStages: 1 }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, id: "Radish" }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, harvest: { ...valid.harvest, baseQuantity: 0 } }])).toThrow();
+    expect(() => createCropRegistry([{ ...valid, harvest: { ...valid.harvest, xp: 0 } }])).toThrow();
+    expect(() =>
+      createCropRegistry([{ ...valid, harvest: { itemDefinitionId: "item_radish", baseQuantity: 2 } }])
+    ).toThrow();
     expect(() => createCropRegistry([valid, valid])).toThrow("Duplicate crop definition");
   });
 
@@ -44,7 +51,7 @@ describe("game-data validation", () => {
         displayNameKey: "crop.radish.name",
         growthDurationSeconds: 60,
         growthStages: 2,
-        harvest: { itemDefinitionId: "item_missing", baseQuantity: 1 }
+        harvest: { itemDefinitionId: "item_missing", baseQuantity: 1, xp: 1 }
       }
     ]);
     expect(() => {
@@ -153,6 +160,25 @@ describe("game-data validation", () => {
       expect(itemRegistry.has(entry.itemDefinitionId)).toBe(true);
       expect(currencyRegistry.has(entry.currencyDefinitionId)).toBe(true);
       expect(entry.sellPrice).toBeLessThanOrEqual(entry.buyPrice);
+    }
+  });
+
+  it("ships a level curve and rewards a player can actually progress through", () => {
+    expect(playerProgressionRegistry.get("progression_player_default")).toBe(playerProgression);
+    expect(playerProgression.maxLevel).toBeGreaterThan(1);
+    expect(playerProgression.xpStep).toBeGreaterThan(0);
+    for (const crop of crops) {
+      expect(Number.isSafeInteger(crop.harvest.xp)).toBe(true);
+      expect(crop.harvest.xp).toBeGreaterThan(0);
+    }
+    // The slowest crop has to be worth at least as much as the fastest, or the curve rewards
+    // waiting less than it rewards re-planting carrots.
+    const carrot = crops.find((crop) => crop.id === "crop_carrot");
+    const corn = crops.find((crop) => crop.id === "crop_corn");
+    expect(carrot).toBeDefined();
+    expect(corn).toBeDefined();
+    if (carrot !== undefined && corn !== undefined) {
+      expect(corn.harvest.xp).toBeGreaterThan(carrot.harvest.xp);
     }
   });
 });

@@ -100,6 +100,12 @@ the development Worker entrypoint. Open the printed URL and:
    **Harvest** on the tile. The field refreshes every two seconds from the server.
 5. Use **Sell** in **Shop** to turn harvested items into gold, and **Buy** to spend it.
 
+**Progression** shows the level and experience the server reports for the development player. A
+harvest is the only thing that moves it, because the award is written inside the harvest settlement
+itself; the status line names the experience a harvest earned and says so when a level was reached.
+The panel is a projection of `GET /progression` and recomputes no threshold of its own, so it cannot
+disagree with the curve the server applied.
+
 The UI computes nothing authoritative: prices, rewards, maturity, and balances all come from the
 API, and every response is validated against the `@happy-farm/contracts` schemas before it is used.
 

@@ -10,6 +10,8 @@ export type DomainErrorCode =
   | "INVALID_ECONOMY_MUTATION"
   | "INSUFFICIENT_FUNDS"
   | "WALLET_LIMIT_EXCEEDED"
+  | "INVALID_PROGRESSION"
+  | "PROGRESSION_LIMIT_EXCEEDED"
   | "CONFLICT_STALE_STATE";
 
 export class DomainError extends Error {

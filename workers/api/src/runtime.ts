@@ -15,6 +15,7 @@ import {
   type EconomyTransactionId,
   type ItemDefinition,
   type ItemDefinitionId,
+  type ProgressionDefinition,
   type ShopEntry,
   type ShopEntryId
 } from "@happy-farm/domain";
@@ -31,7 +32,24 @@ import type {
   PayloadFingerprint,
   ShopEntryRepository
 } from "@happy-farm/application";
-import { cropRegistry, currencyRegistry, itemRegistry, shopRegistry } from "@happy-farm/game-data";
+import {
+  cropRegistry,
+  currencyRegistry,
+  itemRegistry,
+  playerProgression,
+  shopRegistry
+} from "@happy-farm/game-data";
+
+/**
+ * The levelling curve, read from game data and handed to the application layer as plain numbers.
+ *
+ * `packages/application` must not import game data, so this is the one place the two meet, exactly
+ * as the repositories above translate registries into domain definitions.
+ */
+export const gameDataProgressionDefinition: ProgressionDefinition = {
+  maxLevel: playerProgression.maxLevel,
+  xpStep: playerProgression.xpStep
+};
 
 export class SystemClock implements Clock {
   now(): string {
@@ -108,7 +126,8 @@ export class GameDataCropDefinitions implements CropDefinitionRepository {
           growthStages: definition.growthStages,
           harvest: {
             itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
-            baseQuantity: definition.harvest.baseQuantity
+            baseQuantity: definition.harvest.baseQuantity,
+            xp: definition.harvest.xp
           }
         }
       : {
@@ -119,7 +138,8 @@ export class GameDataCropDefinitions implements CropDefinitionRepository {
           requiredFarmLevel: definition.requiredFarmLevel,
           harvest: {
             itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
-            baseQuantity: definition.harvest.baseQuantity
+            baseQuantity: definition.harvest.baseQuantity,
+            xp: definition.harvest.xp
           }
         };
   }

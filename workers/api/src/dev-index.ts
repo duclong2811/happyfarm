@@ -15,7 +15,8 @@ import {
   GameDataItemDefinitions,
   GameDataShopEntries,
   Sha256Fingerprint,
-  SystemClock
+  SystemClock,
+  gameDataProgressionDefinition
 } from "./runtime";
 import type { D1DatabaseLike } from "./d1-types";
 
@@ -77,6 +78,7 @@ export function createDevWorker(env: DevEnv) {
     itemDefinitions: new GameDataItemDefinitions(),
     currencyDefinitions: new GameDataCurrencyDefinitions(),
     shopEntries: new GameDataShopEntries(),
+    progressionDefinition: gameDataProgressionDefinition,
     clock
   });
   const bootstrap = new DevPlayerBootstrap(env.DB);
