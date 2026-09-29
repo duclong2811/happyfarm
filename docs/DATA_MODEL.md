@@ -82,6 +82,13 @@ never observable with a partial starter square. Reading that land back requires 
 
 `terrain_type` uses the initial stable enum-like values `GRASS`, `SOIL`, `WATER`, and `BLOCKED`. Terrain and mutable tile state are separate concepts. Phase 1 uses the minimal `tile_state` value `IDLE`; later states require an explicit schema/game-data change. Runtime validation and database constraints where practical must reject arbitrary client-provided terrain or state strings.
 
+#### Farm expansion
+
+Each purchased plot adds a deterministic `6 x 6` cohort of fresh `SOIL` tiles. Plot order, price,
+currency, and required player level come from validated game data. Only the farm owner may buy the
+server-selected next contiguous plot. Wallet debit, ledger row, all tile inserts, and idempotency
+record commit atomically; a tile row remains the single representation of unlocked land.
+
 Each successful tile state mutation increments `version` monotonically by one. Operations that require optimistic concurrency accept a validated `expectedVersion` and conceptually update with:
 
 ```sql
@@ -122,6 +129,21 @@ Crop definition IDs reference the validated game-data registry, not a fake D1 ta
 
 A crop definition's level requirement (`requiredLevel`, absent meaning level 1) is part of that game-data registry and is enforced when a crop is planted. It is not stored per row and is deliberately not applied to reads, so a crop already in the ground keeps reporting its growth even if a later curve would have locked it.
 
+#### Planting settlement
+
+Since Phase 5 every planting costs exactly one seed, and a crop definition names that seed
+(`seedItemDefinitionId`, a `SEED` item in the same registry). The seed is resolved from the crop
+definition the server looked up, never from the command. `PlantCrop` prepares the removal through
+the centralized inventory service and passes the expected inventory row to the repository, which
+spends the seed, inserts the crop, and finalizes idempotency in one D1 batch. The batch's final
+statement commits the receipt only when the crop row exists *and* the seed row sits at the
+post-removal quantity and version, so a failure anywhere rolls back all three. A replay returns the
+stored crop and spends nothing further; a plant that loses a race is refused with
+`INSUFFICIENT_ITEMS` or `CONFLICT_STALE_STATE`, never with a negative stack.
+
+Uprooting (`UPROOT_CROP`) is the opposite: `DELETE FROM crop_instances` plus the idempotency record
+in one batch, and no inventory, currency, or experience write at all.
+
 Constraints: at most one active crop per valid tile; definition ID validated by application/game-data.
 Indexes: farm_id; (farm_id,tile_x,tile_y)
 
@@ -138,6 +160,20 @@ UNIQUE: (player_id, item_definition_id)
 Constraint: quantity is an integer from 0 through 2,147,483,647. Each player/item pair has one authoritative stack. Mutations are created through the centralized inventory service; gameplay systems do not issue ad hoc quantity updates.
 
 Item definition IDs are validated against static game data and intentionally have no fake D1 foreign key. Crop harvest item references are validated against that registry at game-data load time.
+
+### starter_seed_grants
+- player_id PK
+- item_definition_id
+- quantity
+- created_at
+FK: player_id -> players(id)
+
+The one-time starter grant receipt (Phase 5). The primary key on `player_id` is what makes the grant
+happen once per player: a repeated bootstrap, a second farm, or a replayed onboarding call matches
+the existing row and credits nothing. The receipt *is* the command -- an `AFTER INSERT` trigger
+appends the quantity to `inventory_items` in the same statement -- so there is no window in which a
+player holds the seeds without the record of having received them, or the reverse. The item and the
+quantity come from validated game data, and no route accepts either.
 
 ### harvest_settlements
 - actor_player_id
@@ -212,7 +248,11 @@ UNIQUE: player + quest definition + applicable cycle/version
 - expires_at nullable
 UNIQUE: (actor_player_id, request_id, operation)
 
-Only successful planting and harvest commands are recorded. A retry by the same actor with the same operation, request ID, and payload fingerprint returns the original result after current resource access is re-authorized. Reusing that identity with a different payload returns `IDEMPOTENCY_CONFLICT`. Failed validation is not recorded and may be corrected and retried.
+Only successful high-value commands are recorded: planting, harvest, shop settlement, farm expansion,
+and uproot. A retry by the same actor with the same operation, request ID, and payload fingerprint
+returns the original result after current resource access is re-authorized where the command names a
+protected farm resource. Reusing that identity with a different payload returns
+`IDEMPOTENCY_CONFLICT`. Failed validation is not recorded and may be corrected and retried.
 
 ### audit_events
 - id PK

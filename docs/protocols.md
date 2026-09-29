@@ -83,6 +83,7 @@ Initial set:
 - ITEM_DEFINITION_NOT_FOUND
 - INVENTORY_LIMIT_EXCEEDED
 - INSUFFICIENT_ITEMS
+- SHOP_ENTRY_NOT_ALLOWED
 - INSUFFICIENT_FUNDS
 - REQUEST_ALREADY_PROCESSED
 - CONFLICT_STALE_STATE
@@ -99,7 +100,9 @@ Never accept authoritative balance, reward, maturity, price, level, XP, ownershi
 ## Phase 2B HTTP commands
 
 - `POST /farms/:farmId/crops/:cropInstanceId/harvest` accepts only `requestId` and `expectedCropVersion`. Reward item, quantity, maturity, and time are server-derived.
-- `GET /inventory` returns only the authenticated player's `{ itemDefinitionId, quantity }` entries.
+- `GET /inventory` returns only the authenticated player's entries. Phase 5 added
+  `displayNameKey` and `category` so the client can name and group what it holds without keeping a
+  list of item IDs; the quantity is still the server's authoritative stack.
 - There is no generic client inventory mutation route.
 
 ## Phase 3 shop command contracts
@@ -116,8 +119,8 @@ Phase 3D exposes `POST /shop/buy` and `POST /shop/sell`. Both authenticate the a
 
 ## Phase 3E read-only economy reads
 
-- `GET /shop` requires authentication (route policy: `/health` is public, every other API route is authenticated) and returns presentation-safe catalog entries projected from the authoritative game-data shop registry: `{ shopEntryId, itemDefinitionId, currencyId, buyPrice, sellPrice, maxQuantityPerRequest }`. Displayed prices are informational; `POST /shop/buy` and `POST /shop/sell` still resolve prices server-side and reject client-supplied price fields.
-- `GET /wallet` requires authentication and returns only the authenticated actor's wallets as `{ currencyId, balance }` entries under `{ "wallets": [...] }`. A player with no persisted wallet receives `{ "wallets": [] }`. Phase 3C lazy wallet creation remains mutation-only: this route never creates a wallet row and never writes wallet, ledger, inventory, or idempotency state.
+- `GET /shop` requires authentication (route policy: `/health` is public, every other API route is authenticated) and returns presentation-safe catalog entries projected from the authoritative game-data shop registry: `{ shopEntryId, itemDefinitionId, itemDisplayNameKey, category, currencyId, currencyDisplayNameKey, buyPrice, sellPrice, maxQuantityPerRequest }`. Displayed prices are informational; `POST /shop/buy` and `POST /shop/sell` still resolve prices server-side and reject client-supplied price fields. Since Phase 5 a price may be `null`, which means this entry does not trade that way: seeds carry `buyPrice`, harvested produce carries `sellPrice`, and the client renders one button per non-null price.
+- `GET /wallet` requires authentication and returns only the authenticated actor's wallets as `{ currencyId, displayNameKey, balance }` entries under `{ "wallets": [...] }`. A player with no persisted wallet receives `{ "wallets": [] }`. Phase 3C lazy wallet creation remains mutation-only: this route never creates a wallet row and never writes wallet, ledger, inventory, or idempotency state.
 - Neither read route accepts `playerId`, `userId`, `walletOwner`, or any pricing/authority input from the route, query string, body, or headers.
 
 ## Phase 3.5B farm read route and development UI
@@ -178,11 +181,13 @@ Phase 3D exposes `POST /shop/buy` and `POST /shop/sell`. Both authenticate the a
 ## Phase 4B crop catalogue and level-gated unlocks
 
 - `GET /crop-definitions` requires authentication and returns
-  `{ "definitions": [ { "cropDefinitionId", "growthDurationSeconds", "harvestItemDefinitionId",
-  "baseQuantity", "harvestXp", "requiredLevel" } ] }` for every crop this deployment can plant. It is
-  a pure projection of game data: it reads no database, mutates nothing, and reveals no player state.
+  `{ "definitions": [ { "cropDefinitionId", "displayNameKey", "growthDurationSeconds",
+  "seedItemDefinitionId", "seedItemDisplayNameKey", "harvestItemDefinitionId", "baseQuantity",
+  "harvestXp", "requiredLevel" } ] }` for every crop this deployment can plant. It is a pure
+  projection of game data: it reads no database, mutates nothing, and reveals no player state.
   `requiredLevel` is always present, with 1 meaning "no requirement", so a client never infers a rule
-  from a missing field.
+  from a missing field. Phase 5 added the seed the crop consumes and the display keys the client
+  translates; the player's own seed count is not part of this route.
 - Crops a player has not unlocked are **listed**, not filtered out. The client needs them to explain
   what to work towards; the server is what refuses the command.
 - `POST /farms/:farmId/crops` now enforces the requirement. A crop above the actor's level is refused
@@ -199,3 +204,57 @@ Phase 3D exposes `POST /shop/buy` and `POST /shop/sell`. Both authenticate the a
   a retuned curve would no longer let the player plant, and `GetFarmCrops` filters nothing by level.
 - Unlocks are permanent: a level only ever rises, so a crop that has been unlocked stays unlocked.
   Expiring or consumable unlocks are deliberately out of scope.
+
+## Phase 4C farm expansion
+
+- `GET /farms/:farmId/plots` requires farm membership and returns every server-defined plot with
+  `plotId`, `plotIndex`, `currencyId`, `price`, `requiredLevel`, and farm-specific `unlocked` state.
+- `POST /farms/:farmId/plots` is owner-only and accepts exactly `{ "requestId": "..." }`. The server
+  chooses the next plot; plot ID, coordinates, price, currency, level, and wallet values are never
+  accepted from the client.
+- A successful response contains `{ "expansion": { "plotId", "plotIndex", "currencyId",
+  "amountSpent", "newBalance", "tilesAdded" } }`. Replays return the originally stored result.
+- `PLOT_LEVEL_REQUIRED` is 403; `PLOT_LIMIT_REACHED`, insufficient funds, and settlement races are
+  conflicts. A refused request writes neither land nor an idempotency record.
+
+## Phase 5 seed economy, uproot, and bilingual HUD
+
+### Planting costs a seed
+
+- `POST /farms/:farmId/crops` accepts exactly the same five fields as before. The crop definition now
+  names the seed it consumes (`seedItemDefinitionId`), and the server spends exactly one of it
+  through the centralized inventory service inside the same transaction as the crop insert and the
+  idempotency record. The command never carries an item ID, a quantity, or a cost.
+- A player with no seed of the chosen crop is refused with `INSUFFICIENT_ITEMS` (409). The refusal
+  writes no crop, no idempotency record, and no inventory change.
+- A replayed request returns the stored crop and spends nothing further. A connected pair of
+  requests that only one seed can satisfy leaves one planting and a seed stack at zero; the loser is
+  refused with `INSUFFICIENT_ITEMS` or `CONFLICT_STALE_STATE` rather than overspending.
+- `SHOP_ENTRY_NOT_ALLOWED` (400) is the stable refusal for asking the shop to trade an item the
+  wrong way: the shop sells seeds and buys produce, and no entry does both for one item.
+
+### Uprooting
+
+- `POST /farms/:farmId/crops/:cropInstanceId/uproot` is owner-only and accepts exactly
+  `{ "requestId": "...", "expectedCropVersion": 1 }`. It is available for a growing crop and for a
+  mature one.
+- Uprooting refunds nothing: no seed, no gold, no produce, and no experience. It deletes the crop
+  row and records the idempotency receipt in one transaction, so a replay returns the stored result
+  and never deletes a second crop.
+- The response is `{ "removed": { "cropInstanceId": "..." } }`: there is no reward field, because
+  there is no reward.
+- Authorization and membership are re-read before a stored result is returned, exactly as harvest
+  does, so a replay cannot outlive the access that allowed the original command.
+
+### Starter seeds and the client
+
+- The development bootstrap grants the configured player exactly 36 `item_carrot_seed`, once, through
+  `GrantStarterSeed`. There is no HTTP route for granting items: the grant is an onboarding step the
+  server performs for the identity it just authenticated, and a repeated bootstrap, a second farm, or
+  a replay finds the receipt and credits nothing.
+- The client's planting control lists each crop with its name and the player's seed count, disables
+  planting when the tile is not empty soil, the crop is not unlocked, or no seed is held, and says
+  which of those is missing. Nothing is subtracted optimistically: the dock re-renders from
+  `GET /inventory` and `GET /farms/:farmId/crops` after every command.
+- The HUD is bilingual (`vi`/`en`). Language is presentation only: no route accepts a language, and
+  every authoritative value -- level, price, seed count, maturity -- is unchanged by the switch.

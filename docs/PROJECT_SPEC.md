@@ -74,12 +74,15 @@ No per-crop daemon/timer. Persist timestamps and compute elapsed state on access
 Admin operations must use separate authorization, require explicit reason for high-risk mutations, and create audit records. Admin UI is not part of the first gameplay phase.
 
 ## Delivery phases
-Phase 0: repo/documentation/tooling/security baseline.
-Phase 1: player, farm, tile, IDs, game-data foundation.
-Phase 2: crop planting/growth/harvest and offline time.
-Phase 3: inventory, economy, shop, ledger, idempotency.
-Phase 4: XP, levels, unlocks, farm expansion.
-Phase 5: D1 persistence hardening + migrations + integration tests.
-Phase 6: Durable Object FarmRoom, multiplayer presence, permissions, ordered commands.
-Phase 7: trees, animals, fish, buildings/production.
-Phase 8: browser renderer, character/vehicle, UI polish, asset pipeline.
+
+`docs/ROADMAP.md` is the canonical phase numbering and ordered backlog. This specification defines
+product scope; it must not maintain a second sequence that assigns the same phase number to another
+feature. Historical ADR labels such as Phase 3.5/3.6 remain historical implementation labels.
+
+- Phase 0: repository, documentation, tooling, and security baseline.
+- Phase 1: player, farm, tile, IDs, and game-data foundation.
+- Phase 2: crop planting, timestamp growth, harvest, and offline time.
+- Phase 3: inventory, economy, shop, ledger, idempotency, and the playable development client.
+- Phase 4: XP, levels, crop unlocks, and farm expansion.
+- Phase 5: seed economy, starter grant, uproot, and bilingual HUD.
+- Phase 6 onward: use the ordered backlog in `docs/ROADMAP.md`.

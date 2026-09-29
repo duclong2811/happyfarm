@@ -6,6 +6,11 @@ Always read:
 1. `/AGENTS.md`
 2. This file
 
+For "what should we build next" planning, read `docs/ROADMAP.md`. It lists the ordered phases after
+the current build, each written to be handed to an implementation agent as one prompt. It is
+planning input only: it does not authorize a change, and every phase still follows the task template
+and the execution protocol.
+
 Then read only what matches the task:
 
 ## Phase 1 foundation task
@@ -78,18 +83,53 @@ gate, the crop catalogue, or the client's planting control.
 - Enforcement: `PlantCrop` in `packages/application/src/crops.ts`. The read-only catalogue is
   `ListCropDefinitions` in the same file, served as `GET /crop-definitions` in
   `workers/api/src/handler.ts`.
-- The client: `apps/web/src/{api,main,labels}.ts`. The planting control is built from the catalogue
+- The client: `apps/web/src/{api,main,i18n}.ts`. The planting control is built from the catalogue
   and holds no crop list of its own; `tests/web/farm-assets.test.ts` ties the model manifest to game
   data rather than to a client constant.
 
 Never gate a read: `CropStateProjector` and `GetFarmCrops` keep reporting crops a player could not
 plant today, and no route accepts a level, an experience total, or a crop requirement from a client.
 
+## Farm expansion (Phase 4C)
+
+Read `docs/decisions/0010-farm-expansion.md` before editing plot geometry, land prices, expansion
+settlement, or the plot API. The domain rule is `packages/domain/src/plot.ts`, values are in
+`packages/game-data/src/plots`, the use cases are in `packages/application/src/plot.ts`, and the
+atomic D1 write is `D1FarmExpansionRepository`. A client command may carry only a request ID.
+
+## Seed economy, uproot, and i18n (Phase 5)
+
+Read `docs/decisions/0013-phase-5-seed-economy.md` before editing seed definitions, shop pricing,
+the planting settlement, the starter grant, uprooting, or the client's translation layer.
+
+- Seed mapping and item categories: `packages/game-data/src/items/index.ts` and
+  `packages/game-data/src/crops/index.ts`; shop directions and prices:
+  `packages/game-data/src/shops/index.ts`. Domain shapes: `ItemCategory` in
+  `packages/domain/src/inventory.ts`, `CropDefinition.seedItemDefinitionId` in
+  `packages/domain/src/crop.ts`, `ShopEntry`/`calculateShopTotal` in `packages/domain/src/economy.ts`.
+- The planting settlement: `PlantCrop` in `packages/application/src/crops.ts` and
+  `D1CropRepository.plantAtomically` in `workers/api/src/d1-repositories.ts`. Uprooting is
+  `UprootCrop` in the same file with `D1CropRepository.removeAtomically`.
+- The one-time starter grant: `packages/game-data/src/starter/index.ts`,
+  `GrantStarterSeed` in `packages/application/src/starter.ts`, `D1StarterSeedGrantRepository`, and
+  `database/migrations/0007_seed_economy.sql`. It is called from the development bootstrap in
+  `workers/api/src/dev-index.ts`; there is no grant route and none may be added.
+- Contracts and routes: `packages/contracts/src/index.ts`, `workers/api/src/handler.ts` (including
+  the uproot route), `apps/web/src/api.ts`.
+- The client's language layer is `apps/web/src/i18n.ts`; the dock's planting rules are
+  `apps/web/src/selection.ts`; the level readout is `apps/web/src/progression.ts`. Tests:
+  `tests/web/i18n.test.ts`, `tests/web/farm-selection.test.ts`,
+  `tests/application/starter-seed.test.ts`, `tests/application/uproot-crop.test.ts`,
+  `tests/integration/seed-economy-migration.test.ts`.
+
+Never let a client name a seed item, a price, or a refund, and never add a second inventory mutation
+path: planting spends a seed through `InventoryService` inside the crop-insert transaction.
+
 ## Local development / playable UI task
 
 Read `docs/development.md` first, then `docs/decisions/0006-starter-land-and-node-dev-host.md`.
 
-- UI only: `apps/web` (`api.ts`, `main.ts`, `labels.ts`, `vite.config.ts`) and the contracts it consumes.
+- UI only: `apps/web` (`api.ts`, `main.ts`, `i18n.ts`, `vite.config.ts`) and the contracts it consumes.
 - Development backend: `workers/api/dev/` plus `workers/api/src/dev-index.ts` and `dev-auth.ts`.
 - Farm land: starter-land section of `docs/DATA_MODEL.md` and the Phase 3.5B section of `docs/protocols.md`.
 - Tests: `tests/api/dev-auth.test.ts`, `tests/integration/dev-host.test.ts`, `tests/integration/d1-starter-land.test.ts`.
@@ -125,6 +165,11 @@ Read `docs/decisions/0007-renderer-foundation-and-plain-typescript-client.md`, t
 - Pure geometry and its tests: `apps/web/src/render/layout.ts`, `tests/web/farm-layout.test.ts`.
 - Pure state-to-descriptor mapping and its tests: `apps/web/src/render/view-model.ts`,
   `tests/web/farm-view-model.test.ts`.
+- World map and camera: read `docs/decisions/0012-farm-world-map-and-camera.md`. Pure world
+  geometry (island, apron, path, locked ring, deterministic scenery) and its tests:
+  `apps/web/src/render/world.ts`, `tests/web/farm-world.test.ts`. Shared geometry and materials:
+  `apps/web/src/render/materials.ts`; static ground, water, fence, pond, barn, and locked squares:
+  `apps/web/src/render/terrain.ts`; decorations: `apps/web/src/render/scenery.ts`.
 - Crop model manifest and its tests: `apps/web/src/render/assets.ts`,
   `tests/web/farm-assets.test.ts`. Model files, the generator, and the authoring contract they are
   held to: `apps/web/src/assets/models/`, `apps/web/tools/generate-placeholder-models.mjs`,
