@@ -22,8 +22,13 @@ separate "award experience" command — the award is part of the harvest settlem
 
 Artifacts to attach to the conversation (all of them, not a summary):
 
-1. `git add -A && git diff --cached 24c2d3d`, saved as a single unified diff. (`24c2d3d` is the last
-   commit; Phase 4A is the uncommitted working tree on top of it.)
+1. The Phase 4A commit as a single unified diff:
+
+   ```text
+   git diff 24c2d3d 4e7b89c > happyfarm-4a.diff
+   ```
+
+   `24c2d3d` is the Phase 3.6C commit it sits on.
 2. The full current contents of these files, because a diff hides their surroundings:
    - `packages/domain/src/progression.ts`
    - `packages/application/src/progression.ts`

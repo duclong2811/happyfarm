@@ -60,4 +60,14 @@ describe("crop unlocks by player level", () => {
     expect(isCropUnlocked(definition(2.5), 2)).toBe(false);
     expect(isCropUnlocked(definition(2.5), 3)).toBe(true);
   });
+
+  it("locks a crop whose requirement is below the level every player starts at", () => {
+    // Zero and negative are not levels. Compared exactly as written they unlock the crop for every
+    // player who has ever reached level 1, which is the one direction this rule must never fail in.
+    // Game data rejects those values at load; this is the rule's own last line of defence.
+    for (const requiredLevel of [0, -1, -1_000]) {
+      expect(isCropUnlocked(definition(requiredLevel), 1), String(requiredLevel)).toBe(false);
+      expect(isCropUnlocked(definition(requiredLevel), 50), String(requiredLevel)).toBe(false);
+    }
+  });
 });

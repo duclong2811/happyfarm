@@ -60,7 +60,10 @@ learns which crops exist.
 - The requirement is read from game data, which is a module constant for the life of a deployment, so
   there is no version to guard here: the crop either is or is not unlocked for the whole deployment.
   Retuning the curve later can lock a crop a player could plant yesterday; it never affects a crop
-  already in the ground, because reading is not gated.
+  already in the ground, because reading is not gated. A curve change is not free in the other
+  direction either: it also has to rewrite the cached level every progression row was written with,
+  or the next harvest for those players is refused. ADR 0008 records that consequence and the data
+  step it requires.
 - A refusal writes nothing — no crop row, no idempotency record — so the request id stays usable
   once the player reaches the level. The gate sits ahead of id, fingerprint, and settlement work for
   the same reason.

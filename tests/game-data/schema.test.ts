@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAX_PROGRESSION_LEVEL } from "@happy-farm/contracts";
 import {
   createCropRegistry,
   createCurrencyRegistry,
@@ -200,5 +201,18 @@ describe("game-data validation", () => {
     expect(crops.filter((crop) => (crop.requiredLevel ?? 1) === 1).map((crop) => crop.id)).toEqual([
       "crop_carrot"
     ]);
+  });
+
+  it("keeps every shipped level ceiling inside the bound the API contract validates against", () => {
+    // `PlayerProgressionDTOSchema` and `CropDefinitionDTOSchema` cap `level`, `maxLevel`, and
+    // `requiredLevel` at MAX_PROGRESSION_LEVEL, and `player_progression` checks the same 10,000 on
+    // the level it stores. Those three bounds live in three modules and nothing else ties them
+    // together: a curve above the contract bound would be served to a client whose own validator
+    // would reject the whole response, and a level above the database bound would abort the
+    // settlement on a CHECK constraint. Raising the cap is therefore a coordinated change.
+    expect(playerProgression.maxLevel).toBeLessThanOrEqual(MAX_PROGRESSION_LEVEL);
+    for (const crop of crops) {
+      expect(crop.requiredLevel ?? 1, crop.id).toBeLessThanOrEqual(MAX_PROGRESSION_LEVEL);
+    }
   });
 });

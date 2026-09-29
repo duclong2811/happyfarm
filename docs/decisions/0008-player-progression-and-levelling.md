@@ -82,5 +82,40 @@ stored level stays consistent with the experience it is derived from.
 - The level cap is a data value. Raising it changes `maxLevel` in game data and nothing else; the
   domain arithmetic and the schema bounds (`MAX_PROGRESSION_LEVEL`) still have to be raised together,
   which is why the contract exports the bound it validates against.
+- **A curve change has to rewrite the cached level in the same deployment.** The stored `level` is a
+  cache of `levelForXp(xp)` under the definition that wrote it, and `assertProgression` refuses a row
+  where the two disagree. That is the right reading of a corrupt row, but it also means retuning
+  `xpStep` or lowering `maxLevel` — which ADR 0009 explicitly contemplates — leaves every row written
+  under the old curve disagreeing with the new one. The next harvest for each of those players is then
+  refused with `INTERNAL_ERROR` instead of awarding experience, and the player cannot earn their way
+  out of it, because experience is only awarded by the harvest that is now failing. Reads are
+  unaffected while the cache is stale (`GET /progression`, the planting gate, and the harvest's own
+  response all derive the level from `xp`), so the impact is confined to the write path.
+
+  A retune therefore ships with a D1 step, and that step has to lift the monotonic guard to run:
+  `player_progression_monotonic_update` aborts any update where `NEW.level < OLD.level`, which is
+  exactly what lowering the cap does. The whole rewrite goes in one migration file, which D1 (and the
+  development runner) commits as a single transaction, so no reader ever sees the trigger missing:
+
+  ```sql
+  DROP TRIGGER player_progression_monotonic_update;
+  UPDATE player_progression SET level = <levelForXp(xp) under the new curve>, updated_at = <now>;
+  -- the verbatim DDL from database/migrations/0005_player_progression.sql
+  CREATE TRIGGER player_progression_monotonic_update
+  BEFORE UPDATE ON player_progression
+  WHEN NEW.xp < OLD.xp OR NEW.level < OLD.level OR NEW.progression_version <= OLD.progression_version
+  BEGIN
+    SELECT RAISE(ABORT, 'player progression cannot regress');
+  END;
+  ```
+
+  The `level` clause of the guard is worth keeping rather than deleting. Experience is the only value
+  that can never go backwards, but `assertProgression` refuses a row whose level disagrees with its
+  experience, so a write path that lowered the level without lowering `xp` would strand that player's
+  harvest in exactly the way a retune does. Lifting the guard for the one procedure that has to lower
+  the cache, and putting it straight back, keeps that detector without blocking the retune.
+  `tests/integration/progression-migration.test.ts` pins all three states: the plain rewrite aborts
+  with `player progression cannot regress`, the rewrite with the guard lifted commits, and the guard
+  is enforced again afterwards.
 - Farm expansion and unlocks, the rest of Phase 4, are not covered here. `player_progression` is the
   state they will read, not the feature itself.

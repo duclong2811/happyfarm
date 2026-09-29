@@ -80,6 +80,13 @@ function assertStoredAward(value: unknown): void {
     const entry = (progression as Record<string, unknown>)[field];
     if (!Number.isSafeInteger(entry) || (entry as number) < 0) throw new Error("invalid stored award");
   }
+  // The floors `PlayerProgressionDTOSchema` puts on the same fields, so a corrupt or hand-edited row
+  // cannot be echoed in a shape the contract the client validates against would reject: a level
+  // starts at 1, and a cap below 2 cannot hold a level.
+  const view = progression as Record<string, unknown>;
+  const level = view.level as number;
+  const maxLevel = view.maxLevel as number;
+  if (level < 1 || maxLevel < 2 || level > maxLevel) throw new Error("invalid stored award");
 }
 
 export class HarvestCrop {

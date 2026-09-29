@@ -62,9 +62,14 @@ export function requiredLevelFor(definition: CropDefinition): number {
  * insufficient, so a malformed reading locks every crop rather than unlocking every crop. The
  * refusal is the safe direction: a player who should have been allowed can retry, a player who
  * should not have been cannot un-plant.
+ *
+ * The same applies to the requirement: a requirement below the level every player starts at is not
+ * a level either, and compared exactly as written it would unlock the crop for everybody. It locks
+ * instead. Game data rejects such a value at load; this is the rule's last line of defence.
  */
 export function isCropUnlocked(definition: CropDefinition, level: number): boolean {
-  return Number.isSafeInteger(level) && level >= requiredLevelFor(definition);
+  const required = requiredLevelFor(definition);
+  return Number.isSafeInteger(level) && required >= 1 && level >= required;
 }
 
 export function createCropInstance(

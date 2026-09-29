@@ -6,6 +6,7 @@ import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happ
 import {
   GetCropDefinitionsResponseSchema,
   GetFarmTilesResponseSchema,
+  GetProgressionResponseSchema,
   GetShopResponseSchema,
   GetWalletResponseSchema
 } from "@happy-farm/contracts";
@@ -26,6 +27,7 @@ const TilesEnvelopeSchema = z.object({ ok: z.literal(true), data: GetFarmTilesRe
 const CropDefinitionsEnvelopeSchema = z
   .object({ ok: z.literal(true), data: GetCropDefinitionsResponseSchema })
   .strict();
+const ProgressionEnvelopeSchema = z.object({ ok: z.literal(true), data: GetProgressionResponseSchema }).strict();
 
 class FixedAuth implements AuthenticationPort<Request> {
   constructor(private actor: ActorContext | null) {}
@@ -418,8 +420,9 @@ describe("Worker API foundation", () => {
     }));
     db.sqlite.prepare("INSERT INTO crop_instances (id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at) VALUES ('cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc', ?, 0, 0, 'crop_carrot', ?, '2026-09-26T23:55:00.000Z', 1, ?, ?)").run(FARM_ONE_ID, PLAYER_ONE_ID, NOW, NOW);
 
-    // A player who has never earned experience reads as level 1, and reading stores nothing.
-    expect(await (await handle(new Request("https://api.test/progression"))).json()).toEqual({
+    // A player who has never earned experience reads as level 1, and reading stores nothing. The
+    // response is parsed by the schema the client validates against, so the served shape is checked.
+    expect(ProgressionEnvelopeSchema.parse(await (await handle(new Request("https://api.test/progression"))).json())).toEqual({
       ok: true,
       data: { progression: { level: 1, xp: 0, xpIntoLevel: 0, xpForNextLevel: 120, maxLevel: 50 } }
     });
@@ -440,8 +443,9 @@ describe("Worker API foundation", () => {
       }
     });
 
-    // Reading afterwards agrees with the award the harvest already reported.
-    expect(await (await handle(new Request("https://api.test/progression"))).json()).toEqual({
+    // Reading afterwards agrees with the award the harvest already reported, in a shape the client's
+    // own validator accepts — this is the same row the planting gate reads.
+    expect(ProgressionEnvelopeSchema.parse(await (await handle(new Request("https://api.test/progression"))).json())).toEqual({
       ok: true,
       data: { progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 } }
     });

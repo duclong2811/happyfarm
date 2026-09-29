@@ -300,4 +300,28 @@ describe("HarvestCrop", () => {
       count: 0
     });
   });
+
+  it("refuses to echo a stored award that is not a valid progression", async () => {
+    seedCrop();
+    const harvest = service();
+    await harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    // A hand-edited — or otherwise corrupt — stored response has to fail the replay's own validation
+    // rather than be returned as a valid progression: level 0 is not a level, and a cap of 0 cannot
+    // hold one. The harvest contract the client validates against rejects both.
+    db.sqlite
+      .prepare("UPDATE idempotency_keys SET response_json = ? WHERE operation = 'HARVEST_CROP'")
+      .run(
+        JSON.stringify({
+          harvest: { cropInstanceId: CROP_ONE_ID, itemDefinitionId: "item_carrot", quantityAdded: 2 },
+          progression: {
+            xpAwarded: 4,
+            leveledUp: false,
+            progression: { level: 0, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 0 }
+          }
+        })
+      );
+    await expect(harvest.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).rejects.toMatchObject({
+      code: "INTERNAL_ERROR"
+    });
+  });
 });

@@ -95,6 +95,39 @@ describe("player_progression migration", () => {
     expect(row(db)).toMatchObject({ xp: 360, level: 3, progression_version: 4 });
   });
 
+  it("keeps the monotonic guard while a retune rewrites the cached level", () => {
+    // A row written under a curve where 60,000 experience meant level 32.
+    db.sqlite
+      .prepare(
+        "INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 32, 60000, 7, ?, ?)"
+      )
+      .run(PLAYER_ONE_ID, NOW, NOW);
+    const trigger = db.sqlite
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'player_progression_monotonic_update'"
+      )
+      .get() as { sql: string };
+    const lowered = db.sqlite.prepare(
+      "UPDATE player_progression SET level = 10, progression_version = 8, updated_at = ? WHERE player_id = ?"
+    );
+
+    // Retuning the curve down lowers the level those rows were written with, and the guard refuses
+    // that write. This is what a retune migration runs into, so the migration has to lift the guard
+    // around the rewrite — the procedure ADR 0008 records and this test pins.
+    expect(() => lowered.run(NOW, PLAYER_ONE_ID)).toThrow(/regress/i);
+
+    db.sqlite.exec("DROP TRIGGER player_progression_monotonic_update");
+    lowered.run(NOW, PLAYER_ONE_ID);
+    db.sqlite.exec(trigger.sql);
+    expect(row(db)).toMatchObject({ xp: 60000, level: 10, progression_version: 8 });
+
+    // The guard is back up, so the rewrite stays a one-off the migration owns rather than a new hole.
+    const loweredAgain = db.sqlite.prepare(
+      "UPDATE player_progression SET level = 9, progression_version = 9, updated_at = ? WHERE player_id = ?"
+    );
+    expect(() => loweredAgain.run(NOW, PLAYER_ONE_ID)).toThrow(/regress/i);
+  });
+
   it("keeps a player's progression while the player exists, and blocks deleting the owner", () => {
     db.sqlite
       .prepare(

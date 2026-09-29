@@ -20,24 +20,22 @@ Browser farm game at `C:\Project\HappyFarm`. Cloudflare-native and server-author
 Phase 4B: crops can require a player level, planting is refused below it, and the client builds its
 planting control from a server-served crop catalogue instead of a compiled-in list.
 
-Phase 4A (experience and levels) is **staged but not committed**; the Phase 4B changes are the
-unstaged working tree above it. This is deliberate, so do not treat the split as an accident. Auditing
-Phase 4B therefore means auditing a tree that also contains Phase 4A; the Phase 4A audit is a separate
-request (`docs/reviews/AUDIT_PROMPT_PHASE_4A.md`).
+Phase 4A (experience and levels) is `4e7b89c`, and Phase 4B is `0857e93`; both sit on `24c2d3d`
+(Phase 3.6C). Phase 4B reads the progression state Phase 4A introduced and is its first gameplay
+reader, so a review of either one benefits from the other. The Phase 4A audit is a separate request
+(`docs/reviews/AUDIT_PROMPT_PHASE_4A.md`); to audit both in one session, use
+`docs/reviews/AUDIT_PROMPT_PHASE_4A_4B.md` instead of this file.
 
 Artifacts to attach to the conversation (all of them, not a summary):
 
-1. The **unstaged** diff, which is exactly Phase 4B because Phase 4A is staged. Four Phase 4B files
-   are new and untracked, so record them first:
+1. The Phase 4B commit as a single unified diff:
 
    ```text
-   git add -N .
-   git diff > happyfarm-4b.diff
+   git diff 4e7b89c 0857e93 > happyfarm-4b.diff
    ```
 
-   `git add -N` only marks the new files as "intent to add" so they appear in `git diff`; it does not
-   touch the Phase 4A index entries. Do **not** send `git diff --cached` (that is Phase 4A), and do
-   not `git add -A` before capturing the diff.
+   `4e7b89c` is the Phase 4A commit it sits on. Four of the 26 files are new, and a commit diff
+   includes them, so nothing has to be added to the index first.
 2. The full current contents of these files, because a diff hides their surroundings:
    - `packages/domain/src/crop.ts`
    - `packages/application/src/crops.ts`
