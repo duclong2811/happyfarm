@@ -10,7 +10,13 @@ import {
   ListPlots,
   ListCropDefinitions,
   ListFarmTiles,
+  ListFarmTrees,
+  ListTreeDefinitions,
   PlantCrop,
+  PlantTree,
+  HarvestTree,
+  RemoveTree,
+  TreeStateProjector,
   UprootCrop,
   ApplicationError,
   BuyItem,
@@ -29,15 +35,21 @@ import {
   type PayloadFingerprint,
   type PlotDefinitionRepository,
   type PlotView,
-  type ShopEntryRepository
+  type ShopEntryRepository,
+  type TreeDefinitionRepository,
+  type TreeIdGenerator
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
   FarmIdSchema,
   CropInstanceIdSchema,
+  TreeInstanceIdSchema,
   HarvestCropRequestSchema,
   BuyItemRequestSchema,
   ExpandFarmRequestSchema,
+  HarvestTreeRequestSchema,
+  PlantTreeRequestSchema,
+  RemoveTreeRequestSchema,
   SellItemRequestSchema,
   PlantCropRequestSchema,
   UprootCropRequestSchema,
@@ -51,6 +63,8 @@ import {
   type CropDefinitionDTO,
   type HarvestResultDTO,
   type UprootCropResponse,
+  type TreeHarvestResultDTO,
+  type RemoveTreeResponse,
   type InventoryEntryDTO,
   type PlayerProgressionDTO,
   type XpAwardDTO,
@@ -60,6 +74,8 @@ import {
   type WalletDTO
   ,type PlotDTO,
   type ExpandFarmResultDTO
+  ,type TreeDefinitionDTO,
+  type TreeStateDTO
 } from "@happy-farm/contracts";
 import {
   parseCurrencyDefinitionId,
@@ -74,6 +90,9 @@ import {
   D1HarvestSettlementRepository,
   D1EconomySettlementRepository,
   D1FarmExpansionRepository,
+  D1TreeRepository,
+  D1TreeHarvestSettlementRepository,
+  D1IdempotencyRepository,
   D1WalletRepository,
   D1InventoryRepository,
   D1FarmMemberRepository,
@@ -88,13 +107,14 @@ const MAX_JSON_BODY_BYTES = 16_384;
 export interface HandlerDependencies {
   readonly db: D1DatabaseLike;
   readonly authenticator: AuthenticationPort<Request>;
-  readonly ids: IdGenerator & CropIdGenerator & EconomyTransactionIdGenerator;
+  readonly ids: IdGenerator & CropIdGenerator & TreeIdGenerator & EconomyTransactionIdGenerator;
   readonly fingerprints: PayloadFingerprint;
   readonly cropDefinitions: CropDefinitionRepository;
   readonly itemDefinitions: ItemDefinitionRepository;
   readonly currencyDefinitions: CurrencyDefinitionRepository;
   readonly shopEntries: ShopEntryRepository;
   readonly plotDefinitions: PlotDefinitionRepository;
+  readonly treeDefinitions: TreeDefinitionRepository;
   /** The levelling curve. Passed in rather than imported, so application code stays game-data free. */
   readonly progressionDefinition: ProgressionDefinition;
   readonly clock: Clock;
@@ -227,6 +247,7 @@ function errorStatus(code: ErrorCode): number {
     case "FARM_PERMISSION_DENIED":
     case "CROP_LEVEL_REQUIRED":
     case "PLOT_LEVEL_REQUIRED":
+    case "TREE_LEVEL_REQUIRED":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -234,6 +255,8 @@ function errorStatus(code: ErrorCode): number {
     case "ITEM_DEFINITION_NOT_FOUND":
     case "CURRENCY_DEFINITION_NOT_FOUND":
     case "SHOP_ENTRY_NOT_FOUND":
+    case "TREE_DEFINITION_NOT_FOUND":
+    case "TREE_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
     case "REQUEST_ALREADY_PROCESSED":
@@ -249,6 +272,7 @@ function errorStatus(code: ErrorCode): number {
     case "ECONOMY_CONFLICT":
     case "PROGRESSION_CONFLICT":
     case "PLOT_LIMIT_REACHED":
+    case "TREE_NOT_READY":
       return 409;
     case "RATE_LIMITED":
       return 429;
@@ -273,6 +297,8 @@ export function createHandler(dependencies: HandlerDependencies) {
   const wallets = new D1WalletRepository(dependencies.db);
   const economySettlement = new D1EconomySettlementRepository(dependencies.db);
   const farmExpansionSettlement = new D1FarmExpansionRepository(dependencies.db);
+  const trees = new D1TreeRepository(dependencies.db);
+  const treeHarvestSettlement = new D1TreeHarvestSettlementRepository(dependencies.db);
   const progressions = new D1ProgressionRepository(dependencies.db);
   const unlockedLand = {
     async isUnlocked(farmId: Parameters<typeof tiles.find>[0], coordinate: { x: number; y: number }) {
@@ -348,6 +374,52 @@ export function createHandler(dependencies: HandlerDependencies) {
   const buyItem = new BuyItem(shopDependencies);
   const sellItem = new SellItem(shopDependencies);
   const listPlots = new ListPlots(dependencies.plotDefinitions, farms, members, tiles);
+  const treeProjector = new TreeStateProjector(dependencies.treeDefinitions, dependencies.clock);
+  const treeIdempotency = new D1IdempotencyRepository(dependencies.db);
+  const plantTree = new PlantTree({
+    farms,
+    members,
+    tiles,
+    trees,
+    crops,
+    inventory,
+    idempotency: treeIdempotency,
+    definitions: dependencies.treeDefinitions,
+    progression: progressions,
+    progressionDefinition: dependencies.progressionDefinition,
+    unlockedLand,
+    inventoryService,
+    ids: dependencies.ids,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
+  const harvestTree = new HarvestTree(
+    farms,
+    members,
+    trees,
+    inventory,
+    treeIdempotency,
+    treeHarvestSettlement,
+    dependencies.treeDefinitions,
+    inventoryService,
+    progressions,
+    dependencies.progressionDefinition,
+    dependencies.fingerprints,
+    dependencies.clock
+  );
+  const removeTree = new RemoveTree(
+    farms,
+    members,
+    trees,
+    treeIdempotency,
+    dependencies.fingerprints,
+    dependencies.clock
+  );
+  const listTreeDefinitions = new ListTreeDefinitions(
+    dependencies.treeDefinitions,
+    dependencies.itemDefinitions
+  );
+  const listFarmTrees = new ListFarmTrees(farms, members, trees, treeProjector);
   const expandFarm = new ExpandFarm({
     farms,
     members,
@@ -434,6 +506,16 @@ export function createHandler(dependencies: HandlerDependencies) {
         return jsonResponse(body);
       }
 
+      if (request.method === "GET" && url.pathname === "/tree-definitions") {
+        if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
+        const definitions: TreeDefinitionDTO[] = [...listTreeDefinitions.execute(actor)];
+        const body: ApiSuccess<{ definitions: TreeDefinitionDTO[] }> = {
+          ok: true,
+          data: { definitions }
+        };
+        return jsonResponse(body);
+      }
+
       if (request.method === "POST" && (url.pathname === "/shop/buy" || url.pathname === "/shop/sell")) {
         const schema = url.pathname === "/shop/buy" ? BuyItemRequestSchema : SellItemRequestSchema;
         const parsed = schema.safeParse(await parseJson(request));
@@ -510,6 +592,85 @@ export function createHandler(dependencies: HandlerDependencies) {
         if (request.method === "GET") {
           const cropStates = await getFarmCrops.execute(actor, farmId);
           const body: ApiSuccess<{ crops: CropStateDTO[] }> = { ok: true, data: { crops: [...cropStates] } };
+          return jsonResponse(body);
+        }
+      }
+
+      const treeHarvestRoute = /^\/farms\/([^/]+)\/trees\/([^/]+)\/harvest$/.exec(url.pathname);
+      if (
+        request.method === "POST" &&
+        treeHarvestRoute?.[1] !== undefined &&
+        treeHarvestRoute[2] !== undefined
+      ) {
+        const decodedFarmId = decodePathSegment(treeHarvestRoute[1]);
+        const decodedTreeId = decodePathSegment(treeHarvestRoute[2]);
+        if (
+          decodedFarmId === null ||
+          decodedTreeId === null ||
+          !FarmIdSchema.safeParse(decodedFarmId).success ||
+          !TreeInstanceIdSchema.safeParse(decodedTreeId).success
+        ) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const parsed = HarvestTreeRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const result = await harvestTree.execute(actor, parseFarmId(decodedFarmId), {
+          ...parsed.data,
+          treeInstanceId: decodedTreeId
+        });
+        const body: ApiSuccess<{ harvest: TreeHarvestResultDTO; progression: XpAwardDTO }> = {
+          ok: true,
+          data: result
+        };
+        return jsonResponse(body);
+      }
+
+      const treeRemoveRoute = /^\/farms\/([^/]+)\/trees\/([^/]+)\/remove$/.exec(url.pathname);
+      if (
+        request.method === "POST" &&
+        treeRemoveRoute?.[1] !== undefined &&
+        treeRemoveRoute[2] !== undefined
+      ) {
+        const decodedFarmId = decodePathSegment(treeRemoveRoute[1]);
+        const decodedTreeId = decodePathSegment(treeRemoveRoute[2]);
+        if (
+          decodedFarmId === null ||
+          decodedTreeId === null ||
+          !FarmIdSchema.safeParse(decodedFarmId).success ||
+          !TreeInstanceIdSchema.safeParse(decodedTreeId).success
+        ) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const parsed = RemoveTreeRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const removed = await removeTree.execute(actor, parseFarmId(decodedFarmId), {
+          ...parsed.data,
+          treeInstanceId: decodedTreeId
+        });
+        const body: ApiSuccess<RemoveTreeResponse> = { ok: true, data: { removed } };
+        return jsonResponse(body);
+      }
+
+      const treesRoute = /^\/farms\/([^/]+)\/trees$/.exec(url.pathname);
+      if (treesRoute?.[1] !== undefined) {
+        const decodedId = decodePathSegment(treesRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const farmId = parseFarmId(decodedId);
+        if (request.method === "POST") {
+          const parsed = PlantTreeRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const tree = await plantTree.execute(actor, farmId, parsed.data);
+          const body: ApiSuccess<{ tree: TreeStateDTO }> = { ok: true, data: { tree } };
+          return jsonResponse(body, 201);
+        }
+        if (request.method === "GET") {
+          const treeStates = await listFarmTrees.execute(actor, farmId);
+          const body: ApiSuccess<{ trees: TreeStateDTO[] }> = {
+            ok: true,
+            data: { trees: [...treeStates] }
+          };
           return jsonResponse(body);
         }
       }

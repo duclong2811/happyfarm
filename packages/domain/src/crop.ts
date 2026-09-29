@@ -1,5 +1,6 @@
 import { DomainError } from "./errors";
 import type { CropDefinitionId, CropInstanceId, FarmId, ItemDefinitionId, PlayerId } from "./ids";
+import { meetsRequiredLevel } from "./progression";
 import type { FarmTile } from "./tile";
 
 export interface CropDefinition {
@@ -76,8 +77,7 @@ export function requiredLevelFor(definition: CropDefinition): number {
  * instead. Game data rejects such a value at load; this is the rule's last line of defence.
  */
 export function isCropUnlocked(definition: CropDefinition, level: number): boolean {
-  const required = requiredLevelFor(definition);
-  return Number.isSafeInteger(level) && required >= 1 && level >= required;
+  return meetsRequiredLevel(requiredLevelFor(definition), level);
 }
 
 export function createCropInstance(

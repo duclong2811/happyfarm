@@ -29,6 +29,41 @@ export interface XpAwardView {
 }
 
 /**
+ * Refuses a stored experience award that is not one this contract could have produced.
+ *
+ * Replay hands back what the settlement stored, so a corrupt or hand-edited row must not be echoed
+ * in a shape the client's validator rejects — that would turn a damaged receipt into a broken
+ * screen instead of an honest internal error. The floors are the ones `PlayerProgressionDTOSchema`
+ * puts on the same fields: a level starts at 1, and a cap below 2 cannot hold a level.
+ *
+ * Deliberately absent is any re-derivation of the level from `xp`: an award written under an older
+ * curve has to stay replayable after a retune, which is exactly what the replay exists for. Both the
+ * crop harvest and the tree harvest read their receipts through this one function.
+ */
+export function assertStoredXpAward(value: unknown): void {
+  if (typeof value !== "object" || value === null) throw new Error("invalid stored award");
+  const award = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(award.xpAwarded) ||
+    (award.xpAwarded as number) <= 0 ||
+    typeof award.leveledUp !== "boolean"
+  ) {
+    throw new Error("invalid stored award");
+  }
+  const progression = award.progression;
+  if (typeof progression !== "object" || progression === null) throw new Error("invalid stored award");
+  const fields = ["level", "xp", "xpIntoLevel", "xpForNextLevel", "maxLevel"] as const;
+  for (const field of fields) {
+    const entry = (progression as Record<string, unknown>)[field];
+    if (!Number.isSafeInteger(entry) || (entry as number) < 0) throw new Error("invalid stored award");
+  }
+  const view = progression as Record<string, unknown>;
+  const level = view.level as number;
+  const maxLevel = view.maxLevel as number;
+  if (level < 1 || maxLevel < 2 || level > maxLevel) throw new Error("invalid stored award");
+}
+
+/**
  * The version a player who has never earned experience is modelled at.
  *
  * Rows are created by the first award rather than with the player, so "no row" is a normal state

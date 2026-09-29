@@ -8,6 +8,8 @@ declare const itemDefinitionIdBrand: unique symbol;
 declare const currencyDefinitionIdBrand: unique symbol;
 declare const shopEntryIdBrand: unique symbol;
 declare const plotIdBrand: unique symbol;
+declare const treeInstanceIdBrand: unique symbol;
+declare const treeDefinitionIdBrand: unique symbol;
 declare const economyTransactionIdBrand: unique symbol;
 
 export type PlayerId = string & { readonly [playerIdBrand]: true };
@@ -18,6 +20,8 @@ export type ItemDefinitionId = string & { readonly [itemDefinitionIdBrand]: true
 export type CurrencyDefinitionId = string & { readonly [currencyDefinitionIdBrand]: true };
 export type ShopEntryId = string & { readonly [shopEntryIdBrand]: true };
 export type PlotId = string & { readonly [plotIdBrand]: true };
+export type TreeInstanceId = string & { readonly [treeInstanceIdBrand]: true };
+export type TreeDefinitionId = string & { readonly [treeDefinitionIdBrand]: true };
 export type EconomyTransactionId = string & { readonly [economyTransactionIdBrand]: true };
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -29,6 +33,8 @@ const ITEM_DEFINITION_ID_PATTERN = /^item_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const CURRENCY_DEFINITION_ID_PATTERN = /^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const SHOP_ENTRY_ID_PATTERN = /^shop_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const PLOT_ID_PATTERN = /^plot_[1-9][0-9]*$/;
+const TREE_INSTANCE_ID_PATTERN = new RegExp(`^treeinst_${UUID_PATTERN}$`, "i");
+const TREE_DEFINITION_ID_PATTERN = /^tree_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const ECONOMY_TRANSACTION_ID_PATTERN = new RegExp(`^econ_${UUID_PATTERN}$`, "i");
 
 export function parsePlayerId(value: string): PlayerId {
@@ -113,6 +119,30 @@ export function plotIdForIndex(index: number): PlotId {
     throw new DomainError("INVALID_ID", "Invalid plot index");
   }
   return parsePlotId(`plot_${String(index)}`);
+}
+
+/**
+ * A tree is identified by the instance the planting settlement allocated it.
+ *
+ * The pattern accepts exactly `treeinst_<uuid>`, mirroring `cropinst_<uuid>`, so an instance id and
+ * an identity cannot disagree. The persistent id is what binds a tree to its receipts.
+ */
+export function parseTreeInstanceId(value: string): TreeInstanceId {
+  if (!TREE_INSTANCE_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid tree instance ID");
+  }
+  return value as TreeInstanceId;
+}
+
+export function treeInstanceIdFromUuid(uuid: string): TreeInstanceId {
+  return parseTreeInstanceId(`treeinst_${uuid}`);
+}
+
+export function parseTreeDefinitionId(value: string): TreeDefinitionId {
+  if (!TREE_DEFINITION_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid tree definition ID");
+  }
+  return value as TreeDefinitionId;
 }
 
 export function parseEconomyTransactionId(value: string): EconomyTransactionId {

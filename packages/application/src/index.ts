@@ -12,3 +12,4 @@ export * from "./progression";
 export * from "./shop";
 export * from "./starter";
 export * from "./tile-service";
+export * from "./trees";

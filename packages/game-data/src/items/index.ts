@@ -39,7 +39,11 @@ export const itemRegistry = createItemRegistry([
   { id: "item_corn", displayNameKey: "item.corn.name", category: "CROP", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_carrot_seed", displayNameKey: "item.carrot_seed.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_wheat_seed", displayNameKey: "item.wheat_seed.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
-  { id: "item_corn_seed", displayNameKey: "item.corn_seed.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK }
+  { id: "item_corn_seed", displayNameKey: "item.corn_seed.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
+  // A sapling is the planting input for a tree, so it reuses the `SEED` category the shop sells and
+  // planting consumes. The fruit is produce, so it reuses `CROP` and is only ever sold.
+  { id: "item_apple_sapling", displayNameKey: "item.apple_sapling.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_apple", displayNameKey: "item.apple.name", category: "CROP", stackable: true, maxStack: MAX_ITEM_STACK }
 ]);
 
 export const items = [...itemRegistry.values()];

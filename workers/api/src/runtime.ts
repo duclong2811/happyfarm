@@ -7,6 +7,8 @@ import {
   parseItemDefinitionId,
   parsePlotId,
   parseShopEntryId,
+  parseTreeDefinitionId,
+  treeInstanceIdFromUuid,
   type CropDefinition,
   type CropDefinitionId,
   type CropInstanceId,
@@ -19,7 +21,10 @@ import {
   type ProgressionDefinition,
   type PlotDefinition,
   type ShopEntry,
-  type ShopEntryId
+  type ShopEntryId,
+  type TreeDefinition,
+  type TreeDefinitionId,
+  type TreeInstanceId
 } from "@happy-farm/domain";
 import type {
   ActorContext,
@@ -33,7 +38,9 @@ import type {
   ItemDefinitionRepository,
   PlotDefinitionRepository,
   PayloadFingerprint,
-  ShopEntryRepository
+  ShopEntryRepository,
+  TreeDefinitionRepository,
+  TreeIdGenerator
 } from "@happy-farm/application";
 import {
   cropRegistry,
@@ -43,7 +50,9 @@ import {
   plotRegistry,
   shopRegistry,
   starterSeedGrant,
-  type CropDefinitionData
+  treeRegistry,
+  type CropDefinitionData,
+  type TreeDefinitionData
 } from "@happy-farm/game-data";
 
 /**
@@ -75,13 +84,19 @@ export class SystemClock implements Clock {
   }
 }
 
-export class CryptoIdGenerator implements IdGenerator, CropIdGenerator, EconomyTransactionIdGenerator {
+export class CryptoIdGenerator
+  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator
+{
   newFarmId(): FarmId {
     return farmIdFromUuid(crypto.randomUUID());
   }
 
   newCropInstanceId(): CropInstanceId {
     return cropInstanceIdFromUuid(crypto.randomUUID());
+  }
+
+  newTreeInstanceId(): TreeInstanceId {
+    return treeInstanceIdFromUuid(crypto.randomUUID());
   }
 
   newEconomyTransactionId(): EconomyTransactionId {
@@ -167,6 +182,43 @@ export class GameDataCropDefinitions implements CropDefinitionRepository {
     const definition = cropRegistry.get(id);
     return definition === undefined ? null : toCropDefinition(definition);
   }
+}
+
+export class GameDataTreeDefinitions implements TreeDefinitionRepository {
+  list(): readonly TreeDefinition[] {
+    return [...treeRegistry.values()].map(toTreeDefinition);
+  }
+
+  findById(id: TreeDefinitionId): TreeDefinition | null {
+    const definition = treeRegistry.get(id);
+    return definition === undefined ? null : toTreeDefinition(definition);
+  }
+}
+
+/**
+ * Translates one game-data tree into the domain shape.
+ *
+ * The same optional-key treatment as a crop: the domain is compiled with
+ * `exactOptionalPropertyTypes`, so an absent level requirement is added only when game data sets
+ * one, and the domain's `requiredLevelForTree` decides what an absent requirement means.
+ */
+function toTreeDefinition(definition: TreeDefinitionData): TreeDefinition {
+  const base = {
+    id: parseTreeDefinitionId(definition.id),
+    displayNameKey: definition.displayNameKey,
+    saplingItemDefinitionId: parseItemDefinitionId(definition.saplingItemDefinitionId),
+    firstReadySeconds: definition.firstReadySeconds,
+    regrowSeconds: definition.regrowSeconds,
+    growthStages: definition.growthStages,
+    harvest: {
+      itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
+      baseQuantity: definition.harvest.baseQuantity,
+      xp: definition.harvest.xp
+    }
+  };
+  return definition.requiredLevel === undefined
+    ? base
+    : { ...base, requiredLevel: definition.requiredLevel };
 }
 
 /**

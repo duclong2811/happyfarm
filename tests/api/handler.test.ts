@@ -7,17 +7,20 @@ import {
   GetCropDefinitionsResponseSchema,
   GetFarmTilesResponseSchema,
   GetProgressionResponseSchema,
+  GetTreeDefinitionsResponseSchema,
+  TreeStateDTOSchema,
   GetShopResponseSchema,
   GetWalletResponseSchema
 } from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE, parseCropInstanceId, parseEconomyTransactionId, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
+import { parseTreeInstanceId, type TreeInstanceId } from "@happy-farm/domain";
 import { itemRegistry, shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
-import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
+import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -26,6 +29,9 @@ const WalletEnvelopeSchema = z.object({ ok: z.literal(true), data: GetWalletResp
 const TilesEnvelopeSchema = z.object({ ok: z.literal(true), data: GetFarmTilesResponseSchema }).strict();
 const CropDefinitionsEnvelopeSchema = z
   .object({ ok: z.literal(true), data: GetCropDefinitionsResponseSchema })
+  .strict();
+const TreeDefinitionsEnvelopeSchema = z
+  .object({ ok: z.literal(true), data: GetTreeDefinitionsResponseSchema })
   .strict();
 const ProgressionEnvelopeSchema = z.object({ ok: z.literal(true), data: GetProgressionResponseSchema }).strict();
 
@@ -52,6 +58,9 @@ class FixedIds implements IdGenerator {
   }
   newCropInstanceId(): CropInstanceId {
     return parseCropInstanceId("cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  }
+  newTreeInstanceId(): TreeInstanceId {
+    return parseTreeInstanceId("treeinst_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
   }
   newEconomyTransactionId(): EconomyTransactionId {
     return parseEconomyTransactionId(`econ_eeeeeeee-eeee-4eee-8eee-${String(this.economySequence++).padStart(12, "0")}`);
@@ -81,6 +90,7 @@ describe("Worker API foundation", () => {
       currencyDefinitions: new GameDataCurrencyDefinitions(),
       shopEntries: new GameDataShopEntries(),
       plotDefinitions: new GameDataPlotDefinitions(),
+      treeDefinitions: new GameDataTreeDefinitions(),
       progressionDefinition: gameDataProgressionDefinition,
       clock: new FixedClock()
     });
@@ -910,5 +920,182 @@ describe("Worker API foundation", () => {
     db.sqlite.prepare("INSERT INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'issuer', 'other', 'Other', 'ACTIVE', ?, ?)").run(PLAYER_TWO_ID, NOW, NOW);
     auth.setActor({ playerId: PLAYER_TWO_ID });
     expect((await expand("expand_other_001")).status).toBe(403);
+  });
+
+  it("serves the tree catalogue and gates planting, harvesting and removal by level and server time", async () => {
+    const catalogue = await handle(new Request("https://api.test/tree-definitions"));
+    expect(catalogue.status).toBe(200);
+    const catalogueBody = TreeDefinitionsEnvelopeSchema.parse(await catalogue.json());
+    expect(catalogueBody.data.definitions).toHaveLength(1);
+    expect(catalogueBody.data.definitions[0]).toMatchObject({
+      treeDefinitionId: "tree_apple",
+      saplingItemDefinitionId: "item_apple_sapling",
+      firstReadySeconds: 3600,
+      regrowSeconds: 900,
+      harvestItemDefinitionId: "item_apple",
+      baseQuantity: 3,
+      harvestXp: 10,
+      requiredLevel: 3
+    });
+    // The catalogue carries only what the client renders from: the sapling's own id and name, and
+    // never a reward, a price, or a timer the client could set.
+    expect(Object.keys(catalogueBody.data.definitions[0] ?? {}).sort()).toEqual([
+      "baseQuantity",
+      "displayNameKey",
+      "firstReadySeconds",
+      "growthStages",
+      "harvestItemDefinitionId",
+      "harvestXp",
+      "regrowSeconds",
+      "requiredLevel",
+      "saplingItemDefinitionId",
+      "saplingItemDisplayNameKey",
+      "treeDefinitionId"
+    ]);
+
+    const created = await handle(
+      new Request("https://api.test/farms", {
+        method: "POST",
+        body: JSON.stringify({ name: "Tree Farm" }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(created.status).toBe(201);
+    const farmId = FARM_ONE_ID;
+    giveItem("item_apple_sapling", 2);
+    const plant = (body: unknown) =>
+      handle(
+        new Request(`https://api.test/farms/${farmId}/trees`, {
+          method: "POST",
+          body: JSON.stringify(body),
+          headers: { "content-type": "application/json" }
+        })
+      );
+    const plantBody = {
+      requestId: "tree_api_plant_001",
+      treeDefinitionId: "tree_apple",
+      x: 0,
+      y: 0,
+      expectedTileVersion: 1
+    };
+
+    // Level 1 cannot plant the level-3 tree, and the sapling is untouched.
+    const locked = await plant(plantBody);
+    expect(locked.status).toBe(403);
+    expect(await locked.json()).toMatchObject({ error: { code: "TREE_LEVEL_REQUIRED" } });
+    expect(
+      db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE item_definition_id = 'item_apple_sapling'").get()
+    ).toEqual({ quantity: 2 });
+
+    // Level 3 plants it; the tree spends one sapling and starts growing.
+    db.sqlite
+      .prepare("INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 3, 360, 1, ?, ?)")
+      .run(PLAYER_ONE_ID, NOW, NOW);
+    const planted = await plant(plantBody);
+    expect(planted.status).toBe(201);
+    const plantedBody = z
+      .object({ ok: z.literal(true), data: z.object({ tree: TreeStateDTOSchema }).strict() })
+      .strict()
+      .parse(await planted.json());
+    expect(plantedBody.data.tree).toMatchObject({ phase: "GROWING", ready: false, version: 1 });
+    const treeInstanceId = plantedBody.data.tree.treeInstanceId;
+    expect(parseTreeInstanceId(treeInstanceId)).toBe(treeInstanceId);
+    expect(
+      db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE item_definition_id = 'item_apple_sapling'").get()
+    ).toEqual({ quantity: 1 });
+
+    const trees = await handle(new Request(`https://api.test/farms/${farmId}/trees`));
+    expect(trees.status).toBe(200);
+    expect(await trees.json()).toMatchObject({ data: { trees: [{ treeInstanceId }] } });
+
+    // A tree that is not ready cannot be harvested, and a client cannot claim it is.
+    const notReady = await handle(
+      new Request(`https://api.test/farms/${farmId}/trees/${treeInstanceId}/harvest`, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "tree_api_harvest_early", expectedTreeVersion: 1 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(notReady.status).toBe(409);
+    expect(await notReady.json()).toMatchObject({ error: { code: "TREE_NOT_READY" } });
+
+    // Once the server's own clock says the fruit is ready, one harvest pays fruit and experience.
+    db.sqlite.prepare("UPDATE tree_instances SET planted_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", treeInstanceId);
+    const harvest = (requestId: string) =>
+      handle(
+        new Request(`https://api.test/farms/${farmId}/trees/${treeInstanceId}/harvest`, {
+          method: "POST",
+          body: JSON.stringify({ requestId, expectedTreeVersion: 1 }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+    const harvested = await harvest("tree_api_harvest_ready");
+    expect(harvested.status).toBe(200);
+    expect(await harvested.json()).toMatchObject({
+      data: {
+        harvest: { treeInstanceId, itemDefinitionId: "item_apple", quantityAdded: 3 },
+        progression: { xpAwarded: 10 }
+      }
+    });
+    // Replaying the same request returns the same reward and pays nothing again.
+    const replay = await harvest("tree_api_harvest_ready");
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ data: { harvest: { quantityAdded: 3 } } });
+    expect(
+      db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE item_definition_id = 'item_apple'").get()
+    ).toEqual({ quantity: 3 });
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) AS count FROM tree_harvest_settlements").get()
+    ).toEqual({ count: 1 });
+
+    // The tree survives its harvest at the next revision.
+    expect(
+      db.sqlite.prepare("SELECT version FROM tree_instances WHERE id = ?").get(treeInstanceId)
+    ).toEqual({ version: 2 });
+
+    // Removing it needs the owner and the exact revision, and refunds nothing.
+    auth.setActor({ playerId: PLAYER_TWO_ID });
+    const foreignRemove = await handle(
+      new Request(`https://api.test/farms/${farmId}/trees/${treeInstanceId}/remove`, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "tree_api_remove_other", expectedTreeVersion: 2 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(foreignRemove.status).toBe(403);
+    auth.setActor({ playerId: PLAYER_ONE_ID });
+    const removed = await handle(
+      new Request(`https://api.test/farms/${farmId}/trees/${treeInstanceId}/remove`, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "tree_api_remove_owner", expectedTreeVersion: 2 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({ data: { removed: { treeInstanceId } } });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM tree_instances").get()).toEqual({ count: 0 });
+    expect(
+      db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE item_definition_id = 'item_apple_sapling'").get()
+    ).toEqual({ quantity: 1 });
+
+    // A body that tries to name authoritative state is rejected outright.
+    const injectedBodies: Record<string, unknown>[] = [
+      { ...plantBody, xp: 999 },
+      { ...plantBody, level: 9 },
+      { ...plantBody, saplingItemDefinitionId: "item_carrot_seed" },
+      { requestId: "tree_api_injected_harvest", expectedTreeVersion: 2, ready: true }
+    ];
+    for (const injected of injectedBodies) {
+      const response = injected.requestId === "tree_api_injected_harvest"
+        ? await handle(
+            new Request(`https://api.test/farms/${farmId}/trees/${treeInstanceId}/harvest`, {
+              method: "POST",
+              body: JSON.stringify(injected),
+              headers: { "content-type": "application/json" }
+            })
+          )
+        : await plant(injected);
+      expect(response.status, JSON.stringify(injected)).toBe(400);
+    }
   });
 });

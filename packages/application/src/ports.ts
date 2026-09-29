@@ -24,6 +24,10 @@ import type {
   PlotDefinition,
   ShopEntry,
   ShopEntryId,
+  TreeDefinition,
+  TreeDefinitionId,
+  TreeInstance,
+  TreeInstanceId,
   XpAward,
   Wallet
 } from "@happy-farm/domain";
@@ -46,6 +50,10 @@ export interface IdGenerator {
 
 export interface CropIdGenerator {
   newCropInstanceId(): CropInstanceId;
+}
+
+export interface TreeIdGenerator {
+  newTreeInstanceId(): TreeInstanceId;
 }
 
 export interface PayloadFingerprint {
@@ -116,6 +124,18 @@ export interface ShopEntryRepository {
 export interface PlotDefinitionRepository {
   findByIndex(index: number): PlotDefinition | null;
   list(): readonly PlotDefinition[];
+}
+
+/**
+ * The trees this deployment ships.
+ *
+ * A catalogue like the crop one: game data rather than player state, looked up by the definition a
+ * command names and never by anything a client invents. Two trees cannot share a sapling, and the
+ * game-data registry refuses that at load rather than leaving it to be interpreted here.
+ */
+export interface TreeDefinitionRepository {
+  findById(id: TreeDefinitionId): TreeDefinition | null;
+  list(): readonly TreeDefinition[];
 }
 
 export interface WalletRepository {
@@ -212,6 +232,47 @@ export interface HarvestSettlementRepository {
    */
   settleHarvestAtomically(
     crop: CropInstance,
+    addition: InventoryAddition,
+    award: XpAward,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+}
+
+/**
+ * The tree plant and removal boundaries: one tile's occupant, and the receipt that says so.
+ *
+ * Planting consumes exactly one sapling and inserts exactly one tree in the same transaction, the
+ * same shape as planting a crop. Removal deletes one tree and records one receipt, with no inventory,
+ * currency, or experience written at all: a removed tree is simply gone.
+ */
+export interface TreeInstanceRepository {
+  findById(id: TreeInstanceId): Promise<TreeInstance | null>;
+  findAtTile(farmId: FarmId, x: number, y: number): Promise<TreeInstance | null>;
+  listByFarm(farmId: FarmId): Promise<readonly TreeInstance[]>;
+  plantAtomically(
+    tree: TreeInstance,
+    expectedTileVersion: number,
+    saplingRemoval: InventoryRemoval,
+    expectedInventory: InventoryItem,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+  removeAtomically(
+    tree: TreeInstance,
+    expectedTreeVersion: number,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+}
+
+/**
+ * The one write boundary for harvesting a tree's cycle.
+ *
+ * The receipt identifies the cycle by the revision the tree was at, so a repeated or concurrent
+ * harvest of one cycle can settle exactly once, and the fruit, the experience award, the harvest
+ * anchor, and the revision advance together or not at all.
+ */
+export interface TreeHarvestSettlementRepository {
+  settleTreeHarvestAtomically(
+    tree: TreeInstance,
     addition: InventoryAddition,
     award: XpAward,
     idempotency: IdempotencyRecord

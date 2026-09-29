@@ -21,6 +21,8 @@ import type {
   PlayerStatus,
   TerrainType,
   TileState,
+  TreeInstance,
+  TreeInstanceId,
   XpAward,
   Wallet
 } from "@happy-farm/domain";
@@ -33,6 +35,8 @@ import {
   parseFarmId,
   parseItemDefinitionId,
   parsePlayerId,
+  parseTreeInstanceId,
+  parseTreeDefinitionId,
   PLOT_TILE_COUNT,
   PLOT_TILE_SIZE
 } from "@happy-farm/domain";
@@ -53,6 +57,8 @@ import type {
   ProgressionRepository,
   StarterSeedGrant,
   StarterSeedGrantRepository,
+  TreeHarvestSettlementRepository,
+  TreeInstanceRepository,
   WalletRepository
 } from "@happy-farm/application";
 import { ApplicationError } from "@happy-farm/application";
@@ -887,4 +893,322 @@ function mapLedger(row: EconomyLedgerRow): EconomyLedgerEntry {
     requestId: row.request_id,
     createdAt: row.created_at
   };
+}
+
+/**
+ * Reads stored command receipts.
+ *
+ * Every command path looks a receipt up by (actor, operation, request id). The tree commands have no
+ * other use for a crop repository, so this names the one query they need instead of borrowing a
+ * crop-named class to reach a table the two features share.
+ */
+export class D1IdempotencyRepository implements IdempotencyRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async find(actorPlayerId: PlayerId, operation: string, requestId: string): Promise<IdempotencyRecord | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT actor_player_id, operation, request_id, payload_fingerprint, resource_id, response_json, status, created_at FROM idempotency_keys WHERE actor_player_id = ? AND operation = ? AND request_id = ?"
+      )
+      .bind(actorPlayerId, operation, requestId)
+      .first<IdempotencyRow>();
+    return row === null
+      ? null
+      : {
+          actorPlayerId: parsePlayerId(row.actor_player_id),
+          operation: row.operation,
+          requestId: row.request_id,
+          payloadFingerprint: row.payload_fingerprint,
+          resourceId: row.resource_id,
+          responseJson: row.response_json,
+          status: row.status,
+          createdAt: row.created_at
+        };
+  }
+}
+
+interface TreeInstanceRow {
+  id: string;
+  farm_id: string;
+  tile_x: number;
+  tile_y: number;
+  tree_definition_id: string;
+  planted_by_player_id: string;
+  planted_at: string;
+  last_harvested_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapTree(row: TreeInstanceRow): TreeInstance {
+  return {
+    id: parseTreeInstanceId(row.id),
+    farmId: parseFarmId(row.farm_id),
+    tileX: row.tile_x,
+    tileY: row.tile_y,
+    treeDefinitionId: parseTreeDefinitionId(row.tree_definition_id),
+    plantedByPlayerId: parsePlayerId(row.planted_by_player_id),
+    plantedAt: row.planted_at,
+    lastHarvestedAt: row.last_harvested_at,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+/**
+ * Trees: one row per planted tree, plus the two settlements that create and end it.
+ *
+ * The SELECT list is spelled out rather than `*` so a column added later cannot silently reach a
+ * domain object, and every read filters by farm so a caller cannot reach another farm's tree through
+ * a shared instance id.
+ */
+export class D1TreeRepository implements TreeInstanceRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async findById(id: TreeInstanceId): Promise<TreeInstance | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, farm_id, tile_x, tile_y, tree_definition_id, planted_by_player_id, planted_at, last_harvested_at, version, created_at, updated_at FROM tree_instances WHERE id = ?"
+      )
+      .bind(id)
+      .first<TreeInstanceRow>();
+    return row === null ? null : mapTree(row);
+  }
+
+  async findAtTile(farmId: FarmId, x: number, y: number): Promise<TreeInstance | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, farm_id, tile_x, tile_y, tree_definition_id, planted_by_player_id, planted_at, last_harvested_at, version, created_at, updated_at FROM tree_instances WHERE farm_id = ? AND tile_x = ? AND tile_y = ?"
+      )
+      .bind(farmId, x, y)
+      .first<TreeInstanceRow>();
+    return row === null ? null : mapTree(row);
+  }
+
+  async listByFarm(farmId: FarmId): Promise<readonly TreeInstance[]> {
+    const result = await this.db
+      .prepare(
+        "SELECT id, farm_id, tile_x, tile_y, tree_definition_id, planted_by_player_id, planted_at, last_harvested_at, version, created_at, updated_at FROM tree_instances WHERE farm_id = ? ORDER BY tile_y, tile_x"
+      )
+      .bind(farmId)
+      .all<TreeInstanceRow>();
+    return result.results.map(mapTree);
+  }
+
+  async plantAtomically(
+    tree: TreeInstance,
+    expectedTileVersion: number,
+    saplingRemoval: InventoryRemoval,
+    expectedInventory: InventoryItem,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    if (saplingRemoval.playerId !== expectedInventory.playerId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Sapling removal ownership does not match");
+    }
+    const saplingAfterQuantity = expectedInventory.quantity - saplingRemoval.quantity;
+    const saplingAfterVersion = expectedInventory.version + 1;
+    const results = await this.db.batch([
+      // Spends the sapling first, guarded on the exact quantity and version the caller read. SQLite
+      // cannot fail an UPDATE that matches no rows, so a lost race shows up in the final idempotency
+      // statement below, which is what actually aborts the batch.
+      this.db
+        .prepare(
+          "UPDATE inventory_items SET quantity = quantity - ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity >= ?"
+        )
+        .bind(
+          saplingRemoval.quantity,
+          saplingRemoval.timestamp,
+          saplingRemoval.playerId,
+          saplingRemoval.itemDefinitionId,
+          expectedInventory.quantity,
+          expectedInventory.version,
+          saplingRemoval.quantity
+        ),
+      // The tile row is the unlocked land, and the SELECT is the guard that it is still empty soil at
+      // the revision the caller read. A tile that a crop already occupies inserts nothing.
+      this.db
+        .prepare(
+          "INSERT INTO tree_instances (id, farm_id, tile_x, tile_y, tree_definition_id, planted_by_player_id, planted_at, last_harvested_at, version, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ? FROM farm_tiles WHERE farm_id = ? AND x = ? AND y = ? AND version = ? AND terrain_type = 'SOIL' AND tile_state = 'IDLE'"
+        )
+        .bind(
+          tree.id,
+          tree.farmId,
+          tree.tileX,
+          tree.tileY,
+          tree.treeDefinitionId,
+          tree.plantedByPlayerId,
+          tree.plantedAt,
+          tree.version,
+          tree.createdAt,
+          tree.updatedAt,
+          tree.farmId,
+          tree.tileX,
+          tree.tileY,
+          expectedTileVersion
+        ),
+      // The receipt commits only when the tree exists *and* the sapling is exactly where this
+      // settlement left it, so a failure after the insert cannot leave a planted tree that was never
+      // paid for.
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM tree_instances WHERE id = ? AND farm_id = ? AND version = ?) AND EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          tree.id,
+          tree.farmId,
+          tree.version,
+          saplingRemoval.playerId,
+          saplingRemoval.itemDefinitionId,
+          saplingAfterQuantity,
+          saplingAfterVersion,
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        )
+    ]);
+    if (results.length !== 3 || results.some((result) => !result.success)) {
+      throw new Error("Atomic tree planting failed");
+    }
+  }
+
+  async removeAtomically(
+    tree: TreeInstance,
+    expectedTreeVersion: number,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    const results = await this.db.batch([
+      // Claim the exact revision before deleting it. Checking only that the tree is absent after
+      // DELETE would let a second request whose DELETE matched zero rows also commit a successful
+      // receipt. Since a D1 batch is one transaction, a later DELETE failure rolls this receipt back
+      // with the batch.
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM tree_instances WHERE id = ? AND farm_id = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          tree.id,
+          tree.farmId,
+          expectedTreeVersion,
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        ),
+      this.db
+        .prepare("DELETE FROM tree_instances WHERE id = ? AND farm_id = ? AND version = ?")
+        .bind(tree.id, tree.farmId, expectedTreeVersion)
+    ]);
+    if (results.length !== 2 || results.some((result) => !result.success)) {
+      throw new Error("Atomic tree removal failed");
+    }
+  }
+}
+
+/**
+ * The one write boundary for harvesting a tree's cycle.
+ *
+ * The same four statements as a crop harvest, with one substitution: the settlement's apply trigger
+ * advances the tree's harvest anchor and revision instead of deleting the crop. The guard still tests
+ * the progression state the caller read, so a lost race aborts the whole batch and the use case
+ * re-reads rather than paying twice.
+ */
+export class D1TreeHarvestSettlementRepository implements TreeHarvestSettlementRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async settleTreeHarvestAtomically(
+    tree: TreeInstance,
+    addition: InventoryAddition,
+    award: XpAward,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    if (award.playerId !== idempotency.actorPlayerId || award.playerId !== addition.playerId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Settlement ownership does not match");
+    }
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "INSERT INTO tree_harvest_settlements (actor_player_id, operation, request_id, farm_id, tree_instance_id, tree_version, tree_definition_id, item_definition_id, quantity, max_quantity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            addition.playerId,
+            idempotency.operation,
+            idempotency.requestId,
+            tree.farmId,
+            tree.id,
+            tree.version,
+            tree.treeDefinitionId,
+            addition.itemDefinitionId,
+            addition.quantity,
+            addition.maxQuantity,
+            addition.timestamp
+          ),
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 0, 1, ?, ?)"
+          )
+          .bind(award.playerId, award.timestamp, award.timestamp),
+        // Tests the state the caller read *before* the award is applied, exactly as the crop harvest
+        // does. SQLite cannot fail an UPDATE that matches no rows, so this CASE is the guard: it
+        // yields NULL when the row moved, and the receipt's NOT NULL then aborts the batch.
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          ),
+        this.db
+          .prepare(
+            "UPDATE player_progression SET level = ?, xp = ?, progression_version = progression_version + 1, updated_at = ? WHERE player_id = ? AND xp = ? AND progression_version = ?"
+          )
+          .bind(
+            award.levelAfter,
+            award.xpAfter,
+            award.timestamp,
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion
+          )
+      ]);
+      if (results.length !== 4 || results.some((result) => !result.success)) {
+        throw new Error("Atomic tree harvest settlement failed");
+      }
+    } catch (error: unknown) {
+      // The messages the crop harvest classifies, plus the tree cycle's own two: the receipt trigger
+      // fires when the guard yielded NULL, and the monotonic progression trigger fires when the
+      // caller's award would move a row that has already moved. Anything else is a genuine internal
+      // failure and is rethrown so it surfaces as one instead of being disguised as a conflict.
+      if (
+        error instanceof Error &&
+        (error.message.includes("player progression") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys") ||
+          error.message.includes("completed tree harvest idempotency requires settlement"))
+      ) {
+        throw new ApplicationError("PROGRESSION_CONFLICT", "Player progression changed concurrently");
+      }
+      throw error;
+    }
+  }
 }

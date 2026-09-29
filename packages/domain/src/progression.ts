@@ -55,6 +55,22 @@ function assertXp(xp: number): void {
   }
 }
 
+/**
+ * Whether a player's level satisfies a requirement, which is the one rule that reads one.
+ *
+ * A level that is not a safe integer (negative, fractional, NaN, infinite) compares as
+ * insufficient, so a malformed reading locks everything rather than unlocking everything. The same
+ * applies to the requirement: a requirement below the level every player starts at is not a level
+ * either, and compared exactly as written it would unlock the content for everybody. Both are
+ * refused instead, and game data rejects such a value at load, so this is the last line of defence.
+ *
+ * Crops and trees share this rule rather than each restating it, which is what keeps "what a level
+ * unlocks" from drifting into two interpretations.
+ */
+export function meetsRequiredLevel(required: number, level: number): boolean {
+  return Number.isSafeInteger(level) && required >= 1 && level >= required;
+}
+
 /** Total experience a player has earned on reaching `level`. Level 1 is zero. */
 export function cumulativeXpForLevel(definition: ProgressionDefinition, level: number): number {
   assertDefinition(definition);

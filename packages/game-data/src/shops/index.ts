@@ -79,7 +79,11 @@ export const shopRegistry = createShopRegistry([
   // Harvested produce never costs gold, and selling it here is the only way it turns back into gold.
   { id: "shop_carrot", itemDefinitionId: "item_carrot", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },
   { id: "shop_wheat", itemDefinitionId: "item_wheat", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
-  { id: "shop_corn", itemDefinitionId: "item_corn", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 }
+  { id: "shop_corn", itemDefinitionId: "item_corn", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 },
+  // The repeating producer plugs into the same two directions: gold buys the sapling once, and every
+  // fruit after that sells like any other produce. Nothing new is bought or sold back.
+  { id: "shop_apple_sapling", itemDefinitionId: "item_apple_sapling", currencyDefinitionId: "currency_gold", buyPrice: 20, maxQuantityPerRequest: 1_000 },
+  { id: "shop_apple", itemDefinitionId: "item_apple", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 }
 ]);
 
 export const shops = [...shopRegistry.values()];

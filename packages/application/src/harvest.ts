@@ -12,7 +12,12 @@ import {
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
 import type { InventoryService } from "./inventory";
-import { emptyProgression, progressionView, type XpAwardView } from "./progression";
+import {
+  assertStoredXpAward,
+  emptyProgression,
+  progressionView,
+  type XpAwardView
+} from "./progression";
 import type {
   ActorContext,
   Clock,
@@ -61,32 +66,6 @@ export interface HarvestResult {
 export interface HarvestCropResult {
   readonly harvest: HarvestResult;
   readonly progression: XpAwardView;
-}
-
-function assertStoredAward(value: unknown): void {
-  if (typeof value !== "object" || value === null) throw new Error("invalid stored award");
-  const award = value as Record<string, unknown>;
-  if (
-    !Number.isSafeInteger(award.xpAwarded) ||
-    (award.xpAwarded as number) <= 0 ||
-    typeof award.leveledUp !== "boolean"
-  ) {
-    throw new Error("invalid stored award");
-  }
-  const progression = award.progression;
-  if (typeof progression !== "object" || progression === null) throw new Error("invalid stored award");
-  const fields = ["level", "xp", "xpIntoLevel", "xpForNextLevel", "maxLevel"] as const;
-  for (const field of fields) {
-    const entry = (progression as Record<string, unknown>)[field];
-    if (!Number.isSafeInteger(entry) || (entry as number) < 0) throw new Error("invalid stored award");
-  }
-  // The floors `PlayerProgressionDTOSchema` puts on the same fields, so a corrupt or hand-edited row
-  // cannot be echoed in a shape the contract the client validates against would reject: a level
-  // starts at 1, and a cap below 2 cannot hold a level.
-  const view = progression as Record<string, unknown>;
-  const level = view.level as number;
-  const maxLevel = view.maxLevel as number;
-  if (level < 1 || maxLevel < 2 || level > maxLevel) throw new Error("invalid stored award");
 }
 
 export class HarvestCrop {
@@ -242,7 +221,7 @@ export class HarvestCrop {
       }
       parseCropInstanceId(fields.cropInstanceId);
       parseItemDefinitionId(fields.itemDefinitionId);
-      assertStoredAward(value.progression);
+      assertStoredXpAward(value.progression);
       return value as unknown as HarvestCropResult;
     } catch {
       throw new ApplicationError("INTERNAL_ERROR", "Stored command result is unavailable");

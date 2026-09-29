@@ -6,6 +6,8 @@ export const PlayerIdSchema = z.string().regex(new RegExp(`^player_${UUID_PATTER
 export const FarmIdSchema = z.string().regex(new RegExp(`^farm_${UUID_PATTERN}$`, "i"));
 export const CropInstanceIdSchema = z.string().regex(new RegExp(`^cropinst_${UUID_PATTERN}$`, "i"));
 export const CropDefinitionIdSchema = z.string().regex(/^crop_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+export const TreeInstanceIdSchema = z.string().regex(new RegExp(`^treeinst_${UUID_PATTERN}$`, "i"));
+export const TreeDefinitionIdSchema = z.string().regex(/^tree_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const ItemDefinitionIdSchema = z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const CurrencyDefinitionIdSchema = z.string().regex(/^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const ShopEntryIdSchema = z.string().regex(/^shop_[a-z0-9]+(?:_[a-z0-9]+)*$/);
@@ -141,6 +143,118 @@ export const UprootCropResponseSchema = z
   .object({ removed: z.object({ cropInstanceId: CropInstanceIdSchema }).strict() })
   .strict();
 
+/**
+ * One tree the server can be asked to plant.
+ *
+ * A tree carries two durations rather than one: `firstReadySeconds` for the fruit it bears first and
+ * `regrowSeconds` for every fruit after that. `requiredLevel` is always present, exactly as it is for
+ * crops, so the client never infers a rule from a missing field.
+ */
+export const TreeDefinitionDTOSchema = z
+  .object({
+    treeDefinitionId: TreeDefinitionIdSchema,
+    /** The game-data key for this tree's name, which the client translates. */
+    displayNameKey: z.string().min(1).max(120),
+    /** The sapling one planting consumes. The client shows the count of exactly this item. */
+    saplingItemDefinitionId: ItemDefinitionIdSchema,
+    saplingItemDisplayNameKey: z.string().min(1).max(120),
+    firstReadySeconds: z.number().int().positive().max(31_536_000),
+    regrowSeconds: z.number().int().positive().max(31_536_000),
+    growthStages: z.number().int().min(2).max(16),
+    harvestItemDefinitionId: ItemDefinitionIdSchema,
+    baseQuantity: z.number().int().positive().max(1_000_000),
+    harvestXp: z.number().int().positive().max(1_000_000),
+    // Bounded by the same ceiling the progression schema and `player_progression` use, so a served
+    // definition can never be one this contract would reject.
+    requiredLevel: z.number().int().positive().max(10_000)
+  })
+  .strict();
+
+export const GetTreeDefinitionsResponseSchema = z
+  .object({ definitions: z.array(TreeDefinitionDTOSchema) })
+  .strict();
+
+/**
+ * Where a tree is in its current cycle.
+ *
+ * `ready`, `readyAt`, `secondsUntilReady`, `phase`, and the growth numbers are derived by the server
+ * from its own clock and the tree's timestamps; they travel so the client can show a countdown
+ * without reimplementing the rule or trusting a local clock. `lastHarvestedAt` is null until the
+ * first harvest, which is how a client tells first growth from regrowth.
+ */
+export const TREE_PHASES = ["GROWING", "READY", "REGROWING"] as const;
+
+export const TreeStateDTOSchema = z
+  .object({
+    treeInstanceId: TreeInstanceIdSchema,
+    definitionId: TreeDefinitionIdSchema,
+    tileX: z.number().int(),
+    tileY: z.number().int(),
+    plantedAt: z.iso.datetime(),
+    lastHarvestedAt: z.iso.datetime().nullable(),
+    readyAt: z.iso.datetime(),
+    secondsUntilReady: z.number().int().nonnegative(),
+    ready: z.boolean(),
+    phase: z.enum(TREE_PHASES),
+    growthStage: z.number().int().nonnegative(),
+    growthProgress: z.number().min(0).max(1),
+    version: z.number().int().positive()
+  })
+  .strict();
+
+/**
+ * Planting a tree.
+ *
+ * The command names a coordinate, the definition, and the tile revision the client last saw. There is
+ * no sapling id, no quantity, and no reward: the sapling comes from the definition and the settlement
+ * spends exactly one.
+ */
+export const PlantTreeRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    treeDefinitionId: TreeDefinitionIdSchema,
+    x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
+    y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
+    expectedTileVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const PlantTreeResponseSchema = z.object({ tree: TreeStateDTOSchema }).strict();
+export const GetFarmTreesResponseSchema = z.object({ trees: z.array(TreeStateDTOSchema) }).strict();
+
+/** Harvesting one cycle. The tree version identifies the cycle and is the concurrency guard. */
+export const HarvestTreeRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedTreeVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const TreeHarvestResultDTOSchema = z
+  .object({
+    treeInstanceId: TreeInstanceIdSchema,
+    itemDefinitionId: ItemDefinitionIdSchema,
+    quantityAdded: z.number().int().positive()
+  })
+  .strict();
+
+/**
+ * Removing a tree.
+ *
+ * Like uprooting a crop, the command carries a request ID and the version the client last saw, and
+ * nothing else: there is no reward and no refund to ask for.
+ */
+export const RemoveTreeRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedTreeVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const RemoveTreeResponseSchema = z
+  .object({ removed: z.object({ treeInstanceId: TreeInstanceIdSchema }).strict() })
+  .strict();
+
 export const InventoryEntryDTOSchema = z
   .object({
     itemDefinitionId: ItemDefinitionIdSchema,
@@ -178,6 +292,10 @@ export const XpAwardDTOSchema = z
 
 export const HarvestCropResponseSchema = z
   .object({ harvest: HarvestResultDTOSchema, progression: XpAwardDTOSchema })
+  .strict();
+
+export const HarvestTreeResponseSchema = z
+  .object({ harvest: TreeHarvestResultDTOSchema, progression: XpAwardDTOSchema })
   .strict();
 export const GetProgressionResponseSchema = z
   .object({ progression: PlayerProgressionDTOSchema })
@@ -358,6 +476,10 @@ export const ErrorCodeSchema = z.enum([
   "ECONOMY_CONFLICT",
   "PROGRESSION_CONFLICT",
   "CROP_NOT_READY",
+  "TREE_DEFINITION_NOT_FOUND",
+  "TREE_NOT_FOUND",
+  "TREE_NOT_READY",
+  "TREE_LEVEL_REQUIRED",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
   "REQUEST_ALREADY_PROCESSED",
@@ -392,6 +514,17 @@ export type PlotDTO = z.infer<typeof PlotDTOSchema>;
 export type GetPlotsResponse = z.infer<typeof GetPlotsResponseSchema>;
 export type ExpandFarmRequest = z.infer<typeof ExpandFarmRequestSchema>;
 export type ExpandFarmResultDTO = z.infer<typeof ExpandFarmResultDTOSchema>;
+export type TreeDefinitionDTO = z.infer<typeof TreeDefinitionDTOSchema>;
+export type GetTreeDefinitionsResponse = z.infer<typeof GetTreeDefinitionsResponseSchema>;
+export type TreeStateDTO = z.infer<typeof TreeStateDTOSchema>;
+export type PlantTreeRequest = z.infer<typeof PlantTreeRequestSchema>;
+export type PlantTreeResponse = z.infer<typeof PlantTreeResponseSchema>;
+export type GetFarmTreesResponse = z.infer<typeof GetFarmTreesResponseSchema>;
+export type HarvestTreeRequest = z.infer<typeof HarvestTreeRequestSchema>;
+export type TreeHarvestResultDTO = z.infer<typeof TreeHarvestResultDTOSchema>;
+export type HarvestTreeResponse = z.infer<typeof HarvestTreeResponseSchema>;
+export type RemoveTreeRequest = z.infer<typeof RemoveTreeRequestSchema>;
+export type RemoveTreeResponse = z.infer<typeof RemoveTreeResponseSchema>;
 
 export type ApiSuccess<T> = { readonly ok: true; readonly data: T };
 export type ApiFailure = {
