@@ -196,7 +196,31 @@ const EN_MESSAGES = {
   "error.NOT_AUTHORIZED": "Not allowed for this farm.",
   "error.RESOURCE_NOT_FOUND": "Not found on the server.",
   "error.INTERNAL_ERROR": "Server error.",
-  "error.INVALID_INPUT": "The request was rejected as invalid."
+  "error.INVALID_INPUT": "The request was rejected as invalid.",
+  "dock.tree": "Tree",
+  "dock.plantTree": "Plant tree",
+  "dock.removeTree": "Remove tree",
+  "dock.removeTree.confirm": "Remove this tree? The sapling will not be refunded.",
+  "dock.saplingCount": "{count} saplings",
+  "dock.noSapling": "You have no {sapling} to plant. Buy more in the Farm Market.",
+  "plant.crops": "Crops",
+  "plant.trees": "Trees",
+  "tree.state.GROWING": "growing",
+  "tree.state.READY": "ready",
+  "tree.state.REGROWING": "regrowing",
+  "selection.tree.title": "Selected {at} · {tree} · {state}",
+  "selection.tree.growingDetail": "Growing · {percent}% · {time}",
+  "selection.tree.readyDetail": "Fruit is ready · harvest it to collect {item} and XP.",
+  "selection.tree.regrowingDetail": "Regrowing · {time}",
+  "selection.empty.noSapling": "You have no {sapling} to plant. Buy more in the Farm Market.",
+  "selection.empty.treeLocked": "That tree needs level {level} of the player.",
+  "status.plantedTree": "Planted {tree} on ({x}, {y}).",
+  "status.removedTree": "Removed the tree on ({x}, {y}).",
+  "status.selectReadyTree": "Select a tree with fruit ready to harvest.",
+  "error.TREE_NOT_READY": "That tree's fruit is not ready yet.",
+  "error.TREE_NOT_FOUND": "That tree is no longer there.",
+  "error.TREE_DEFINITION_NOT_FOUND": "That tree is not available in this build.",
+  "error.TREE_LEVEL_REQUIRED": "That tree needs a higher player level."
 } as const;
 
 export type MessageKey = keyof typeof EN_MESSAGES;
@@ -313,6 +337,31 @@ const VI_MESSAGES: Record<MessageKey, string> = {
   "error.RESOURCE_NOT_FOUND": "Máy chủ không tìm thấy.",
   "error.INTERNAL_ERROR": "Lỗi máy chủ.",
   "error.INVALID_INPUT": "Yêu cầu bị từ chối vì không hợp lệ."
+  ,
+  "dock.tree": "Cây ăn quả",
+  "dock.plantTree": "Trồng cây ăn quả",
+  "dock.removeTree": "Nhổ bỏ cây",
+  "dock.removeTree.confirm": "Nhổ bỏ cây này? Cây giống sẽ không được hoàn lại.",
+  "dock.saplingCount": "{count} cây giống",
+  "dock.noSapling": "Bạn không còn {sapling} để trồng. Hãy mua thêm ở Chợ nông sản.",
+  "plant.crops": "Cây trồng",
+  "plant.trees": "Cây ăn quả",
+  "tree.state.GROWING": "đang lớn",
+  "tree.state.READY": "có quả",
+  "tree.state.REGROWING": "đang hồi phục",
+  "selection.tree.title": "Đã chọn {at} · {tree} · {state}",
+  "selection.tree.growingDetail": "Đang lớn · {percent}% · {time}",
+  "selection.tree.readyDetail": "Quả đã chín · thu hoạch để nhận {item} và XP.",
+  "selection.tree.regrowingDetail": "Đang hồi phục · {time}",
+  "selection.empty.noSapling": "Bạn không còn {sapling} để trồng. Hãy mua thêm ở Chợ nông sản.",
+  "selection.empty.treeLocked": "Cây này cần cấp người chơi {level}.",
+  "status.plantedTree": "Đã trồng {tree} tại ({x}, {y}).",
+  "status.removedTree": "Đã nhổ bỏ cây tại ({x}, {y}).",
+  "status.selectReadyTree": "Hãy chọn cây đã có quả để thu hoạch.",
+  "error.TREE_NOT_READY": "Cây này chưa có quả.",
+  "error.TREE_NOT_FOUND": "Cây này không còn ở đó.",
+  "error.TREE_DEFINITION_NOT_FOUND": "Bản dựng này không có loại cây đó.",
+  "error.TREE_LEVEL_REQUIRED": "Cây này cần cấp người chơi cao hơn."
 };
 
 const MESSAGES: Record<Language, Record<MessageKey, string>> = {
@@ -335,6 +384,9 @@ export function createTranslator(language: Language): Translate {
 const DISPLAY_NAMES: Record<Language, Record<string, string>> = {
   en: {
     "crop.carrot.name": "Carrot",
+    "tree.apple.name": "Apple Tree",
+    "item.apple_sapling.name": "Apple sapling",
+    "item.apple.name": "Apple",
     "crop.wheat.name": "Wheat",
     "crop.corn.name": "Corn",
     "item.carrot.name": "Carrot",
@@ -346,6 +398,9 @@ const DISPLAY_NAMES: Record<Language, Record<string, string>> = {
     "currency.gold.name": "Gold"
   },
   vi: {
+    "tree.apple.name": "Cây táo",
+    "item.apple_sapling.name": "Cây táo giống",
+    "item.apple.name": "Táo",
     "crop.carrot.name": "Cà rốt",
     "crop.wheat.name": "Lúa mì",
     "crop.corn.name": "Ngô",
@@ -402,6 +457,11 @@ const ERROR_MESSAGE_KEYS: Record<string, MessageKey> = {
   RESOURCE_NOT_FOUND: "error.RESOURCE_NOT_FOUND",
   INTERNAL_ERROR: "error.INTERNAL_ERROR",
   INVALID_INPUT: "error.INVALID_INPUT"
+  ,
+  TREE_NOT_READY: "error.TREE_NOT_READY",
+  TREE_NOT_FOUND: "error.TREE_NOT_FOUND",
+  TREE_DEFINITION_NOT_FOUND: "error.TREE_DEFINITION_NOT_FOUND",
+  TREE_LEVEL_REQUIRED: "error.TREE_LEVEL_REQUIRED"
 };
 
 export function terrainName(language: Language, terrainType: string): string {

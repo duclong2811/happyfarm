@@ -147,7 +147,54 @@ in one batch, and no inventory, currency, or experience write at all.
 Constraints: at most one active crop per valid tile; definition ID validated by application/game-data.
 Indexes: farm_id; (farm_id,tile_x,tile_y)
 
-### tree_instances / animal_instances / building_instances
+### tree_instances
+- id PK (`treeinst_*`)
+- farm_id FK
+- tile_x
+- tile_y
+- tree_definition_id
+- planted_by_player_id FK
+- planted_at
+- last_harvested_at nullable
+- version
+- created_at
+- updated_at
+
+`tree_instances` is the single source of truth for tree occupancy. `UNIQUE(farm_id,tile_x,tile_y)`
+prevents two trees on one tile, and the `(farm_id,tile_x,tile_y)` foreign key to `farm_tiles` means a
+tree can only stand on unlocked land. Only `planted_at`, `last_harvested_at`, and `version` carry
+lifecycle state: readiness, phase, remaining time, and growth stage are derived from those plus the
+definition's `firstReadySeconds`/`regrowSeconds` (see `docs/decisions/0014-trees-and-repeating-harvests.md`).
+`last_harvested_at` is null until the first harvest, which is the only difference between first growth
+and regrowth.
+
+### tree_harvest_settlements
+- actor_player_id
+- operation (`HARVEST_TREE`)
+- request_id
+- farm_id FK
+- tree_instance_id
+- tree_version (the revision the cycle started from)
+- tree_definition_id
+- item_definition_id
+- quantity, max_quantity
+- created_at
+UNIQUE: (tree_instance_id, tree_version)
+
+One settled cycle per row, and the uniqueness is what makes "one cycle, at most one reward" a
+database fact rather than a convention. The `BEFORE INSERT` trigger refuses a settlement whose actor
+does not own the farm, whose tree is not at that exact revision, or whose reward would exceed the
+player's stack, and the `AFTER INSERT` trigger credits the fruit and advances the tree's
+`last_harvested_at` and `version` in the same statement pair. The tree is never deleted by a harvest.
+
+### Cross-occupancy between crops and trees
+
+`crop_instances` and `tree_instances` each prevent two of their own rows on a tile. The pair
+`tree_instance_requires_free_of_crop` and `crop_instance_requires_free_of_tree` (both added by
+`0008_tree_instances.sql`) extend that across the two tables in both directions, so one tile holds at
+most one occupant no matter how the two plantings interleave.
+
+### animal_instances / building_instances
 Follow the same pattern: stable instance ID, farm ID, definition ID, logical position, authoritative state anchors/timestamps, version, creator, timestamps.
 
 ### inventory_items

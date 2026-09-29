@@ -92,6 +92,27 @@ plant today, and no route accepts a level, an experience total, or a crop requir
 
 ## Farm expansion (Phase 4C)
 
+## Trees and repeating harvests (Phase 6)
+
+Read `docs/decisions/0014-trees-and-repeating-harvests.md` before editing tree definitions, the
+repeating cycle, cross-occupancy, or either tree settlement.
+
+- Domain rules and the derived cycle: `packages/domain/src/tree.ts`; identifiers are
+  `TreeDefinitionId` (`tree_*`) and `TreeInstanceId` (`treeinst_*`) in `packages/domain/src/ids.ts`.
+- Values: `packages/game-data/src/trees/index.ts`, with the sapling and fruit items in
+  `packages/game-data/src/items/index.ts` and their market rows in `packages/game-data/src/shops/index.ts`.
+- Persistence: `database/migrations/0008_tree_instances.sql` (both tables, the two settlements, and
+  the two cross-occupancy triggers) and `tests/integration/tree-migration.test.ts`.
+- Use cases: `packages/application/src/trees.ts` (plant, harvest, remove, both catalogue reads, and
+  the projector), with routes in `workers/api/src/handler.ts` and wiring in
+  `workers/api/src/runtime.ts`.
+- Client: `apps/web/src/api.ts`, `apps/web/src/selection.ts`, `apps/web/src/render/view-model.ts`
+  (`SceneTree` and the `plantable = SOIL && crop === null && tree === null` rule), and
+  `apps/web/src/render/scene.ts`. Tests: `tests/web/tree-ui.test.ts`.
+
+Never let a client name a tree's reward, its sapling, or its readiness: the cycle is derived from
+server timestamps, and one cycle settles at most once.
+
 Read `docs/decisions/0010-farm-expansion.md` before editing plot geometry, land prices, expansion
 settlement, or the plot API. The domain rule is `packages/domain/src/plot.ts`, values are in
 `packages/game-data/src/plots`, the use cases are in `packages/application/src/plot.ts`, and the

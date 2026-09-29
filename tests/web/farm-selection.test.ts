@@ -64,9 +64,12 @@ function input(overrides: Partial<SelectionInput> = {}): SelectionInput {
   return {
     tiles: [],
     crops: [],
+    trees: [],
     cropDefinitions: [definition()],
+    treeDefinitions: [],
     selected: null,
     selectedCrop: PLANTABLE,
+    selectedTree: null,
     nowMs: NOW,
     ...overrides
   };

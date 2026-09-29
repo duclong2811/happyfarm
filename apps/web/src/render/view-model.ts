@@ -1,4 +1,4 @@
-import type { CropStateDTO, FarmTileDTO, PlotDTO } from "@happy-farm/contracts";
+import type { CropStateDTO, FarmTileDTO, PlotDTO, TreeStateDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type FarmLayout, type TilePlacement } from "./layout";
 import { buildFarmWorld, landFrame, type FarmWorld } from "./world";
 
@@ -23,12 +23,31 @@ export interface SceneCrop {
   readonly heightFraction: number;
 }
 
+/**
+ * The four visual stages a tree can be drawn in.
+ *
+ * Derived from the server's phase and growth numbers, never decided here: this is the only place the
+ * renderer's vocabulary meets the contract's, and it is a projection in one direction.
+ */
+export type TreeVisualStage = "SAPLING" | "GROWING" | "READY" | "REGROWING";
+
+export interface SceneTree {
+  readonly treeInstanceId: string;
+  readonly definitionId: string;
+  readonly visualStage: TreeVisualStage;
+  /** 0..1 within the current cycle, straight from the server's projection. */
+  readonly growthProgress: number;
+  readonly ready: boolean;
+}
+
 export interface SceneTile extends TilePlacement {
   readonly terrainType: FarmTileDTO["terrainType"];
   /** True only for soil with no crop: the server's planting preconditions, not a client guess. */
   readonly plantable: boolean;
   readonly selected: boolean;
   readonly crop: SceneCrop | null;
+  /** The tree on this tile, or null. A tile never holds both, but this file does not assume it. */
+  readonly tree: SceneTree | null;
 }
 
 export interface FarmSceneInput {
@@ -40,6 +59,7 @@ export interface FarmSceneInput {
 export interface FarmViewState {
   readonly tiles: readonly FarmTileDTO[];
   readonly crops: readonly CropStateDTO[];
+  readonly trees: readonly TreeStateDTO[];
   readonly plots: readonly PlotDTO[];
   readonly selected: { readonly x: number; readonly y: number } | null;
 }
@@ -53,6 +73,29 @@ function heightFractionOf(crop: CropStateDTO): number {
   const progress = crop.growthProgress;
   if (!Number.isFinite(progress) || progress <= 0) return 0;
   return progress > 1 ? 1 : progress;
+}
+
+/**
+ * Which of the four stages to draw.
+ *
+ * `READY` and `REGROWING` are the server's phase; the first growth splits into a sapling and a
+ * growing tree at the first stage boundary, which is display-only.
+ */
+function visualStageOf(tree: TreeStateDTO): TreeVisualStage {
+  if (tree.ready) return "READY";
+  if (tree.phase === "REGROWING") return "REGROWING";
+  return tree.growthStage <= 0 ? "SAPLING" : "GROWING";
+}
+
+function sceneTreeOf(tree: TreeStateDTO): SceneTree {
+  const progress = tree.growthProgress;
+  return {
+    treeInstanceId: tree.treeInstanceId,
+    definitionId: tree.definitionId,
+    visualStage: visualStageOf(tree),
+    growthProgress: Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 1) : 0,
+    ready: tree.ready
+  };
 }
 
 /** One player, one farm, one crop per tile: the first row for a coordinate is the winner. */
@@ -70,6 +113,7 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
   // candidates when the API repeats a coordinate.
   const tilesByCoordinate = firstByCoordinate(state.tiles, (tile) => coordinateKey(tile.x, tile.y));
   const cropsByCoordinate = firstByCoordinate(state.crops, (crop) => coordinateKey(crop.tileX, crop.tileY));
+  const treesByCoordinate = firstByCoordinate(state.trees, (tree) => coordinateKey(tree.tileX, tree.tileY));
   const uniqueTiles = [...tilesByCoordinate.values()].map((tile) => ({ x: tile.x, y: tile.y }));
   const frame = landFrame(uniqueTiles, state.plots);
   const layout = layoutFarmTiles(uniqueTiles, frame === null ? {} : { frame });
@@ -83,16 +127,24 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
     // authoritative to draw and the placement is skipped rather than guessed at.
     if (tile === undefined) continue;
     const crop = cropsByCoordinate.get(key) ?? null;
+    const tree = treesByCoordinate.get(key) ?? null;
     tiles.push({
       ...placement,
       terrainType: tile.terrainType,
-      plantable: tile.terrainType === "SOIL" && crop === null,
+      // Three conditions, not two: a tree occupies its tile for as long as it stands, exactly as a
+      // crop does. Corrupt state holding both still renders (the renderer draws the tree) and is
+      // never plantable, and this file never edits the rows it was given.
+      plantable: tile.terrainType === "SOIL" && crop === null && tree === null,
       selected:
         state.selected !== null &&
         state.selected.x === placement.tileX &&
         state.selected.y === placement.tileY,
+      tree:
+        tree === null
+          ? null
+          : sceneTreeOf(tree),
       crop:
-        crop === null
+        crop === null || tree !== null
           ? null
           : {
               cropInstanceId: crop.cropInstanceId,

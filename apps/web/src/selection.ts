@@ -1,4 +1,10 @@
-import type { CropDefinitionDTO, CropStateDTO, FarmTileDTO } from "@happy-farm/contracts";
+import type {
+  CropDefinitionDTO,
+  CropStateDTO,
+  FarmTileDTO,
+  TreeDefinitionDTO,
+  TreeStateDTO
+} from "@happy-farm/contracts";
 import type { Translate } from "./i18n";
 
 /**
@@ -20,7 +26,7 @@ export interface SelectedCoordinate {
   readonly y: number;
 }
 
-export type SelectionKind = "none" | "missing" | "empty" | "growing" | "mature";
+export type SelectionKind = "none" | "missing" | "empty" | "growing" | "mature" | "tree";
 
 /**
  * The first precondition the dock is missing, in the order a player would fix them.
@@ -35,19 +41,32 @@ export type PlantBlockReason =
   | "occupied"
   | "no-crop"
   | "crop-locked"
-  | "no-seed";
+  | "no-seed"
+  | "tree-locked"
+  | "no-sapling";
 
 export interface SelectionView {
   readonly kind: SelectionKind;
   readonly coordinate: SelectedCoordinate | null;
   readonly terrainType: FarmTileDTO["terrainType"] | null;
   readonly crop: CropStateDTO | null;
+  /** The tree on the selected tile, in the server's terms; null when the tile holds none. */
+  readonly tree: TreeStateDTO | null;
   /** True only for bare soil holding the chosen, unlocked crop with at least one seed in inventory. */
   readonly canPlant: boolean;
   /** True only when the server's crop row says mature. */
   readonly canHarvest: boolean;
   /** True when the selected tile holds a crop at all: growing crops can be uprooted too. */
   readonly canUproot: boolean;
+  /** True only when the server's tree row says the current cycle is ready. */
+  readonly canHarvestTree: boolean;
+  /** True when the selected tile holds a tree at all: a tree can always be removed, ready or not. */
+  readonly canRemoveTree: boolean;
+  /**
+   * Which catalogue the planting control should read for this selection, or null when the tile is
+   * not plantable. The dock sends the matching command; the server checks both again.
+   */
+  readonly plantOption: "crop" | "tree" | null;
   /** Why `canPlant` is false, or null when it is true. */
   readonly plantBlocked: PlantBlockReason | null;
   /**
@@ -58,6 +77,15 @@ export interface SelectionView {
    * never a second source of maturity.
    */
   readonly remainingSeconds: number | null;
+}
+
+/** The tree chosen in the planting control, and the two preconditions the catalogue decides. */
+export interface SelectedTreeState {
+  readonly treeDefinitionId: string;
+  /** False when the tree's required level is above the player's level. */
+  readonly unlocked: boolean;
+  /** How many of this tree's saplings the player's inventory holds. */
+  readonly saplingCount: number;
 }
 
 /** The crop chosen in the planting control, and the two preconditions the catalogue decides. */
@@ -72,9 +100,12 @@ export interface SelectedCropState {
 export interface SelectionInput {
   readonly tiles: readonly FarmTileDTO[];
   readonly crops: readonly CropStateDTO[];
+  readonly trees: readonly TreeStateDTO[];
   readonly cropDefinitions: readonly CropDefinitionDTO[];
+  readonly treeDefinitions: readonly TreeDefinitionDTO[];
   readonly selected: SelectedCoordinate | null;
   readonly selectedCrop: SelectedCropState | null;
+  readonly selectedTree: SelectedTreeState | null;
   /** Current epoch milliseconds. Callers pass `Date.now()`; tests pass a fixed value. */
   readonly nowMs: number;
 }
@@ -83,9 +114,13 @@ const NO_SELECTION: Omit<SelectionView, "kind" | "plantBlocked"> = {
   coordinate: null,
   terrainType: null,
   crop: null,
+  tree: null,
   canPlant: false,
   canHarvest: false,
   canUproot: false,
+  canHarvestTree: false,
+  canRemoveTree: false,
+  plantOption: null,
   remainingSeconds: null
 };
 
@@ -112,13 +147,23 @@ function remainingGrowthSeconds(
  */
 function plantBlocker(
   tile: FarmTileDTO,
-  selectedCrop: SelectedCropState | null
-): PlantBlockReason | null {
-  if (tile.terrainType !== "SOIL") return "terrain";
-  if (selectedCrop === null) return "no-crop";
-  if (!selectedCrop.unlocked) return "crop-locked";
-  if (!Number.isSafeInteger(selectedCrop.seedCount) || selectedCrop.seedCount < 1) return "no-seed";
-  return null;
+  selectedCrop: SelectedCropState | null,
+  selectedTree: SelectedTreeState | null
+): { readonly reason: PlantBlockReason | null; readonly option: "crop" | "tree" | null } {
+  if (tile.terrainType !== "SOIL") return { reason: "terrain", option: null };
+  if (selectedTree !== null) {
+    if (!selectedTree.unlocked) return { reason: "tree-locked", option: null };
+    if (!Number.isSafeInteger(selectedTree.saplingCount) || selectedTree.saplingCount < 1) {
+      return { reason: "no-sapling", option: null };
+    }
+    return { reason: null, option: "tree" };
+  }
+  if (selectedCrop === null) return { reason: "no-crop", option: null };
+  if (!selectedCrop.unlocked) return { reason: "crop-locked", option: null };
+  if (!Number.isSafeInteger(selectedCrop.seedCount) || selectedCrop.seedCount < 1) {
+    return { reason: "no-seed", option: null };
+  }
+  return { reason: null, option: "crop" };
 }
 
 export function describeSelection(input: SelectionInput): SelectionView {
@@ -133,17 +178,48 @@ export function describeSelection(input: SelectionInput): SelectionView {
   }
 
   const crop = input.crops.find((row) => row.tileX === coordinate.x && row.tileY === coordinate.y);
+  const tree = input.trees.find((row) => row.tileX === coordinate.x && row.tileY === coordinate.y);
+  if (tree !== undefined) {
+    // A tree owns the tile whether or not it is bearing fruit, so every planting precondition is
+    // closed and the dock offers the tree's own actions instead.
+    const definition = input.treeDefinitions.find(
+      (entry) => entry.treeDefinitionId === tree.definitionId
+    );
+    const remaining = tree.ready
+      ? null
+      : Math.max(0, tree.secondsUntilReady);
+    return {
+      kind: "tree",
+      coordinate,
+      terrainType: tile.terrainType,
+      crop: null,
+      tree,
+      canPlant: false,
+      canHarvest: false,
+      canUproot: false,
+      canHarvestTree: tree.ready,
+      canRemoveTree: true,
+      plantOption: null,
+      plantBlocked: "occupied",
+      remainingSeconds: definition === undefined ? remaining : remaining
+    };
+  }
+
   if (crop === undefined) {
-    const blocked = plantBlocker(tile, input.selectedCrop);
+    const blocked = plantBlocker(tile, input.selectedCrop, input.selectedTree);
     return {
       kind: "empty",
       coordinate,
       terrainType: tile.terrainType,
       crop: null,
-      canPlant: blocked === null,
+      tree: null,
+      canPlant: blocked.reason === null,
       canHarvest: false,
       canUproot: false,
-      plantBlocked: blocked,
+      canHarvestTree: false,
+      canRemoveTree: false,
+      plantOption: blocked.option,
+      plantBlocked: blocked.reason,
       remainingSeconds: null
     };
   }
@@ -154,9 +230,13 @@ export function describeSelection(input: SelectionInput): SelectionView {
       coordinate,
       terrainType: tile.terrainType,
       crop,
+      tree: null,
       canPlant: false,
       canHarvest: true,
       canUproot: true,
+      canHarvestTree: false,
+      canRemoveTree: false,
+      plantOption: null,
       plantBlocked: "occupied",
       remainingSeconds: null
     };
@@ -170,9 +250,13 @@ export function describeSelection(input: SelectionInput): SelectionView {
     coordinate,
     terrainType: tile.terrainType,
     crop,
+    tree: null,
     canPlant: false,
     canHarvest: false,
     canUproot: true,
+    canHarvestTree: false,
+    canRemoveTree: false,
+    plantOption: null,
     plantBlocked: "occupied",
     remainingSeconds: remainingGrowthSeconds(crop, definition, input.nowMs)
   };

@@ -6,6 +6,8 @@ import type {
   PlayerProgressionDTO,
   PlotDTO,
   ShopEntryDTO,
+  TreeDefinitionDTO,
+  TreeStateDTO,
   WalletDTO
 } from "@happy-farm/contracts";
 import { ApiClient, ApiError } from "./api";
@@ -38,6 +40,8 @@ import "./styles.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
 const REFRESH_INTERVAL_MS = 2_000;
+/** The separator the planting choices use between a name, its level, and its count. */
+const OPTION_SEPARATOR = " \u00b7 ";
 
 interface SelectedTile {
   readonly x: number;
@@ -58,8 +62,11 @@ interface AppState {
   farmName: string;
   tiles: readonly FarmTileDTO[];
   crops: readonly CropStateDTO[];
+  trees: readonly TreeStateDTO[];
   /** The server's crop catalogue: the only list of crops this page offers to plant. */
   cropDefinitions: readonly CropDefinitionDTO[];
+  /** The server's tree catalogue: the only list of trees this page offers to plant. */
+  treeDefinitions: readonly TreeDefinitionDTO[];
   inventory: readonly InventoryEntryDTO[];
   shop: readonly ShopEntryDTO[];
   wallet: readonly WalletDTO[];
@@ -67,6 +74,8 @@ interface AppState {
   plots: readonly PlotDTO[];
   selected: SelectedTile | null;
   selectedCrop: string | null;
+  /** The tree chosen in the planting control. Exactly one of the two choices is ever set. */
+  selectedTree: string | null;
 }
 
 function initialLanguage(): Language {
@@ -80,14 +89,17 @@ const state: AppState = {
   farmName: "",
   tiles: [],
   crops: [],
+  trees: [],
   cropDefinitions: [],
+  treeDefinitions: [],
   inventory: [],
   shop: [],
   wallet: [],
   progression: null,
   plots: [],
   selected: null,
-  selectedCrop: null
+  selectedCrop: null,
+  selectedTree: null
 };
 
 let t: Translate = createTranslator(state.language);
@@ -184,6 +196,13 @@ function itemDisplayKey(itemDefinitionId: string): string | null {
   return fromCatalogue?.seedItemDisplayNameKey ?? null;
 }
 
+/** The produce a tree's harvest yields, named through the item catalogue's display key. */
+function treeHarvestItemLabel(definitionId: string): string {
+  const definition = state.treeDefinitions.find((entry) => entry.treeDefinitionId === definitionId);
+  if (definition === undefined) return t("dock.harvest");
+  return itemLabel(definition.harvestItemDefinitionId);
+}
+
 function itemLabel(itemDefinitionId: string): string {
   const key = itemDisplayKey(itemDefinitionId);
   return key === null ? itemDefinitionId : displayName(state.language, key, itemDefinitionId);
@@ -213,6 +232,43 @@ function selectedTile(): FarmTileDTO | null {
 
 function cropAt(x: number, y: number): CropStateDTO | null {
   return state.crops.find((crop) => crop.tileX === x && crop.tileY === y) ?? null;
+}
+
+/** The tree on a tile, by the server's own row. Occupancy is never inferred from art. */
+function treeAt(x: number, y: number): TreeStateDTO | null {
+  return state.trees.find((tree) => tree.tileX === x && tree.tileY === y) ?? null;
+}
+
+function treeName(definitionId: string): string {
+  const definition = state.treeDefinitions.find((entry) => entry.treeDefinitionId === definitionId);
+  return displayName(state.language, definition?.displayNameKey ?? "", definitionId);
+}
+
+/** An unknown level -- signed out, or no account read yet -- locks nothing, exactly as for crops. */
+function treeIsLocked(definition: TreeDefinitionDTO): boolean {
+  const level = state.progression?.level ?? null;
+  return level !== null && level < definition.requiredLevel;
+}
+
+/** How many of this tree's saplings the player currently holds. Server inventory, never a guess. */
+function saplingCount(definition: TreeDefinitionDTO): number {
+  return state.inventory
+    .filter((entry) => entry.itemDefinitionId === definition.saplingItemDefinitionId)
+    .reduce((total, entry) => total + entry.quantity, 0);
+}
+
+function selectedTreeDefinition(): TreeDefinitionDTO | null {
+  if (state.selectedTree === null) return null;
+  return (
+    state.treeDefinitions.find((entry) => entry.treeDefinitionId === state.selectedTree) ?? null
+  );
+}
+
+/** The option value the planting control shows: one list, two catalogues. */
+function selectedPlantOption(): string {
+  if (state.selectedTree !== null) return `tree:${state.selectedTree}`;
+  if (state.selectedCrop !== null) return `crop:${state.selectedCrop}`;
+  return "";
 }
 
 function renderFarm(): void {
@@ -316,15 +372,41 @@ function selectedCropDefinition(): CropDefinitionDTO | null {
   );
 }
 
-/** Keeps the planting selection valid: the first crop this player can actually plant. */
+/**
+ * Keeps the planting selection valid: the first option this player can actually plant.
+ *
+ * Crops are preferred because they are what the farm's first minutes use, and a tree is chosen next
+ * when nothing in the crop list is plantable. Both are only ever chosen from the server's
+ * catalogues, and the server checks the same preconditions again when the request arrives.
+ */
 function ensurePlantableSelection(): void {
-  const plantable = (definition: CropDefinitionDTO): boolean =>
+  const cropPlantable = (definition: CropDefinitionDTO): boolean =>
     definition.cropDefinitionId === state.selectedCrop &&
     !cropIsLocked(definition) &&
     seedCount(definition) > 0;
-  if (state.cropDefinitions.some(plantable)) return;
-  state.selectedCrop =
-    state.cropDefinitions.find((definition) => !cropIsLocked(definition))?.cropDefinitionId ?? null;
+  const treePlantable = (definition: TreeDefinitionDTO): boolean =>
+    definition.treeDefinitionId === state.selectedTree &&
+    !treeIsLocked(definition) &&
+    saplingCount(definition) > 0;
+  if (
+    (state.selectedCrop !== null && state.cropDefinitions.some(cropPlantable)) ||
+    (state.selectedTree !== null && state.treeDefinitions.some(treePlantable))
+  ) {
+    return;
+  }
+  const crop = state.cropDefinitions.find(
+    (definition) => !cropIsLocked(definition) && seedCount(definition) > 0
+  );
+  if (crop !== undefined) {
+    state.selectedCrop = crop.cropDefinitionId;
+    state.selectedTree = null;
+    return;
+  }
+  const tree = state.treeDefinitions.find(
+    (definition) => !treeIsLocked(definition) && saplingCount(definition) > 0
+  );
+  state.selectedTree = tree?.treeDefinitionId ?? null;
+  state.selectedCrop = null;
 }
 
 // The planting control is this page's only <select>, and it is rebuilt from the server's catalogue.
@@ -341,8 +423,14 @@ function renderCrops(): void {
       definition.requiredLevel,
       seedCount(definition)
     ]),
+    state.treeDefinitions.map((definition) => [
+      definition.treeDefinitionId,
+      definition.requiredLevel,
+      saplingCount(definition)
+    ]),
     level,
-    state.selectedCrop
+    state.selectedCrop,
+    state.selectedTree
   ]);
   if (signature === renderedCropOptions) return;
   renderedCropOptions = signature;
@@ -358,6 +446,11 @@ function renderCrops(): void {
     return;
   }
   select.disabled = false;
+  // Crops and trees come from two catalogues and are grouped, because the player is choosing one
+  // thing to plant: the group labels are the only place the page distinguishes them.
+  const cropGroup = document.createElement("optgroup");
+  cropGroup.label = t("plant.crops");
+  select.appendChild(cropGroup);
   for (const definition of state.cropDefinitions) {
     const option = document.createElement("option");
     option.value = definition.cropDefinitionId;
@@ -371,18 +464,36 @@ function renderCrops(): void {
     parts.push(t("dock.seedCount", { count: seedCount(definition) }));
     option.disabled = cropIsLocked(definition);
     option.textContent = parts.join(" · ");
-    select.appendChild(option);
+    cropGroup.appendChild(option);
   }
-  select.value = state.selectedCrop ?? "";
+  const treeGroup = document.createElement("optgroup");
+  treeGroup.label = t("plant.trees");
+  for (const definition of state.treeDefinitions) {
+    const option = document.createElement("option");
+    option.value = `tree:${definition.treeDefinitionId}`;
+    const parts = [treeName(definition.treeDefinitionId)];
+    if (definition.requiredLevel > 1) {
+      parts.push(`(${t("dock.locked", { level: definition.requiredLevel })})`);
+    }
+    parts.push(t("dock.saplingCount", { count: saplingCount(definition) }));
+    option.disabled = treeIsLocked(definition);
+    option.textContent = parts.join(OPTION_SEPARATOR);
+    treeGroup.appendChild(option);
+  }
+  if (state.treeDefinitions.length > 0) select.appendChild(treeGroup);
+  select.value = selectedPlantOption();
 }
 
 /** The single place the page turns authoritative rows into "what the dock offers" semantics. */
 function currentSelection(): SelectionView {
   const definition = selectedCropDefinition();
+  const treeDefinition = selectedTreeDefinition();
   return describeSelection({
     tiles: state.tiles,
     crops: state.crops,
+    trees: state.trees,
     cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions,
     selected: state.selected,
     selectedCrop:
       definition === null
@@ -391,6 +502,14 @@ function currentSelection(): SelectionView {
             cropDefinitionId: definition.cropDefinitionId,
             unlocked: !cropIsLocked(definition),
             seedCount: seedCount(definition)
+          },
+    selectedTree:
+      treeDefinition === null
+        ? null
+        : {
+            treeDefinitionId: treeDefinition.treeDefinitionId,
+            unlocked: !treeIsLocked(treeDefinition),
+            saplingCount: saplingCount(treeDefinition)
           },
     nowMs: Date.now()
   });
@@ -448,6 +567,31 @@ function renderSelection(): void {
       detail.textContent = t("selection.mature.detail");
       break;
     }
+    case "tree": {
+      const tree = selection.tree;
+      node.textContent = t("selection.tree.title", {
+        at: where,
+        tree: tree === null ? t("dock.tree") : treeName(tree.definitionId),
+        state:
+          tree === null
+            ? t("tree.state.GROWING")
+            : t(`tree.state.${tree.phase}` as MessageKey)
+      });
+      detail.textContent =
+        tree === null
+          ? t("selection.tree.regrowingDetail", { time: formatRemainingGrowth(null, t) })
+          : tree.phase === "READY"
+            ? t("selection.tree.readyDetail", { item: treeHarvestItemLabel(tree.definitionId) })
+            : tree.phase === "GROWING"
+              ? t("selection.tree.growingDetail", {
+                  percent: Math.round(tree.growthProgress * 100),
+                  time: formatRemainingGrowth(selection.remainingSeconds, t)
+                })
+              : t("selection.tree.regrowingDetail", {
+                  time: formatRemainingGrowth(selection.remainingSeconds, t)
+                });
+      break;
+    }
   }
 
   renderActionControls(selection);
@@ -467,6 +611,17 @@ function emptyDetail(selection: SelectionView): string {
         definition === null || key === null ? t("dock.crop") : itemName(definition.seedItemDefinitionId, key);
       return t("selection.empty.noSeed", { seed });
     }
+    case "tree-locked":
+      return t("selection.empty.treeLocked", { level: selectedTreeDefinition()?.requiredLevel ?? 1 });
+    case "no-sapling": {
+      const tree = selectedTreeDefinition();
+      const key = tree?.saplingItemDisplayNameKey ?? null;
+      const sapling =
+        tree === null || key === null
+          ? t("dock.tree")
+          : itemName(tree.saplingItemDefinitionId, key);
+      return t("selection.empty.noSapling", { sapling });
+    }
     default:
       return t("selection.empty.detail");
   }
@@ -479,12 +634,25 @@ function emptyDetail(selection: SelectionView): string {
  */
 function renderActionControls(selection: SelectionView): void {
   const hasCrop = selection.crop !== null;
-  element<HTMLDivElement>("plant-controls").hidden = hasCrop;
+  const hasTree = selection.tree !== null;
+  element<HTMLDivElement>("plant-controls").hidden = hasCrop || hasTree;
   element<HTMLDivElement>("crop-controls").hidden = !hasCrop;
+  element<HTMLDivElement>("tree-controls").hidden = !hasTree;
   element<HTMLButtonElement>("plant").disabled = !selection.canPlant;
   element<HTMLButtonElement>("harvest").disabled = !selection.canHarvest;
   element<HTMLButtonElement>("harvest").hidden = !selection.canHarvest;
   element<HTMLButtonElement>("uproot").disabled = !selection.canUproot;
+  // A tree offers harvest only while the server's own row says this cycle is ready; growing and
+  // regrowing trees offer removal instead, so a mis-planted tree never has to be waited out.
+  const harvestTreeButton = element<HTMLButtonElement>("harvest-tree");
+  harvestTreeButton.disabled = !selection.canHarvestTree;
+  harvestTreeButton.hidden = selection.tree !== null && selection.tree.phase !== "READY";
+  element<HTMLButtonElement>("remove-tree").disabled = !selection.canRemoveTree;
+  const treeState = element<HTMLElement>("tree-state");
+  treeState.textContent =
+    selection.tree === null
+      ? ""
+      : t(`tree.state.${selection.tree.phase}` as MessageKey);
 }
 
 function tileNode(tile: FarmTileDTO): HTMLDivElement {
@@ -498,7 +666,22 @@ function tileNode(tile: FarmTileDTO): HTMLDivElement {
   node.tabIndex = 0;
   node.appendChild(make("span", "coords", t("field.tile", { x: tile.x, y: tile.y })));
 
-  if (crop === null) {
+  const tree = treeAt(tile.x, tile.y);
+  if (tree !== null) {
+    // A tree is shown with the server's phase, and a ready one offers the same one-tap harvest the
+    // 3D view and the dock do.
+    node.classList.add("tree");
+    node.appendChild(make("span", "crop", treeName(tree.definitionId)));
+    node.appendChild(make("span", "state", t(`tree.state.${tree.phase}` as MessageKey)));
+    if (tree.ready) {
+      const harvest = make("button", "mini", t("dock.harvest"));
+      harvest.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void run(() => harvestTree(tree.treeInstanceId, tree.version));
+      });
+      node.appendChild(harvest);
+    }
+  } else if (crop === null) {
     node.appendChild(
       make(
         "span",
@@ -644,6 +827,8 @@ function renderChrome(): void {
   element<HTMLButtonElement>("plant").textContent = t("dock.plant");
   element<HTMLButtonElement>("harvest").textContent = t("dock.harvest");
   element<HTMLButtonElement>("uproot").textContent = t("dock.uproot");
+  element<HTMLButtonElement>("harvest-tree").textContent = t("dock.harvest");
+  element<HTMLButtonElement>("remove-tree").textContent = t("dock.removeTree");
   element<HTMLButtonElement>("expand-farm").textContent = t("land.unlock");
   const language = element<HTMLButtonElement>("language");
   language.textContent = t("language.switch");
@@ -669,18 +854,20 @@ function render(): void {
 
 async function refreshAccount(): Promise<void> {
   const client = api();
-  const [inventory, wallet, shop, progression, cropDefinitions] = await Promise.all([
+  const [inventory, wallet, shop, progression, cropDefinitions, treeDefinitions] = await Promise.all([
     client.getInventory(),
     client.getWallet(),
     client.getShop(),
     client.getProgression(),
-    client.getCropDefinitions()
+    client.getCropDefinitions(),
+    client.getTreeDefinitions()
   ]);
   state.inventory = inventory.items;
   state.wallet = wallet.wallets;
   state.shop = shop.entries;
   state.progression = progression.progression;
   state.cropDefinitions = cropDefinitions.definitions;
+  state.treeDefinitions = treeDefinitions.definitions;
   ensurePlantableSelection();
 }
 
@@ -709,6 +896,7 @@ function refreshScene(): void {
       buildFarmSceneInput({
         tiles: state.tiles,
         crops: state.crops,
+        trees: state.trees,
         plots: state.plots,
         selected: state.selected
       })
@@ -759,14 +947,16 @@ function enable3D(): void {
 async function refreshFarm(): Promise<void> {
   if (state.farmId === null) return;
   const client = api();
-  const [tiles, crops, plots] = await Promise.all([
+  const [tiles, crops, plots, trees] = await Promise.all([
     client.getTiles(state.farmId),
     client.getCrops(state.farmId),
-    client.getPlots(state.farmId)
+    client.getPlots(state.farmId),
+    client.getTrees(state.farmId)
   ]);
   state.tiles = tiles.tiles;
   state.crops = crops.crops;
   state.plots = plots.plots;
+  state.trees = trees.trees;
   refreshScene();
 }
 
@@ -804,6 +994,10 @@ async function plant(): Promise<void> {
   const selection = currentSelection();
   if (!selection.canPlant) {
     setStatus(literal(emptyDetail(selection)), true);
+    return;
+  }
+  if (selection.plantOption === "tree") {
+    await plantTree(tile);
     return;
   }
   const cropDefinitionId = state.selectedCrop;
@@ -909,6 +1103,106 @@ async function uprootSelected(): Promise<void> {
   );
 }
 
+/** Plants the chosen tree: the sapling comes from the definition, and the server spends exactly one. */
+async function plantTree(tile: FarmTileDTO): Promise<void> {
+  const definitionId = state.selectedTree;
+  if (state.farmId === null || definitionId === null) {
+    setStatus(message("status.noCrop"), true);
+    return;
+  }
+  // Belt and braces: an occupied tile never reaches the network, whichever occupant holds it.
+  if (cropAt(tile.x, tile.y) !== null || treeAt(tile.x, tile.y) !== null) {
+    setStatus(message("status.occupied"), true);
+    return;
+  }
+  await api().plantTree(state.farmId, {
+    requestId: newRequestId("plant-tree"),
+    treeDefinitionId: definitionId,
+    x: tile.x,
+    y: tile.y,
+    expectedTileVersion: tile.version
+  });
+  await refreshFarm();
+  await refreshAccount();
+  setStatus((translate) =>
+    translate("status.plantedTree", { tree: treeName(definitionId), x: tile.x, y: tile.y })
+  );
+}
+
+/**
+ * Harvests one tree cycle.
+ *
+ * The tree survives, so nothing is removed locally: the refresh reports it regrowing at its next
+ * revision, and the fruit and experience in the message are the award the server returned while the
+ * page's own numbers come from the refreshed reads.
+ */
+async function harvestTree(treeInstanceId: string, expectedTreeVersion: number): Promise<void> {
+  if (state.farmId === null) return;
+  const result = await api().harvestTree(state.farmId, treeInstanceId, {
+    requestId: newRequestId("harvest-tree"),
+    expectedTreeVersion
+  });
+  await refreshFarm();
+  await refreshAccount();
+  const awarded = result.progression;
+  const harvested = result.harvest;
+  setStatus((translate) => {
+    const base = translate("status.harvested", {
+      quantity: harvested.quantityAdded,
+      item: itemLabel(harvested.itemDefinitionId),
+      xp: awarded.xpAwarded
+    });
+    return awarded.leveledUp
+      ? `${base}${translate("status.levelUp", { level: awarded.progression.level })}`
+      : base;
+  });
+}
+
+/** Harvests the selected tree; only a cycle the server reported ready can reach this. */
+async function harvestSelectedTree(): Promise<void> {
+  if (state.farmId === null) {
+    setStatus(message("status.loadFarm"), true);
+    return;
+  }
+  const selection = currentSelection();
+  if (selection.kind !== "tree" || selection.tree === null || !selection.canHarvestTree) {
+    setStatus(message("status.selectReadyTree"), true);
+    return;
+  }
+  element<HTMLButtonElement>("harvest-tree").disabled = true;
+  await harvestTree(selection.tree.treeInstanceId, selection.tree.version);
+}
+
+/**
+ * Removes the selected tree after an explicit confirmation.
+ *
+ * The confirmation is the page's, not the server's: removing a tree destroys the sapling, so the
+ * player is asked first. The command itself still goes through the server, which decides on its own
+ * authority whether the tree exists, belongs to this farm, and is at the version last seen.
+ */
+async function removeSelectedTree(): Promise<void> {
+  const selection = currentSelection();
+  if (state.farmId === null) {
+    setStatus(message("status.loadFarm"), true);
+    return;
+  }
+  if (selection.tree === null) {
+    setStatus(message("status.selectReadyTree"), true);
+    return;
+  }
+  if (!window.confirm(t("dock.removeTree.confirm"))) return;
+  const coordinate = selection.coordinate;
+  await api().removeTree(state.farmId, selection.tree.treeInstanceId, {
+    requestId: newRequestId("remove-tree"),
+    expectedTreeVersion: selection.tree.version
+  });
+  await refreshFarm();
+  await refreshAccount();
+  setStatus((translate) =>
+    translate("status.removedTree", { x: coordinate?.x ?? 0, y: coordinate?.y ?? 0 })
+  );
+}
+
 async function trade(direction: "buy" | "sell", shopEntryId: string, quantity: number): Promise<void> {
   if (!Number.isSafeInteger(quantity) || quantity <= 0) {
     setStatus(message("status.quantity"), true);
@@ -983,7 +1277,16 @@ function wire(): void {
   // The options are built by renderCrops from the server's crop catalogue, not compiled in here.
   const cropSelect = element<HTMLSelectElement>("crop-select");
   cropSelect.addEventListener("change", () => {
-    state.selectedCrop = cropSelect.value;
+    // One control, two catalogues: a tree option is prefixed, and choosing either clears the other
+    // so exactly one plant intent is ever pending.
+    const chosen = cropSelect.value;
+    if (chosen.startsWith("tree:")) {
+      state.selectedTree = chosen.slice("tree:".length);
+      state.selectedCrop = null;
+    } else {
+      state.selectedCrop = chosen;
+      state.selectedTree = null;
+    }
     renderSelection();
     refreshScene();
   });
@@ -1006,6 +1309,12 @@ function wire(): void {
   });
   element<HTMLButtonElement>("uproot").addEventListener("click", () => {
     void run(uprootSelected);
+  });
+  element<HTMLButtonElement>("harvest-tree").addEventListener("click", () => {
+    void run(harvestSelectedTree);
+  });
+  element<HTMLButtonElement>("remove-tree").addEventListener("click", () => {
+    void run(removeSelectedTree);
   });
   element<HTMLButtonElement>("expand-farm").addEventListener("click", () => {
     void run(expandFarm);

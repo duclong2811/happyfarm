@@ -20,12 +20,12 @@ import {
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
-import { createSharedAssets, tileMaterial } from "./materials";
+import { createSharedAssets, tileMaterial, type SharedAssets } from "./materials";
 import { CROP_MODEL_URLS } from "./model-urls";
 import { ENVIRONMENT_MODEL_URLS } from "./environment-model-urls";
 import { buildScenery, type SceneryKind } from "./scenery";
 import { buildTerrain, TILE_THICKNESS } from "./terrain";
-import type { FarmSceneInput, SceneTile } from "./view-model";
+import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
 
 /**
@@ -136,6 +136,73 @@ function disposeModelResources(root: Object3D): void {
   });
 }
 
+/**
+ * Scale of the shared tree model, matching the normalization the scenery applies to the same file.
+ *
+ * One model serves every tree: the visual stage is a scale and a decoration, not another asset, so a
+ * farm with many trees loads and caches exactly one tree model.
+ */
+const TREE_MODEL_SCALE = 0.78;
+
+/** Fruit positions on a ready tree, in the model's own units. Decoration, never a reward count. */
+const FRUIT_OFFSETS: readonly (readonly [number, number, number])[] = [
+  [0.2, 0.86, 0.12],
+  [-0.18, 0.72, -0.1],
+  [0.04, 1.0, -0.2]
+];
+
+/** How tall a tree of each visual stage is drawn, as a fraction of a full-grown one. */
+function treeStageScale(tree: SceneTree): number {
+  switch (tree.visualStage) {
+    case "SAPLING":
+      return 0.35;
+    case "GROWING":
+      return 0.55 + 0.35 * tree.growthProgress;
+    case "REGROWING":
+    case "READY":
+      return 1;
+  }
+}
+
+/**
+ * One tree on its tile.
+ *
+ * The model is cloned from the cache the scenery already fills; a build with no model, or one whose
+ * file has not arrived yet, falls back to a trunk-and-canopy placeholder so the tile is never bare.
+ * A ready tree gains fruit meshes, which are the visual signal and nothing more: the server decided
+ * the reward before the page drew anything.
+ */
+function treePlant(
+  tile: SceneTile,
+  assets: SharedAssets,
+  model: Object3D | undefined,
+  tree: SceneTree
+): Group {
+  const plant = new Group();
+  plant.position.set(tile.worldX, TILE_THICKNESS, tile.worldZ);
+  plant.scale.setScalar(TREE_MODEL_SCALE * treeStageScale(tree));
+  if (model === undefined) {
+    const trunk = new Mesh(assets.cylinder, assets.wood);
+    trunk.position.y = 0.3;
+    trunk.scale.set(0.09, 0.6, 0.09);
+    const canopy = new Mesh(assets.sphere, assets.foliage);
+    canopy.position.y = 0.86;
+    canopy.scale.set(0.5, 0.56, 0.5);
+    plant.add(trunk, canopy);
+  } else {
+    plant.add(model.clone(true));
+  }
+  if (tree.visualStage === "READY") {
+    for (const offset of FRUIT_OFFSETS) {
+      const fruit = new Mesh(assets.octa, assets.cropMature);
+      fruit.position.set(offset[0], offset[1], offset[2]);
+      fruit.scale.setScalar(0.09);
+      plant.add(fruit);
+    }
+  }
+  return plant;
+}
+
 export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOptions = {}): FarmSceneHandle {
   let renderer: WebGLRenderer;
   try {
@@ -153,7 +220,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const worldGroup = new Group();
   const tileGroup = new Group();
   const cropGroup = new Group();
-  scene.add(worldGroup, tileGroup, cropGroup);
+  const treeGroup = new Group();
+  scene.add(worldGroup, tileGroup, cropGroup, treeGroup);
 
   scene.add(new HemisphereLight(0xdfefff, 0x4a6a3f, 1.15));
   scene.add(new AmbientLight(0xffffff, 0.45));
@@ -367,6 +435,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
 
     tileGroup.clear();
     cropGroup.clear();
+    treeGroup.clear();
     pickTargets.clear();
 
     for (const tile of state.tiles) {
@@ -377,6 +446,15 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       pickTargets.set(slab, coordinate);
 
       const crop = tile.crop;
+      const tree = tile.tree;
+      if (tree !== null) {
+        // A tree keeps its tile, so it is drawn in its own group and never as a crop. Selection maps
+        // to the tile coordinate the authoritative tree row is looked up by, never to a mesh, a
+        // display name, or an array index.
+        const treePlantNode = treePlant(tile, assets, sceneryModels.tree, tree);
+        treeGroup.add(treePlantNode);
+        pickTargets.set(treePlantNode, coordinate);
+      }
       if (crop === null) continue;
       const height = Math.max(crop.heightFraction * CROP_MAX_HEIGHT, MIN_CROP_HEIGHT);
       const variants = modelVariants(crop.definitionId);
@@ -528,6 +606,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       worldGroup.clear();
       tileGroup.clear();
       cropGroup.clear();
+      treeGroup.clear();
       pickTargets.clear();
       for (const variants of models.values()) {
         disposeModelResources(variants.growing);

@@ -7,11 +7,16 @@ import {
   GetFarmTilesResponseSchema,
   GetInventoryResponseSchema,
   GetProgressionResponseSchema,
+  GetTreeDefinitionsResponseSchema,
+  GetFarmTreesResponseSchema,
   GetPlotsResponseSchema,
   GetShopResponseSchema,
   GetWalletResponseSchema,
   HarvestCropResponseSchema,
+  HarvestTreeResponseSchema,
   PlantCropResponseSchema,
+  PlantTreeResponseSchema,
+  RemoveTreeResponseSchema,
   UprootCropResponseSchema,
   SellItemResultDTOSchema
   ,ExpandFarmResponseSchema
@@ -24,13 +29,17 @@ import type {
   FarmMemberDTO,
   FarmTileDTO,
   HarvestResultDTO,
+  TreeHarvestResultDTO,
   InventoryEntryDTO,
   PlayerProgressionDTO,
   PlotDTO,
   ExpandFarmResultDTO,
   SellItemResultDTO,
   ShopEntryDTO,
+  TreeDefinitionDTO,
+  TreeStateDTO,
   UprootCropResponse,
+  RemoveTreeResponse,
   XpAwardDTO,
   WalletDTO
 } from "@happy-farm/contracts";
@@ -111,6 +120,18 @@ export interface HarvestBody {
 
 /** Uprooting carries the same two fields as harvesting and nothing that could name a reward. */
 export type UprootBody = HarvestBody;
+export interface PlantTreeBody {
+  readonly requestId: string;
+  readonly treeDefinitionId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly expectedTileVersion: number;
+}
+/** Harvesting one tree cycle carries the same two fields as harvesting a crop. */
+export interface TreeHarvestBody {
+  readonly requestId: string;
+  readonly expectedTreeVersion: number;
+}
 export interface ShopCommandBody {
   readonly requestId: string;
   readonly shopEntryId: string;
@@ -189,6 +210,48 @@ export class ApiClient {
   /** The crops this deployment can plant, which is what the planting control is built from. */
   getCropDefinitions(): Promise<{ readonly definitions: CropDefinitionDTO[] }> {
     return this.get("/crop-definitions", GetCropDefinitionsResponseSchema);
+  }
+
+  /** The trees this deployment can plant, which is what the tree planting choices are built from. */
+  getTreeDefinitions(): Promise<{ readonly definitions: TreeDefinitionDTO[] }> {
+    return this.get("/tree-definitions", GetTreeDefinitionsResponseSchema);
+  }
+
+  getTrees(farmId: string): Promise<{ readonly trees: TreeStateDTO[] }> {
+    return this.get(`/farms/${encodeURIComponent(farmId)}/trees`, GetFarmTreesResponseSchema);
+  }
+
+  plantTree(farmId: string, body: PlantTreeBody): Promise<{ readonly tree: TreeStateDTO }> {
+    return this.post(`/farms/${encodeURIComponent(farmId)}/trees`, body, PlantTreeResponseSchema);
+  }
+
+  /**
+   * Harvests one cycle of a tree. The tree survives; the response carries the fruit and the award,
+   * and the next read of the farm reports the tree regrowing at its next revision.
+   */
+  harvestTree(
+    farmId: string,
+    treeInstanceId: string,
+    body: TreeHarvestBody
+  ): Promise<{ readonly harvest: TreeHarvestResultDTO; readonly progression: XpAwardDTO }> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/trees/${encodeURIComponent(treeInstanceId)}/harvest`,
+      body,
+      HarvestTreeResponseSchema
+    );
+  }
+
+  /** Removes a tree. No reward, no refund: the server only confirms what it removed. */
+  removeTree(
+    farmId: string,
+    treeInstanceId: string,
+    body: TreeHarvestBody
+  ): Promise<RemoveTreeResponse> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/trees/${encodeURIComponent(treeInstanceId)}/remove`,
+      body,
+      RemoveTreeResponseSchema
+    );
   }
 
   plantCrop(farmId: string, body: PlantCropBody): Promise<{ readonly crop: CropStateDTO }> {

@@ -258,3 +258,32 @@ Phase 3D exposes `POST /shop/buy` and `POST /shop/sell`. Both authenticate the a
   `GET /inventory` and `GET /farms/:farmId/crops` after every command.
 - The HUD is bilingual (`vi`/`en`). Language is presentation only: no route accepts a language, and
   every authoritative value -- level, price, seed count, maturity -- is unchanged by the switch.
+## Phase 6 - Trees and repeating harvests
+
+- `GET /tree-definitions` requires authentication and returns
+  `{ "definitions": [ { "treeDefinitionId", "displayNameKey", "saplingItemDefinitionId",
+  "saplingItemDisplayNameKey", "firstReadySeconds", "regrowSeconds", "growthStages",
+  "harvestItemDefinitionId", "baseQuantity", "harvestXp", "requiredLevel" } ] }` for every tree this
+  deployment can plant. Reads are never gated by level: a tree the player has not unlocked is listed
+  with the level it needs. The player's own sapling count is not part of this route.
+- `GET /farms/:farmId/trees` requires farm membership and returns `{ "trees": [ TreeState ] }` where a
+  tree state carries `treeInstanceId`, `definitionId`, `tileX`, `tileY`, `plantedAt`,
+  `lastHarvestedAt` (nullable), `readyAt`, `secondsUntilReady`, `ready`, `phase`
+  (`GROWING`|`READY`|`REGROWING`), `growthStage`, `growthProgress`, and `version`. Every readiness
+  field is projected from server time; no route accepts a client clock.
+- `POST /farms/:farmId/trees` (owner only) takes `{ "requestId", "treeDefinitionId", "x", "y",
+  "expectedTileVersion" }` and answers `201 { "tree": TreeState }`. The sapling comes from the
+  definition and exactly one is spent in the same transaction that inserts the tree; a tile that
+  already holds a crop or a tree is refused with `TILE_OCCUPIED` (409).
+- `POST /farms/:farmId/trees/:treeInstanceId/harvest` (owner only) takes `{ "requestId",
+  "expectedTreeVersion" }` and answers `{ "harvest": { "treeInstanceId", "itemDefinitionId",
+  "quantityAdded" }, "progression": XpAward }`. The tree is not removed: the revision advances and
+  the next cycle begins. A cycle the server has not reported ready is refused with `TREE_NOT_READY`
+  (409), and a second harvest of the same cycle cannot settle.
+- `POST /farms/:farmId/trees/:treeInstanceId/remove` (owner only) takes `{ "requestId",
+  "expectedTreeVersion" }` and answers `{ "removed": { "treeInstanceId" } }`. There is no reward and
+  no refund, exactly like uprooting a crop.
+- Tree error codes: `TREE_DEFINITION_NOT_FOUND` (404), `TREE_NOT_FOUND` (404), `TREE_NOT_READY`
+  (409), `TREE_LEVEL_REQUIRED` (403). The shared codes (`TILE_OCCUPIED`, `TILE_NOT_PLANTABLE`,
+  `INSUFFICIENT_ITEMS`, `INVENTORY_LIMIT_EXCEEDED`, `CONFLICT_STALE_STATE`,
+  `IDEMPOTENCY_CONFLICT`, `PROGRESSION_CONFLICT`) keep their existing meanings.
