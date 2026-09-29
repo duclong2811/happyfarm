@@ -115,8 +115,39 @@ export const HarvestResultDTOSchema = z
   })
   .strict();
 
+/**
+ * The two item kinds an inventory or a market row can hold.
+ *
+ * Sent to the client so it can group and label without keeping a list of which item is which: a
+ * server that adds a seed does not need a client release to say so.
+ */
+export const ItemCategorySchema = z.enum(["CROP", "SEED"]);
+
+/**
+ * Uprooting a crop.
+ *
+ * The command carries a request ID and the crop version the client last saw, exactly like harvesting.
+ * There is no reward, refund, or owner field because there is nothing to decide: the server deletes
+ * the crop it was pointed at, and the seed is gone.
+ */
+export const UprootCropRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedCropVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const UprootCropResponseSchema = z
+  .object({ removed: z.object({ cropInstanceId: CropInstanceIdSchema }).strict() })
+  .strict();
+
 export const InventoryEntryDTOSchema = z
-  .object({ itemDefinitionId: ItemDefinitionIdSchema, quantity: z.number().int().nonnegative() })
+  .object({
+    itemDefinitionId: ItemDefinitionIdSchema,
+    displayNameKey: z.string().min(1).max(120),
+    category: ItemCategorySchema,
+    quantity: z.number().int().nonnegative()
+  })
   .strict();
 
 export const MAX_PROGRESSION_LEVEL = 10_000;
@@ -163,7 +194,18 @@ export const GetProgressionResponseSchema = z
 export const CropDefinitionDTOSchema = z
   .object({
     cropDefinitionId: CropDefinitionIdSchema,
+    /**
+     * The game-data key for this crop's name, which the client translates.
+     *
+     * It travels so the client renders its planting choices from what this deployment ships instead
+     * of from a compiled-in crop list, and so a crop this client has never heard of still appears
+     * with a translated or clearly-fallback name.
+     */
+    displayNameKey: z.string().min(1).max(120),
     growthDurationSeconds: z.number().int().positive().max(31_536_000),
+    /** The seed one planting consumes. The client shows the player's count of exactly this item. */
+    seedItemDefinitionId: ItemDefinitionIdSchema,
+    seedItemDisplayNameKey: z.string().min(1).max(120),
     harvestItemDefinitionId: ItemDefinitionIdSchema,
     baseQuantity: z.number().int().positive().max(1_000_000),
     harvestXp: z.number().int().positive().max(1_000_000),
@@ -214,18 +256,31 @@ export const ShopEntryDTOSchema = z
   .object({
     shopEntryId: ShopEntryIdSchema,
     itemDefinitionId: ItemDefinitionIdSchema,
+    itemDisplayNameKey: z.string().min(1).max(120),
+    category: ItemCategorySchema,
     currencyId: CurrencyDefinitionIdSchema,
-    buyPrice: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    sellPrice: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    currencyDisplayNameKey: z.string().min(1).max(120),
+    /**
+     * Null means this entry does not trade that way, so the client renders no button for it rather
+     * than a disabled one. Prices stay server-owned: the command carries an entry ID and a quantity.
+     */
+    buyPrice: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+    sellPrice: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
     maxQuantityPerRequest: z.number().int().positive().max(MAX_SHOP_COMMAND_QUANTITY)
   })
-  .strict();
+  .strict()
+  // An entry that trades neither way is not a market row, so the client is never handed one it
+  // would have to render as a name with no action.
+  .refine((entry) => entry.buyPrice !== null || entry.sellPrice !== null, {
+    message: "A shop entry must offer a buy price, a sell price, or both"
+  });
 
 export const GetShopResponseSchema = z.object({ entries: z.array(ShopEntryDTOSchema) }).strict();
 
 export const WalletDTOSchema = z
   .object({
     currencyId: CurrencyDefinitionIdSchema,
+    displayNameKey: z.string().min(1).max(120),
     balance: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
   })
   .strict();
@@ -295,6 +350,7 @@ export const ErrorCodeSchema = z.enum([
   "INVENTORY_LIMIT_EXCEEDED",
   "CURRENCY_DEFINITION_NOT_FOUND",
   "SHOP_ENTRY_NOT_FOUND",
+  "SHOP_ENTRY_NOT_ALLOWED",
   "PLOT_LEVEL_REQUIRED",
   "PLOT_LIMIT_REACHED",
   "INVALID_QUANTITY",
@@ -319,6 +375,8 @@ export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export type PlantCropRequest = z.infer<typeof PlantCropRequestSchema>;
 export type CropStateDTO = z.infer<typeof CropStateDTOSchema>;
 export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;
+export type UprootCropRequest = z.infer<typeof UprootCropRequestSchema>;
+export type UprootCropResponse = z.infer<typeof UprootCropResponseSchema>;
 export type HarvestResultDTO = z.infer<typeof HarvestResultDTOSchema>;
 export type PlayerProgressionDTO = z.infer<typeof PlayerProgressionDTOSchema>;
 export type XpAwardDTO = z.infer<typeof XpAwardDTOSchema>;

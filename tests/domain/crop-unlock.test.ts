@@ -13,6 +13,7 @@ function definition(requiredLevel?: number): CropDefinition {
     displayNameKey: "crop.test.name",
     growthDurationSeconds: 60,
     growthStages: 2,
+    seedItemDefinitionId: parseItemDefinitionId("item_test_seed"),
     harvest: { itemDefinitionId: parseItemDefinitionId("item_test"), baseQuantity: 1, xp: 1 }
   };
   return requiredLevel === undefined ? base : { ...base, requiredLevel };

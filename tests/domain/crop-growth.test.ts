@@ -13,6 +13,7 @@ const definition = {
   displayNameKey: "crop.test.name",
   growthDurationSeconds: 400,
   growthStages: 4,
+  seedItemDefinitionId: parseItemDefinitionId("item_test_seed"),
   harvest: { itemDefinitionId: parseItemDefinitionId("item_test"), baseQuantity: 1, xp: 1 }
 };
 const plantedAt = "2026-01-01T12:00:00.000Z";

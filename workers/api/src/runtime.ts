@@ -42,6 +42,7 @@ import {
   playerProgression,
   plotRegistry,
   shopRegistry,
+  starterSeedGrant,
   type CropDefinitionData
 } from "@happy-farm/game-data";
 
@@ -55,6 +56,18 @@ export const gameDataProgressionDefinition: ProgressionDefinition = {
   maxLevel: playerProgression.maxLevel,
   xpStep: playerProgression.xpStep
 };
+
+/**
+ * The one-time starter grant, read from game data and handed to the application as plain values.
+ *
+ * It is exported from here so the same `GrantStarterSeed` use case can be called by the development
+ * bootstrap today and by a production onboarding step later, without either of them knowing an item
+ * ID or a quantity.
+ */
+export const gameDataStarterSeedGrant = {
+  itemDefinitionId: starterSeedGrant.itemDefinitionId,
+  quantity: starterSeedGrant.quantity
+} as const;
 
 export class SystemClock implements Clock {
   now(): string {
@@ -120,16 +133,20 @@ function toShopEntry(entry: {
   readonly id: string;
   readonly itemDefinitionId: string;
   readonly currencyDefinitionId: string;
-  readonly buyPrice: number;
-  readonly sellPrice: number;
+  // `| undefined` as well as optional: game data is compiled with `exactOptionalPropertyTypes`, so
+  // the parsed entry's absent price is typed as an explicit `undefined`.
+  readonly buyPrice?: number | undefined;
+  readonly sellPrice?: number | undefined;
   readonly maxQuantityPerRequest: number;
 }): ShopEntry {
   return {
     id: parseShopEntryId(entry.id),
     itemDefinitionId: parseItemDefinitionId(entry.itemDefinitionId),
     currencyDefinitionId: parseCurrencyDefinitionId(entry.currencyDefinitionId),
-    buyPrice: entry.buyPrice,
-    sellPrice: entry.sellPrice,
+    // A missing price is the explicit "this direction is closed" the domain and the client read.
+    // Collapsing it to 0 would read as a free purchase or a zero-value sale instead.
+    buyPrice: entry.buyPrice ?? null,
+    sellPrice: entry.sellPrice ?? null,
     maxQuantityPerRequest: entry.maxQuantityPerRequest
   };
 }
@@ -166,6 +183,7 @@ function toCropDefinition(definition: CropDefinitionData): CropDefinition {
     displayNameKey: definition.displayNameKey,
     growthDurationSeconds: definition.growthDurationSeconds,
     growthStages: definition.growthStages,
+    seedItemDefinitionId: parseItemDefinitionId(definition.seedItemDefinitionId),
     harvest: {
       itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),
       baseQuantity: definition.harvest.baseQuantity,

@@ -84,4 +84,23 @@ describe("economy mutation rules", () => {
     expect(calculateShopTotal(safeEntry, 2, "BUY")).toBe(9_007_199_254_740_990);
     expect(() => calculateShopTotal({ ...safeEntry, buyPrice: Number.MAX_SAFE_INTEGER }, 2, "BUY")).toThrow();
   });
+
+  it("refuses a direction the entry does not trade instead of pricing it at nothing", () => {
+    // The shop sells seeds and buys produce, so a null price is a closed direction, never a zero
+    // price. Turning it into free gold or a free item is the failure mode this rule exists for.
+    const sellOnly = {
+      id: parseShopEntryId("shop_carrot"),
+      itemDefinitionId: parseItemDefinitionId("item_carrot"),
+      currencyDefinitionId: currency.id,
+      buyPrice: null,
+      sellPrice: 2,
+      maxQuantityPerRequest: 100
+    };
+    expect(calculateShopTotal(sellOnly, 3, "SELL")).toBe(6);
+    expect(() => calculateShopTotal(sellOnly, 1, "BUY")).toThrow();
+
+    const buyOnly = { ...sellOnly, id: parseShopEntryId("shop_carrot_seed"), buyPrice: 2, sellPrice: null };
+    expect(calculateShopTotal(buyOnly, 3, "BUY")).toBe(6);
+    expect(() => calculateShopTotal(buyOnly, 1, "SELL")).toThrow();
+  });
 });

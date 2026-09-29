@@ -22,8 +22,15 @@ export interface ShopEntry {
   readonly id: ShopEntryId;
   readonly itemDefinitionId: ItemDefinitionId;
   readonly currencyDefinitionId: CurrencyDefinitionId;
-  readonly buyPrice: number;
-  readonly sellPrice: number;
+  /**
+   * What the server charges for one unit, or null when this entry does not trade that way.
+   *
+   * A null price is the server's statement that the direction is closed: the shop sells seeds
+   * (`buyPrice`) and buys produce (`sellPrice`), and no entry does both for the same item. The
+   * client only ever displays the directions that exist.
+   */
+  readonly buyPrice: number | null;
+  readonly sellPrice: number | null;
   readonly maxQuantityPerRequest: number;
 }
 
@@ -118,6 +125,11 @@ export function calculateShopTotal(entry: ShopEntry, quantity: number, operation
     throw new DomainError("INVALID_ECONOMY_MUTATION", "Shop quantity is invalid");
   }
   const unitPrice = operation === "BUY" ? entry.buyPrice : entry.sellPrice;
+  // A direction the entry does not trade is refused here as well as in the use case, so no caller
+  // can turn a null price into a free purchase or a zero-value sale.
+  if (unitPrice === null) {
+    throw new DomainError("INVALID_ECONOMY_MUTATION", "Shop entry does not trade in that direction");
+  }
   const total = unitPrice * quantity;
   if (!Number.isSafeInteger(unitPrice) || unitPrice <= 0 || !Number.isSafeInteger(total)) {
     throw new DomainError("INVALID_ECONOMY_MUTATION", "Shop total is outside the safe integer range");

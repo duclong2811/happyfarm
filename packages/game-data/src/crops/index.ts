@@ -19,6 +19,17 @@ export const CropDefinitionSchema = z
     // data cannot define a crop no level could ever satisfy — and cannot define one the API contract
     // would reject later, which would take the whole crop catalogue down with it.
     requiredLevel: z.number().int().positive().max(10_000).optional(),
+    /**
+     * The authoritative seed this crop consumes when it is planted.
+     *
+     * The planting settlement reads the seed from *here*, never from a client, so a crop and its seed
+     * cannot be pointed at different items by a caller. `validateCropItemReferences` refuses a
+     * reference that is missing or that is not a `SEED`, and refuses two crops sharing one seed.
+     */
+    seedItemDefinitionId: z
+      .string()
+      .regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/)
+      .refine((id) => id.startsWith("item_")),
     harvest: z
       .object({
         itemDefinitionId: DefinitionIdSchema.refine((id) => id.startsWith("item_")),
@@ -47,6 +58,7 @@ export const cropRegistry = createCropRegistry([
     displayNameKey: "crop.carrot.name",
     growthDurationSeconds: 300,
     growthStages: 4,
+    seedItemDefinitionId: "item_carrot_seed",
     harvest: { itemDefinitionId: "item_carrot", baseQuantity: 2, xp: 4 }
   },
   {
@@ -55,6 +67,7 @@ export const cropRegistry = createCropRegistry([
     growthDurationSeconds: 900,
     growthStages: 5,
     requiredLevel: 2,
+    seedItemDefinitionId: "item_wheat_seed",
     harvest: { itemDefinitionId: "item_wheat", baseQuantity: 3, xp: 12 }
   },
   {
@@ -63,18 +76,30 @@ export const cropRegistry = createCropRegistry([
     growthDurationSeconds: 1800,
     growthStages: 4,
     requiredLevel: 3,
-    harvest: { itemDefinitionId: "item_corn", baseQuantity: 2, xp: 24 }
+    seedItemDefinitionId: "item_corn_seed",
+    harvest: { itemDefinitionId: "item_corn", baseQuantity: 3, xp: 24 }
   }
 ]);
 
 export function validateCropItemReferences(
   cropDefinitions: ReadonlyMap<string, CropDefinitionData>,
-  itemDefinitions: ReadonlyMap<string, unknown>
+  itemDefinitions: ReadonlyMap<string, { readonly category?: string }>
 ): void {
+  const claimedSeeds = new Set<string>();
   for (const crop of cropDefinitions.values()) {
     if (!itemDefinitions.has(crop.harvest.itemDefinitionId)) {
       throw new Error(`Unknown harvest item definition: ${crop.harvest.itemDefinitionId}`);
     }
+    const seed = itemDefinitions.get(crop.seedItemDefinitionId);
+    if (seed === undefined || seed.category !== "SEED") {
+      throw new Error(`Unknown seed item definition: ${crop.seedItemDefinitionId}`);
+    }
+    // Two crops sharing one seed would make a harvest ambiguous about what it cost, so the catalogue
+    // is refused at load rather than left to be interpreted at runtime.
+    if (claimedSeeds.has(crop.seedItemDefinitionId)) {
+      throw new Error(`Duplicate seed item reference: ${crop.seedItemDefinitionId}`);
+    }
+    claimedSeeds.add(crop.seedItemDefinitionId);
   }
 }
 

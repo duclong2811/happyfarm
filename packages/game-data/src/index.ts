@@ -8,4 +8,5 @@ export * from "./plots";
 export * from "./progression";
 export * from "./schema";
 export * from "./shops";
+export * from "./starter";
 export * from "./trees";

@@ -8,7 +8,7 @@ import { UnconfiguredAuthenticator } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { NOW, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0007_seed_economy.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -119,7 +119,7 @@ describe("development authentication bridge", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       ok: true,
-      data: { wallets: [{ currencyId: "currency_gold", balance: 42 }] }
+      data: { wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 42 }] }
     });
   });
 
@@ -142,9 +142,16 @@ describe("development authentication bridge", () => {
       data: { player: { playerId: DEV_PLAYER_ID, status: "ACTIVE", created: false } }
     });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM players").get()).toEqual({ count: 1 });
-    for (const table of ["wallets", "inventory_items", "economy_ledger", "farms", "farm_members"]) {
+    for (const table of ["wallets", "economy_ledger", "farms", "farm_members"]) {
       expect(db.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get(), table).toEqual({ count: 0 });
     }
+    // Onboarding does write one thing: the player's one-time starter seeds, and nothing else.
+    expect(
+      db.sqlite
+        .prepare("SELECT item_definition_id, quantity FROM inventory_items WHERE player_id = ?")
+        .all(DEV_PLAYER_ID)
+    ).toEqual([{ item_definition_id: "item_carrot_seed", quantity: 36 }]);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM starter_seed_grants").get()).toEqual({ count: 1 });
   });
 
   it("rejects bootstrap without a valid token and writes nothing", async () => {

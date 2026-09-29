@@ -8,11 +8,14 @@ import {
   GetShopResponseSchema,
   GetWalletResponseSchema,
   HarvestCropRequestSchema,
+  InventoryEntryDTOSchema,
   MAX_TILE_X,
   PlantCropRequestSchema,
   ShopEntryDTOSchema,
   SellItemRequestSchema,
   TileCoordinateSchema,
+  UprootCropRequestSchema,
+  UprootCropResponseSchema,
   WalletDTOSchema
 } from "@happy-farm/contracts";
 
@@ -52,6 +55,50 @@ describe("Phase 1 runtime validation", () => {
     expect(HarvestCropRequestSchema.safeParse({ ...valid, itemDefinitionId: "item_gold" }).success).toBe(false);
   });
 
+  it("validates an uproot command that can only carry intent", () => {
+    const valid = { requestId: "uproot_123", expectedCropVersion: 4 };
+    expect(UprootCropRequestSchema.safeParse(valid).success).toBe(true);
+    expect(UprootCropRequestSchema.safeParse({ ...valid, expectedCropVersion: 0 }).success).toBe(false);
+    // Uprooting refunds nothing, so there is nothing a client could legitimately name here.
+    for (const injected of [
+      { refund: 1 },
+      { seedItemDefinitionId: "item_carrot_seed" },
+      { quantity: 1 },
+      { playerId: "player_11111111-1111-4111-8111-111111111111" },
+      { gold: 10 },
+      { xp: 10 }
+    ]) {
+      expect(UprootCropRequestSchema.safeParse({ ...valid, ...injected }).success, JSON.stringify(injected)).toBe(false);
+    }
+    expect(
+      UprootCropResponseSchema.safeParse({
+        removed: { cropInstanceId: "cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc" }
+      }).success
+    ).toBe(true);
+    expect(UprootCropResponseSchema.safeParse({ removed: { cropInstanceId: "carrot" } }).success).toBe(false);
+    // The response carries no reward field either, so a client cannot be told it earned something.
+    expect(
+      UprootCropResponseSchema.safeParse({
+        removed: { cropInstanceId: "cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc" },
+        harvest: { quantityAdded: 2 }
+      }).success
+    ).toBe(false);
+  });
+
+  it("validates inventory rows that name and categorise the item", () => {
+    const entry = {
+      itemDefinitionId: "item_carrot_seed",
+      displayNameKey: "item.carrot_seed.name",
+      category: "SEED",
+      quantity: 36
+    };
+    expect(InventoryEntryDTOSchema.safeParse(entry).success).toBe(true);
+    expect(InventoryEntryDTOSchema.safeParse({ ...entry, category: "TOOL" }).success).toBe(false);
+    expect(InventoryEntryDTOSchema.safeParse({ ...entry, quantity: -1 }).success).toBe(false);
+    expect(InventoryEntryDTOSchema.safeParse({ ...entry, quantity: 1.5 }).success).toBe(false);
+    expect(InventoryEntryDTOSchema.safeParse({ ...entry, displayNameKey: "" }).success).toBe(false);
+  });
+
   it.each([BuyItemRequestSchema, SellItemRequestSchema])(
     "validates shop intent without accepting an authoritative price",
     (schema) => {
@@ -70,43 +117,58 @@ describe("Phase 1 runtime validation", () => {
 
   it("validates presentation-safe shop and wallet read DTOs", () => {
     const entry = {
-      shopEntryId: "shop_carrot",
-      itemDefinitionId: "item_carrot",
+      shopEntryId: "shop_carrot_seed",
+      itemDefinitionId: "item_carrot_seed",
+      itemDisplayNameKey: "item.carrot_seed.name",
+      category: "SEED",
       currencyId: "currency_gold",
-      buyPrice: 4,
-      sellPrice: 2,
+      currencyDisplayNameKey: "currency.gold.name",
+      buyPrice: 2,
+      sellPrice: null,
       maxQuantityPerRequest: 1_000
     };
     expect(ShopEntryDTOSchema.safeParse(entry).success).toBe(true);
+    // A closed direction is null, never zero: the client renders no button for it.
+    expect(
+      ShopEntryDTOSchema.safeParse({ ...entry, buyPrice: null, sellPrice: 2 }).success
+    ).toBe(true);
+    expect(ShopEntryDTOSchema.safeParse({ ...entry, buyPrice: null, sellPrice: null }).success).toBe(false);
     expect(GetShopResponseSchema.safeParse({ entries: [entry] }).success).toBe(true);
     expect(GetShopResponseSchema.safeParse({ entries: [] }).success).toBe(true);
     for (const injected of [
       { id: "shop_carrot" }, { version: 1 }, { registry: {} }, { itemRegistry: "item_carrot" },
       { shopEntryId: "carrot" }, { buyPrice: 0 }, { buyPrice: 1.5 },
-      { sellPrice: -1 }, { maxQuantityPerRequest: 0 }, { maxQuantityPerRequest: 1_000_001 }
+      { sellPrice: -1 }, { category: "TOOL" }, { itemDisplayNameKey: "" },
+      { maxQuantityPerRequest: 0 }, { maxQuantityPerRequest: 1_000_001 }
     ]) {
       expect(ShopEntryDTOSchema.safeParse({ ...entry, ...injected }).success, JSON.stringify(injected)).toBe(false);
     }
     expect(GetShopResponseSchema.safeParse({ entries: [entry], wallet: [] }).success).toBe(false);
 
-    expect(WalletDTOSchema.safeParse({ currencyId: "currency_gold", balance: 0 }).success).toBe(true);
+    expect(
+      WalletDTOSchema.safeParse({ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 0 }).success
+    ).toBe(true);
     expect(GetWalletResponseSchema.safeParse({ wallets: [] }).success).toBe(true);
-    expect(GetWalletResponseSchema.safeParse({ wallets: [{ currencyId: "currency_gold", balance: 92 }] }).success).toBe(true);
+    expect(GetWalletResponseSchema.safeParse({ wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 92 }] }).success).toBe(true);
     for (const injected of [
       { balance: -1 }, { balance: 1.5 }, { currencyId: "gold" },
       { playerId: "player_11111111-1111-4111-8111-111111111111" },
       { version: 1 }, { updatedAt: "2026-09-27T00:00:00.000Z" }
     ]) {
-      expect(WalletDTOSchema.safeParse({ currencyId: "currency_gold", balance: 1, ...injected }).success, JSON.stringify(injected)).toBe(false);
+      expect(WalletDTOSchema.safeParse({ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 1, ...injected }).success, JSON.stringify(injected)).toBe(false);
     }
+    expect(GetWalletResponseSchema.safeParse({ wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name" }] }).success).toBe(false);
     expect(GetWalletResponseSchema.safeParse({ wallets: [{ balance: 1 }] }).success).toBe(false);
-    expect(GetWalletResponseSchema.safeParse({ wallets: [{ currencyId: "currency_gold", balance: 1 }], items: [] }).success).toBe(false);
+    expect(GetWalletResponseSchema.safeParse({ wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 1 }], items: [] }).success).toBe(false);
   });
 
   it("validates the crop catalogue and rejects any field the server does not own", () => {
     const definition = {
       cropDefinitionId: "crop_wheat",
+      displayNameKey: "crop.wheat.name",
       growthDurationSeconds: 900,
+      seedItemDefinitionId: "item_wheat_seed",
+      seedItemDisplayNameKey: "item.wheat_seed.name",
       harvestItemDefinitionId: "item_wheat",
       baseQuantity: 3,
       harvestXp: 12,
@@ -123,7 +185,9 @@ describe("Phase 1 runtime validation", () => {
       { baseQuantity: 0 },
       { harvestXp: 0 },
       { harvestItemDefinitionId: "wheat" },
-      { displayNameKey: "crop.wheat.name" },
+      { displayNameKey: "" },
+      { seedItemDefinitionId: "wheat_seed" },
+      { seedItemDisplayNameKey: "" },
       { growthStages: 5 },
       { harvest: { baseQuantity: 3 } },
       { playerId: "player_11111111-1111-4111-8111-111111111111" },

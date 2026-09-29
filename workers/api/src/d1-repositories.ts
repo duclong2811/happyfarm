@@ -13,6 +13,7 @@ import type {
   InventoryAddition,
   InventoryItem,
   InventoryMutation,
+  InventoryRemoval,
   ItemDefinitionId,
   Player,
   PlayerId,
@@ -50,6 +51,8 @@ import type {
   EconomyMutationRepository,
   EconomySettlementRepository,
   ProgressionRepository,
+  StarterSeedGrant,
+  StarterSeedGrantRepository,
   WalletRepository
 } from "@happy-farm/application";
 import { ApplicationError } from "@happy-farm/application";
@@ -366,9 +369,32 @@ export class D1CropRepository implements CropInstanceRepository, IdempotencyRepo
   async plantAtomically(
     crop: CropInstance,
     expectedTileVersion: number,
+    seedRemoval: InventoryRemoval,
+    expectedInventory: InventoryItem,
     idempotency: IdempotencyRecord
   ): Promise<void> {
+    if (seedRemoval.playerId !== expectedInventory.playerId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Seed removal ownership does not match");
+    }
+    const seedAfterQuantity = expectedInventory.quantity - seedRemoval.quantity;
+    const seedAfterVersion = expectedInventory.version + 1;
     const results = await this.db.batch([
+      // Spends the seed first, guarded on the exact quantity and version the caller read. SQLite
+      // cannot fail an UPDATE that matches no rows, so a lost race shows up in the final idempotency
+      // statement below, which is what actually aborts the batch.
+      this.db
+        .prepare(
+          "UPDATE inventory_items SET quantity = quantity - ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity >= ?"
+        )
+        .bind(
+          seedRemoval.quantity,
+          seedRemoval.timestamp,
+          seedRemoval.playerId,
+          seedRemoval.itemDefinitionId,
+          expectedInventory.quantity,
+          expectedInventory.version,
+          seedRemoval.quantity
+        ),
       this.db
         .prepare(
           "INSERT INTO crop_instances (id, farm_id, tile_x, tile_y, crop_definition_id, planted_by_player_id, planted_at, version, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM farm_tiles WHERE farm_id = ? AND x = ? AND y = ? AND version = ? AND terrain_type = 'SOIL' AND tile_state = 'IDLE'"
@@ -389,11 +415,44 @@ export class D1CropRepository implements CropInstanceRepository, IdempotencyRepo
           crop.tileY,
           expectedTileVersion
         ),
+      // The receipt commits only when the crop row exists *and* the seed row is exactly where this
+      // settlement left it. Either half missing aborts the whole batch, so a failure after the crop
+      // insert cannot leave a planted crop that was never paid for.
       this.db
         .prepare(
-          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM crop_instances WHERE id = ? AND farm_id = ? AND version = ?) AND EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(
+          crop.id, crop.farmId, crop.version,
+          seedRemoval.playerId, seedRemoval.itemDefinitionId, seedAfterQuantity, seedAfterVersion,
+          idempotency.actorPlayerId, idempotency.operation, idempotency.requestId,
+          idempotency.payloadFingerprint, idempotency.status, idempotency.resourceId,
+          idempotency.responseJson, idempotency.createdAt
+        )
+    ]);
+    if (results.length !== 3 || results.some((result) => !result.success)) {
+      throw new Error("Atomic crop planting failed");
+    }
+  }
+
+  async removeAtomically(
+    crop: CropInstance,
+    expectedCropVersion: number,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    const results = await this.db.batch([
+      // Claim the exact crop revision before deleting it. Checking only that the crop is absent
+      // after DELETE would let a second request whose DELETE matched zero rows also commit a
+      // successful receipt. Since a D1 batch is one transaction, a later DELETE failure rolls this
+      // receipt back with the batch.
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM crop_instances WHERE id = ? AND farm_id = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          crop.id,
+          crop.farmId,
+          expectedCropVersion,
           idempotency.actorPlayerId,
           idempotency.operation,
           idempotency.requestId,
@@ -402,11 +461,41 @@ export class D1CropRepository implements CropInstanceRepository, IdempotencyRepo
           idempotency.resourceId,
           idempotency.responseJson,
           idempotency.createdAt
-        )
+        ),
+      this.db
+        .prepare("DELETE FROM crop_instances WHERE id = ? AND farm_id = ? AND version = ?")
+        .bind(crop.id, crop.farmId, expectedCropVersion)
     ]);
     if (results.length !== 2 || results.some((result) => !result.success)) {
-      throw new Error("Atomic crop planting failed");
+      throw new Error("Atomic crop removal failed");
     }
+  }
+}
+
+/**
+ * The one-time starter seed receipt.
+ *
+ * The insert is the whole command: `starter_seed_grant_apply` credits the inventory in the same
+ * statement, and the receipt's primary key on the player is what makes the grant happen once. A
+ * second call -- a repeated bootstrap, a second farm, a replayed sign-in -- matches the existing row
+ * and reports `changes = 0`, so nothing is credited and no error is raised.
+ */
+export class D1StarterSeedGrantRepository implements StarterSeedGrantRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async grantStarterSeedAtomically(grant: StarterSeedGrant): Promise<boolean> {
+    const results = await this.db.batch([
+      this.db
+        .prepare(
+          "INSERT INTO starter_seed_grants (player_id, item_definition_id, quantity, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING"
+        )
+        .bind(grant.playerId, grant.itemDefinitionId, grant.quantity, grant.timestamp)
+    ]);
+    const result = results[0];
+    if (result === undefined || !result.success) {
+      throw new Error("Atomic starter seed grant failed");
+    }
+    return (result.meta.changes ?? 0) === 1;
   }
 }
 

@@ -29,10 +29,15 @@ describe("InventoryService", () => {
         }
       ])
     };
-    const query = new GetInventory(repository);
+    const query = new GetInventory(repository, new GameDataItemDefinitions());
     await expect(query.execute(null)).rejects.toMatchObject({ code: "NOT_AUTHENTICATED" });
     await expect(query.execute({ playerId: PLAYER_ONE_ID })).resolves.toEqual([
-      { itemDefinitionId: "item_carrot", quantity: 2 }
+      {
+        itemDefinitionId: "item_carrot",
+        displayNameKey: "item.carrot.name",
+        category: "CROP",
+        quantity: 2
+      }
     ]);
   });
 });

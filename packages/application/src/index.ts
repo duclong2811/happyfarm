@@ -10,4 +10,5 @@ export * from "./plot";
 export * from "./ports";
 export * from "./progression";
 export * from "./shop";
+export * from "./starter";
 export * from "./tile-service";

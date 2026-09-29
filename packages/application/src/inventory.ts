@@ -4,8 +4,8 @@ import {
   DomainError,
   parseItemDefinitionId,
   type InventoryAddition,
-  type InventoryItem,
   type InventoryRemoval,
+  type ItemCategory,
   type PlayerId
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
@@ -13,6 +13,9 @@ import type { ActorContext, Clock, InventoryRepository, ItemDefinitionRepository
 
 export interface InventoryEntry {
   readonly itemDefinitionId: string;
+  /** The game-data key the client translates, so a new item needs no client release. */
+  readonly displayNameKey: string;
+  readonly category: ItemCategory;
   readonly quantity: number;
 }
 
@@ -61,14 +64,28 @@ export class InventoryService {
 }
 
 export class GetInventory {
-  constructor(private readonly inventory: InventoryRepository) {}
+  constructor(
+    private readonly inventory: InventoryRepository,
+    private readonly definitions: ItemDefinitionRepository
+  ) {}
 
   async execute(actor: ActorContext | null): Promise<readonly InventoryEntry[]> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    return (await this.inventory.listByPlayer(actor.playerId)).map(toEntry);
+    const rows = await this.inventory.listByPlayer(actor.playerId);
+    return rows.map((item) => {
+      // Every stored item got there through `InventoryService` or a settlement trigger fed by game
+      // data, so a miss means the deployment's item catalogue shrank under stored state. Refusing the
+      // read is the honest answer; a silent skip would hide a player's item.
+      const definition = this.definitions.findById(item.itemDefinitionId);
+      if (definition === null) {
+        throw new ApplicationError("ITEM_DEFINITION_NOT_FOUND", "Item definition was not found");
+      }
+      return {
+        itemDefinitionId: item.itemDefinitionId,
+        displayNameKey: definition.displayNameKey,
+        category: definition.category,
+        quantity: item.quantity
+      };
+    });
   }
-}
-
-function toEntry(item: InventoryItem): InventoryEntry {
-  return { itemDefinitionId: item.itemDefinitionId, quantity: item.quantity };
 }

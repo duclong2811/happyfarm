@@ -16,6 +16,14 @@ export interface CropDefinition {
    * of its own, and progression is the single source of one.
    */
   readonly requiredLevel?: number;
+  /**
+   * The seed item planting this crop consumes, exactly one per planting.
+   *
+   * It is authoritative game data travelling with the crop definition, so the planting settlement
+   * resolves the cost from the crop it is planting rather than from anything a client sends. The
+   * catalogue refuses a crop whose seed is missing or is not a `SEED`.
+   */
+  readonly seedItemDefinitionId: ItemDefinitionId;
   readonly harvest: {
     readonly itemDefinitionId: ItemDefinitionId;
     readonly baseQuantity: number;

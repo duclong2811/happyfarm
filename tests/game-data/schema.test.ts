@@ -28,9 +28,15 @@ describe("game-data validation", () => {
       displayNameKey: "crop.radish.name",
       growthDurationSeconds: 120,
       growthStages: 3,
+      seedItemDefinitionId: "item_radish_seed",
       harvest: { itemDefinitionId: "item_radish", baseQuantity: 2, xp: 3 }
     };
     expect(createCropRegistry([valid]).size).toBe(1);
+    // A crop names the seed it consumes, and the reference is part of the definition, not a guess.
+    expect(createCropRegistry([valid]).get("crop_radish")?.seedItemDefinitionId).toBe(
+      "item_radish_seed"
+    );
+    expect(() => createCropRegistry([{ ...valid, seedItemDefinitionId: "radish_seed" }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, growthDurationSeconds: 0 }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, growthStages: 1 }])).toThrow();
     expect(() => createCropRegistry([{ ...valid, id: "Radish" }])).toThrow();
@@ -53,23 +59,55 @@ describe("game-data validation", () => {
 
   it("validates item definitions and crop harvest references", () => {
     const items = createItemRegistry([
-      { id: "item_radish", displayNameKey: "item.radish.name", category: "CROP", stackable: true, maxStack: 100 }
+      { id: "item_radish", displayNameKey: "item.radish.name", category: "CROP", stackable: true, maxStack: 100 },
+      { id: "item_radish_seed", displayNameKey: "item.radish_seed.name", category: "SEED", stackable: true, maxStack: 100 }
     ]);
-    const crops = createCropRegistry([
+    const cropValid = {
+      id: "crop_radish",
+      displayNameKey: "crop.radish.name",
+      growthDurationSeconds: 60,
+      growthStages: 2,
+      seedItemDefinitionId: "item_radish_seed",
+      harvest: { itemDefinitionId: "item_radish", baseQuantity: 1, xp: 1 }
+    };
+    const crops = createCropRegistry([cropValid]);
+    expect(() => {
+      validateCropItemReferences(crops, items);
+    }).not.toThrow();
+    // The harvest reference and the seed reference are both checked, and the seed has to be a seed.
+    const missingHarvest = createCropRegistry([
       {
-        id: "crop_radish",
-        displayNameKey: "crop.radish.name",
-        growthDurationSeconds: 60,
-        growthStages: 2,
+        ...cropValid,
         harvest: { itemDefinitionId: "item_missing", baseQuantity: 1, xp: 1 }
       }
     ]);
     expect(() => {
-      validateCropItemReferences(crops, items);
+      validateCropItemReferences(missingHarvest, items);
     }).toThrow("Unknown harvest item definition");
+    const seedIsProduce = createCropRegistry([{ ...cropValid, seedItemDefinitionId: "item_radish" }]);
+    expect(() => {
+      validateCropItemReferences(seedIsProduce, items);
+    }).toThrow("Unknown seed item definition");
+    const unknownSeed = createCropRegistry([{ ...cropValid, seedItemDefinitionId: "item_absent_seed" }]);
+    expect(() => {
+      validateCropItemReferences(unknownSeed, items);
+    }).toThrow("Unknown seed item definition");
+    // Two crops cannot share one seed: a planting would then have an ambiguous cost.
+    const sharedSeed = createCropRegistry([
+      cropValid,
+      { ...cropValid, id: "crop_turnip", displayNameKey: "crop.turnip.name", harvest: { itemDefinitionId: "item_radish", baseQuantity: 1, xp: 1 } }
+    ]);
+    expect(() => {
+      validateCropItemReferences(sharedSeed, items);
+    }).toThrow("Duplicate seed item reference");
     expect(() =>
       createItemRegistry([
         { id: "item_bad", displayNameKey: "bad", category: "CROP", stackable: true, maxStack: 0 }
+      ])
+    ).toThrow();
+    expect(() =>
+      createItemRegistry([
+        { id: "item_bad", displayNameKey: "item.bad.name", category: "TOOL", stackable: true, maxStack: 1 }
       ])
     ).toThrow();
   });
@@ -87,17 +125,17 @@ describe("game-data validation", () => {
     ).toThrow();
     expect(() =>
       createShopRegistry([
-        { id: "shop_bad", itemDefinitionId: "item_missing", currencyDefinitionId: "currency_gold", buyPrice: 4, sellPrice: 2, maxQuantityPerRequest: 10 }
+        { id: "shop_bad", itemDefinitionId: "item_missing", currencyDefinitionId: "currency_gold", buyPrice: 4, maxQuantityPerRequest: 10 }
       ])
     ).toThrow("Unknown shop item definition");
     expect(() =>
       createShopRegistry([
-        { id: "shop_bad", itemDefinitionId: "item_carrot", currencyDefinitionId: "currency_gold", buyPrice: 2, sellPrice: 4, maxQuantityPerRequest: 10 }
+        { id: "shop_bad", itemDefinitionId: "item_carrot_seed", currencyDefinitionId: "currency_gold", buyPrice: 2, sellPrice: 4, maxQuantityPerRequest: 10 }
       ])
     ).toThrow("Sell price cannot exceed buy price");
     expect(() =>
       createShopRegistry([
-        { id: "shop_bad", itemDefinitionId: "item_carrot", currencyDefinitionId: "currency_gold", buyPrice: Number.MAX_SAFE_INTEGER, sellPrice: 1, maxQuantityPerRequest: 2 }
+        { id: "shop_bad", itemDefinitionId: "item_carrot_seed", currencyDefinitionId: "currency_gold", buyPrice: Number.MAX_SAFE_INTEGER, maxQuantityPerRequest: 2 }
       ])
     ).toThrow("Maximum shop total must be a safe integer");
   });
@@ -117,46 +155,54 @@ describe("game-data validation", () => {
 
   it("accepts a valid development shop entry and rejects unknown cross-references", () => {
     const valid = {
-      id: "shop_dev_carrot",
-      itemDefinitionId: "item_carrot",
+      id: "shop_dev_carrot_seed",
+      itemDefinitionId: "item_carrot_seed",
       currencyDefinitionId: "currency_gold",
-      buyPrice: 4,
-      sellPrice: 2,
+      buyPrice: 2,
       maxQuantityPerRequest: 100
     };
-    expect(createShopRegistry([valid]).get("shop_dev_carrot")?.buyPrice).toBe(4);
+    expect(createShopRegistry([valid]).get("shop_dev_carrot_seed")?.buyPrice).toBe(2);
     expect(() => createShopRegistry([{ ...valid, itemDefinitionId: "item_missing" }])).toThrow(
       "Unknown shop item definition"
     );
     expect(() => createShopRegistry([{ ...valid, currencyDefinitionId: "currency_missing" }])).toThrow(
       "Unknown shop currency definition"
     );
+    // Gold buys seeds and only seeds; harvested produce can only be sold.
+    expect(() =>
+      createShopRegistry([{ ...valid, itemDefinitionId: "item_carrot" }])
+    ).toThrow("Only seeds can be bought");
+    expect(() =>
+      createShopRegistry([
+        { ...valid, buyPrice: undefined, sellPrice: 2 }
+      ])
+    ).toThrow("Only harvested produce can be sold");
   });
 
   it("rejects negative, zero, and fractional shop prices", () => {
     const base = {
-      id: "shop_dev_carrot",
-      itemDefinitionId: "item_carrot",
+      id: "shop_dev_carrot_seed",
+      itemDefinitionId: "item_carrot_seed",
       currencyDefinitionId: "currency_gold",
-      buyPrice: 4,
-      sellPrice: 2,
+      buyPrice: 2,
       maxQuantityPerRequest: 100
     };
     expect(() => createShopRegistry([{ ...base, buyPrice: -1 }])).toThrow();
     expect(() => createShopRegistry([{ ...base, buyPrice: 0 }])).toThrow();
-    expect(() => createShopRegistry([{ ...base, sellPrice: 0 }])).toThrow();
-    expect(() => createShopRegistry([{ ...base, sellPrice: 2.5 }])).toThrow();
+    expect(() => createShopRegistry([{ ...base, buyPrice: undefined, sellPrice: 0 }])).toThrow();
+    expect(() => createShopRegistry([{ ...base, buyPrice: undefined, sellPrice: 2.5 }])).toThrow();
+    // An entry that trades neither way is not a market row at all.
+    expect(() => createShopRegistry([{ ...base, buyPrice: undefined }])).toThrow();
   });
 
   it("rejects duplicate currency and shop entry IDs", () => {
     const currency = { id: "currency_gold", displayNameKey: "currency.gold.name", maxBalance: Number.MAX_SAFE_INTEGER };
     expect(() => createCurrencyRegistry([currency, currency])).toThrow("Duplicate currency definition");
     const shop = {
-      id: "shop_dev_carrot",
-      itemDefinitionId: "item_carrot",
+      id: "shop_dev_carrot_seed",
+      itemDefinitionId: "item_carrot_seed",
       currencyDefinitionId: "currency_gold",
-      buyPrice: 4,
-      sellPrice: 2,
+      buyPrice: 2,
       maxQuantityPerRequest: 100
     };
     expect(() => createShopRegistry([shop, shop])).toThrow("Duplicate shop entry");
@@ -165,11 +211,38 @@ describe("game-data validation", () => {
   it("ships a small, internally consistent development fixture set", () => {
     expect(currencies.map((currency) => currency.id)).toContain("currency_gold");
     expect(shops.length).toBeGreaterThanOrEqual(2);
-    expect(shops.length).toBeLessThanOrEqual(4);
+    expect(shops.length).toBeLessThanOrEqual(8);
     for (const entry of shops) {
       expect(itemRegistry.has(entry.itemDefinitionId)).toBe(true);
       expect(currencyRegistry.has(entry.currencyDefinitionId)).toBe(true);
-      expect(entry.sellPrice).toBeLessThanOrEqual(entry.buyPrice);
+      if (entry.buyPrice !== undefined && entry.sellPrice !== undefined) {
+        expect(entry.sellPrice).toBeLessThanOrEqual(entry.buyPrice);
+      }
+    }
+  });
+
+  it("ships a seed that can pay for itself without ever creating free gold", () => {
+    // The loop has to close: selling one full harvest has to buy at least one more seed, and no item
+    // may be bought and sold in one step for a profit. Both prices come from game data, so this test
+    // is what stops a future price edit from breaking the economy silently.
+    for (const crop of crops) {
+      const seed = itemRegistry.get(crop.seedItemDefinitionId);
+      const produce = itemRegistry.get(crop.harvest.itemDefinitionId);
+      expect(seed?.category, crop.id).toBe("SEED");
+      expect(produce?.category, crop.id).toBe("CROP");
+      const seedEntry = shops.find((entry) => entry.itemDefinitionId === crop.seedItemDefinitionId);
+      const produceEntry = shops.find((entry) => entry.itemDefinitionId === crop.harvest.itemDefinitionId);
+      expect(seedEntry?.buyPrice, crop.id).toBeDefined();
+      expect(seedEntry?.sellPrice, crop.id).toBeUndefined();
+      expect(produceEntry?.sellPrice, crop.id).toBeDefined();
+      expect(produceEntry?.buyPrice, crop.id).toBeUndefined();
+      const seedPrice = seedEntry?.buyPrice ?? 0;
+      const harvestRevenue = (produceEntry?.sellPrice ?? 0) * crop.harvest.baseQuantity;
+      expect(harvestRevenue, crop.id).toBeGreaterThan(seedPrice);
+    }
+    // No item is both bought and sold, so there is no buy-then-sell-again arbitrage anywhere.
+    for (const entry of shops) {
+      expect(entry.buyPrice !== undefined && entry.sellPrice !== undefined, entry.id).toBe(false);
     }
   });
 

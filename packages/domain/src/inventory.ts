@@ -3,10 +3,19 @@ import type { ItemDefinitionId, PlayerId } from "./ids";
 
 export const MAX_INVENTORY_QUANTITY = 2_147_483_647;
 
+/**
+ * The two item kinds the game stores.
+ *
+ * `SEED` is what planting consumes and what the shop sells; `CROP` is what harvesting yields and
+ * what the shop buys back. Keeping both in one inventory is deliberate: a player's holdings are one
+ * list, and the category only decides what may be done with a stack.
+ */
+export type ItemCategory = "CROP" | "SEED";
+
 export interface ItemDefinition {
   readonly id: ItemDefinitionId;
   readonly displayNameKey: string;
-  readonly category: "CROP";
+  readonly category: ItemCategory;
   readonly stackable: true;
   readonly maxStack: number;
 }

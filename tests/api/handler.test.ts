@@ -11,7 +11,7 @@ import {
   GetWalletResponseSchema
 } from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE, parseCropInstanceId, parseEconomyTransactionId, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
-import { shops } from "@happy-farm/game-data";
+import { itemRegistry, shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
 import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
@@ -89,6 +89,15 @@ describe("Worker API foundation", () => {
   afterEach(() => {
     db.close();
   });
+
+  /** Stock one item for a player so a planting or a sale has something to spend. */
+  function giveItem(itemDefinitionId: string, quantity: number, player = PLAYER_ONE_ID): void {
+    db.sqlite
+      .prepare(
+        "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1)"
+      )
+      .run(player, itemDefinitionId, quantity, NOW);
+  }
 
   it("serves health without authentication", async () => {
     auth.setActor(null);
@@ -180,6 +189,7 @@ describe("Worker API foundation", () => {
       })
     );
     expect(created.status).toBe(201);
+    giveItem("item_carrot_seed", 3);
 
     const response = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/tiles`));
     expect(response.status).toBe(200);
@@ -222,6 +232,7 @@ describe("Worker API foundation", () => {
         headers: { "content-type": "application/json" }
       })
     );
+    giveItem("item_carrot_seed", 2);
 
     const rejectedTime = await handle(
       new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
@@ -271,6 +282,12 @@ describe("Worker API foundation", () => {
     const crops = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`));
     expect(crops.status).toBe(200);
     expect(await crops.json()).toMatchObject({ ok: true, data: { crops: [{ definitionId: "crop_carrot" }] } });
+    // The seed was spent by the server, once, in the same transaction as the crop.
+    expect(
+      db.sqlite
+        .prepare("SELECT quantity, version FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'")
+        .get(PLAYER_ONE_ID)
+    ).toEqual({ quantity: 1, version: 2 });
 
     auth.setActor({ playerId: PLAYER_TWO_ID });
     const unauthorized = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`));
@@ -285,6 +302,7 @@ describe("Worker API foundation", () => {
         headers: { "content-type": "application/json" }
       })
     );
+    giveItem("item_carrot_seed", 2);
 
     const post = (cropDefinitionId: string) =>
       handle(
@@ -328,6 +346,7 @@ describe("Worker API foundation", () => {
         headers: { "content-type": "application/json" }
       })
     );
+    giveItem("item_wheat_seed", 1);
     const plant = (cropDefinitionId: string, x: number, requestId: string) =>
       handle(
         new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
@@ -345,17 +364,26 @@ describe("Worker API foundation", () => {
       ["crop_wheat", 2],
       ["crop_corn", 3]
     ]);
-    // Only the planting decision travels: no display keys, no registry, no player state.
+    // The catalogue carries the seed each planting spends and the display keys the client
+    // translates, and nothing that belongs to the player: no count, no level, no inventory.
     for (const entry of body.data.definitions) {
       expect(Object.keys(entry).sort()).toEqual([
         "baseQuantity",
         "cropDefinitionId",
+        "displayNameKey",
         "growthDurationSeconds",
         "harvestItemDefinitionId",
         "harvestXp",
-        "requiredLevel"
+        "requiredLevel",
+        "seedItemDefinitionId",
+        "seedItemDisplayNameKey"
       ]);
     }
+    expect(body.data.definitions[0]).toMatchObject({
+      cropDefinitionId: "crop_carrot",
+      seedItemDefinitionId: "item_carrot_seed",
+      seedItemDisplayNameKey: "item.carrot_seed.name"
+    });
 
     auth.setActor(null);
     expect((await handle(new Request("https://api.test/crop-definitions"))).status).toBe(401);
@@ -379,6 +407,100 @@ describe("Worker API foundation", () => {
     const stillLocked = await plant("crop_corn", 1, "request_api_locked_corn");
     expect(stillLocked.status).toBe(403);
     expect(await stillLocked.json()).toMatchObject({ ok: false, error: { code: "CROP_LEVEL_REQUIRED" } });
+    expect(
+      db.sqlite
+        .prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_wheat_seed'")
+        .get(PLAYER_ONE_ID)
+    ).toEqual({ quantity: 0 });
+  });
+
+  it("refuses to plant without a seed and leaves the tile free", async () => {
+    await handle(
+      new Request("https://api.test/farms", {
+        method: "POST",
+        body: JSON.stringify({ name: "Starter Farm" }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    const planted = await handle(
+      new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "no_seed_plant_001", cropDefinitionId: "crop_carrot", x: 0, y: 0, expectedTileVersion: 1 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(planted.status).toBe(409);
+    expect(await planted.json()).toMatchObject({ ok: false, error: { code: "INSUFFICIENT_ITEMS" } });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances").get()).toEqual({ count: 0 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_keys").get()).toEqual({ count: 0 });
+  });
+
+  it("uproots a growing crop through an explicit owner command and replays safely", async () => {
+    await handle(
+      new Request("https://api.test/farms", {
+        method: "POST",
+        body: JSON.stringify({ name: "Starter Farm" }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    giveItem("item_carrot_seed", 1);
+    const plantUrl = `https://api.test/farms/${FARM_ONE_ID}/crops`;
+    const planted = await handle(
+      new Request(plantUrl, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "uproot_setup_001", cropDefinitionId: "crop_carrot", x: 0, y: 0, expectedTileVersion: 1 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    const cropId = "cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    expect(await planted.json()).toMatchObject({ ok: true, data: { crop: { cropInstanceId: cropId, mature: false } } });
+
+    const uprootUrl = `https://api.test/farms/${FARM_ONE_ID}/crops/${cropId}/uproot`;
+    const rejected = await handle(
+      new Request(uprootUrl, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "uproot_api_001", expectedCropVersion: 1, refund: 1 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(rejected.status).toBe(400);
+
+    const removed = await handle(
+      new Request(uprootUrl, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "uproot_api_001", expectedCropVersion: 1 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ ok: true, data: { removed: { cropInstanceId: cropId } } });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances").get()).toEqual({ count: 0 });
+    // The seed is not refunded: uprooting deletes the crop and nothing else.
+    expect(
+      db.sqlite
+        .prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'")
+        .get(PLAYER_ONE_ID)
+    ).toEqual({ quantity: 0 });
+
+    const replay = await handle(
+      new Request(uprootUrl, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "uproot_api_001", expectedCropVersion: 1 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ ok: true, data: { removed: { cropInstanceId: cropId } } });
+
+    auth.setActor({ playerId: PLAYER_TWO_ID });
+    const forbidden = await handle(
+      new Request(uprootUrl, {
+        method: "POST",
+        body: JSON.stringify({ requestId: "uproot_api_002", expectedCropVersion: 1 }),
+        headers: { "content-type": "application/json" }
+      })
+    );
+    expect(forbidden.status).toBe(403);
   });
 
   it("harvests through an explicit command and exposes only the actor inventory", async () => {
@@ -408,7 +530,9 @@ describe("Worker API foundation", () => {
     db.sqlite.prepare("INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, 'item_wheat', 9, ?, 1)").run(PLAYER_TWO_ID, NOW);
     const response = await handle(new Request("https://api.test/inventory"));
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, data: { items: [{ itemDefinitionId: "item_carrot", quantity: 2 }] } });
+    expect(await response.json()).toEqual({ ok: true, data: { items: [
+      { itemDefinitionId: "item_carrot", displayNameKey: "item.carrot.name", category: "CROP", quantity: 2 }
+    ] } });
     auth.setActor(null);
     expect((await handle(new Request("https://api.test/inventory"))).status).toBe(401);
   });
@@ -475,7 +599,7 @@ describe("Worker API foundation", () => {
     const post = (path: string, body: unknown) => handle(new Request(`https://api.test${path}`, {
       method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" }
     }));
-    const valid = { requestId: "shop_api_001", shopEntryId: "shop_carrot", quantity: 2 };
+    const valid = { requestId: "shop_api_001", shopEntryId: "shop_carrot_seed", quantity: 2 };
     for (const injected of [
       { price: 1 }, { unitPrice: 1 }, { total: 1 }, { currencyId: "currency_fake" },
       { currencyDelta: 999 }, { reward: 999 }, { balance: 999 }, { playerId: PLAYER_TWO_ID }
@@ -487,11 +611,20 @@ describe("Worker API foundation", () => {
     const bought = await post("/shop/buy", valid);
     expect(bought.status).toBe(200);
     expect(await bought.json()).toEqual({ ok: true, data: { settlement: {
-      itemDefinitionId: "item_carrot", quantity: 2, currencyId: "currency_gold", amountSpent: 8, newBalance: 92
+      itemDefinitionId: "item_carrot_seed", quantity: 2, currencyId: "currency_gold", amountSpent: 4, newBalance: 96
     } } });
+    giveItem("item_carrot", 3);
     const sold = await post("/shop/sell", { requestId: "shop_api_002", shopEntryId: "shop_carrot", quantity: 1 });
     expect(sold.status).toBe(200);
-    expect(await sold.json()).toMatchObject({ ok: true, data: { settlement: { amountReceived: 2, newBalance: 94 } } });
+    expect(await sold.json()).toMatchObject({ ok: true, data: { settlement: { amountReceived: 2, newBalance: 98 } } });
+    // The loop is closed in both directions: gold buys seeds, produce is sold, and neither entry
+    // trades the other way.
+    const produceNotForSale = await post("/shop/buy", { requestId: "shop_api_004", shopEntryId: "shop_carrot", quantity: 1 });
+    expect(produceNotForSale.status).toBe(400);
+    expect(await produceNotForSale.json()).toMatchObject({ ok: false, error: { code: "SHOP_ENTRY_NOT_ALLOWED" } });
+    const seedsNotBought = await post("/shop/sell", { requestId: "shop_api_005", shopEntryId: "shop_carrot_seed", quantity: 1 });
+    expect(seedsNotBought.status).toBe(400);
+    expect(await seedsNotBought.json()).toMatchObject({ ok: false, error: { code: "SHOP_ENTRY_NOT_ALLOWED" } });
     auth.setActor(null);
     expect((await post("/shop/buy", { ...valid, requestId: "shop_api_003" })).status).toBe(401);
   });
@@ -500,7 +633,7 @@ describe("Worker API foundation", () => {
     db.sqlite.prepare("INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', 100, 1, ?, ?)").run(PLAYER_ONE_ID, NOW, NOW);
     const response = await handle(new Request("https://api.test/shop/buy", {
       method: "POST",
-      body: JSON.stringify({ requestId: "shop_bound_001", shopEntryId: "shop_carrot", quantity: 1_001 }),
+      body: JSON.stringify({ requestId: "shop_bound_001", shopEntryId: "shop_carrot_seed", quantity: 1_001 }),
       headers: { "content-type": "application/json" }
     }));
     expect(response.status).toBe(400);
@@ -518,24 +651,24 @@ describe("Worker API foundation", () => {
       method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" }
     }));
 
-    const sharedRequest = { requestId: "shared_economy_request", shopEntryId: "shop_carrot", quantity: 2 };
+    const sharedRequest = { requestId: "shared_economy_request", shopEntryId: "shop_carrot_seed", quantity: 2 };
     const authored = await post("/shop/buy", sharedRequest);
     expect(authored.status).toBe(200);
-    expect(await authored.json()).toMatchObject({ ok: true, data: { settlement: { newBalance: 92 } } });
+    expect(await authored.json()).toMatchObject({ ok: true, data: { settlement: { newBalance: 96 } } });
 
     auth.setActor({ playerId: PLAYER_TWO_ID });
     const replayed = await post("/shop/buy", { ...sharedRequest, quantity: 1 });
-    expect(await replayed.json()).toMatchObject({ ok: true, data: { settlement: { newBalance: 3 } } });
+    expect(await replayed.json()).toMatchObject({ ok: true, data: { settlement: { newBalance: 5 } } });
 
     auth.setActor({ playerId: PLAYER_ONE_ID });
     const crossPlayerSale = await post("/shop/sell", { requestId: "cross_player_sell_001", shopEntryId: "shop_carrot", quantity: 5 });
     expect(crossPlayerSale.status).toBe(409);
     expect(await crossPlayerSale.json()).toMatchObject({ ok: false, error: { code: "INSUFFICIENT_ITEMS" } });
 
-    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 92 });
-    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_TWO_ID)).toEqual({ balance: 3 });
-    expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID)).toEqual({ quantity: 2 });
-    expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_TWO_ID)).toEqual({ quantity: 6 });
+    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 96 });
+    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_TWO_ID)).toEqual({ balance: 5 });
+    expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'").get(PLAYER_ONE_ID)).toEqual({ quantity: 2 });
+    expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'").get(PLAYER_TWO_ID)).toEqual({ quantity: 1 });
     expect(db.sqlite.prepare("SELECT player_id, COUNT(*) AS count FROM economy_ledger GROUP BY player_id ORDER BY player_id").all()).toEqual([
       { player_id: PLAYER_ONE_ID, count: 1 },
       { player_id: PLAYER_TWO_ID, count: 1 }
@@ -547,6 +680,7 @@ describe("Worker API foundation", () => {
       method: "POST", body: JSON.stringify({ name: "Starter Farm" }), headers: { "content-type": "application/json" }
     }));
     db.sqlite.prepare("INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', 100, 1, ?, ?)").run(PLAYER_ONE_ID, NOW, NOW);
+    giveItem("item_carrot_seed", 1);
     const sharedRequestId = "shared_operation_request";
     const planted = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`, {
       method: "POST",
@@ -557,11 +691,11 @@ describe("Worker API foundation", () => {
 
     const bought = await handle(new Request("https://api.test/shop/buy", {
       method: "POST",
-      body: JSON.stringify({ requestId: sharedRequestId, shopEntryId: "shop_carrot", quantity: 1 }),
+      body: JSON.stringify({ requestId: sharedRequestId, shopEntryId: "shop_carrot_seed", quantity: 1 }),
       headers: { "content-type": "application/json" }
     }));
     expect(bought.status).toBe(200);
-    expect(await bought.json()).toMatchObject({ ok: true, data: { settlement: { amountSpent: 4, newBalance: 96 } } });
+    expect(await bought.json()).toMatchObject({ ok: true, data: { settlement: { amountSpent: 2, newBalance: 98 } } });
     expect(db.sqlite.prepare("SELECT operation FROM idempotency_keys ORDER BY operation").all()).toEqual([
       { operation: "BUY_ITEM" },
       { operation: "PLANT_CROP" }
@@ -602,25 +736,44 @@ describe("Worker API foundation", () => {
         entries: shops.map((entry) => ({
           shopEntryId: entry.id,
           itemDefinitionId: entry.itemDefinitionId,
+          itemDisplayNameKey: itemRegistry.get(entry.itemDefinitionId)?.displayNameKey,
+          category: itemRegistry.get(entry.itemDefinitionId)?.category,
           currencyId: entry.currencyDefinitionId,
-          buyPrice: entry.buyPrice,
-          sellPrice: entry.sellPrice,
+          currencyDisplayNameKey: "currency.gold.name",
+          // Game data leaves the closed direction absent; the contract makes that an explicit null.
+          buyPrice: entry.buyPrice ?? null,
+          sellPrice: entry.sellPrice ?? null,
           maxQuantityPerRequest: entry.maxQuantityPerRequest
         }))
       }
     });
     expect(body.data.entries).toHaveLength(shops.length);
     expect(body.data.entries).toContainEqual({
+      shopEntryId: "shop_carrot_seed",
+      itemDefinitionId: "item_carrot_seed",
+      itemDisplayNameKey: "item.carrot_seed.name",
+      category: "SEED",
+      currencyId: "currency_gold",
+      currencyDisplayNameKey: "currency.gold.name",
+      buyPrice: 2,
+      sellPrice: null,
+      maxQuantityPerRequest: 1_000
+    });
+    expect(body.data.entries).toContainEqual({
       shopEntryId: "shop_carrot",
       itemDefinitionId: "item_carrot",
+      itemDisplayNameKey: "item.carrot.name",
+      category: "CROP",
       currencyId: "currency_gold",
-      buyPrice: 4,
+      currencyDisplayNameKey: "currency.gold.name",
+      buyPrice: null,
       sellPrice: 2,
       maxQuantityPerRequest: 1_000
     });
     for (const entry of body.data.entries) {
       expect(Object.keys(entry).sort()).toEqual([
-        "buyPrice", "currencyId", "itemDefinitionId", "maxQuantityPerRequest", "sellPrice", "shopEntryId"
+        "buyPrice", "category", "currencyDisplayNameKey", "currencyId", "itemDefinitionId",
+        "itemDisplayNameKey", "maxQuantityPerRequest", "sellPrice", "shopEntryId"
       ]);
     }
     expect(counts()).toEqual(before);
@@ -634,7 +787,8 @@ describe("Worker API foundation", () => {
     const mine = await handle(new Request("https://api.test/wallet"));
     expect(mine.status).toBe(200);
     const body = WalletEnvelopeSchema.parse(await mine.json());
-    expect(body).toEqual({ ok: true, data: { wallets: [{ currencyId: "currency_gold", balance: 100 }] } });
+    const goldWallet = { currencyId: "currency_gold", displayNameKey: "currency.gold.name" };
+    expect(body).toEqual({ ok: true, data: { wallets: [{ ...goldWallet, balance: 100 }] } });
 
     for (const injected of [
       `https://api.test/wallet?playerId=${PLAYER_TWO_ID}`,
@@ -644,14 +798,14 @@ describe("Worker API foundation", () => {
       const response = await handle(new Request(injected, { headers: { "x-player-id": PLAYER_TWO_ID } }));
       expect(await response.json(), injected).toEqual({
         ok: true,
-        data: { wallets: [{ currencyId: "currency_gold", balance: 100 }] }
+        data: { wallets: [{ ...goldWallet, balance: 100 }] }
       });
     }
 
     auth.setActor({ playerId: PLAYER_TWO_ID });
     expect(await (await handle(new Request("https://api.test/wallet"))).json()).toEqual({
       ok: true,
-      data: { wallets: [{ currencyId: "currency_gold", balance: 7 }] }
+      data: { wallets: [{ ...goldWallet, balance: 7 }] }
     });
 
     auth.setActor(null);
@@ -680,21 +834,22 @@ describe("Worker API foundation", () => {
 
     // Browsing the shop does not grant pricing authority to the client.
     const catalog = ShopEnvelopeSchema.parse(await (await handle(new Request("https://api.test/shop"))).json());
-    expect(catalog.data.entries).toContainEqual(expect.objectContaining({ shopEntryId: "shop_carrot", buyPrice: 4 }));
-    expect((await post("/shop/buy", { requestId: "wallet_read_buy_injected", shopEntryId: "shop_carrot", quantity: 2, buyPrice: 1 })).status).toBe(400);
+    expect(catalog.data.entries).toContainEqual(expect.objectContaining({ shopEntryId: "shop_carrot_seed", buyPrice: 2 }));
+    expect((await post("/shop/buy", { requestId: "wallet_read_buy_injected", shopEntryId: "shop_carrot_seed", quantity: 2, buyPrice: 1 })).status).toBe(400);
 
-    expect(await (await post("/shop/buy", { requestId: "wallet_read_buy_001", shopEntryId: "shop_carrot", quantity: 2 })).json())
-      .toMatchObject({ data: { settlement: { amountSpent: 8, newBalance: 92 } } });
+    expect(await (await post("/shop/buy", { requestId: "wallet_read_buy_001", shopEntryId: "shop_carrot_seed", quantity: 2 })).json())
+      .toMatchObject({ data: { settlement: { amountSpent: 4, newBalance: 96 } } });
     expect(await (await handle(new Request("https://api.test/wallet"))).json()).toEqual({
       ok: true,
-      data: { wallets: [{ currencyId: "currency_gold", balance: 92 }] }
+      data: { wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 96 }] }
     });
 
+    giveItem("item_carrot", 2);
     expect(await (await post("/shop/sell", { requestId: "wallet_read_sell_001", shopEntryId: "shop_carrot", quantity: 1 })).json())
-      .toMatchObject({ data: { settlement: { amountReceived: 2, newBalance: 94 } } });
+      .toMatchObject({ data: { settlement: { amountReceived: 2, newBalance: 98 } } });
     expect(await (await handle(new Request("https://api.test/wallet"))).json()).toEqual({
       ok: true,
-      data: { wallets: [{ currencyId: "currency_gold", balance: 94 }] }
+      data: { wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 98 }] }
     });
   });
 

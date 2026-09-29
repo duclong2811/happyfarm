@@ -1,4 +1,5 @@
 import type { ApiFailure, ApiSuccess, ErrorCode } from "@happy-farm/contracts";
+import { GrantStarterSeed, InventoryService } from "@happy-farm/application";
 import { createHandler } from "./handler";
 import {
   DEV_AUTH_BOOTSTRAP_PATH,
@@ -17,8 +18,10 @@ import {
   GameDataShopEntries,
   Sha256Fingerprint,
   SystemClock,
-  gameDataProgressionDefinition
+  gameDataProgressionDefinition,
+  gameDataStarterSeedGrant
 } from "./runtime";
+import { D1StarterSeedGrantRepository } from "./d1-repositories";
 import type { D1DatabaseLike } from "./d1-types";
 
 /**
@@ -84,6 +87,13 @@ export function createDevWorker(env: DevEnv) {
     clock
   });
   const bootstrap = new DevPlayerBootstrap(env.DB);
+  // The starter grant runs through the shared application use case, not through dev-only code, so a
+  // production onboarding step can call the very same service when it replaces this bootstrap.
+  const grantStarterSeed = new GrantStarterSeed(
+    new D1StarterSeedGrantRepository(env.DB),
+    new InventoryService(new GameDataItemDefinitions(), clock),
+    gameDataStarterSeedGrant
+  );
 
   async function handleBootstrap(request: Request): Promise<Response> {
     const requestId = crypto.randomUUID();
@@ -104,6 +114,12 @@ export function createDevWorker(env: DevEnv) {
     let result: DevBootstrapResult | null;
     try {
       result = await bootstrap.ensure(identity, clock.now());
+      if (result !== null) {
+        // Onboarding, not a command: a player who signed in before the seed economy existed still
+        // receives the one-time grant here, and every later bootstrap finds the receipt and does
+        // nothing.
+        await grantStarterSeed.execute(actor);
+      }
     } catch {
       // Unexpected persistence failures must not leak SQL/D1 detail to the client.
       return failure("INTERNAL_ERROR", requestId);

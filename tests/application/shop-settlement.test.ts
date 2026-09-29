@@ -49,45 +49,66 @@ describe("authoritative shop settlement", () => {
   beforeEach(() => { db = new NodeD1Database(migration); seedPlayers(db); });
   afterEach(() => { db.close(); });
 
-  it("buys and sells at server prices, versions both resources, and reconciles the ledger", async () => {
+  it("buys seeds and sells produce at server prices, versions both resources, and reconciles the ledger", async () => {
     wallet(db, 100);
+    item(db, "item_carrot", 10);
     const { buy, sell } = services(db);
-    await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "buy_loop_001", shopEntryId: "shop_carrot", quantity: 10 })).resolves.toMatchObject({ amountSpent: 40, newBalance: 60 });
-    await expect(sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "sell_loop_001", shopEntryId: "shop_carrot", quantity: 4 })).resolves.toMatchObject({ amountReceived: 8, newBalance: 68 });
-    expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 68, version: 3 });
+    await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "buy_loop_001", shopEntryId: "shop_carrot_seed", quantity: 10 })).resolves.toMatchObject({ amountSpent: 20, newBalance: 80 });
+    await expect(sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "sell_loop_001", shopEntryId: "shop_carrot", quantity: 4 })).resolves.toMatchObject({ amountReceived: 8, newBalance: 88 });
+    expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 88, version: 3 });
+    expect(db.sqlite.prepare("SELECT quantity, version FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'").get(PLAYER_ONE_ID)).toEqual({ quantity: 10, version: 1 });
     expect(db.sqlite.prepare("SELECT quantity, version FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID)).toEqual({ quantity: 6, version: 2 });
-    const ledger = db.sqlite.prepare("SELECT delta, balance_before, balance_after FROM economy_ledger ORDER BY rowid").all() as Array<{ delta: number; balance_before: number; balance_after: number }>;
-    expect(ledger).toEqual([{ delta: -40, balance_before: 100, balance_after: 60 }, { delta: 8, balance_before: 60, balance_after: 68 }]);
-    expect(100 + ledger.reduce((sum, row) => sum + row.delta, 0)).toBe(68);
+    const ledger = db.sqlite.prepare("SELECT delta, balance_before, balance_after, reason FROM economy_ledger ORDER BY rowid").all() as Array<{ delta: number; balance_before: number; balance_after: number; reason: string }>;
+    expect(ledger).toEqual([
+      { delta: -20, balance_before: 100, balance_after: 80, reason: "SHOP_BUY" },
+      { delta: 8, balance_before: 80, balance_after: 88, reason: "SHOP_SELL" }
+    ]);
+    expect(100 + ledger.reduce((sum, row) => sum + row.delta, 0)).toBe(88);
+  });
+
+  it("refuses to buy produce or sell seeds, which is what closes the gold loop", async () => {
+    wallet(db, 100);
+    item(db, "item_carrot_seed", 5);
+    const { buy, sell } = services(db);
+    await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "buy_produce_001", shopEntryId: "shop_carrot", quantity: 1 })).rejects.toMatchObject({ code: "SHOP_ENTRY_NOT_ALLOWED" });
+    await expect(sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "sell_seed_001", shopEntryId: "shop_carrot_seed", quantity: 5 })).rejects.toMatchObject({ code: "SHOP_ENTRY_NOT_ALLOWED" });
+    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 100 });
+    expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'").get(PLAYER_ONE_ID)).toEqual({ quantity: 5 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger").get()).toEqual({ count: 0 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_keys").get()).toEqual({ count: 0 });
   });
 
   it("replays successful requests exactly once, rejects payload mismatch, and isolates operations", async () => {
-    wallet(db, 100); item(db, "item_carrot", 10);
+    wallet(db, 100); item(db, "item_carrot", 2);
     const { buy, sell } = services(db);
-    const buyCommand = { requestId: "shared_request_001", shopEntryId: "shop_carrot", quantity: 1 };
+    const buyCommand = { requestId: "shared_request_001", shopEntryId: "shop_carrot_seed", quantity: 1 };
     const first = await buy.execute({ playerId: PLAYER_ONE_ID }, buyCommand);
     expect(await buy.execute({ playerId: PLAYER_ONE_ID }, buyCommand)).toEqual(first);
     await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { ...buyCommand, quantity: 2 })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
-    await sell.execute({ playerId: PLAYER_ONE_ID }, buyCommand);
-    expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 98, version: 3 });
+    // The same request id is a *different* key for a different operation, so selling is not a replay
+    // of the purchase even though the client reused the id.
+    await sell.execute({ playerId: PLAYER_ONE_ID }, { ...buyCommand, shopEntryId: "shop_carrot", quantity: 2 });
+    // 100 - 2 for the seed + 4 for two carrots = 102, with one ledger row per operation.
+    expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 102, version: 3 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger").get()).toEqual({ count: 2 });
   });
 
   it("scopes identical request IDs to the authenticated actor", async () => {
     wallet(db, 20); wallet(db, 20, PLAYER_TWO_ID);
     const { buy } = services(db);
-    const command = { requestId: "same_actor_request", shopEntryId: "shop_carrot", quantity: 1 };
+    const command = { requestId: "same_actor_request", shopEntryId: "shop_carrot_seed", quantity: 1 };
     await buy.execute({ playerId: PLAYER_ONE_ID }, command);
     await buy.execute({ playerId: PLAYER_TWO_ID }, command);
-    expect(db.sqlite.prepare("SELECT player_id, balance FROM wallets ORDER BY player_id").all()).toEqual([{ player_id: PLAYER_ONE_ID, balance: 16 }, { player_id: PLAYER_TWO_ID, balance: 16 }]);
+    expect(db.sqlite.prepare("SELECT player_id, balance FROM wallets ORDER BY player_id").all()).toEqual([{ player_id: PLAYER_ONE_ID, balance: 18 }, { player_id: PLAYER_TWO_ID, balance: 18 }]);
   });
 
   it("prevents concurrent overspend and double sale", async () => {
     wallet(db, 100); item(db, "item_carrot", 10);
     const { buy, sell } = services(db);
+    // Two 51-gold purchases cannot both fit in 100 gold, and only one may land.
     const buys = await Promise.allSettled([
-      buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "overspend_buy_a", shopEntryId: "shop_wheat", quantity: 14 }),
-      buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "overspend_buy_b", shopEntryId: "shop_wheat", quantity: 14 })
+      buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "overspend_buy_a", shopEntryId: "shop_wheat_seed", quantity: 17 }),
+      buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "overspend_buy_b", shopEntryId: "shop_wheat_seed", quantity: 17 })
     ]);
     expect(buys.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const sells = await Promise.allSettled([
@@ -95,7 +116,7 @@ describe("authoritative shop settlement", () => {
       sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "double_sell_b", shopEntryId: "shop_carrot", quantity: 10 })
     ]);
     expect(sells.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 36 });
+    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 69 });
     expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID)).toEqual({ quantity: 0 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger").get()).toEqual({ count: 2 });
   });
@@ -113,36 +134,36 @@ describe("authoritative shop settlement", () => {
   it("replays the original result without overwriting a newer balance", async () => {
     wallet(db, 100);
     const { buy } = services(db);
-    const command = { requestId: "replay_race_001", shopEntryId: "shop_carrot", quantity: 1 };
+    const command = { requestId: "replay_race_001", shopEntryId: "shop_carrot_seed", quantity: 1 };
     const original = await buy.execute({ playerId: PLAYER_ONE_ID }, command);
-    expect(original).toMatchObject({ amountSpent: 4, newBalance: 96 });
+    expect(original).toMatchObject({ amountSpent: 2, newBalance: 98 });
     const [replay, concurrent] = await Promise.all([
       buy.execute({ playerId: PLAYER_ONE_ID }, command),
-      buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "replay_race_002", shopEntryId: "shop_carrot", quantity: 1 })
+      buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "replay_race_002", shopEntryId: "shop_carrot_seed", quantity: 1 })
     ]);
     expect(replay).toEqual(original);
-    expect(concurrent.newBalance).toBe(92);
-    expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 92, version: 3 });
+    expect(concurrent.newBalance).toBe(96);
+    expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 96, version: 3 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger").get()).toEqual({ count: 2 });
   });
 
   it("keeps actor wallets, inventory, and replayed results isolated", async () => {
-    wallet(db, 50, PLAYER_TWO_ID); item(db, "item_carrot", 3, PLAYER_TWO_ID);
+    wallet(db, 50, PLAYER_TWO_ID);
     const { buy, sell } = services(db);
-    const command = { requestId: "actor_isolation_001", shopEntryId: "shop_carrot", quantity: 1 };
+    const command = { requestId: "actor_isolation_001", shopEntryId: "shop_carrot_seed", quantity: 1 };
     await expect(buy.execute({ playerId: PLAYER_ONE_ID }, command)).rejects.toMatchObject({ code: "INSUFFICIENT_FUNDS" });
     await expect(sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "actor_isolation_002", shopEntryId: "shop_carrot", quantity: 1 })).rejects.toMatchObject({ code: "INSUFFICIENT_ITEMS" });
-    await expect(buy.execute({ playerId: PLAYER_TWO_ID }, command)).resolves.toMatchObject({ newBalance: 46 });
-    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_TWO_ID)).toEqual({ balance: 46 });
-    expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_TWO_ID)).toEqual({ quantity: 4 });
+    await expect(buy.execute({ playerId: PLAYER_TWO_ID }, command)).resolves.toMatchObject({ newBalance: 48 });
+    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_TWO_ID)).toEqual({ balance: 48 });
+    expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'").get(PLAYER_TWO_ID)).toEqual({ quantity: 1 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ count: 0 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ count: 0 });
   });
 
   it("rejects insufficient funds/items and unknown shop entries without side effects", async () => {
-    wallet(db, 3); item(db, "item_carrot", 1);
+    wallet(db, 1); item(db, "item_carrot", 1);
     const { buy, sell } = services(db);
-    await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "insufficient_buy", shopEntryId: "shop_carrot", quantity: 1 })).rejects.toMatchObject({ code: "INSUFFICIENT_FUNDS" });
+    await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "insufficient_buy", shopEntryId: "shop_carrot_seed", quantity: 1 })).rejects.toMatchObject({ code: "INSUFFICIENT_FUNDS" });
     await expect(sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "insufficient_sell", shopEntryId: "shop_carrot", quantity: 2 })).rejects.toMatchObject({ code: "INSUFFICIENT_ITEMS" });
     await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "unknown_shop", shopEntryId: "shop_missing", quantity: 1 })).rejects.toMatchObject({ code: "SHOP_ENTRY_NOT_FOUND" });
     await expect(sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "unknown_sale", shopEntryId: "shop_missing", quantity: 1 })).rejects.toMatchObject({ code: "SHOP_ENTRY_NOT_FOUND" });
@@ -150,12 +171,14 @@ describe("authoritative shop settlement", () => {
   });
 
   it("rolls back wallet overflow on sell and inventory overflow on buy", async () => {
-    wallet(db, MAX_WALLET_BALANCE - 1); item(db, "item_carrot", MAX_INVENTORY_QUANTITY);
+    wallet(db, MAX_WALLET_BALANCE - 1);
+    item(db, "item_carrot", 1);
+    item(db, "item_carrot_seed", MAX_INVENTORY_QUANTITY);
     const { buy, sell } = services(db);
     await expect(sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: "overflow_sell", shopEntryId: "shop_carrot", quantity: 1 })).rejects.toMatchObject({ code: "WALLET_LIMIT_EXCEEDED" });
-    await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "overflow_buy", shopEntryId: "shop_carrot", quantity: 1 })).rejects.toMatchObject({ code: "INVENTORY_LIMIT_EXCEEDED" });
+    await expect(buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: "overflow_buy", shopEntryId: "shop_carrot_seed", quantity: 1 })).rejects.toMatchObject({ code: "INVENTORY_LIMIT_EXCEEDED" });
     expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: MAX_WALLET_BALANCE - 1, version: 1 });
-    expect(db.sqlite.prepare("SELECT quantity, version FROM inventory_items WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ quantity: MAX_INVENTORY_QUANTITY, version: 1 });
+    expect(db.sqlite.prepare("SELECT quantity, version FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'").get(PLAYER_ONE_ID)).toEqual({ quantity: MAX_INVENTORY_QUANTITY, version: 1 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger").get()).toEqual({ count: 0 });
   });
 });
@@ -171,12 +194,15 @@ describe.each(["BUY", "SELL"] as const)("%s rollback injection", (operation) => 
     const beforeWallet = db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID);
     const beforeInventory = db.sqlite.prepare("SELECT quantity, version FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID);
     const shop = services(db);
+    // Buying spends gold on a seed, selling turns produce back into gold: together they cover both
+    // halves of the settlement with the entry that actually trades that way.
     const action = operation === "BUY"
-      ? shop.buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: `rollback_buy_${_stage}`, shopEntryId: "shop_carrot", quantity: 1 })
+      ? shop.buy.execute({ playerId: PLAYER_ONE_ID }, { requestId: `rollback_buy_${_stage}`, shopEntryId: "shop_carrot_seed", quantity: 1 })
       : shop.sell.execute({ playerId: PLAYER_ONE_ID }, { requestId: `rollback_sell_${_stage}`, shopEntryId: "shop_carrot", quantity: 1 });
     await expect(action).rejects.toThrow("injected");
     expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual(beforeWallet);
     expect(db.sqlite.prepare("SELECT quantity, version FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID)).toEqual(beforeInventory);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot_seed'").get(PLAYER_ONE_ID)).toEqual({ count: 0 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger").get()).toEqual({ count: 0 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM idempotency_keys").get()).toEqual({ count: 0 });
     db.close();

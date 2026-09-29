@@ -15,6 +15,7 @@ import type {
   InventoryAddition,
   InventoryItem,
   InventoryMutation,
+  InventoryRemoval,
   ItemDefinition,
   ItemDefinitionId,
   Player,
@@ -156,11 +157,50 @@ export interface CropInstanceRepository {
   findById(id: CropInstanceId): Promise<CropInstance | null>;
   findAtTile(farmId: FarmId, x: number, y: number): Promise<CropInstance | null>;
   listByFarm(farmId: FarmId): Promise<readonly CropInstance[]>;
+  /**
+   * Plants one crop, spends exactly one seed, and finalizes idempotency in a single transaction.
+   *
+   * The removal is prepared by `InventoryService` and the expected inventory row is the state the
+   * caller read, so a concurrent consumption either applies against that state or rolls the whole
+   * planting back. There is no separate "consume a seed" write path.
+   */
   plantAtomically(
     crop: CropInstance,
     expectedTileVersion: number,
+    seedRemoval: InventoryRemoval,
+    expectedInventory: InventoryItem,
     idempotency: IdempotencyRecord
   ): Promise<void>;
+  /**
+   * Deletes one crop and finalizes idempotency in a single transaction.
+   *
+   * Uprooting is a pure removal: no inventory, currency, or experience is written, so the only two
+   * states that have to agree are the crop row and the receipt that says it is gone.
+   */
+  removeAtomically(
+    crop: CropInstance,
+    expectedCropVersion: number,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+}
+
+/** A starter seed grant: the player it belongs to, the item, the quantity, and server time. */
+export interface StarterSeedGrant {
+  readonly playerId: PlayerId;
+  readonly itemDefinitionId: ItemDefinitionId;
+  readonly quantity: number;
+  readonly timestamp: string;
+}
+
+/**
+ * The one-time starter seed receipt.
+ *
+ * The receipt and the inventory credit are written together, and the player ID is the key, so a
+ * repeated call -- a second farm, a replayed bootstrap, a repeated sign-in -- finds the receipt and
+ * credits nothing. Returns whether this call is the one that created the receipt.
+ */
+export interface StarterSeedGrantRepository {
+  grantStarterSeedAtomically(grant: StarterSeedGrant): Promise<boolean>;
 }
 
 export interface HarvestSettlementRepository {

@@ -80,6 +80,17 @@ abstract class SettleShopItem<T extends ShopResult> {
     const entry = this.dependencies.shops.findById(shopEntryId);
     if (entry === null) throw new ApplicationError("SHOP_ENTRY_NOT_FOUND", "Shop entry was not found");
 
+    // The direction a market row trades in is server data, not a client choice. Gold buys seeds and
+    // the shop buys produce; asking for the other direction is refused before any price is read, so
+    // a null price can never turn into a free purchase or a zero-value sale.
+    const priceForDirection = this.operation === "BUY" ? entry.buyPrice : entry.sellPrice;
+    if (priceForDirection === null) {
+      throw new ApplicationError(
+        "SHOP_ENTRY_NOT_ALLOWED",
+        "This shop entry does not trade in that direction"
+      );
+    }
+
     let total: number;
     try {
       total = calculateShopTotal(entry, command.quantity, this.operation);

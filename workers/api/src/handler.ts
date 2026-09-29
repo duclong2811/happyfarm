@@ -11,6 +11,7 @@ import {
   ListCropDefinitions,
   ListFarmTiles,
   PlantCrop,
+  UprootCrop,
   ApplicationError,
   BuyItem,
   EconomyService,
@@ -39,6 +40,7 @@ import {
   ExpandFarmRequestSchema,
   SellItemRequestSchema,
   PlantCropRequestSchema,
+  UprootCropRequestSchema,
   type ApiFailure,
   type ApiSuccess,
   type ErrorCode,
@@ -48,6 +50,7 @@ import {
   type CropStateDTO,
   type CropDefinitionDTO,
   type HarvestResultDTO,
+  type UprootCropResponse,
   type InventoryEntryDTO,
   type PlayerProgressionDTO,
   type XpAwardDTO,
@@ -120,19 +123,49 @@ function toMemberDTO(member: {
   return { ...member };
 }
 
-function toShopEntryDTO(entry: ShopEntry): ShopEntryDTO {
+/**
+ * One market row, in the shape the client renders.
+ *
+ * The item's display key and category travel with the price so the page can name and group what it
+ * is selling without keeping a list of items of its own. A null price means the direction is closed
+ * and the client draws no button for it.
+ */
+function toShopEntryDTO(
+  entry: ShopEntry,
+  itemDefinitions: ItemDefinitionRepository,
+  currencyDefinitions: CurrencyDefinitionRepository
+): ShopEntryDTO {
+  const item = itemDefinitions.findById(entry.itemDefinitionId);
+  const currency = currencyDefinitions.findById(entry.currencyDefinitionId);
+  if (item === null) {
+    throw new ApplicationError("ITEM_DEFINITION_NOT_FOUND", "Item definition was not found");
+  }
+  if (currency === null) {
+    throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
+  }
   return {
     shopEntryId: entry.id,
     itemDefinitionId: entry.itemDefinitionId,
+    itemDisplayNameKey: item.displayNameKey,
+    category: item.category,
     currencyId: entry.currencyDefinitionId,
+    currencyDisplayNameKey: currency.displayNameKey,
     buyPrice: entry.buyPrice,
     sellPrice: entry.sellPrice,
     maxQuantityPerRequest: entry.maxQuantityPerRequest
   };
 }
 
-function toWalletDTO(wallet: Wallet): WalletDTO {
-  return { currencyId: wallet.currencyDefinitionId, balance: wallet.balance };
+function toWalletDTO(wallet: Wallet, currencyDefinitions: CurrencyDefinitionRepository): WalletDTO {
+  const currency = currencyDefinitions.findById(wallet.currencyDefinitionId);
+  if (currency === null) {
+    throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
+  }
+  return {
+    currencyId: wallet.currencyDefinitionId,
+    displayNameKey: currency.displayNameKey,
+    balance: wallet.balance
+  };
 }
 
 /** Names the currency a plot is priced in, so the client can phrase the price without a label table. */
@@ -186,6 +219,7 @@ function errorStatus(code: ErrorCode): number {
     case "INVALID_INPUT":
     case "TILE_INVALID":
     case "INVALID_QUANTITY":
+    case "SHOP_ENTRY_NOT_ALLOWED":
       return 400;
     case "NOT_AUTHENTICATED":
       return 401;
@@ -248,24 +282,37 @@ export function createHandler(dependencies: HandlerDependencies) {
   const createFarm = new CreateFarm(players, farms, dependencies.ids, dependencies.clock);
   const getFarm = new GetFarm(farms, members);
   const projector = new CropStateProjector(dependencies.cropDefinitions, dependencies.clock);
-  const plantCrop = new PlantCrop(
+  const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
+  const plantCrop = new PlantCrop({
     farms,
     members,
     tiles,
     crops,
-    crops,
-    dependencies.cropDefinitions,
-    progressions,
-    dependencies.progressionDefinition,
+    inventory,
+    idempotency: crops,
+    definitions: dependencies.cropDefinitions,
+    progression: progressions,
+    progressionDefinition: dependencies.progressionDefinition,
     unlockedLand,
-    dependencies.ids,
+    inventoryService,
+    ids: dependencies.ids,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
+  const uprootCrop = new UprootCrop(
+    farms,
+    members,
+    crops,
+    crops,
     dependencies.fingerprints,
     dependencies.clock
   );
   const getFarmCrops = new GetFarmCrops(farms, members, crops, projector);
-  const listCropDefinitions = new ListCropDefinitions(dependencies.cropDefinitions);
+  const listCropDefinitions = new ListCropDefinitions(
+    dependencies.cropDefinitions,
+    dependencies.itemDefinitions
+  );
   const listFarmTiles = new ListFarmTiles(farms, members, tiles);
-  const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
   const harvestCrop = new HarvestCrop(
     farms,
     members,
@@ -285,7 +332,7 @@ export function createHandler(dependencies: HandlerDependencies) {
     progressions,
     dependencies.clock
   );
-  const getInventory = new GetInventory(inventory);
+  const getInventory = new GetInventory(inventory, dependencies.itemDefinitions);
   const shopDependencies = {
     shops: dependencies.shopEntries,
     currencies: dependencies.currencyDefinitions,
@@ -349,14 +396,20 @@ export function createHandler(dependencies: HandlerDependencies) {
 
       if (request.method === "GET" && url.pathname === "/shop") {
         if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
-        const entries: ShopEntryDTO[] = dependencies.shopEntries.list().map(toShopEntryDTO);
+        const entries: ShopEntryDTO[] = dependencies.shopEntries
+          .list()
+          .map((entry) =>
+            toShopEntryDTO(entry, dependencies.itemDefinitions, dependencies.currencyDefinitions)
+          );
         const body: ApiSuccess<{ entries: ShopEntryDTO[] }> = { ok: true, data: { entries } };
         return jsonResponse(body);
       }
 
       if (request.method === "GET" && url.pathname === "/wallet") {
         if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
-        const balances: WalletDTO[] = (await wallets.listByPlayer(actor.playerId)).map(toWalletDTO);
+        const balances: WalletDTO[] = (await wallets.listByPlayer(actor.playerId)).map((wallet) =>
+          toWalletDTO(wallet, dependencies.currencyDefinitions)
+        );
         const body: ApiSuccess<{ wallets: WalletDTO[] }> = { ok: true, data: { wallets: balances } };
         return jsonResponse(body);
       }
@@ -415,6 +468,28 @@ export function createHandler(dependencies: HandlerDependencies) {
           ok: true,
           data: result
         };
+        return jsonResponse(body);
+      }
+
+      const uprootRoute = /^\/farms\/([^/]+)\/crops\/([^/]+)\/uproot$/.exec(url.pathname);
+      if (request.method === "POST" && uprootRoute?.[1] !== undefined && uprootRoute[2] !== undefined) {
+        const decodedFarmId = decodePathSegment(uprootRoute[1]);
+        const decodedCropId = decodePathSegment(uprootRoute[2]);
+        if (
+          decodedFarmId === null ||
+          decodedCropId === null ||
+          !FarmIdSchema.safeParse(decodedFarmId).success ||
+          !CropInstanceIdSchema.safeParse(decodedCropId).success
+        ) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const parsed = UprootCropRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const removed = await uprootCrop.execute(actor, parseFarmId(decodedFarmId), {
+          ...parsed.data,
+          cropInstanceId: decodedCropId
+        });
+        const body: ApiSuccess<UprootCropResponse> = { ok: true, data: { removed } };
         return jsonResponse(body);
       }
 
