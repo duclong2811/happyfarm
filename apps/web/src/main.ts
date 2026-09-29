@@ -27,6 +27,7 @@ import {
   type Translate
 } from "./i18n";
 import { progressionSummary } from "./progression";
+import { createIcon, renderIcons } from "./icons";
 import {
   closePanel,
   crossesPanelBreakpoint,
@@ -142,6 +143,19 @@ function make<K extends keyof HTMLElementTagNameMap>(
   if (className !== undefined) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+/**
+ * Writes a control's visible label without destroying the icon beside it.
+ *
+ * Icon buttons keep their `<span class="label">`, so a language switch rewrites the word and leaves
+ * the drawn icon in place.
+ */
+function setLabel(id: string, text: string): void {
+  const node = element<HTMLElement>(id);
+  const label = node.querySelector(".label");
+  if (label === null) node.textContent = text;
+  else label.textContent = text;
 }
 
 function setStatus(text: StatusText, isError = false): void {
@@ -681,7 +695,7 @@ function renderGo(): void {
   const selected = state.selected;
   button.hidden = selected === null;
   button.disabled = scene === null || selected === null;
-  button.textContent = `👣 ${t("dock.go")}`;
+  setLabel("go", t("dock.go"));
   button.title = t("dock.goTitle");
   button.setAttribute("aria-label", t("dock.goTitle"));
 }
@@ -828,10 +842,12 @@ function shopRow(entry: ShopEntryDTO, direction: MarketDirection): HTMLDivElemen
   const currency = currencyLabel(entry.currencyId, entry.currencyDisplayNameKey);
   const price = direction === "buy" ? entry.buyPrice : entry.sellPrice;
   const row = make("div", "shop-row");
-  row.appendChild(
-    make("span", "shop-name", itemName(entry.itemDefinitionId, entry.itemDisplayNameKey))
-  );
-  row.appendChild(make("span", "shop-price", `${String(price ?? 0)} ${currency}`));
+  // Product information and controls are separated: the name carries the hierarchy, the price is
+  // metadata under it, and everything the player can press sits to the right on one line.
+  const product = make("div", "shop-product");
+  product.appendChild(make("span", "shop-name", itemName(entry.itemDefinitionId, entry.itemDisplayNameKey)));
+  product.appendChild(make("span", "shop-price", `${String(price ?? 0)} ${currency}`));
+  row.appendChild(product);
 
   const quantity = make("input");
   quantity.type = "number";
@@ -842,15 +858,17 @@ function shopRow(entry: ShopEntryDTO, direction: MarketDirection): HTMLDivElemen
   quantity.setAttribute("aria-label", t("market.quantity"));
 
   const stepper = make("div", "stepper");
-  const decrease = make("button", "stepper-button", "−");
+  const decrease = make("button", "stepper-button");
   decrease.type = "button";
+  decrease.appendChild(createIcon("minus", 14));
   decrease.setAttribute("aria-label", t("market.decrease"));
   decrease.addEventListener("click", () => {
     const next = Math.max(1, (quantity.valueAsNumber || 1) - 1);
     quantity.value = String(next);
   });
-  const increase = make("button", "stepper-button", "+");
+  const increase = make("button", "stepper-button");
   increase.type = "button";
+  increase.appendChild(createIcon("plus", 14));
   increase.setAttribute("aria-label", t("market.increase"));
   increase.addEventListener("click", () => {
     const max = entry.maxQuantityPerRequest;
@@ -881,14 +899,13 @@ function renderChrome(): void {
   element<HTMLElement>("module-rail").setAttribute("aria-label", t("hud.modules"));
   renderMarketTabs();
   element<HTMLElement>("crop-label").textContent = t("dock.crop");
-  element<HTMLButtonElement>("plant").textContent = t("dock.plant");
-  element<HTMLButtonElement>("harvest").textContent = t("dock.harvest");
-  element<HTMLButtonElement>("uproot").textContent = t("dock.uproot");
-  element<HTMLButtonElement>("harvest-tree").textContent = t("dock.harvest");
-  element<HTMLButtonElement>("remove-tree").textContent = t("dock.removeTree");
-  element<HTMLButtonElement>("expand-farm").textContent = t("land.unlock");
+  setLabel("plant", t("dock.plant"));
+  setLabel("harvest", t("dock.harvest"));
+  setLabel("uproot", t("dock.uproot"));
+  setLabel("harvest-tree", t("dock.harvest"));
+  setLabel("remove-tree", t("dock.removeTree"));
+  setLabel("expand-farm", t("land.unlock"));
   const language = element<HTMLButtonElement>("language");
-  language.textContent = t("language.switch");
   language.title = t("language.label");
   language.setAttribute("aria-label", t("language.label"));
   element<HTMLButtonElement>("refresh").title = t("hud.refresh");
@@ -1608,6 +1625,7 @@ function wire(): void {
 
 document.documentElement.lang = languageTag(state.language);
 wire();
+renderIcons();
 render();
 void run(async () => {
   await api().bootstrap();

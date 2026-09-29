@@ -6,31 +6,31 @@
       <canvas id="scene" class="scene" width="1440" height="900"></canvas><div class="world-vignette"></div>
 
       <header id="top-hud" class="top-hud">
-        <div class="brand"><span class="brand-mark" aria-hidden="true">🌱</span><h1>Happy Farm</h1></div>
+        <div class="brand"><span class="brand-mark" data-icon="farm" data-icon-size="24"></span><h1>Happy Farm</h1></div>
         <div class="hud-status">
-          <div class="hud-stat"><span class="hud-stat-icon" aria-hidden="true">🪙</span><strong id="wallet">0 gold</strong><span id="gold-label" class="visually-hidden">Gold</span></div>
-          <div class="hud-stat"><span class="hud-stat-icon" aria-hidden="true">⭐</span><div id="progression"><p class="muted">Level</p></div></div>
-          <button id="language" class="ghost-button" type="button" title="Language">VI</button>
-          <button id="refresh" class="ghost-button" type="button" title="Refresh farm">⟳</button>
+          <div class="hud-stat hud-stat-gold"><span class="hud-stat-icon" data-icon="coin" data-icon-size="18"></span><strong id="wallet">0 gold</strong><span id="gold-label" class="visually-hidden">Gold</span></div>
+          <div class="hud-stat hud-stat-level"><span class="hud-stat-icon" data-icon="star" data-icon-size="18"></span><div id="progression"><strong class="level-value">1</strong></div></div>
+          <button id="language" class="ghost-button" type="button" title="Language"><span data-icon="language" data-icon-size="18"></span></button>
+          <button id="refresh" class="ghost-button" type="button" title="Refresh farm"><span data-icon="refresh" data-icon-size="18"></span></button>
         </div>
       </header>
 
       <nav id="module-rail" class="module-rail" aria-label="Farm modules">
-        <button id="inventory-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="inventory-panel" title="Inventory"><span aria-hidden="true">🎒</span></button>
-        <button id="market-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="market-panel" title="Farm Market"><span aria-hidden="true">🛒</span></button>
+        <button id="inventory-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="inventory-panel" title="Inventory"><span data-icon="inventory" data-icon-size="22"></span></button>
+        <button id="market-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="market-panel" title="Farm Market"><span data-icon="market" data-icon-size="22"></span></button>
       </nav>
 
       <aside id="inventory-panel" class="module-panel" aria-labelledby="inventory-title" hidden>
         <header class="module-header">
           <h2 id="inventory-title">Inventory</h2>
-          <button id="inventory-close" class="panel-close" type="button"><span aria-hidden="true">✕</span></button>
+          <button id="inventory-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
         </header>
         <div id="inventory-body" class="module-body">
           <ul id="inventory" class="inventory-grid"></ul>
           <section class="land-strip">
             <h3 id="land-title">Land</h3>
             <div id="plots"></div>
-            <button id="expand-farm" class="primary compact" type="button">Unlock next plot</button>
+            <button id="expand-farm" class="primary compact" type="button"><span data-icon="land" data-icon-size="18"></span><span class="label">Unlock next plot</span></button>
           </section>
         </div>
       </aside>
@@ -38,7 +38,7 @@
       <aside id="market-panel" class="module-panel module-panel-right" aria-labelledby="market-title" hidden>
         <header class="module-header">
           <h2 id="market-title">Farm Market</h2>
-          <button id="market-close" class="panel-close" type="button"><span aria-hidden="true">✕</span></button>
+          <button id="market-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
         </header>
         <div class="market-tabs" role="tablist" aria-label="Market direction">
           <button id="market-tab-buy" class="market-tab is-active" type="button" role="tab" aria-selected="true">Buy</button>
@@ -50,10 +50,10 @@
       <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>
         <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>
         <div class="action-buttons">
-          <button id="go" class="go" type="button" hidden>👣 Go</button>
-          <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled>Plant crop</button></div>
-          <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button">Harvest</button><button id="uproot" class="uproot" type="button">Uproot</button></div>
-          <div id="tree-controls" class="action-controls" hidden><span id="tree-state" class="muted"></span><button id="harvest-tree" class="primary harvest" type="button">Harvest</button><button id="remove-tree" class="uproot" type="button">Remove tree</button></div>
+          <button id="go" class="go" type="button" hidden><span data-icon="walk" data-icon-size="18"></span><span class="label">Go</span></button>
+          <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled><span data-icon="plant" data-icon-size="18"></span><span class="label">Plant crop</span></button></div>
+          <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button"><span data-icon="harvest" data-icon-size="18"></span><span class="label">Harvest</span></button><button id="uproot" class="uproot" type="button"><span data-icon="remove" data-icon-size="18"></span><span class="label">Uproot</span></button></div>
+          <div id="tree-controls" class="action-controls" hidden><span id="tree-state" class="muted"></span><button id="harvest-tree" class="primary harvest" type="button"><span data-icon="harvest" data-icon-size="18"></span><span class="label">Harvest</span></button><button id="remove-tree" class="uproot" type="button"><span data-icon="remove" data-icon-size="18"></span><span class="label">Remove tree</span></button></div>
         </div>
       </section>
 
