@@ -1,0 +1,4 @@
+/* HUD-only additions that are not about the action dock.
+   The language switch sits with the other resource pills so it is easy to find, and stays compact
+   enough that it never covers the field. */
+.lang-button{align-self:center;padding:.4rem .7rem;border-radius:.8rem;font-size:.72rem;font-weight:800;letter-spacing:.02em;white-space:nowrap}

@@ -1,96 +1,31 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Happy Farm — development</title>
-  </head>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Happy Farm</title></head>
   <body>
-    <header>
-      <h1>Happy Farm <span class="tag">development</span></h1>
-      <p class="hint">
-        Server-authoritative loop: create farm → plant → grow → harvest → inventory → sell → gold.
-        Every reward, price, and timer comes from the API.
-      </p>
-    </header>
-    <main>
-      <section class="panel">
-        <h2>Session</h2>
-        <label for="token">Development token</label>
-        <input id="token" type="password" autocomplete="off" placeholder="DEV_AUTH_TOKEN" />
-        <div class="row">
-          <button id="save-token" type="button">Save token</button>
-          <button id="bootstrap" type="button">Bootstrap dev player</button>
+    <main class="game-shell"><section class="world" aria-label="Farm world">
+      <canvas id="scene" class="scene" width="1440" height="900"></canvas><div class="world-vignette"></div>
+      <header class="top-hud">
+        <div class="brand"><span class="brand-mark">🌱</span><div><h1>Happy Farm</h1><p id="farm-info">Preparing your farm…</p></div></div>
+        <div class="hud-resources">
+          <div class="resource-pill"><span>🪙</span><div><small id="gold-label">Gold</small><strong id="wallet">0 gold</strong></div></div>
+          <div class="level-pill"><span>⭐</span><div id="progression"><p class="muted">Loading level…</p></div></div>
+          <button id="language" class="lang-button" type="button" title="Language">Tiếng Việt</button>
+          <button id="refresh" class="icon-button" type="button" title="Refresh farm">↻</button>
         </div>
-        <p class="muted">The token stays in this browser and is sent as a bearer header. Identity is server-side.</p>
+      </header>
+      <aside class="game-panel left-panel">
+        <section><div class="panel-title"><span>🎒</span><h2 id="inventory-title">Inventory</h2></div><ul id="inventory" class="inventory-list"></ul></section>
+        <section><div class="panel-title"><span>🗺️</span><h2 id="land-title">Land</h2></div><div id="plots"></div><button id="expand-farm" class="primary compact" type="button">Unlock next plot</button></section>
+      </aside>
+      <aside class="game-panel right-panel"><div class="panel-title"><span>🛒</span><h2 id="market-title">Farm Market</h2></div><div id="shop" class="shop-list"></div></aside>
+      <section class="action-dock" aria-label="Farm actions">
+        <div class="selection-orb">🌾</div><div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>
+        <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled>Plant crop</button></div>
+        <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button">Harvest</button><button id="uproot" class="uproot" type="button">Uproot</button></div>
       </section>
-
-      <section class="panel">
-        <h2>Farm</h2>
-        <div class="row">
-          <input id="farm-name" type="text" value="Starter Farm" maxlength="80" />
-          <button id="create-farm" type="button">Create farm</button>
-        </div>
-        <div class="row">
-          <input id="load-farm-id" type="text" placeholder="farm_..." />
-          <button id="load-farm" type="button">Load farm</button>
-          <button id="refresh" type="button">Refresh</button>
-        </div>
-        <p id="farm-info" class="muted">No farm loaded.</p>
-      </section>
-
-      <section class="panel">
-        <h2>Wallet</h2>
-        <p id="wallet" class="big">0 gold</p>
-      </section>
-
-      <section class="panel">
-        <h2>Progression</h2>
-        <div id="progression"></div>
-        <p class="muted">Level and experience are server-derived from the settlement that awarded them.</p>
-      </section>
-
-      <section class="panel">
-        <h2>Inventory</h2>
-        <ul id="inventory"></ul>
-      </section>
-
-      <section class="panel wide">
-        <h2>Field</h2>
-        <div class="row">
-          <label for="crop-select">Crop</label>
-          <select id="crop-select"></select>
-          <button id="plant" type="button">Plant on selected tile</button>
-          <span id="selection" class="muted">No tile selected.</span>
-        </div>
-        <p class="muted">
-          Crops and the level each one needs come from the server. A crop this player has not
-          unlocked yet is listed with the level it needs instead of being hidden.
-        </p>
-        <div id="field"></div>
-      </section>
-
-      <section class="panel wide">
-        <h2>Field: 3D prototype</h2>
-        <div class="row">
-          <button id="render-3d" type="button">Enable 3D view</button>
-          <span id="render-3d-state" class="muted">Renderer idle.</span>
-        </div>
-        <canvas id="scene" class="scene" width="960" height="540"></canvas>
-        <p class="muted">
-          Drawn from the farm's authoritative unlocked tiles and crops, so planting and growth show
-          up here without a reload. Click a tile to select it. Each crop draws the glTF model this
-          build ships for it, and placeholder geometry when it has none.
-        </p>
-      </section>
-
-      <section class="panel wide">
-        <h2>Shop</h2>
-        <div id="shop"></div>
-      </section>
-
-      <p id="status" class="status">Ready.</p>
-    </main>
-    <script type="module" src="/src/main.ts"></script>
+      <div class="status-wrap"><p id="status" class="status">Loading your farm…</p></div>
+      <div class="renderer-state" id="render-3d-state">Preparing 3D world…</div>
+      <button id="render-3d" type="button" hidden>Enable 3D</button><div id="field" class="debug-field" hidden></div>
+    </section></main><script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -7,11 +7,14 @@ import {
   GetFarmTilesResponseSchema,
   GetInventoryResponseSchema,
   GetProgressionResponseSchema,
+  GetPlotsResponseSchema,
   GetShopResponseSchema,
   GetWalletResponseSchema,
   HarvestCropResponseSchema,
   PlantCropResponseSchema,
+  UprootCropResponseSchema,
   SellItemResultDTOSchema
+  ,ExpandFarmResponseSchema
 } from "@happy-farm/contracts";
 import type {
   BuyItemResultDTO,
@@ -23,8 +26,11 @@ import type {
   HarvestResultDTO,
   InventoryEntryDTO,
   PlayerProgressionDTO,
+  PlotDTO,
+  ExpandFarmResultDTO,
   SellItemResultDTO,
   ShopEntryDTO,
+  UprootCropResponse,
   XpAwardDTO,
   WalletDTO
 } from "@happy-farm/contracts";
@@ -102,6 +108,9 @@ export interface HarvestBody {
   readonly requestId: string;
   readonly expectedCropVersion: number;
 }
+
+/** Uprooting carries the same two fields as harvesting and nothing that could name a reward. */
+export type UprootBody = HarvestBody;
 export interface ShopCommandBody {
   readonly requestId: string;
   readonly shopEntryId: string;
@@ -122,14 +131,12 @@ export interface HarvestOutcome {
  * version so optimistic concurrency stays authoritative.
  */
 export class ApiClient {
-  constructor(private readonly token: string) {}
-
   private authHeaders(): Record<string, string> {
-    return { authorization: `Bearer ${this.token}` };
+    return {};
   }
 
-  private static jsonHeaders(token: string): Record<string, string> {
-    return { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  private static jsonHeaders(): Record<string, string> {
+    return { "content-type": "application/json" };
   }
 
   private async request<T>(path: string, init: RequestInit, validate: Validator<T>): Promise<T> {
@@ -154,19 +161,13 @@ export class ApiClient {
   private post<T>(path: string, body: unknown, validate: Validator<T>): Promise<T> {
     return this.request(
       path,
-      { method: "POST", headers: ApiClient.jsonHeaders(this.token), body: JSON.stringify(body) },
+      { method: "POST", headers: ApiClient.jsonHeaders(), body: JSON.stringify(body) },
       validate
     );
   }
 
   bootstrap(): Promise<DevBootstrapStatus> {
-    return this.post("/__dev/bootstrap", undefined, bootstrapValidator).catch((error: unknown) => {
-      // A body-less POST is required, so retry without a JSON content-type when that is the cause.
-      if (error instanceof ApiError && error.code === "INVALID_INPUT") {
-        return this.request("/__dev/bootstrap", { method: "POST", headers: this.authHeaders() }, bootstrapValidator);
-      }
-      throw error;
-    });
+    return this.request("/__dev/bootstrap", { method: "POST", headers: this.authHeaders() }, bootstrapValidator);
   }
 
   createFarm(name: string): Promise<CreateFarmResult> {
@@ -210,6 +211,22 @@ export class ApiClient {
     return this.get("/inventory", GetInventoryResponseSchema);
   }
 
+  /**
+   * Removes a crop the player planted by mistake. The server decides whether the crop is there, at
+   * the expected version, and on a farm this actor owns; the response only confirms what it removed.
+   */
+  uprootCrop(
+    farmId: string,
+    cropInstanceId: string,
+    body: UprootBody
+  ): Promise<UprootCropResponse> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/crops/${encodeURIComponent(cropInstanceId)}/uproot`,
+      body,
+      UprootCropResponseSchema
+    );
+  }
+
   getProgression(): Promise<{ readonly progression: PlayerProgressionDTO }> {
     return this.get("/progression", GetProgressionResponseSchema);
   }
@@ -220,6 +237,14 @@ export class ApiClient {
 
   getWallet(): Promise<{ readonly wallets: WalletDTO[] }> {
     return this.get("/wallet", GetWalletResponseSchema);
+  }
+
+  getPlots(farmId: string): Promise<{ readonly plots: PlotDTO[] }> {
+    return this.get(`/farms/${encodeURIComponent(farmId)}/plots`, GetPlotsResponseSchema);
+  }
+
+  expandFarm(farmId: string, requestId: string): Promise<{ readonly expansion: ExpandFarmResultDTO }> {
+    return this.post(`/farms/${encodeURIComponent(farmId)}/plots`, { requestId }, ExpandFarmResponseSchema);
   }
 
   buy(body: ShopCommandBody): Promise<{ readonly settlement: BuyItemResultDTO }> {

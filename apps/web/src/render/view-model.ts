@@ -1,5 +1,6 @@
-import type { CropStateDTO, FarmTileDTO } from "@happy-farm/contracts";
+import type { CropStateDTO, FarmTileDTO, PlotDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type FarmLayout, type TilePlacement } from "./layout";
+import { buildFarmWorld, landFrame, type FarmWorld } from "./world";
 
 /**
  * Turns authoritative farm state into render descriptors.
@@ -32,12 +33,14 @@ export interface SceneTile extends TilePlacement {
 
 export interface FarmSceneInput {
   readonly layout: FarmLayout;
+  readonly world: FarmWorld;
   readonly tiles: readonly SceneTile[];
 }
 
 export interface FarmViewState {
   readonly tiles: readonly FarmTileDTO[];
   readonly crops: readonly CropStateDTO[];
+  readonly plots: readonly PlotDTO[];
   readonly selected: { readonly x: number; readonly y: number } | null;
 }
 
@@ -67,7 +70,10 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
   // candidates when the API repeats a coordinate.
   const tilesByCoordinate = firstByCoordinate(state.tiles, (tile) => coordinateKey(tile.x, tile.y));
   const cropsByCoordinate = firstByCoordinate(state.crops, (crop) => coordinateKey(crop.tileX, crop.tileY));
-  const layout = layoutFarmTiles([...tilesByCoordinate.values()].map((tile) => ({ x: tile.x, y: tile.y })));
+  const uniqueTiles = [...tilesByCoordinate.values()].map((tile) => ({ x: tile.x, y: tile.y }));
+  const frame = landFrame(uniqueTiles, state.plots);
+  const layout = layoutFarmTiles(uniqueTiles, frame === null ? {} : { frame });
+  const world = buildFarmWorld({ layout, tiles: uniqueTiles, plots: state.plots });
 
   const tiles: SceneTile[] = [];
   for (const placement of layout.placements) {
@@ -97,5 +103,5 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
     });
   }
 
-  return { layout, tiles };
+  return { layout, world, tiles };
 }

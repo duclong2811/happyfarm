@@ -43,7 +43,7 @@ function crop(x: number, y: number, overrides: Partial<CropStateDTO> = {}): Crop
 }
 
 function state(overrides: Partial<FarmViewState> = {}): FarmViewState {
-  return { tiles: [], crops: [], selected: null, ...overrides };
+  return { tiles: [], crops: [], plots: [], selected: null, ...overrides };
 }
 
 /** Keeps assertions strict: a missing tile fails loudly instead of comparing against `undefined`. */
