@@ -4,6 +4,7 @@ import {
   GameDataCurrencyDefinitions,
   GameDataCropDefinitions,
   GameDataItemDefinitions,
+  GameDataPlotDefinitions,
   GameDataShopEntries,
   Sha256Fingerprint,
   SystemClock,
@@ -27,6 +28,7 @@ export default {
       itemDefinitions: new GameDataItemDefinitions(),
       currencyDefinitions: new GameDataCurrencyDefinitions(),
       shopEntries: new GameDataShopEntries(),
+      plotDefinitions: new GameDataPlotDefinitions(),
       progressionDefinition: gameDataProgressionDefinition,
       clock: new SystemClock()
     })(request);

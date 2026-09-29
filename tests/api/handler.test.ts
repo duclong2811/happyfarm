@@ -13,11 +13,11 @@ import {
 import { INITIAL_LAND_SIZE, parseCropInstanceId, parseEconomyTransactionId, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
 import { shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
-import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataShopEntries, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
+import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -80,6 +80,7 @@ describe("Worker API foundation", () => {
       itemDefinitions: new GameDataItemDefinitions(),
       currencyDefinitions: new GameDataCurrencyDefinitions(),
       shopEntries: new GameDataShopEntries(),
+      plotDefinitions: new GameDataPlotDefinitions(),
       progressionDefinition: gameDataProgressionDefinition,
       clock: new FixedClock()
     });
@@ -695,5 +696,64 @@ describe("Worker API foundation", () => {
       ok: true,
       data: { wallets: [{ currencyId: "currency_gold", balance: 94 }] }
     });
+  });
+
+  it("lists and atomically buys the next server-selected plot with idempotent replay", async () => {
+    const created = await handle(new Request("https://api.test/farms", {
+      method: "POST",
+      body: JSON.stringify({ name: "Expansion Farm" }),
+      headers: { "content-type": "application/json" }
+    }));
+    expect(created.status).toBe(201);
+    db.sqlite.prepare("INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', 500, 1, ?, ?)").run(PLAYER_ONE_ID, NOW, NOW);
+
+    const catalogue = await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/plots`));
+    expect(catalogue.status).toBe(200);
+    const catalogueBody: { data: { plots: unknown[] } } = await catalogue.json();
+    expect(catalogueBody.data.plots).toHaveLength(8);
+    expect(catalogueBody.data.plots[0]).toMatchObject({
+      plotId: "plot_1", plotIndex: 1, price: 100, requiredLevel: 1, unlocked: false
+    });
+
+    const request = () => handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/plots`, {
+      method: "POST",
+      body: JSON.stringify({ requestId: "expand_farm_001" }),
+      headers: { "content-type": "application/json" }
+    }));
+    const first = await request();
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({
+      data: { expansion: { plotId: "plot_1", plotIndex: 1, amountSpent: 100, newBalance: 400, tilesAdded: 36 } }
+    });
+    const replay = await request();
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ data: { expansion: { plotId: "plot_1", newBalance: 400 } } });
+
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ?").get(FARM_ONE_ID)).toEqual({ count: 72 });
+    expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 400, version: 2 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger WHERE reason = 'FARM_EXPANSION'").get()).toEqual({ count: 1 });
+  });
+
+  it("allows only the owner to expand and lets only one concurrent purchase win", async () => {
+    await handle(new Request("https://api.test/farms", {
+      method: "POST", body: JSON.stringify({ name: "Concurrent Farm" }),
+      headers: { "content-type": "application/json" }
+    }));
+    db.sqlite.prepare("INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', 500, 1, ?, ?)").run(PLAYER_ONE_ID, NOW, NOW);
+    const expand = (requestId: string) => handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/plots`, {
+      method: "POST", body: JSON.stringify({ requestId }), headers: { "content-type": "application/json" }
+    }));
+
+    const responses = await Promise.all([expand("expand_race_001"), expand("expand_race_002")]);
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(1);
+    expect(statuses.filter((status) => status === 403 || status === 409)).toHaveLength(1);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ?").get(FARM_ONE_ID)).toEqual({ count: 72 });
+    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 400 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger WHERE reason = 'FARM_EXPANSION'").get()).toEqual({ count: 1 });
+
+    db.sqlite.prepare("INSERT INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'issuer', 'other', 'Other', 'ACTIVE', ?, ?)").run(PLAYER_TWO_ID, NOW, NOW);
+    auth.setActor({ playerId: PLAYER_TWO_ID });
+    expect((await expand("expand_other_001")).status).toBe(403);
   });
 });

@@ -7,6 +7,7 @@ import {
   GetProgression,
   HarvestCrop,
   InventoryService,
+  ListPlots,
   ListCropDefinitions,
   ListFarmTiles,
   PlantCrop,
@@ -14,6 +15,7 @@ import {
   BuyItem,
   EconomyService,
   SellItem,
+  ExpandFarm,
   type ActorContext,
   type AuthenticationPort,
   type Clock,
@@ -24,6 +26,8 @@ import {
   type IdGenerator,
   type ItemDefinitionRepository,
   type PayloadFingerprint,
+  type PlotDefinitionRepository,
+  type PlotView,
   type ShopEntryRepository
 } from "@happy-farm/application";
 import {
@@ -32,6 +36,7 @@ import {
   CropInstanceIdSchema,
   HarvestCropRequestSchema,
   BuyItemRequestSchema,
+  ExpandFarmRequestSchema,
   SellItemRequestSchema,
   PlantCropRequestSchema,
   type ApiFailure,
@@ -50,13 +55,22 @@ import {
   type SellItemResultDTO,
   type ShopEntryDTO,
   type WalletDTO
+  ,type PlotDTO,
+  type ExpandFarmResultDTO
 } from "@happy-farm/contracts";
-import { parseFarmId, type ProgressionDefinition, type ShopEntry, type Wallet } from "@happy-farm/domain";
+import {
+  parseCurrencyDefinitionId,
+  parseFarmId,
+  type ProgressionDefinition,
+  type ShopEntry,
+  type Wallet
+} from "@happy-farm/domain";
 import type { D1DatabaseLike } from "./d1-types";
 import {
   D1CropRepository,
   D1HarvestSettlementRepository,
   D1EconomySettlementRepository,
+  D1FarmExpansionRepository,
   D1WalletRepository,
   D1InventoryRepository,
   D1FarmMemberRepository,
@@ -77,6 +91,7 @@ export interface HandlerDependencies {
   readonly itemDefinitions: ItemDefinitionRepository;
   readonly currencyDefinitions: CurrencyDefinitionRepository;
   readonly shopEntries: ShopEntryRepository;
+  readonly plotDefinitions: PlotDefinitionRepository;
   /** The levelling curve. Passed in rather than imported, so application code stays game-data free. */
   readonly progressionDefinition: ProgressionDefinition;
   readonly clock: Clock;
@@ -118,6 +133,21 @@ function toShopEntryDTO(entry: ShopEntry): ShopEntryDTO {
 
 function toWalletDTO(wallet: Wallet): WalletDTO {
   return { currencyId: wallet.currencyDefinitionId, balance: wallet.balance };
+}
+
+/** Names the currency a plot is priced in, so the client can phrase the price without a label table. */
+function toPlotDTO(view: PlotView, currencyDefinitions: CurrencyDefinitionRepository): PlotDTO {
+  let currencyId;
+  try {
+    currencyId = parseCurrencyDefinitionId(view.currencyId);
+  } catch {
+    throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
+  }
+  const currency = currencyDefinitions.findById(currencyId);
+  if (currency === null) {
+    throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
+  }
+  return { ...view, currencyDisplayNameKey: currency.displayNameKey };
 }
 
 /**
@@ -162,6 +192,7 @@ function errorStatus(code: ErrorCode): number {
     case "NOT_AUTHORIZED":
     case "FARM_PERMISSION_DENIED":
     case "CROP_LEVEL_REQUIRED":
+    case "PLOT_LEVEL_REQUIRED":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -183,6 +214,7 @@ function errorStatus(code: ErrorCode): number {
     case "WALLET_LIMIT_EXCEEDED":
     case "ECONOMY_CONFLICT":
     case "PROGRESSION_CONFLICT":
+    case "PLOT_LIMIT_REACHED":
       return 409;
     case "RATE_LIMITED":
       return 429;
@@ -206,6 +238,7 @@ export function createHandler(dependencies: HandlerDependencies) {
   const harvestSettlement = new D1HarvestSettlementRepository(dependencies.db);
   const wallets = new D1WalletRepository(dependencies.db);
   const economySettlement = new D1EconomySettlementRepository(dependencies.db);
+  const farmExpansionSettlement = new D1FarmExpansionRepository(dependencies.db);
   const progressions = new D1ProgressionRepository(dependencies.db);
   const unlockedLand = {
     async isUnlocked(farmId: Parameters<typeof tiles.find>[0], coordinate: { x: number; y: number }) {
@@ -267,6 +300,22 @@ export function createHandler(dependencies: HandlerDependencies) {
   };
   const buyItem = new BuyItem(shopDependencies);
   const sellItem = new SellItem(shopDependencies);
+  const listPlots = new ListPlots(dependencies.plotDefinitions, farms, members, tiles);
+  const expandFarm = new ExpandFarm({
+    farms,
+    members,
+    tiles,
+    plots: dependencies.plotDefinitions,
+    progressions,
+    progressionDefinition: dependencies.progressionDefinition,
+    currencies: dependencies.currencyDefinitions,
+    wallets,
+    idempotency: crops,
+    settlement: farmExpansionSettlement,
+    economyService: new EconomyService(dependencies.ids, dependencies.clock),
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
 
   return async function handle(request: Request): Promise<Response> {
     const requestId = crypto.randomUUID();
@@ -387,6 +436,25 @@ export function createHandler(dependencies: HandlerDependencies) {
           const cropStates = await getFarmCrops.execute(actor, farmId);
           const body: ApiSuccess<{ crops: CropStateDTO[] }> = { ok: true, data: { crops: [...cropStates] } };
           return jsonResponse(body);
+        }
+      }
+
+      const plotsRoute = /^\/farms\/([^/]+)\/plots$/.exec(url.pathname);
+      if (plotsRoute?.[1] !== undefined) {
+        const decodedId = decodePathSegment(plotsRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) return failure("INVALID_INPUT", requestId);
+        const farmId = parseFarmId(decodedId);
+        if (request.method === "GET") {
+          const plots: PlotDTO[] = (await listPlots.execute(actor, farmId)).map((view) =>
+            toPlotDTO(view, dependencies.currencyDefinitions)
+          );
+          return jsonResponse({ ok: true, data: { plots } });
+        }
+        if (request.method === "POST") {
+          const parsed = ExpandFarmRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const expansion: ExpandFarmResultDTO = await expandFarm.execute(actor, farmId, parsed.data);
+          return jsonResponse({ ok: true, data: { expansion } });
         }
       }
 

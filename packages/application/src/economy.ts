@@ -5,7 +5,7 @@ import {
   parseCurrencyDefinitionId,
   type EconomyMutation,
   type EconomyReason,
-  type ShopEntryId,
+  type EconomyReferenceId,
   type Wallet
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
@@ -21,7 +21,8 @@ import type {
 export interface PrepareEconomyMutation {
   readonly delta: number;
   readonly reason: EconomyReason;
-  readonly shopEntryId: ShopEntryId;
+  /** What the ledger row points at. The domain derives its kind from `reason`. */
+  readonly referenceId: EconomyReferenceId;
   readonly requestId: string;
 }
 
@@ -91,7 +92,7 @@ export class EconomyService {
         transactionId: this.ids.newEconomyTransactionId(),
         delta: input.delta,
         reason: input.reason,
-        referenceId: input.shopEntryId,
+        referenceId: input.referenceId,
         requestId: input.requestId,
         createdAt: this.clock.now()
       });

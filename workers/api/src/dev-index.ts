@@ -13,6 +13,7 @@ import {
   GameDataCurrencyDefinitions,
   GameDataCropDefinitions,
   GameDataItemDefinitions,
+  GameDataPlotDefinitions,
   GameDataShopEntries,
   Sha256Fingerprint,
   SystemClock,
@@ -78,6 +79,7 @@ export function createDevWorker(env: DevEnv) {
     itemDefinitions: new GameDataItemDefinitions(),
     currencyDefinitions: new GameDataCurrencyDefinitions(),
     shopEntries: new GameDataShopEntries(),
+    plotDefinitions: new GameDataPlotDefinitions(),
     progressionDefinition: gameDataProgressionDefinition,
     clock
   });

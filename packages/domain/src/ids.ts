@@ -7,6 +7,7 @@ declare const cropDefinitionIdBrand: unique symbol;
 declare const itemDefinitionIdBrand: unique symbol;
 declare const currencyDefinitionIdBrand: unique symbol;
 declare const shopEntryIdBrand: unique symbol;
+declare const plotIdBrand: unique symbol;
 declare const economyTransactionIdBrand: unique symbol;
 
 export type PlayerId = string & { readonly [playerIdBrand]: true };
@@ -16,6 +17,7 @@ export type CropDefinitionId = string & { readonly [cropDefinitionIdBrand]: true
 export type ItemDefinitionId = string & { readonly [itemDefinitionIdBrand]: true };
 export type CurrencyDefinitionId = string & { readonly [currencyDefinitionIdBrand]: true };
 export type ShopEntryId = string & { readonly [shopEntryIdBrand]: true };
+export type PlotId = string & { readonly [plotIdBrand]: true };
 export type EconomyTransactionId = string & { readonly [economyTransactionIdBrand]: true };
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -26,6 +28,7 @@ const CROP_DEFINITION_ID_PATTERN = /^crop_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const ITEM_DEFINITION_ID_PATTERN = /^item_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const CURRENCY_DEFINITION_ID_PATTERN = /^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const SHOP_ENTRY_ID_PATTERN = /^shop_[a-z0-9]+(?:_[a-z0-9]+)*$/;
+const PLOT_ID_PATTERN = /^plot_[1-9][0-9]*$/;
 const ECONOMY_TRANSACTION_ID_PATTERN = new RegExp(`^econ_${UUID_PATTERN}$`, "i");
 
 export function parsePlayerId(value: string): PlayerId {
@@ -87,6 +90,29 @@ export function parseShopEntryId(value: string): ShopEntryId {
     throw new DomainError("INVALID_ID", "Invalid shop entry ID");
   }
   return value as ShopEntryId;
+}
+
+/**
+ * A plot is identified by its index, and by nothing else.
+ *
+ * The pattern accepts exactly `plot_<n>` for a positive integer `n` with no leading zero, so the
+ * identifier and the index cannot disagree: `plotIdForIndex` is the only producer and
+ * `parsePlotId` is the only reader. Land geometry, prices, and the level that unlocks a plot are
+ * separate concerns owned by game data and the plot domain.
+ */
+export function parsePlotId(value: string): PlotId {
+  if (!PLOT_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid plot ID");
+  }
+  return value as PlotId;
+}
+
+/** The identifier of the plot a given index occupies. The only way to name a plot. */
+export function plotIdForIndex(index: number): PlotId {
+  if (!Number.isSafeInteger(index) || index < 1) {
+    throw new DomainError("INVALID_ID", "Invalid plot index");
+  }
+  return parsePlotId(`plot_${String(index)}`);
 }
 
 export function parseEconomyTransactionId(value: string): EconomyTransactionId {

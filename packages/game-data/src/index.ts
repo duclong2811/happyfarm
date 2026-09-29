@@ -4,6 +4,7 @@ export * from "./crops";
 export * from "./economy";
 export * from "./fish";
 export * from "./items";
+export * from "./plots";
 export * from "./progression";
 export * from "./schema";
 export * from "./shops";

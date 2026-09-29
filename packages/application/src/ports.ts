@@ -20,6 +20,7 @@ import type {
   Player,
   PlayerId,
   PlayerProgression,
+  PlotDefinition,
   ShopEntry,
   ShopEntryId,
   XpAward,
@@ -104,6 +105,18 @@ export interface ShopEntryRepository {
   list(): readonly ShopEntry[];
 }
 
+/**
+ * The land this deployment sells.
+ *
+ * The catalogue is game data rather than player state, so a plot is looked up by the layout slot the
+ * purchase targets — never by anything a client sends. `findByIndex` returning null is how the
+ * application learns a farm has bought all the land there is.
+ */
+export interface PlotDefinitionRepository {
+  findByIndex(index: number): PlotDefinition | null;
+  list(): readonly PlotDefinition[];
+}
+
 export interface WalletRepository {
   find(playerId: PlayerId, currencyDefinitionId: CurrencyDefinitionId): Promise<Wallet | null>;
   listByPlayer(playerId: PlayerId): Promise<readonly Wallet[]>;
@@ -174,6 +187,22 @@ export interface EconomySettlementRepository {
     economy: EconomyMutation,
     inventory: InventoryMutation,
     expectedInventory: InventoryItem | null,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+}
+
+/**
+ * The one write boundary for buying land: the wallet mutation, its ledger row, every new tile, and
+ * the idempotency record, all or nothing.
+ *
+ * A tile row *is* unlocked land, so this settlement is what actually hands the player the plot. The
+ * tiles are inserted rather than a bound being widened, which is what makes the existing
+ * `UnlockedLandPolicy` and the crop foreign key keep working unchanged.
+ */
+export interface FarmExpansionRepository {
+  expandFarmAtomically(
+    economy: EconomyMutation,
+    tiles: readonly FarmTile[],
     idempotency: IdempotencyRecord
   ): Promise<void>;
 }

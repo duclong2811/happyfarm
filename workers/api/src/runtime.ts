@@ -5,6 +5,7 @@ import {
   parseCropDefinitionId,
   parseCurrencyDefinitionId,
   parseItemDefinitionId,
+  parsePlotId,
   parseShopEntryId,
   type CropDefinition,
   type CropDefinitionId,
@@ -16,6 +17,7 @@ import {
   type ItemDefinition,
   type ItemDefinitionId,
   type ProgressionDefinition,
+  type PlotDefinition,
   type ShopEntry,
   type ShopEntryId
 } from "@happy-farm/domain";
@@ -29,6 +31,7 @@ import type {
   EconomyTransactionIdGenerator,
   IdGenerator,
   ItemDefinitionRepository,
+  PlotDefinitionRepository,
   PayloadFingerprint,
   ShopEntryRepository
 } from "@happy-farm/application";
@@ -37,6 +40,7 @@ import {
   currencyRegistry,
   itemRegistry,
   playerProgression,
+  plotRegistry,
   shopRegistry,
   type CropDefinitionData
 } from "@happy-farm/game-data";
@@ -88,6 +92,28 @@ export class GameDataShopEntries implements ShopEntryRepository {
     const entry = shopRegistry.get(id);
     return entry === undefined ? null : toShopEntry(entry);
   }
+}
+
+export class GameDataPlotDefinitions implements PlotDefinitionRepository {
+  list(): readonly PlotDefinition[] {
+    return [...plotRegistry.values()].map(toPlotDefinition);
+  }
+
+  findByIndex(index: number): PlotDefinition | null {
+    const definition = plotRegistry.get(`plot_${String(index)}`);
+    return definition === undefined ? null : toPlotDefinition(definition);
+  }
+}
+
+function toPlotDefinition(definition: { readonly id: string; readonly plotIndex: number; readonly displayNameKey: string; readonly currencyDefinitionId: string; readonly price: number; readonly requiredLevel: number }): PlotDefinition {
+  return {
+    id: parsePlotId(definition.id),
+    plotIndex: definition.plotIndex,
+    displayNameKey: definition.displayNameKey,
+    currencyDefinitionId: parseCurrencyDefinitionId(definition.currencyDefinitionId),
+    price: definition.price,
+    requiredLevel: definition.requiredLevel
+  };
 }
 
 function toShopEntry(entry: {

@@ -156,7 +156,7 @@ abstract class SettleShopItem<T extends ShopResult> {
         economy: this.dependencies.economyService.prepareMutation(actor, wallet, this.requireCurrency(entry), {
           delta: -total,
           reason: "SHOP_BUY",
-          shopEntryId: entry.id,
+          referenceId: entry.id,
           requestId: command.requestId
         }),
         inventory: addition
@@ -169,7 +169,7 @@ abstract class SettleShopItem<T extends ShopResult> {
       economy: this.dependencies.economyService.prepareMutation(actor, wallet, this.requireCurrency(entry), {
         delta: total,
         reason: "SHOP_SELL",
-        shopEntryId: entry.id,
+        referenceId: entry.id,
         requestId: command.requestId
       }),
       inventory: this.dependencies.inventoryService.prepareRemoval(actor.playerId, entry.itemDefinitionId, command.quantity)

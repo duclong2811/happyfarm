@@ -9,6 +9,7 @@ export const CropDefinitionIdSchema = z.string().regex(/^crop_[a-z0-9]+(?:_[a-z0
 export const ItemDefinitionIdSchema = z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const CurrencyDefinitionIdSchema = z.string().regex(/^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const ShopEntryIdSchema = z.string().regex(/^shop_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+export const PlotIdSchema = z.string().regex(/^plot_[1-9][0-9]*$/);
 export const RequestIdSchema = z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/);
 export const FarmRoleSchema = z.enum(["OWNER", "EDITOR", "HELPER", "VISITOR"]);
 export const TerrainTypeSchema = z.enum(["GRASS", "SOIL", "WATER", "BLOCKED"]);
@@ -231,6 +232,51 @@ export const WalletDTOSchema = z
 
 export const GetWalletResponseSchema = z.object({ wallets: z.array(WalletDTOSchema) }).strict();
 
+/**
+ * The deepest plot index a catalogue may define. Mirrors `MAX_PLOT_INDEX` in `@happy-farm/game-data`,
+ * which is what a deployment actually ships; a game-data contract test keeps the two equal.
+ */
+export const MAX_PLOT_INDEX = 256;
+
+/**
+ * One piece of land a farm can buy, and whether this farm already owns it.
+ *
+ * Prices and level requirements are server data the client only displays: the expansion command
+ * carries a request ID and nothing else, so the client can never name a price, a currency, or a plot.
+ */
+export const PlotDTOSchema = z
+  .object({
+    plotId: PlotIdSchema,
+    plotIndex: z.number().int().min(1).max(MAX_PLOT_INDEX),
+    currencyId: CurrencyDefinitionIdSchema,
+    currencyDisplayNameKey: z.string().min(1).max(120),
+    price: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    requiredLevel: z.number().int().positive().max(MAX_PROGRESSION_LEVEL),
+    unlocked: z.boolean()
+  })
+  .strict();
+
+export const GetPlotsResponseSchema = z.object({ plots: z.array(PlotDTOSchema) }).strict();
+
+export const ExpandFarmRequestSchema = z
+  .object({
+    requestId: RequestIdSchema
+  })
+  .strict();
+
+export const ExpandFarmResultDTOSchema = z
+  .object({
+    plotId: PlotIdSchema,
+    plotIndex: z.number().int().min(1).max(MAX_PLOT_INDEX),
+    currencyId: CurrencyDefinitionIdSchema,
+    amountSpent: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    newBalance: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    tilesAdded: z.number().int().positive().max(1_000_000)
+  })
+  .strict();
+
+export const ExpandFarmResponseSchema = z.object({ expansion: ExpandFarmResultDTOSchema }).strict();
+
 export const ErrorCodeSchema = z.enum([
   "INVALID_INPUT",
   "NOT_AUTHENTICATED",
@@ -249,6 +295,8 @@ export const ErrorCodeSchema = z.enum([
   "INVENTORY_LIMIT_EXCEEDED",
   "CURRENCY_DEFINITION_NOT_FOUND",
   "SHOP_ENTRY_NOT_FOUND",
+  "PLOT_LEVEL_REQUIRED",
+  "PLOT_LIMIT_REACHED",
   "INVALID_QUANTITY",
   "WALLET_LIMIT_EXCEEDED",
   "ECONOMY_CONFLICT",
@@ -282,6 +330,10 @@ export type BuyItemResultDTO = z.infer<typeof BuyItemResultDTOSchema>;
 export type SellItemResultDTO = z.infer<typeof SellItemResultDTOSchema>;
 export type ShopEntryDTO = z.infer<typeof ShopEntryDTOSchema>;
 export type WalletDTO = z.infer<typeof WalletDTOSchema>;
+export type PlotDTO = z.infer<typeof PlotDTOSchema>;
+export type GetPlotsResponse = z.infer<typeof GetPlotsResponseSchema>;
+export type ExpandFarmRequest = z.infer<typeof ExpandFarmRequestSchema>;
+export type ExpandFarmResultDTO = z.infer<typeof ExpandFarmResultDTOSchema>;
 
 export type ApiSuccess<T> = { readonly ok: true; readonly data: T };
 export type ApiFailure = {

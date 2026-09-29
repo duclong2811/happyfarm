@@ -36,7 +36,7 @@ function createService(db: NodeD1Database): EconomyService {
 }
 
 function input(delta: number, requestId = "request_001") {
-  return { currencyDefinitionId: "currency_gold", delta, reason: delta < 0 ? "SHOP_BUY" as const : "SHOP_SELL" as const, shopEntryId: carrotShop, requestId };
+  return { currencyDefinitionId: "currency_gold", delta, reason: delta < 0 ? "SHOP_BUY" as const : "SHOP_SELL" as const, referenceId: carrotShop, requestId };
 }
 
 describe("D1 economy infrastructure", () => {

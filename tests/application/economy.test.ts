@@ -31,7 +31,7 @@ describe("EconomyService boundary", () => {
     const input = {
       delta: -4,
       reason: "SHOP_BUY" as const,
-      shopEntryId: parseShopEntryId("shop_carrot"),
+      referenceId: parseShopEntryId("shop_carrot"),
       requestId: "economy_request_001"
     };
     expect(service.prepareMutation({ playerId: PLAYER_ONE_ID }, wallet, currency, input)).toMatchObject({

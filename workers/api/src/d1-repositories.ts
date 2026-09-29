@@ -27,14 +27,17 @@ import {
   parseCropDefinitionId,
   parseCropInstanceId,
   parseCurrencyDefinitionId,
+  parseEconomyReferenceId,
   parseEconomyTransactionId,
   parseFarmId,
   parseItemDefinitionId,
   parsePlayerId,
-  parseShopEntryId
+  PLOT_TILE_COUNT,
+  PLOT_TILE_SIZE
 } from "@happy-farm/domain";
 import type {
   CropInstanceRepository,
+  FarmExpansionRepository,
   FarmMemberRepository,
   FarmRepository,
   FarmTileRepository,
@@ -581,6 +584,62 @@ export class D1EconomySettlementRepository implements EconomySettlementRepositor
   }
 }
 
+export class D1FarmExpansionRepository implements FarmExpansionRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async expandFarmAtomically(
+    economy: EconomyMutation,
+    tiles: readonly FarmTile[],
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    if (economy.playerId !== idempotency.actorPlayerId || economy.reason !== "FARM_EXPANSION") {
+      throw new ApplicationError("NOT_AUTHORIZED", "Expansion settlement ownership does not match");
+    }
+    if (tiles.length !== PLOT_TILE_COUNT || tiles.some((tile) => tile.farmId !== tiles[0]?.farmId)) {
+      throw new ApplicationError("INVALID_INPUT", "Expansion tile cohort is invalid");
+    }
+    const xs = tiles.map((tile) => tile.x);
+    const ys = tiles.map((tile) => tile.y);
+    if (new Set(xs).size !== PLOT_TILE_SIZE || new Set(ys).size !== PLOT_TILE_SIZE) {
+      throw new ApplicationError("INVALID_INPUT", "Expansion tile geometry is invalid");
+    }
+
+    const statements: D1PreparedStatementLike[] = [
+      this.db
+        .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+        .bind(economy.playerId, economy.currencyDefinitionId, economy.createdAt, economy.createdAt),
+      this.db
+        .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(economy.transactionId, economy.playerId, economy.currencyDefinitionId, economy.delta, economy.balanceBefore, economy.balanceAfter, economy.expectedWalletVersion, economy.reason, economy.referenceType, economy.referenceId, economy.requestId, economy.createdAt),
+      ...tiles.map((tile) =>
+        this.db
+          .prepare("INSERT INTO farm_tiles (farm_id, x, y, terrain_type, tile_state, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(tile.farmId, tile.x, tile.y, tile.terrainType, tile.state, tile.version, tile.updatedAt)
+      ),
+      this.db
+        .prepare("INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(
+          economy.playerId, economy.currencyDefinitionId, economy.balanceAfter, economy.expectedWalletVersion + 1,
+          economy.transactionId, economy.playerId,
+          idempotency.actorPlayerId, idempotency.operation, idempotency.requestId,
+          idempotency.payloadFingerprint, idempotency.status, idempotency.resourceId,
+          idempotency.responseJson, idempotency.createdAt
+        )
+    ];
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) {
+        throw new Error("Atomic farm expansion failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && (error.message.includes("economy conflict") || error.message.includes("UNIQUE constraint failed: farm_tiles") || error.message.includes("idempotency_keys.actor_player_id"))) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "Farm or economy state changed concurrently");
+      }
+      throw error;
+    }
+  }
+}
+
 export class D1HarvestSettlementRepository implements HarvestSettlementRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
@@ -735,7 +794,7 @@ function mapLedger(row: EconomyLedgerRow): EconomyLedgerEntry {
     expectedWalletVersion: row.expected_wallet_version,
     reason: row.reason,
     referenceType: row.reference_type,
-    referenceId: parseShopEntryId(row.reference_id),
+    referenceId: parseEconomyReferenceId(row.reference_id),
     requestId: row.request_id,
     createdAt: row.created_at
   };
