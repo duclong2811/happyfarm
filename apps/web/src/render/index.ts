@@ -15,6 +15,7 @@ export {
   GROUND_MARGIN,
   MIN_CROP_HEIGHT,
   TILE_THICKNESS,
+  type FarmScenePlayer,
   type FarmSceneHandle
 } from "./scene";
 export {

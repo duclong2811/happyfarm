@@ -27,13 +27,19 @@ import {
   type Translate
 } from "./i18n";
 import { progressionSummary } from "./progression";
+import type { PlayerState } from "./player/controller";
+import { createMovementInput, NEUTRAL_INPUT, type MovementInput } from "./player/input";
+import { createPlayerRuntime } from "./player/runtime";
 import { describeSelection, formatRemainingGrowth, type SelectionView } from "./selection";
 import {
   buildFarmSceneInput,
   createFarmScene,
   FarmRendererUnavailableError,
+  type FarmSceneInput,
+  type FarmScenePlayer,
   type FarmSceneHandle
 } from "./render";
+import { SPAWN_WORLD } from "./render/world-config";
 import "./action-dock.css";
 import "./hud.css";
 import "./styles.css";
@@ -880,6 +886,74 @@ function renderSceneState(): void {
   element<HTMLSpanElement>("render-3d-state").textContent = sceneState(t, state.language);
 }
 
+/*
+ * The local character.
+ *
+ * It is client-local and non-authoritative: the server never receives this position, and no game
+ * rule reads it. The character exists so the world has a body in it, and it is created only with the
+ * 3D view, because a character that cannot be drawn is only state that can go wrong.
+ *
+ * The pure modules under `player/` decide how it moves and when it runs; this only supplies the
+ * platform - the keyboard, `requestAnimationFrame`, and the renderer to publish a pose to - and the
+ * farm rows that block a step. The runtime sleeps while no movement key is held, so the renderer
+ * keeps drawing on demand rather than every frame.
+ */
+
+/** The avatar stands on the tray surface, which is a hair above the tiles' base. */
+const PLAYER_FEET_Y = 0.02;
+
+let movement: MovementInput | null = null;
+let playerFrameHandle: number | null = null;
+
+function toScenePlayer(current: PlayerState): FarmScenePlayer {
+  return {
+    worldX: current.x,
+    worldY: current.y,
+    worldZ: current.z,
+    facingYaw: current.facingYaw,
+    movementState: current.movementState,
+    elapsedWalk: current.elapsedWalk
+  };
+}
+
+const playerRuntime = createPlayerRuntime({
+  spawn: SPAWN_WORLD,
+  feetY: PLAYER_FEET_Y,
+  readInput: () => movement?.vector() ?? NEUTRAL_INPUT,
+  onPose: (pose) => {
+    scene?.setPlayer(pose === null ? null : toScenePlayer(pose));
+  },
+  requestFrame: (tick) => {
+    playerFrameHandle = window.requestAnimationFrame((timestampMs) => {
+      // Cleared before the tick runs, so the runtime can schedule the next frame from inside it.
+      playerFrameHandle = null;
+      tick(timestampMs);
+    });
+  },
+  cancelFrame: () => {
+    if (playerFrameHandle === null) return;
+    window.cancelAnimationFrame(playerFrameHandle);
+    playerFrameHandle = null;
+  }
+});
+
+function startPlayer(): void {
+  stopPlayer();
+  movement = createMovementInput({
+    onActivityChange: (active) => {
+      if (active) playerRuntime.wake();
+    }
+  });
+  movement.attach();
+  playerRuntime.start();
+}
+
+function stopPlayer(): void {
+  movement?.detach();
+  movement = null;
+  playerRuntime.stop();
+}
+
 /** Applies a selection from either the 2D grid or the 3D view; both read and write this one state. */
 function selectTile(x: number, y: number): void {
   state.selected = { x, y };
@@ -888,19 +962,27 @@ function selectTile(x: number, y: number): void {
   refreshScene();
 }
 
+/** The renderer's view of the farm right now: one descriptor set for drawing and for collision. */
+function sceneInput(): FarmSceneInput {
+  return buildFarmSceneInput({
+    tiles: state.tiles,
+    crops: state.crops,
+    trees: state.trees,
+    plots: state.plots,
+    selected: state.selected
+  });
+}
+
 /** Pushes authoritative farm state into the renderer. The renderer invents no land and no crops. */
 function refreshScene(): void {
+  const input = sceneInput();
+  // Movement is blocked by the same rows the renderer draws, so a crop that grows under the
+  // character starts blocking the next step without a second refresh path. Rebuilding the collision
+  // world never moves the character: it only changes where the next step may go.
+  playerRuntime.setTiles(input.tiles);
   if (scene === null) return;
   try {
-    scene.setState(
-      buildFarmSceneInput({
-        tiles: state.tiles,
-        crops: state.crops,
-        trees: state.trees,
-        plots: state.plots,
-        selected: state.selected
-      })
-    );
+    scene.setState(input);
   } catch (error: unknown) {
     // The 3D view is a projection of state the rest of the page owns. A renderer problem must not
     // abort the authoritative refresh that called this, because the 2D field and the polling that
@@ -915,33 +997,39 @@ function refreshScene(): void {
 }
 
 function enable3D(): void {
-  try {
-    scene ??= createFarmScene(element<HTMLCanvasElement>("scene"), {
-      onTileSelected: (coordinate) => {
-        selectTile(coordinate.x, coordinate.y);
-      },
-      onAssetProblem: (assetId, error) => {
-        // The crop keeps its placeholder art, so this is information rather than a failure the page
-        // has to recover from. Reported on the main status line because the scene status is
-        // rewritten by the next refresh.
-        const described = describe(error);
-        setStatus(
-          (translate, language) =>
-            translate("scene.assetProblem", { asset: assetId, message: described(translate, language) }),
-          true
-        );
+  if (scene === null) {
+    try {
+      scene = createFarmScene(element<HTMLCanvasElement>("scene"), {
+        onTileSelected: (coordinate) => {
+          selectTile(coordinate.x, coordinate.y);
+        },
+        onAssetProblem: (assetId, error) => {
+          // The crop keeps its placeholder art, so this is information rather than a failure the page
+          // has to recover from. Reported on the main status line because the scene status is
+          // rewritten by the next refresh.
+          const described = describe(error);
+          setStatus(
+            (translate, language) =>
+              translate("scene.assetProblem", { asset: assetId, message: described(translate, language) }),
+            true
+          );
+        }
+      });
+    } catch (error: unknown) {
+      if (error instanceof FarmRendererUnavailableError) {
+        setSceneState((translate) => translate("scene.unavailable"));
+        setStatus(message("scene.noWebgl"), true);
+        return;
       }
-    });
-    refreshScene();
-    setStatus(message("scene.ready"));
-  } catch (error: unknown) {
-    if (error instanceof FarmRendererUnavailableError) {
-      setSceneState((translate) => translate("scene.unavailable"));
-      setStatus(message("scene.noWebgl"), true);
+      setStatus(describe(error), true);
       return;
     }
-    setStatus(describe(error), true);
+    // The character exists exactly as long as the 3D view does: it listens for movement keys and
+    // wakes the render loop while a key is held.
+    startPlayer();
   }
+  refreshScene();
+  setStatus(message("scene.ready"));
 }
 
 async function refreshFarm(): Promise<void> {
@@ -970,6 +1058,7 @@ async function loadFarm(farmId: string): Promise<void> {
   state.selected = null;
   localStorage.setItem(FARM_KEY, result.farm.id);
   await refreshFarm();
+  playerRuntime.respawn();
   await refreshAccount();
 }
 
@@ -981,6 +1070,7 @@ async function createFarm(): Promise<void> {
   state.selected = null;
   localStorage.setItem(FARM_KEY, created.farm.id);
   await refreshFarm();
+  playerRuntime.respawn();
   await refreshAccount();
   setStatus(message("status.createdDetail", { name: created.farm.name, tiles: state.tiles.length }));
 }
@@ -1325,6 +1415,7 @@ function wire(): void {
   window.addEventListener("pagehide", () => {
     scene?.dispose();
     scene = null;
+    stopPlayer();
     setSceneState((translate) => translate("scene.idle"));
   });
 

@@ -28,6 +28,9 @@ Implemented and locally verified in the current working tree, but **not shipped 
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the
   ground).
+- Client character: a walkable local avatar on the fixed world, with depth-based collision against
+  the shore, the pond, the farmhouse, a fence drawn from one derived geometry, and the farm's own
+  crop and tree rows, plus a follow camera that wakes only while a movement key is held (ADR 0016).
 
 Gateways available today: `npm run typecheck`, `npm run lint`, `npx vitest run` (42 files /
 385 tests), `npm run build --workspace @happy-farm/web`,
@@ -146,7 +149,10 @@ ready, remove, replay safety, and unauthorized removal; plus all repository gate
 Status note: the **world/map foundation** for this phase landed first (fixed world coordinates, static
 regions, paths, spawn, and walkability preparation) - see
 `docs/decisions/0015-fixed-world-coordinates-and-static-farm-regions.md`. Buildings and animals
-themselves are **not implemented**; the reserved regions are visual space only.
+themselves are **not implemented**; the reserved regions are visual space only. The **character**
+that foundation was built for also landed - a walkable avatar with collision and a follow camera, see
+`docs/decisions/0016-player-character-and-follow-camera.md`. The fence is drawn and blocked from the
+same derived segments, and the avatar has no animation yet.
 
 Goal: the farm earns while the player is away without one timer per animal.
 

@@ -61,6 +61,20 @@ const CROP_RADIUS_FACTOR = 0.32;
 const SKY_COLOR = 0x9fd4ef;
 /** Warm tint applied to a loaded model once the server calls the crop mature. Placeholder art. */
 const READY_EMISSIVE_COLOR = 0x4a3410;
+/** Height of the placeholder avatar, in world units. Art replaces the look, not the controller. */
+const PLAYER_HEIGHT = 1.3;
+/** How far the avatar's shoulders rise on each step, for a walk that reads without an animation. */
+const PLAYER_WALK_BOB = 0.035;
+/** Steps per second at full walking speed, used only to phase the bob. */
+const PLAYER_STEP_FREQUENCY = 9;
+/**
+ * Framing used while a character is drawn.
+ *
+ * The island view is framed to the whole world; a follow camera at that distance would show the
+ * avatar as a few pixels, so a character pulls the camera in to a fixed, much smaller extent while
+ * zoom and the camera direction stay exactly as they were.
+ */
+const FOLLOW_FRAME_EXTENT = 9;
 
 /** Thrown when the browser cannot give the page a WebGL context. */
 export class FarmRendererUnavailableError extends Error {
@@ -88,10 +102,32 @@ export interface FarmSceneHandle {
   readonly canvas: HTMLCanvasElement;
   /** Replaces the rendered farm state and redraws. Safe to call repeatedly. */
   setState(input: FarmSceneInput): void;
+  /**
+   * Draws the local character at this pose, or removes it with `null`. The pose is client-local and
+   * never authoritative: the renderer copies the numbers it is given and decides nothing itself.
+   */
+  setPlayer(player: FarmScenePlayer | null): void;
   /** Re-measures the canvas and redraws. */
   resize(): void;
   /** Releases GPU resources, detaches observers and listeners, and leaves the canvas unusable. */
   dispose(): void;
+}
+
+/**
+ * Where to draw the character and how it is moving.
+ *
+ * Deliberately its own small shape rather than the controller's state: the renderer only needs a
+ * pose, so the player module stays free to change without dragging the view along.
+ */
+export interface FarmScenePlayer {
+  readonly worldX: number;
+  readonly worldY: number;
+  readonly worldZ: number;
+  /** Radians about Y, where 0 faces world +Z. Matches the controller's `facingYaw`. */
+  readonly facingYaw: number;
+  readonly movementState: "IDLE" | "WALKING";
+  /** Seconds spent walking, for the step bob. Never a gameplay quantity. */
+  readonly elapsedWalk: number;
 }
 
 interface ModelVariants {
@@ -203,6 +239,44 @@ function treePlant(
   return plant;
 }
 
+/**
+ * The placeholder avatar: a handful of shared primitives standing in for the real model.
+ *
+ * The group's local +Z is the direction the character faces, which is the same convention the
+ * controller's `facingYaw` uses, so the renderer only has to copy one rotation. The visor and the
+ * hat brim make that facing readable from the isometric camera; neither is a gameplay marker.
+ */
+function buildPlayerAvatar(assets: SharedAssets): Group {
+  const avatar = new Group();
+
+  const legs = new Mesh(assets.box, assets.playerLegs);
+  legs.scale.set(0.36, PLAYER_HEIGHT * 0.32, 0.3);
+  legs.position.y = PLAYER_HEIGHT * 0.16;
+
+  const body = new Mesh(assets.cylinder, assets.playerBody);
+  body.scale.set(0.24, PLAYER_HEIGHT * 0.4, 0.24);
+  body.position.y = PLAYER_HEIGHT * 0.52;
+
+  const head = new Mesh(assets.sphere, assets.playerSkin);
+  head.scale.setScalar(PLAYER_HEIGHT * 0.17);
+  head.position.y = PLAYER_HEIGHT * 0.79;
+
+  const brim = new Mesh(assets.cylinder, assets.playerHat);
+  brim.scale.set(PLAYER_HEIGHT * 0.27, PLAYER_HEIGHT * 0.02, PLAYER_HEIGHT * 0.27);
+  brim.position.y = PLAYER_HEIGHT * 0.85;
+
+  const hat = new Mesh(assets.cone, assets.playerHat);
+  hat.scale.set(PLAYER_HEIGHT * 0.16, PLAYER_HEIGHT * 0.14, PLAYER_HEIGHT * 0.16);
+  hat.position.y = PLAYER_HEIGHT * 0.93;
+
+  const visor = new Mesh(assets.box, assets.playerHat);
+  visor.scale.set(PLAYER_HEIGHT * 0.22, PLAYER_HEIGHT * 0.03, PLAYER_HEIGHT * 0.06);
+  visor.position.set(0, PLAYER_HEIGHT * 0.76, PLAYER_HEIGHT * 0.16);
+
+  avatar.add(legs, body, head, brim, hat, visor);
+  return avatar;
+}
+
 export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOptions = {}): FarmSceneHandle {
   let renderer: WebGLRenderer;
   try {
@@ -224,7 +298,12 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // The overlay follows progression (locked land changes when a plot is bought), so it is rebuilt
   // with the dynamic layer instead of living in the static cache.
   const overlayGroup = new Group();
-  scene.add(worldGroup, tileGroup, cropGroup, treeGroup, overlayGroup);
+  // The character is its own group: it is rebuilt never and repainted every walking frame, so it
+  // must not be cleared with the farm state.
+  const playerGroup = new Group();
+  playerGroup.visible = false;
+  playerGroup.add(buildPlayerAvatar(assets));
+  scene.add(worldGroup, tileGroup, cropGroup, treeGroup, overlayGroup, playerGroup);
 
   scene.add(new HemisphereLight(0xdfefff, 0x4a6a3f, 1.15));
   scene.add(new AmbientLight(0xffffff, 0.45));
@@ -251,6 +330,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   let zoom = 1;
   let targetX = 0;
   let targetZ = 0;
+  let playerPose: FarmScenePlayer | null = null;
 
   const loader = new GLTFLoader();
   const models = new Map<CropModelId, ModelVariants>();
@@ -348,21 +428,46 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function cameraDistance(): number {
-    return worldExtent * 2.35 * zoom;
+    return framedExtent() * 2.35 * zoom;
+  }
+
+  function framedExtent(): number {
+    return playerPose === null ? worldExtent : Math.min(worldExtent, FOLLOW_FRAME_EXTENT);
   }
 
   function updateCamera(): void {
-    // Panning stays near the world's centre, whichever way the player has framed the farm.
-    const limit = worldExtent * PAN_LIMIT_FACTOR;
-    targetX = clamp(targetX, state.world.centerWorldX - limit, state.world.centerWorldX + limit);
-    targetZ = clamp(targetZ, state.world.centerWorldZ - limit, state.world.centerWorldZ + limit);
+    if (playerPose === null) {
+      // Panning stays near the world's centre, whichever way the player has framed the farm.
+      const limit = worldExtent * PAN_LIMIT_FACTOR;
+      targetX = clamp(targetX, state.world.centerWorldX - limit, state.world.centerWorldX + limit);
+      targetZ = clamp(targetZ, state.world.centerWorldZ - limit, state.world.centerWorldZ + limit);
+    } else {
+      // A character owns the camera target; the pan clamp cannot apply, because the spawn sits
+      // outside the framed land.
+      targetX = playerPose.worldX;
+      targetZ = playerPose.worldZ;
+    }
     const distance = cameraDistance();
     camera.position.set(
       targetX + CAMERA_DIRECTION.x * distance,
       CAMERA_DIRECTION.y * distance,
       targetZ + CAMERA_DIRECTION.z * distance
     );
-    camera.lookAt(targetX, 0.2, targetZ);
+    camera.lookAt(targetX, playerPose === null ? 0.2 : PLAYER_HEIGHT * 0.5, targetZ);
+  }
+
+  function updatePlayer(): void {
+    if (playerPose === null) {
+      playerGroup.visible = false;
+      return;
+    }
+    playerGroup.visible = true;
+    const bob =
+      playerPose.movementState === "WALKING"
+        ? Math.abs(Math.sin(playerPose.elapsedWalk * PLAYER_STEP_FREQUENCY)) * PLAYER_WALK_BOB
+        : 0;
+    playerGroup.position.set(playerPose.worldX, playerPose.worldY + bob, playerPose.worldZ);
+    playerGroup.rotation.y = playerPose.facingYaw;
   }
 
   function updateMarkers(): void {
@@ -518,6 +623,9 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function panBy(deltaX: number, deltaY: number): void {
+    // The follow camera owns the target while a character is on screen. The drag is still tracked,
+    // so a drag never turns into a tile selection; it simply does not move the camera.
+    if (playerPose !== null) return;
     const worldPerPixel = (2 * cameraDistance() * Math.tan((CAMERA_FOV / 2) * (Math.PI / 180))) / Math.max(canvas.clientHeight, 1);
     targetX -= deltaX * worldPerPixel;
     targetZ -= deltaY * worldPerPixel;
@@ -548,7 +656,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       }
     }
     hoveredCoordinate = raycastTile(event);
-    canvas.style.cursor = hoveredCoordinate === null ? "grab" : "pointer";
+    canvas.style.cursor = hoveredCoordinate === null ? (playerPose === null ? "grab" : "default") : "pointer";
     updateMarkers();
     draw();
   }
@@ -601,6 +709,12 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       applyState(next);
       draw();
     },
+    setPlayer(next: FarmScenePlayer | null): void {
+      playerPose = next;
+      updatePlayer();
+      updateCamera();
+      draw();
+    },
     resize: draw,
     dispose(): void {
       disposed = true;
@@ -615,6 +729,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       cropGroup.clear();
       treeGroup.clear();
       overlayGroup.clear();
+      playerGroup.clear();
       pickTargets.clear();
       for (const variants of models.values()) {
         disposeModelResources(variants.growing);

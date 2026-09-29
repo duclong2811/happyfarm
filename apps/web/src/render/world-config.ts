@@ -1,5 +1,5 @@
-import type { TileBounds, TileCoordinate } from "./layout";
-import { tileToWorld, WORLD_ORIGIN_TILE_X, worldFrame } from "./layout";
+import type { TileBounds, TileCoordinate, WorldFrame } from "./layout";
+import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, WORLD_ORIGIN_TILE_X, worldFrame } from "./layout";
 
 /**
  * The static farm world.
@@ -52,11 +52,20 @@ export const WORLD_REGIONS: readonly WorldRegion[] = [
   { id: "farmhouse", kind: "FARMHOUSE", bounds: { minX: 19, maxX: 29, minY: -10, maxY: 0 }, labelKey: "world.region.farmhouse" }
 ];
 
+export type FenceSide = "SOUTH" | "NORTH" | "WEST" | "EAST";
+
+/** One opening in the fence: a range of tile coordinates along its own side's axis. */
+export interface FenceGate {
+  readonly side: FenceSide;
+  readonly from: number;
+  readonly to: number;
+}
+
 /** The fence around the field, and the gaps in it. All in tile coordinates, all fixed. */
 export interface FenceSpec {
   readonly bounds: TileBounds;
-  /** Axis-aligned gaps: the south gate leads to the spawn, the two side gates to the reserves. */
-  readonly gates: readonly { readonly side: "SOUTH" | "WEST" | "EAST"; readonly from: number; readonly to: number }[];
+  /** The south gate leads to the spawn, the two side gates to the reserves. */
+  readonly gates: readonly FenceGate[];
 }
 
 export const FENCE: FenceSpec = {
@@ -67,6 +76,126 @@ export const FENCE: FenceSpec = {
     { side: "EAST", from: 6.5, to: 9 }
   ]
 };
+
+/** How thick the fence is, as drawn and as collided with. One number for both. */
+export const FENCE_THICKNESS_WORLD = 0.09;
+/** Breathing room between the dirt apron and the fence line. */
+const FENCE_CLEARANCE_WORLD = 0.18;
+
+const FENCE_SIDES: readonly FenceSide[] = ["SOUTH", "EAST", "NORTH", "WEST"];
+
+/** A built piece of the fence: an axis-aligned world rectangle with no gate in it. */
+export interface FenceSegment {
+  readonly id: string;
+  readonly side: FenceSide;
+  readonly minWorldX: number;
+  readonly maxWorldX: number;
+  readonly minWorldZ: number;
+  readonly maxWorldZ: number;
+}
+
+/**
+ * The fence as world geometry: where it stands, how big it is, and the closed segments between its
+ * gates.
+ *
+ * This is the one derivation of `FENCE` that both the renderer and the player's collision consume,
+ * so a gate that is drawn open is a gate that can be walked through and a segment that is drawn
+ * solid is a segment that blocks. Neither side owns gate numbers of its own.
+ */
+export interface FenceGeometry {
+  /** World centre of the fence rectangle: where the dirt apron is centred too. */
+  readonly centerWorldX: number;
+  readonly centerWorldZ: number;
+  readonly halfWidthWorld: number;
+  readonly halfDepthWorld: number;
+  /** Every piece that is actually built, in no particular order. */
+  readonly segments: readonly FenceSegment[];
+}
+
+interface WorldSpan {
+  readonly from: number;
+  readonly to: number;
+}
+
+/** Cuts the open ranges out of one side's span, leaving what is built. */
+function closedSpans(from: number, to: number, openings: readonly WorldSpan[]): readonly WorldSpan[] {
+  const ordered = [...openings].sort((left, right) => left.from - right.from);
+  const spans: WorldSpan[] = [];
+  let cursor = from;
+  for (const opening of ordered) {
+    if (opening.from > cursor) spans.push({ from: cursor, to: Math.min(opening.from, to) });
+    cursor = Math.max(cursor, opening.to);
+  }
+  if (cursor < to) spans.push({ from: cursor, to });
+  return spans;
+}
+
+/** Where a gate sits in world metres, along the axis its side runs on. */
+function gateOpening(gate: FenceGate, frame: WorldFrame): WorldSpan {
+  const horizontal = gate.side === "SOUTH" || gate.side === "NORTH";
+  const from = horizontal ? tileToWorld({ x: gate.from, y: 0 }, frame).worldX : tileToWorld({ x: 0, y: gate.from }, frame).worldZ;
+  const to = horizontal ? tileToWorld({ x: gate.to, y: 0 }, frame).worldX : tileToWorld({ x: 0, y: gate.to }, frame).worldZ;
+  return from <= to ? { from, to } : { from: to, to: from };
+}
+
+/**
+ * Builds the fence from `FENCE` alone.
+ *
+ * The rectangle is centred on the middle of `FENCE.bounds` - the middle of the field the catalogue
+ * can hand out - and sized to the apron plus a small clearance, so it encloses every plot, locked or
+ * not, exactly as the config describes. Gates are subtracted from the side they name, whatever side
+ * that is, so adding a gate to the config adds both the drawn opening and the walkable one.
+ */
+export function fenceGeometry(pitch: number = DEFAULT_TILE_SIZE + DEFAULT_TILE_GAP): FenceGeometry {
+  const frame = worldFrame(pitch);
+  const center = tileToWorld(
+    { x: (FENCE.bounds.minX + FENCE.bounds.maxX) / 2, y: (FENCE.bounds.minY + FENCE.bounds.maxY) / 2 },
+    frame
+  );
+  const halfWidthWorld = ((FENCE.bounds.maxX - FENCE.bounds.minX + 1) / 2) * pitch + FENCE_CLEARANCE_WORLD;
+  const halfDepthWorld = ((FENCE.bounds.maxY - FENCE.bounds.minY + 1) / 2) * pitch + FENCE_CLEARANCE_WORLD;
+  const halfThickness = FENCE_THICKNESS_WORLD / 2;
+  const segments: FenceSegment[] = [];
+
+  for (const side of FENCE_SIDES) {
+    const horizontal = side === "SOUTH" || side === "NORTH";
+    const extent = horizontal ? halfWidthWorld : halfDepthWorld;
+    const centerAlong = horizontal ? center.worldX : center.worldZ;
+    const line =
+      side === "SOUTH"
+        ? center.worldZ + halfDepthWorld
+        : side === "NORTH"
+          ? center.worldZ - halfDepthWorld
+          : side === "WEST"
+            ? center.worldX - halfWidthWorld
+            : center.worldX + halfWidthWorld;
+    const openings = FENCE.gates.filter((gate) => gate.side === side).map((gate) => gateOpening(gate, frame));
+
+    closedSpans(centerAlong - extent, centerAlong + extent, openings).forEach((span, index) => {
+      segments.push(
+        horizontal
+          ? {
+              id: `${side.toLowerCase()}_${String(index)}`,
+              side,
+              minWorldX: span.from,
+              maxWorldX: span.to,
+              minWorldZ: line - halfThickness,
+              maxWorldZ: line + halfThickness
+            }
+          : {
+              id: `${side.toLowerCase()}_${String(index)}`,
+              side,
+              minWorldX: line - halfThickness,
+              maxWorldX: line + halfThickness,
+              minWorldZ: span.from,
+              maxWorldZ: span.to
+            }
+      );
+    });
+  }
+
+  return { centerWorldX: center.worldX, centerWorldZ: center.worldZ, halfWidthWorld, halfDepthWorld, segments };
+}
 
 /** An axis-aligned strip of ground. Paths are visual and a walkability hint; there is no pathfinding. */
 export interface PathStrip {
@@ -100,8 +229,9 @@ export const FARMHOUSE = {
 } as const;
 
 /**
- * Where a character would appear in Phase 8: on the main path, south of the fence and outside every
- * tile the farm can own, so it never starts inside a crop, a tree, a marker, or water.
+ * Where the character appears: on the main path, south of the fence and outside every tile the farm
+ * can own, so it never starts inside a crop, a tree, a marker, or water. The south gate opens onto
+ * the same line, so walking north from here enters the field.
  */
 export const SPAWN_TILE: TileCoordinate = { x: WORLD_ORIGIN_TILE_X, y: 24 };
 

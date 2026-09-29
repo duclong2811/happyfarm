@@ -82,6 +82,12 @@ static world - island, water, paths, pond, farmhouse yard, decorative scenery, a
 regions - comes from `apps/web/src/render/world-config.ts` and is client/static, never authoritative:
 land ownership stays in `farm_tiles`, and crop/tree occupancy stays in their instance rows.
 
+The local character is the same kind of thing. `apps/web/src/player/` turns key intent, a delta, and a
+depth query into the next pose; the renderer copies that pose and nothing else. No position is stored,
+sent, or read back as game state, so a tampered client can move a picture and no more. Movement is
+blocked by the static world plus the farm's own crop, tree, and terrain rows, never by a second map
+the client keeps for itself.
+
 ## Security boundary
 Everything from browser, query strings, storage, headers, HTTP body, and WebSocket messages is untrusted until validated, authenticated, and authorized server-side.
 

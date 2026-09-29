@@ -64,6 +64,11 @@ export interface SharedAssets {
   readonly ready: MeshStandardMaterial;
   readonly cropGrowing: MeshStandardMaterial;
   readonly cropMature: MeshStandardMaterial;
+  /** Placeholder avatar colours. Art replaces these; nothing reads them back. */
+  readonly playerBody: MeshStandardMaterial;
+  readonly playerLegs: MeshStandardMaterial;
+  readonly playerSkin: MeshStandardMaterial;
+  readonly playerHat: MeshStandardMaterial;
   dispose(): void;
 }
 
@@ -135,6 +140,10 @@ export function createSharedAssets(): SharedAssets {
     ready: material(standard(0xffcf3f)),
     cropGrowing: material(standard(0x6fbf7f)),
     cropMature: material(standard(0xe0b64a)),
+    playerBody: material(standard(0x3f6fd8)),
+    playerLegs: material(standard(0x39435c)),
+    playerSkin: material(standard(0xf1c7a1)),
+    playerHat: material(standard(0xd9a441)),
     dispose(): void {
       for (const item of geometries) item.dispose();
       for (const item of materials) item.dispose();

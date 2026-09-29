@@ -2,6 +2,7 @@ import { Group, Mesh, type Material } from "three";
 import type { FarmLayout } from "./layout";
 import type { SharedAssets } from "./materials";
 import type { FarmWorld, LockedPlotSquare, PondSpec } from "./world";
+import { FENCE_THICKNESS_WORLD, fenceGeometry, type FenceGeometry } from "./world-config";
 
 /**
  * Static world geometry: water, island, dirt apron, path, fence, pond, barn, and the fogged squares
@@ -17,7 +18,6 @@ export const TILE_THICKNESS = 0.09;
 
 const APRON_TOP_Y = -0.01;
 const FENCE_HEIGHT = 0.62;
-const GATE_HALF_WIDTH = 1.25;
 
 function box(assets: SharedAssets, material: Material, width: number, height: number, depth: number, x: number, y: number, z: number): Mesh {
   const mesh = new Mesh(assets.box, material);
@@ -44,8 +44,26 @@ function addIsland(group: Group, assets: SharedAssets, world: FarmWorld): void {
   group.add(grass);
 }
 
-function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld): void {
-  group.add(box(assets, assets.dirt, world.apronWidth, 0.1, world.apronDepth, 0, APRON_TOP_Y - 0.05, 0));
+/**
+ * The dirt apron under the field.
+ *
+ * Placed where the fence is, not at the world origin: the apron wraps the plots the catalogue can
+ * hand out, which is the middle of `FENCE.bounds`, not the middle of the starter plot. Taking the
+ * centre from the same derived geometry as the fence is what keeps them from drifting apart.
+ */
+function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld, fence: FenceGeometry): void {
+  group.add(
+    box(
+      assets,
+      assets.dirt,
+      world.apronWidth,
+      0.1,
+      world.apronDepth,
+      fence.centerWorldX,
+      APRON_TOP_Y - 0.05,
+      fence.centerWorldZ
+    )
+  );
   if (world.path !== null) {
     group.add(
       box(assets, assets.dirtDark, world.path.widthWorld, 0.1, world.path.depthWorld, world.path.worldX, APRON_TOP_Y - 0.05, world.path.worldZ)
@@ -108,52 +126,39 @@ function addBarn(group: Group, assets: SharedAssets, world: FarmWorld): void {
   group.add(barn);
 }
 
-interface FencePoint {
-  readonly x: number;
-  readonly z: number;
-}
+/**
+ * The fence: posts and rails along every segment the world config derives.
+ *
+ * There are no gate numbers here. A gap exists because `fenceGeometry` cut it out of the side, so
+ * the drawing cannot disagree with what the player can walk through.
+ */
+function addFence(group: Group, assets: SharedAssets, fence: FenceGeometry, postSpacing: number): void {
+  for (const segment of fence.segments) {
+    const horizontal = segment.side === "SOUTH" || segment.side === "NORTH";
+    const from = horizontal ? segment.minWorldX : segment.minWorldZ;
+    const to = horizontal ? segment.maxWorldX : segment.maxWorldZ;
+    const line = horizontal
+      ? (segment.minWorldZ + segment.maxWorldZ) / 2
+      : (segment.minWorldX + segment.maxWorldX) / 2;
+    const length = to - from;
+    if (length <= 0) continue;
+    const middle = (from + to) / 2;
 
-function addFenceLine(group: Group, assets: SharedAssets, points: readonly FencePoint[], alongX: boolean): void {
-  for (const point of points) {
-    group.add(box(assets, assets.wood, 0.1, FENCE_HEIGHT, 0.1, point.x, FENCE_HEIGHT / 2, point.z));
-  }
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const from = points[index];
-    const to = points[index + 1];
-    if (from === undefined || to === undefined) continue;
-    const length = Math.hypot(to.x - from.x, to.z - from.z);
-    if (length > 3) continue;
-    const midX = (from.x + to.x) / 2;
-    const midZ = (from.z + to.z) / 2;
     for (const height of [0.28, 0.46]) {
-      const rail = box(assets, assets.wood, alongX ? length : 0.07, 0.07, alongX ? 0.07 : length, midX, height, midZ);
-      group.add(rail);
+      group.add(
+        horizontal
+          ? box(assets, assets.wood, length, 0.07, FENCE_THICKNESS_WORLD, middle, height, line)
+          : box(assets, assets.wood, FENCE_THICKNESS_WORLD, 0.07, length, line, height, middle)
+      );
+    }
+
+    // Posts every pitch, plus one at each end, so a gate is framed by two posts.
+    const spacings = Math.max(1, Math.round(length / postSpacing));
+    for (let index = 0; index <= spacings; index += 1) {
+      const at = from + (length * index) / spacings;
+      group.add(box(assets, assets.wood, 0.1, FENCE_HEIGHT, 0.1, horizontal ? at : line, FENCE_HEIGHT / 2, horizontal ? line : at));
     }
   }
-}
-
-function addFence(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
-  const halfWidth = world.apronWidth / 2 + 0.18;
-  const halfDepth = world.apronDepth / 2 + 0.18;
-  const step = layout.pitch;
-  const south: FencePoint[] = [];
-  const north: FencePoint[] = [];
-  const west: FencePoint[] = [];
-  const east: FencePoint[] = [];
-
-  for (let x = -halfWidth; x <= halfWidth + 0.001; x += step) {
-    if (Math.abs(x) > GATE_HALF_WIDTH) south.push({ x, z: halfDepth });
-    north.push({ x, z: -halfDepth });
-  }
-  for (let z = -halfDepth; z <= halfDepth + 0.001; z += step) {
-    west.push({ x: -halfWidth, z });
-    if (Math.abs(z) > GATE_HALF_WIDTH) east.push({ x: halfWidth, z });
-  }
-
-  addFenceLine(group, assets, south, true);
-  addFenceLine(group, assets, north, true);
-  addFenceLine(group, assets, west, false);
-  addFenceLine(group, assets, east, false);
 }
 
 function addLockMarker(group: Group, assets: SharedAssets, plot: LockedPlotSquare): void {
@@ -178,9 +183,12 @@ function addLockedPlots(group: Group, assets: SharedAssets, world: FarmWorld): v
 }
 
 export function buildTerrain(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
+  // The fence is derived from the world config and the tile pitch, exactly as the player's collision
+  // is: one description, drawn here, walked around there.
+  const fence = fenceGeometry(layout.pitch);
   addIsland(group, assets, world);
-  addFieldGround(group, assets, world);
-  addFence(group, assets, world, layout);
+  addFieldGround(group, assets, world, fence);
+  addFence(group, assets, fence, layout.pitch);
   if (world.pond !== null) addPond(group, assets, world.pond);
   addBarn(group, assets, world);
 }
