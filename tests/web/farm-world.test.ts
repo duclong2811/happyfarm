@@ -8,8 +8,8 @@ import {
   plotRing,
   plotSquare,
   previewLockedPlots,
-  WORLD_MARGIN_TILES
 } from "../../apps/web/src/render/world";
+import { VISUAL_BOUNDS } from "../../apps/web/src/render/world-config";
 
 function plot(plotIndex: number, unlocked: boolean): PlotDTO {
   return {
@@ -107,18 +107,42 @@ describe("buildFarmWorld", () => {
     expect(world.barn).toBeNull();
   });
 
-  it("sizes the island around the land plus the locked ring and a grass margin", () => {
+  it("sizes the island from the fixed world config, not from how much land is owned", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
     expect(world.inner).toEqual({ minX: 0, maxX: 5, minY: 0, maxY: 5 });
     expect(world.outer).toEqual({ minX: 0, maxX: 11, minY: 0, maxY: 11 });
     expect(world.lockedPlots.map((entry) => entry.plotIndex)).toEqual([1, 2, 3]);
-    // Outer land is 12 tiles plus a 5-tile margin on each side, in tile pitches.
-    expect(world.islandHalfWidthWorld).toBeCloseTo((6 + WORLD_MARGIN_TILES) * 1.08, 6);
-    expect(world.islandHalfDepthWorld).toBeCloseTo((6 + WORLD_MARGIN_TILES) * 1.08, 6);
-    expect(world.apronWidth).toBeGreaterThan(12);
+    // The static world is a function of the config, in tile pitches, and the island is one tile wider
+    // on each side than the reserved field is with the locked ring previewed.
+    expect(world.islandHalfWidthWorld).toBeCloseTo(
+      ((VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2) * 1.08,
+      6
+    );
+    expect(world.islandHalfDepthWorld).toBeCloseTo(
+      ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2) * 1.08,
+      6
+    );
     expect(world.path).not.toBeNull();
     expect(world.pond).not.toBeNull();
     expect(world.barn).not.toBeNull();
+  });
+
+  it("keeps the whole static world fixed when the farm grows", () => {
+    // Phase 7's acceptance test: buying land must not move the world underneath the player.
+    const small = worldFor(starterTiles(), CATALOGUE);
+    const grownTiles = [...starterTiles(), ...plotTileCoordinates(1), ...plotTileCoordinates(2)];
+    const grown = worldFor(grownTiles, [plot(1, true), plot(2, true), ...CATALOGUE.slice(2)]);
+
+    expect(grown.inner).not.toEqual(small.inner);
+    expect(grown.islandHalfWidthWorld).toBe(small.islandHalfWidthWorld);
+    expect(grown.islandHalfDepthWorld).toBe(small.islandHalfDepthWorld);
+    expect(grown.apronWidth).toBe(small.apronWidth);
+    expect(grown.centerWorldX).toBe(small.centerWorldX);
+    expect(grown.centerWorldZ).toBe(small.centerWorldZ);
+    expect(grown.pond).toEqual(small.pond);
+    expect(grown.barn).toEqual(small.barn);
+    expect(grown.path).toEqual(small.path);
+    expect(grown.scenery).toEqual(small.scenery);
   });
 
   it("lays locked plot squares outside the unlocked field", () => {

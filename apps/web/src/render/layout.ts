@@ -12,6 +12,18 @@ export const MIN_TILE_SIZE = 0.05;
 export const MAX_TILE_SIZE = 100;
 export const MAX_TILE_GAP = 100;
 
+/**
+ * The fixed world origin: the centre of the starter land.
+ *
+ * Land grows outward from the 6x6 starter square at tiles (0..5, 0..5), so the centre of that square
+ * is the one point the farm never moves. Anchoring the world here - rather than on the centre of
+ * whatever land happens to be unlocked - is what makes a tile's world position a property of the tile
+ * instead of a property of how much land the player owns. Unlocking a plot must never move a crop, a
+ * tree, the scenery, the spawn, or (in Phase 8) the player.
+ */
+export const WORLD_ORIGIN_TILE_X = 2.5;
+export const WORLD_ORIGIN_TILE_Y = 2.5;
+
 /** An authoritative tile coordinate, as returned by `GET /farms/:farmId/tiles`. */
 export interface TileCoordinate {
   readonly x: number;
@@ -25,6 +37,43 @@ export interface TilePlacement {
   readonly worldZ: number;
 }
 
+/** The one mapping between authoritative tile coordinates and world metres. */
+export interface WorldFrame {
+  readonly originTileX: number;
+  readonly originTileY: number;
+  readonly pitch: number;
+}
+
+export function worldFrame(pitch: number = DEFAULT_TILE_SIZE + DEFAULT_TILE_GAP): WorldFrame {
+  return { originTileX: WORLD_ORIGIN_TILE_X, originTileY: WORLD_ORIGIN_TILE_Y, pitch };
+}
+
+/** Where a tile's coordinate sits in the world. Tile (-)x is to the west, +y is to the south. */
+export function tileToWorld(
+  tile: TileCoordinate,
+  frame: WorldFrame
+): { readonly worldX: number; readonly worldZ: number } {
+  return {
+    worldX: (tile.x - frame.originTileX) * frame.pitch,
+    worldZ: (tile.y - frame.originTileY) * frame.pitch
+  };
+}
+
+/**
+ * The tile a world position falls in: the nearest tile coordinate, because a tile is drawn centred
+ * on its coordinate. The half-tile shift is applied in integers so a click exactly on a boundary
+ * resolves the same way every time instead of depending on floating-point rounding.
+ */
+export function worldToTile(
+  world: { readonly worldX: number; readonly worldZ: number },
+  frame: WorldFrame
+): TileCoordinate {
+  return {
+    x: Math.floor(world.worldX / frame.pitch + frame.originTileX + 0.5),
+    y: Math.floor(world.worldZ / frame.pitch + frame.originTileY + 0.5)
+  };
+}
+
 export interface FarmLayout {
   readonly tileSize: number;
   readonly tileGap: number;
@@ -32,6 +81,14 @@ export interface FarmLayout {
   /** Tile coordinate the world origin sits on. Set by `frame` so land and scenery share one frame. */
   readonly centerTileX: number;
   readonly centerTileY: number;
+  /**
+   * World position of the framed land's centre, for camera framing only.
+   *
+   * This is a convenience for pointing a camera at the farm; it is deliberately *not* the origin the
+   * tile mapping uses, so zoom, pan, and framing can never change where a tile is.
+   */
+  readonly frameCenterWorldX: number;
+  readonly frameCenterWorldZ: number;
   readonly columns: number;
   readonly rows: number;
   /** Extent of the tile area, excluding any ground margin the renderer adds around it. */
@@ -122,12 +179,14 @@ export function layoutFarmTiles(
   const centerTileY = frame === undefined
     ? ordered.length === 0 ? 0 : (minY + maxY) / 2
     : (frame.minY + frame.maxY) / 2;
+  // The fixed frame, not the framed centre: a tile keeps its world position for the farm's life.
+  const mapping = worldFrame(pitch);
   const placements = ordered.map((tile) => ({
     tileX: tile.x,
     tileY: tile.y,
-    worldX: (tile.x - centerTileX) * pitch,
-    worldZ: (tile.y - centerTileY) * pitch
+    ...tileToWorld(tile, mapping)
   }));
+  const frameCenter = tileToWorld({ x: centerTileX, y: centerTileY }, mapping);
 
   return {
     tileSize,
@@ -135,6 +194,8 @@ export function layoutFarmTiles(
     pitch,
     centerTileX,
     centerTileY,
+    frameCenterWorldX: frameCenter.worldX,
+    frameCenterWorldZ: frameCenter.worldZ,
     columns,
     rows,
     tileAreaWidth: columns === 0 ? 0 : columns * pitch - tileGap,
@@ -148,8 +209,5 @@ export function worldPositionInLayout(
   layout: FarmLayout,
   tile: TileCoordinate
 ): { readonly worldX: number; readonly worldZ: number } {
-  return {
-    worldX: (tile.x - layout.centerTileX) * layout.pitch,
-    worldZ: (tile.y - layout.centerTileY) * layout.pitch
-  };
+  return tileToWorld(tile, worldFrame(layout.pitch));
 }

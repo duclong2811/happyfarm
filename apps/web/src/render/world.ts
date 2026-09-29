@@ -1,5 +1,13 @@
 import type { PlotDTO } from "@happy-farm/contracts";
 import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
+import { tileToWorld, worldFrame, WORLD_ORIGIN_TILE_X, WORLD_ORIGIN_TILE_Y } from "./layout";
+import {
+  FARMHOUSE,
+  FENCE,
+  PATHS,
+  POND,
+  VISUAL_BOUNDS
+} from "./world-config";
 
 /**
  * Pure world geometry around the farm field.
@@ -74,6 +82,9 @@ export interface FarmWorld {
   readonly path: PathSpec | null;
   readonly islandHalfWidthWorld: number;
   readonly islandHalfDepthWorld: number;
+  /** World centre of the static world, for camera framing only. Never a coordinate origin. */
+  readonly centerWorldX: number;
+  readonly centerWorldZ: number;
 }
 
 export interface BuildWorldInput {
@@ -93,7 +104,9 @@ const EMPTY_WORLD: FarmWorld = {
   barn: null,
   path: null,
   islandHalfWidthWorld: 0,
-  islandHalfDepthWorld: 0
+  islandHalfDepthWorld: 0,
+  centerWorldX: 0,
+  centerWorldZ: 0
 };
 
 /** The concentric ring a plot index belongs to. Mirrors `plotRing` in the domain. */
@@ -203,7 +216,7 @@ const MAX_SCENERY = 120;
  */
 function buildScenery(
   layout: FarmLayout,
-  outer: TileBounds,
+  excludedField: TileBounds,
   pondTileX: number,
   pondTileY: number,
   pondRadiusTileX: number,
@@ -212,8 +225,9 @@ function buildScenery(
   barnTileY: number
 ): SceneryInstance[] {
   const rand = mulberry32(SCENERY_SEED);
-  const halfWidth = (outer.maxX - outer.minX + 1) / 2 + WORLD_MARGIN_TILES;
-  const halfDepth = (outer.maxY - outer.minY + 1) / 2 + WORLD_MARGIN_TILES;
+  // The island is fixed, so the ellipse scenery inhabits is fixed too: buying land cannot move it.
+  const halfWidth = (VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2;
+  const halfDepth = (VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2;
   const scenery: SceneryInstance[] = [];
 
   for (let gy = -SCENERY_LATTICE; gy <= SCENERY_LATTICE; gy += 1) {
@@ -228,20 +242,22 @@ function buildScenery(
 
       if (scenery.length >= MAX_SCENERY) continue;
 
-      const tileX = gx + jitterX * 0.7;
-      const tileY = gy + jitterY * 0.7;
-      const relativeX = tileX - layout.centerTileX;
-      const relativeY = tileY - layout.centerTileY;
+      // The lattice is anchored to the fixed world origin, never to the framed land, so buying a plot
+      // cannot shuffle the scenery the player already saw.
+      const tileX = WORLD_ORIGIN_TILE_X + gx + jitterX * 0.7;
+      const tileY = WORLD_ORIGIN_TILE_Y + gy + jitterY * 0.7;
+      const relativeX = tileX - WORLD_ORIGIN_TILE_X;
+      const relativeY = tileY - WORLD_ORIGIN_TILE_Y;
 
       const normalX = relativeX / (halfWidth - 0.8);
       const normalY = relativeY / (halfDepth - 0.8);
       if (normalX * normalX + normalY * normalY > 0.92) continue;
 
       if (
-        tileX >= outer.minX - 1.2 &&
-        tileX <= outer.maxX + 1.2 &&
-        tileY >= outer.minY - 1.2 &&
-        tileY <= outer.maxY + 1.2
+        tileX >= excludedField.minX - 1.2 &&
+        tileX <= excludedField.maxX + 1.2 &&
+        tileY >= excludedField.minY - 1.2 &&
+        tileY <= excludedField.maxY + 1.2
       ) {
         continue;
       }
@@ -254,10 +270,11 @@ function buildScenery(
 
       const kind: SceneryKind =
         kindRoll < 0.26 ? "tree" : kindRoll < 0.48 ? "pine" : kindRoll < 0.7 ? "bush" : kindRoll < 0.87 ? "rock" : "flower";
+      const position = tileToWorld({ x: tileX, y: tileY }, worldFrame(layout.pitch));
       scenery.push({
         kind,
-        worldX: relativeX * layout.pitch,
-        worldZ: relativeY * layout.pitch,
+        worldX: position.worldX,
+        worldZ: position.worldZ,
         scale: 0.85 + scaleRoll * 0.5,
         rotationY: rotationRoll * Math.PI * 2
       });
@@ -274,36 +291,48 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
   }
   if (outer === null) return EMPTY_WORLD;
 
-  const centerTileX = (outer.minX + outer.maxX) / 2;
-  const centerTileY = (outer.minY + outer.maxY) / 2;
-  const halfWidthTiles = (outer.maxX - outer.minX + 1) / 2;
-  const halfDepthTiles = (outer.maxY - outer.minY + 1) / 2;
-  const islandHalfWidthTiles = halfWidthTiles + WORLD_MARGIN_TILES;
-  const islandHalfDepthTiles = halfDepthTiles + WORLD_MARGIN_TILES;
+  // Everything static is a function of the world config alone: the island, the yard, the pond, and
+  // the paths keep their world positions while plots are bought, so the static layer never rebuilds
+  // because the farm grew. Only `inner`/`outer`/`lockedPlots` below follow progression.
+  const mapping = worldFrame(input.layout.pitch);
+  const halfWidthTiles = (VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2;
+  const halfDepthTiles = (VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2;
+  const centerTileX = (VISUAL_BOUNDS.minX + VISUAL_BOUNDS.maxX) / 2;
+  const centerTileY = (VISUAL_BOUNDS.minY + VISUAL_BOUNDS.maxY) / 2;
+  const centerWorld = tileToWorld({ x: centerTileX, y: centerTileY }, mapping);
 
   const lockedPlots: LockedPlotSquare[] = previewLockedPlots(input.plots).map((plot) => {
     const square = plotSquare(plot.plotIndex);
+    const centre = tileToWorld(
+      { x: (square.minX + square.maxX) / 2, y: (square.minY + square.maxY) / 2 },
+      mapping
+    );
     return {
       ...square,
-      centerWorldX: ((square.minX + square.maxX) / 2 - centerTileX) * input.layout.pitch,
-      centerWorldZ: ((square.minY + square.maxY) / 2 - centerTileY) * input.layout.pitch,
+      centerWorldX: centre.worldX,
+      centerWorldZ: centre.worldZ,
       sizeWorld: PLOT_TILE_SIZE * input.layout.pitch
     };
   });
 
-  // Pond and barn sit in opposite island corners, outside the playable land.
-  const pondTileX = outer.minX - 2.6;
-  const pondTileY = (outer.minY + outer.maxY) / 2;
-  const pondRadiusTileX = 2;
-  const pondRadiusTileY = 1.7;
-  const barnTileX = outer.maxX + 2.6;
-  const barnTileY = (outer.minY + outer.maxY) / 2;
+  // The pond, the yard, and the main path are reserved zones from the world config, not positions
+  // derived from how much land exists.
+  const pondCentre = tileToWorld(POND.center, mapping);
+  const yardCentre = tileToWorld(FARMHOUSE.center, mapping);
+  const mainPath = PATHS[0];
+  const pathCentre =
+    mainPath === undefined
+      ? null
+      : tileToWorld(
+          {
+            x: (mainPath.bounds.minX + mainPath.bounds.maxX) / 2,
+            y: (mainPath.bounds.minY + mainPath.bounds.maxY) / 2
+          },
+          mapping
+        );
 
-  const apronWidth = (outer.maxX - outer.minX + 1) * input.layout.pitch + 1.2;
-  const apronDepth = (outer.maxY - outer.minY + 1) * input.layout.pitch + 1.2;
-  const southEdgeWorld = outer.maxY + 0.5 - centerTileY;
-  const pathTop = southEdgeWorld * input.layout.pitch;
-  const pathBottom = islandHalfDepthTiles * input.layout.pitch;
+  const apronWidth = (FENCE.bounds.maxX - FENCE.bounds.minX + 1) * input.layout.pitch;
+  const apronDepth = (FENCE.bounds.maxY - FENCE.bounds.minY + 1) * input.layout.pitch;
 
   return {
     inner,
@@ -313,32 +342,37 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     lockedPlots,
     scenery: buildScenery(
       input.layout,
-      outer,
-      pondTileX,
-      pondTileY,
-      pondRadiusTileX,
-      pondRadiusTileY,
-      barnTileX,
-      barnTileY
+      FENCE.bounds,
+      POND.center.x,
+      POND.center.y,
+      POND.radiusX,
+      POND.radiusY,
+      FARMHOUSE.center.x,
+      FARMHOUSE.center.y
     ),
     pond: {
-      worldX: (pondTileX - centerTileX) * input.layout.pitch,
-      worldZ: (pondTileY - centerTileY) * input.layout.pitch,
-      radiusWorldX: pondRadiusTileX * input.layout.pitch,
-      radiusWorldZ: pondRadiusTileY * input.layout.pitch
+      worldX: pondCentre.worldX,
+      worldZ: pondCentre.worldZ,
+      radiusWorldX: POND.radiusX * input.layout.pitch,
+      radiusWorldZ: POND.radiusY * input.layout.pitch
     },
     barn: {
-      worldX: (barnTileX - centerTileX) * input.layout.pitch,
-      worldZ: (barnTileY - centerTileY) * input.layout.pitch,
-      rotationY: Math.PI * 0.75
+      worldX: yardCentre.worldX,
+      worldZ: yardCentre.worldZ,
+      rotationY: FARMHOUSE.rotationY
     },
-    path: {
-      worldX: 0,
-      worldZ: (pathTop + pathBottom) / 2,
-      widthWorld: 2.1 * input.layout.pitch,
-      depthWorld: Math.max(0, pathBottom - pathTop)
-    },
-    islandHalfWidthWorld: islandHalfWidthTiles * input.layout.pitch,
-    islandHalfDepthWorld: islandHalfDepthTiles * input.layout.pitch
+    path:
+      mainPath === undefined || pathCentre === null
+        ? null
+        : {
+            worldX: pathCentre.worldX,
+            worldZ: pathCentre.worldZ,
+            widthWorld: (mainPath.bounds.maxX - mainPath.bounds.minX) * input.layout.pitch + input.layout.tileSize,
+            depthWorld: (mainPath.bounds.maxY - mainPath.bounds.minY) * input.layout.pitch + input.layout.tileSize
+          },
+    islandHalfWidthWorld: halfWidthTiles * input.layout.pitch,
+    islandHalfDepthWorld: halfDepthTiles * input.layout.pitch,
+    centerWorldX: centerWorld.worldX,
+    centerWorldZ: centerWorld.worldZ
   };
 }

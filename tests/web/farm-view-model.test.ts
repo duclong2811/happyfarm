@@ -186,7 +186,9 @@ describe("buildFarmSceneInput", () => {
     );
     expect(input.layout.columns).toBe(3);
     expect(input.layout.rows).toBe(4);
-    expect(tileAt(input, 0)).toMatchObject({ worldX: -PITCH, worldZ: -1.5 * PITCH });
-    expect(tileAt(input, 1)).toMatchObject({ worldX: 0, worldZ: -1.5 * PITCH });
+    // The origin is the starter land's centre, not the centre of whatever land is unlocked, so these
+    // positions do not depend on how much of the farm exists yet.
+    expect(tileAt(input, 0)).toMatchObject({ worldX: -2.5 * PITCH, worldZ: -2.5 * PITCH });
+    expect(tileAt(input, 1)).toMatchObject({ worldX: -1.5 * PITCH, worldZ: -2.5 * PITCH });
   });
 });

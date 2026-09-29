@@ -65,8 +65,9 @@ describe("layoutFarmTiles", () => {
     const layout = layoutFarmTiles([{ x: 2, y: 3 }, { x: 2, y: 3 }, { x: 2, y: 3 }]);
     expect(layout.columns).toBe(1);
     expect(layout.rows).toBe(1);
+    // The fixed origin sits at the starter land's centre, so a tile's world position is its own.
     expect(layout.placements).toEqual([
-      { tileX: 2, tileY: 3, worldX: 0, worldZ: 0 }
+      { tileX: 2, tileY: 3, worldX: (2 - 2.5) * PITCH, worldZ: (3 - 2.5) * PITCH }
     ]);
   });
 
@@ -83,15 +84,18 @@ describe("layoutFarmTiles", () => {
     expect(layout.tileSize).toBe(2);
     expect(layout.tileGap).toBe(0);
     expect(layout.tileAreaWidth).toBe(4);
-    expect(layout.placements.map((placement) => placement.worldX)).toEqual([-1, 1]);
+    expect(layout.placements.map((placement) => placement.worldX)).toEqual([
+      (0 - 2.5) * 2,
+      (1 - 2.5) * 2
+    ]);
   });
 
   it("lays out negative X and Y coordinates without changing their world-axis direction", () => {
     const layout = layoutFarmTiles([{ x: -2, y: -3 }, { x: 2, y: 1 }]);
     expect(layout).toMatchObject({ columns: 5, rows: 5, centerTileX: 0, centerTileY: -1 });
     expect(layout.placements).toEqual([
-      { tileX: -2, tileY: -3, worldX: -2 * PITCH, worldZ: -2 * PITCH },
-      { tileX: 2, tileY: 1, worldX: 2 * PITCH, worldZ: 2 * PITCH }
+      { tileX: -2, tileY: -3, worldX: (-2 - 2.5) * PITCH, worldZ: (-3 - 2.5) * PITCH },
+      { tileX: 2, tileY: 1, worldX: (2 - 2.5) * PITCH, worldZ: (1 - 2.5) * PITCH }
     ]);
   });
 

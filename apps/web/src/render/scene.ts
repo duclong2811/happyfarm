@@ -24,7 +24,7 @@ import { createSharedAssets, tileMaterial, type SharedAssets } from "./materials
 import { CROP_MODEL_URLS } from "./model-urls";
 import { ENVIRONMENT_MODEL_URLS } from "./environment-model-urls";
 import { buildScenery, type SceneryKind } from "./scenery";
-import { buildTerrain, TILE_THICKNESS } from "./terrain";
+import { buildLockedPlotOverlay, buildTerrain, TILE_THICKNESS } from "./terrain";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
 
@@ -221,7 +221,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const tileGroup = new Group();
   const cropGroup = new Group();
   const treeGroup = new Group();
-  scene.add(worldGroup, tileGroup, cropGroup, treeGroup);
+  // The overlay follows progression (locked land changes when a plot is bought), so it is rebuilt
+  // with the dynamic layer instead of living in the static cache.
+  const overlayGroup = new Group();
+  scene.add(worldGroup, tileGroup, cropGroup, treeGroup, overlayGroup);
 
   scene.add(new HemisphereLight(0xdfefff, 0x4a6a3f, 1.15));
   scene.add(new AmbientLight(0xffffff, 0.45));
@@ -349,9 +352,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function updateCamera(): void {
+    // Panning stays near the world's centre, whichever way the player has framed the farm.
     const limit = worldExtent * PAN_LIMIT_FACTOR;
-    targetX = clamp(targetX, -limit, limit);
-    targetZ = clamp(targetZ, -limit, limit);
+    targetX = clamp(targetX, state.world.centerWorldX - limit, state.world.centerWorldX + limit);
+    targetZ = clamp(targetZ, state.world.centerWorldZ - limit, state.world.centerWorldZ + limit);
     const distance = cameraDistance();
     camera.position.set(
       targetX + CAMERA_DIRECTION.x * distance,
@@ -407,14 +411,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
 
   function signatureOf(input: FarmSceneInput): string {
     const world = input.world;
+    // Only the static world's own identity belongs here. Locked plots and the land bounds follow
+    // progression, so they are drawn in their own overlay group: buying a plot must not rebuild the
+    // island, the pond, the yard, or a single rock.
     return [
-      world.outer?.minX ?? "x",
-      world.outer?.maxX ?? "x",
-      world.outer?.minY ?? "x",
-      world.outer?.maxY ?? "x",
       world.islandHalfWidthWorld.toFixed(3),
       world.islandHalfDepthWorld.toFixed(3),
-      world.lockedPlots.map((plot) => `${String(plot.plotIndex)}:${String(plot.minX)},${String(plot.minY)}`).join("|")
+      world.centerWorldX.toFixed(3),
+      world.centerWorldZ.toFixed(3)
     ].join(";");
   }
 
@@ -428,14 +432,17 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       buildScenery(worldGroup, assets, next.world.scenery, sceneryModels);
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
       zoom = 1;
-      targetX = 0;
-      targetZ = 0;
+      // The camera frames the fixed world's centre; the tile mapping does not depend on it.
+      targetX = next.world.centerWorldX;
+      targetZ = next.world.centerWorldZ;
       scene.fog = new Fog(SKY_COLOR, worldExtent * 1.35, worldExtent * 3.9);
     }
 
     tileGroup.clear();
     cropGroup.clear();
     treeGroup.clear();
+    overlayGroup.clear();
+    buildLockedPlotOverlay(overlayGroup, assets, next.world);
     pickTargets.clear();
 
     for (const tile of state.tiles) {
@@ -607,6 +614,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       tileGroup.clear();
       cropGroup.clear();
       treeGroup.clear();
+      overlayGroup.clear();
       pickTargets.clear();
       for (const variants of models.values()) {
         disposeModelResources(variants.growing);

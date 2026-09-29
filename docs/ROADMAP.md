@@ -143,6 +143,11 @@ ready, remove, replay safety, and unauthorized removal; plus all repository gate
 
 ## Phase 7 - Buildings and animals
 
+Status note: the **world/map foundation** for this phase landed first (fixed world coordinates, static
+regions, paths, spawn, and walkability preparation) - see
+`docs/decisions/0015-fixed-world-coordinates-and-static-farm-regions.md`. Buildings and animals
+themselves are **not implemented**; the reserved regions are visual space only.
+
 Goal: the farm earns while the player is away without one timer per animal.
 
 Player-facing result: buy and place a coop or barn, put animals inside, feed them, and collect eggs

@@ -183,5 +183,14 @@ export function buildTerrain(group: Group, assets: SharedAssets, world: FarmWorl
   addFence(group, assets, world, layout);
   if (world.pond !== null) addPond(group, assets, world.pond);
   addBarn(group, assets, world);
+}
+
+/**
+ * The locked-land overlay: the ring of plots the farm does not own yet.
+ *
+ * Kept out of `buildTerrain` because it is a projection of progression rather than of the static
+ * world: buying a plot changes this layer and must leave the island untouched.
+ */
+export function buildLockedPlotOverlay(group: Group, assets: SharedAssets, world: FarmWorld): void {
   addLockedPlots(group, assets, world);
 }

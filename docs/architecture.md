@@ -74,6 +74,14 @@ Durable Objects: active presence, ordered farm commands, WebSocket sessions, tem
 ## Rendering boundary
 Server stores logical entities and coordinates. Renderer maps logical state to Three.js objects. Changing models/materials/UI must not require gameplay migrations.
 
+The client's world is anchored to a **fixed coordinate frame**: the centre of the starter land is world
+origin for the life of the farm, and `apps/web/src/render/layout.ts` owns the only tile-to-world
+mapping. Camera framing, zoom, and pan are separate concerns and can never change a tile's world
+position, so unlocking land does not move crops, trees, scenery, the spawn, or (later) the player. The
+static world - island, water, paths, pond, farmhouse yard, decorative scenery, and the reserved future
+regions - comes from `apps/web/src/render/world-config.ts` and is client/static, never authoritative:
+land ownership stays in `farm_tiles`, and crop/tree occupancy stays in their instance rows.
+
 ## Security boundary
 Everything from browser, query strings, storage, headers, HTTP body, and WebSocket messages is untrusted until validated, authenticated, and authorized server-side.
 

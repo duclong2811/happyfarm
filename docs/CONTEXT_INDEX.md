@@ -94,6 +94,25 @@ plant today, and no route accepts a level, an experience total, or a crop requir
 
 ## Trees and repeating harvests (Phase 6)
 
+## Farm world and map foundation (Phase 7)
+
+Read `docs/decisions/0015-fixed-world-coordinates-and-static-farm-regions.md` before editing world
+layout, world coordinates, regions, paths, the spawn, or walkability.
+
+- The canonical mapping: `apps/web/src/render/layout.ts` (`worldFrame`, `tileToWorld`, `worldToTile`,
+  fixed origin at the starter land's centre). Every module must use it; do not reintroduce a formula
+  that depends on the currently unlocked land.
+- Static world definitions: `apps/web/src/render/world-config.ts` (visual bounds, reserved regions,
+  fence and gates, paths, pond, farmhouse yard, spawn, static obstacles, walkability queries).
+- Static geometry: `apps/web/src/render/world.ts` and `apps/web/src/render/terrain.ts`. Static layers
+  are a function of the config alone; locked land is a progression overlay and is rebuilt with the
+  dynamic layer.
+- Tests: `tests/web/farm-world-config.test.ts` (coordinates, round-trip, config validity,
+  walkability) and `tests/web/farm-world.test.ts` (the world does not move when the farm grows).
+
+Regions are client/static and visual only: they are not domain concepts, not D1 rows, and never gate
+gameplay. Land authority stays `farm_tiles` plus the plot catalogue.
+
 Read `docs/decisions/0014-trees-and-repeating-harvests.md` before editing tree definitions, the
 repeating cycle, cross-occupancy, or either tree settlement.
 
