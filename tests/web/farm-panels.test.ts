@@ -1,50 +1,61 @@
 import { describe, expect, it } from "vitest";
 import {
+  closePanel,
   crossesPanelBreakpoint,
-  FOLDED_PANELS,
-  OPEN_PANELS,
+  MODULES,
+  NO_PANEL,
+  openPanel,
   PANEL_BREAKPOINT_PX,
-  panelStateForWidth,
-  toggledPanel
+  defaultPanelState,
+  togglePanel
 } from "../../apps/web/src/panels";
 
-describe("farm HUD panel policy", () => {
-  it("opens both panels on a desktop viewport", () => {
-    for (const width of [1280, 1440, 1920]) {
-      expect(panelStateForWidth(width), String(width)).toEqual(OPEN_PANELS);
+describe("farm module architecture", () => {
+  it("starts with no panel open, on every viewport", () => {
+    for (const width of [390, 768, 1024, 1440, 1920]) {
+      expect(defaultPanelState(), String(width)).toEqual(NO_PANEL);
     }
+    expect(defaultPanelState()).toEqual(NO_PANEL);
   });
 
-  it("folds both panels on a phone or a tablet held upright", () => {
-    for (const width of [360, 390, 430, 768, PANEL_BREAKPOINT_PX]) {
-      expect(panelStateForWidth(width), String(width)).toEqual(FOLDED_PANELS);
-    }
+  it("opens one module at a time, replacing whatever was open", () => {
+    const inventory = openPanel(NO_PANEL, "inventory");
+    expect(inventory).toEqual({ active: "inventory" });
+    const market = openPanel(inventory, "market");
+    expect(market).toEqual({ active: "market" });
+    // Never two: the state cannot represent "inventory and market both open".
+    expect(Object.keys(market)).toEqual(["active"]);
   });
 
-  it("keeps a tablet in landscape open, because it has the width for the columns", () => {
-    expect(panelStateForWidth(1024)).toEqual(OPEN_PANELS);
+  it("closes the active module and tolerates closing when nothing is open", () => {
+    expect(closePanel({ active: "market" })).toEqual(NO_PANEL);
+    expect(closePanel(NO_PANEL)).toEqual(NO_PANEL);
   });
 
-  it("only re-applies defaults when a resize crosses the breakpoint", () => {
-    // Shrinking from a laptop to a phone crosses it; a window that grows or shrinks a little does
-    // not, so a panel the player just folded stays folded.
+  it("toggles a module from its own launcher without touching the other", () => {
+    expect(togglePanel(NO_PANEL, "inventory")).toEqual({ active: "inventory" });
+    expect(togglePanel({ active: "inventory" }, "inventory")).toEqual(NO_PANEL);
+    expect(togglePanel({ active: "inventory" }, "market")).toEqual({ active: "market" });
+  });
+
+  it("closes the open panel when a resize crosses the breakpoint", () => {
+    // The presentation changes at the breakpoint, so the panel closes instead of half-adapting.
     expect(crossesPanelBreakpoint(1440, 390)).toBe(true);
     expect(crossesPanelBreakpoint(390, 1440)).toBe(true);
     expect(crossesPanelBreakpoint(1450, 1280)).toBe(false);
     expect(crossesPanelBreakpoint(390, 360)).toBe(false);
+    // The breakpoint itself is still narrow, so stepping just past it is a crossing.
+    expect(crossesPanelBreakpoint(PANEL_BREAKPOINT_PX, PANEL_BREAKPOINT_PX + 1)).toBe(true);
   });
 
-  it("treats a nonsense width as a narrow one rather than as a crash", () => {
-    expect(panelStateForWidth(Number.NaN)).toEqual(FOLDED_PANELS);
-  });
-
-  it("flips one panel without disturbing the other", () => {
-    const foldedMarket = toggledPanel(OPEN_PANELS, "market");
-    expect(foldedMarket).toEqual({ market: false, inventory: true });
-    expect(toggledPanel(foldedMarket, "market")).toEqual(OPEN_PANELS);
-    const foldedBag = toggledPanel(OPEN_PANELS, "inventory");
-    expect(foldedBag).toEqual({ market: true, inventory: false });
-    // A new object every time: the panel state is replaced, never mutated in place.
-    expect(toggledPanel(OPEN_PANELS, "market")).not.toBe(OPEN_PANELS);
+  it("describes every module with unique ids, so a new module is one registry entry", () => {
+    const ids = MODULES.map((module) => module.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const elementIds = MODULES.flatMap((module) => [module.panelId, module.bodyId, module.launcherId, module.closeId]);
+    expect(new Set(elementIds).size).toBe(elementIds.length);
+    for (const module of MODULES) {
+      expect(module.glyph.length).toBeGreaterThan(0);
+      expect(module.labelKey).toMatch(/^[a-z]+(\.[a-z]+)+$/);
+    }
   });
 });

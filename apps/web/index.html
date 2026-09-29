@@ -4,39 +4,59 @@
   <body>
     <main class="game-shell"><section class="world" aria-label="Farm world">
       <canvas id="scene" class="scene" width="1440" height="900"></canvas><div class="world-vignette"></div>
+
       <header id="top-hud" class="top-hud">
-        <div class="brand"><span class="brand-mark">🌱</span><div><h1>Happy Farm</h1><p id="farm-info">Preparing your farm…</p></div></div>
-        <div class="hud-resources">
-          <div class="resource-pill"><span>🪙</span><div><small id="gold-label">Gold</small><strong id="wallet">0 gold</strong></div></div>
-          <div class="level-pill"><span>⭐</span><div id="progression"><p class="muted">Loading level…</p></div></div>
-          <button id="language" class="lang-button" type="button" title="Language">Tiếng Việt</button>
-          <button id="refresh" class="icon-button" type="button" title="Refresh farm">↻</button>
+        <div class="brand"><span class="brand-mark" aria-hidden="true">🌱</span><h1>Happy Farm</h1></div>
+        <div class="hud-status">
+          <div class="hud-stat"><span class="hud-stat-icon" aria-hidden="true">🪙</span><strong id="wallet">0 gold</strong><span id="gold-label" class="visually-hidden">Gold</span></div>
+          <div class="hud-stat"><span class="hud-stat-icon" aria-hidden="true">⭐</span><div id="progression"><p class="muted">Level</p></div></div>
+          <button id="language" class="ghost-button" type="button" title="Language">VI</button>
+          <button id="refresh" class="ghost-button" type="button" title="Refresh farm">⟳</button>
         </div>
       </header>
-      <aside id="inventory-panel" class="game-panel left-panel">
-        <div class="panel-title">
-          <span aria-hidden="true">🎒</span><h2 id="inventory-title">Inventory</h2>
-          <button id="inventory-toggle" class="panel-toggle" type="button" aria-expanded="true" aria-controls="inventory-body"><span aria-hidden="true">✕</span></button>
-        </div>
-        <div id="inventory-body" class="panel-body">
-          <section><ul id="inventory" class="inventory-list"></ul></section>
-          <section><div class="panel-title"><span aria-hidden="true">🗺️</span><h2 id="land-title">Land</h2></div><div id="plots"></div><button id="expand-farm" class="primary compact" type="button">Unlock next plot</button></section>
+
+      <nav id="module-rail" class="module-rail" aria-label="Farm modules">
+        <button id="inventory-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="inventory-panel" title="Inventory"><span aria-hidden="true">🎒</span></button>
+        <button id="market-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="market-panel" title="Farm Market"><span aria-hidden="true">🛒</span></button>
+      </nav>
+
+      <aside id="inventory-panel" class="module-panel" aria-labelledby="inventory-title" hidden>
+        <header class="module-header">
+          <h2 id="inventory-title">Inventory</h2>
+          <button id="inventory-close" class="panel-close" type="button"><span aria-hidden="true">✕</span></button>
+        </header>
+        <div id="inventory-body" class="module-body">
+          <ul id="inventory" class="inventory-grid"></ul>
+          <section class="land-strip">
+            <h3 id="land-title">Land</h3>
+            <div id="plots"></div>
+            <button id="expand-farm" class="primary compact" type="button">Unlock next plot</button>
+          </section>
         </div>
       </aside>
-      <aside id="market-panel" class="game-panel right-panel">
-        <div class="panel-title">
-          <span aria-hidden="true">🛒</span><h2 id="market-title">Farm Market</h2>
-          <button id="market-toggle" class="panel-toggle" type="button" aria-expanded="true" aria-controls="market-body"><span aria-hidden="true">✕</span></button>
+
+      <aside id="market-panel" class="module-panel module-panel-right" aria-labelledby="market-title" hidden>
+        <header class="module-header">
+          <h2 id="market-title">Farm Market</h2>
+          <button id="market-close" class="panel-close" type="button"><span aria-hidden="true">✕</span></button>
+        </header>
+        <div class="market-tabs" role="tablist" aria-label="Market direction">
+          <button id="market-tab-buy" class="market-tab is-active" type="button" role="tab" aria-selected="true">Buy</button>
+          <button id="market-tab-sell" class="market-tab" type="button" role="tab" aria-selected="false">Sell</button>
         </div>
-        <div id="market-body" class="panel-body"><div id="shop" class="shop-list"></div></div>
+        <div id="market-body" class="module-body"><div id="shop" class="shop-rows"></div></div>
       </aside>
-      <section id="action-dock" class="action-dock" aria-label="Farm actions">
-        <div class="selection-orb">🌾</div><div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>
-        <button id="go" class="go" type="button" hidden>👣 Go</button>
-        <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled>Plant crop</button></div>
-        <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button">Harvest</button><button id="uproot" class="uproot" type="button">Uproot</button></div>
-        <div id="tree-controls" class="action-controls" hidden><span id="tree-state" class="muted"></span><button id="harvest-tree" class="primary harvest" type="button">Harvest</button><button id="remove-tree" class="uproot" type="button">Remove tree</button></div>
+
+      <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>
+        <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>
+        <div class="action-buttons">
+          <button id="go" class="go" type="button" hidden>👣 Go</button>
+          <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled>Plant crop</button></div>
+          <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button">Harvest</button><button id="uproot" class="uproot" type="button">Uproot</button></div>
+          <div id="tree-controls" class="action-controls" hidden><span id="tree-state" class="muted"></span><button id="harvest-tree" class="primary harvest" type="button">Harvest</button><button id="remove-tree" class="uproot" type="button">Remove tree</button></div>
+        </div>
       </section>
+
       <div class="status-wrap"><p id="status" class="status">Loading your farm…</p></div>
       <div class="renderer-state" id="render-3d-state">Preparing 3D world…</div>
       <button id="render-3d" type="button" hidden>Enable 3D</button><div id="field" class="debug-field" hidden></div>

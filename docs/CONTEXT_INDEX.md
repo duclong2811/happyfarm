@@ -282,3 +282,13 @@ Do not inspect renderer/backend unless the definition contract changes.
 
 ## Forbidden broad scan by default
 Do not recursively inspect `node_modules`, build outputs, caches, R2 assets, 3D models, generated files, or every reference repo. Use search first, then open only relevant files.
+
+## HUD and panel architecture (UI redesign)
+
+Read `docs/decisions/0018-game-hud-and-panel-architecture.md` before editing the HUD, the module rail, panels, the market rows, the inventory grid or the action surface.
+
+- State machine: `apps/web/src/panels.ts` (`MODULES` registry, `activePanel`, open/close/toggle, breakpoint).
+- Presentation: `apps/web/index.html` and `apps/web/src/styles.css` (tokens, one surface hierarchy, three breakpoints); `main.ts` owns `renderPanels`/`renderShop`/`renderInventory`/`renderActionControls`.
+- Tests: `tests/web/farm-panels.test.ts`, `tests/web/i18n.test.ts`.
+
+Panels are presentation: never store, send, or gate gameplay on panel state, and never render a second copy of inventory or market data.

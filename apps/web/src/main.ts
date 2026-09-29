@@ -27,7 +27,14 @@ import {
   type Translate
 } from "./i18n";
 import { progressionSummary } from "./progression";
-import { crossesPanelBreakpoint, panelStateForWidth, toggledPanel, type PanelState } from "./panels";
+import {
+  closePanel,
+  crossesPanelBreakpoint,
+  MODULES,
+  defaultPanelState,
+  togglePanel,
+  type PanelState
+} from "./panels";
 import type { PlayerState } from "./player/controller";
 import { createMovementInput, NEUTRAL_INPUT, type MovementInput } from "./player/input";
 import { createPlayerRuntime } from "./player/runtime";
@@ -42,10 +49,7 @@ import {
   type FarmSceneHandle
 } from "./render";
 import { SPAWN_WORLD } from "./render/world-config";
-import "./action-dock.css";
-import "./hud.css";
 import "./styles.css";
-import "./responsive.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
 const REFRESH_INTERVAL_MS = 2_000;
@@ -281,16 +285,15 @@ function selectedPlantOption(): string {
 }
 
 function renderFarm(): void {
-  const info = element<HTMLParagraphElement>("farm-info");
-  if (state.farmId === null) {
-    info.textContent = t("farm.none");
-    return;
-  }
-  info.textContent = t("farm.info", {
-    name: state.farmName,
-    farmId: state.farmId,
-    tiles: state.tiles.length
-  });
+  // The farm id is diagnostic, not player-facing: it lives in the document title and the brand's
+  // tooltip rather than in a HUD line that competes with the world.
+  const brand = document.querySelector(".brand");
+  const summary =
+    state.farmId === null
+      ? t("farm.none")
+      : t("farm.info", { name: state.farmName, farmId: state.farmId, tiles: state.tiles.length });
+  document.title = summary;
+  if (brand instanceof HTMLElement) brand.title = summary;
 }
 
 function renderWallet(): void {
@@ -662,6 +665,8 @@ function renderActionControls(selection: SelectionView): void {
     selection.tree === null
       ? ""
       : t(`tree.state.${selection.tree.phase}` as MessageKey);
+  // No selection, no surface: the world keeps the space instead of an empty bar.
+  element<HTMLElement>("action-dock").hidden = state.selected === null;
 }
 
 /**
@@ -777,16 +782,11 @@ function renderInventory(): void {
     return;
   }
   for (const entry of state.inventory) {
-    list.appendChild(
-      make(
-        "li",
-        undefined,
-        t("inventory.line", {
-          item: itemName(entry.itemDefinitionId, entry.displayNameKey),
-          quantity: entry.quantity
-        })
-      )
-    );
+    // One cell per stack: name and count, no card, so a growing inventory stays scannable.
+    const cell = make("li", "inventory-cell");
+    cell.appendChild(make("span", "inventory-name", itemName(entry.itemDefinitionId, entry.displayNameKey)));
+    cell.appendChild(make("span", "inventory-count", `×${String(entry.quantity)}`));
+    list.appendChild(cell);
   }
 }
 
@@ -804,43 +804,72 @@ function renderShop(): void {
     container.appendChild(make("p", "muted", t("market.signedOut")));
     return;
   }
-  for (const entry of state.shop) {
-    const currency = currencyLabel(entry.currencyId, entry.currencyDisplayNameKey);
-    const row = make("div", "shop-row");
-    const price = entry.buyPrice ?? entry.sellPrice ?? 0;
-    row.appendChild(
-      make(
-        "span",
-        "shop-item",
-        t("market.line", {
-          item: itemName(entry.itemDefinitionId, entry.itemDisplayNameKey),
-          price: `${String(price)} ${currency}`
-        })
-      )
-    );
-    const quantity = make("input");
-    quantity.type = "number";
-    quantity.min = "1";
-    quantity.max = String(entry.maxQuantityPerRequest);
-    quantity.value = "1";
-    quantity.className = "quantity";
-    row.appendChild(quantity);
-    if (entry.buyPrice !== null) {
-      const buy = make("button", undefined, t("market.buy"));
-      buy.addEventListener("click", () => {
-        void trade("buy", entry.shopEntryId, quantity.valueAsNumber);
-      });
-      row.appendChild(buy);
-    }
-    if (entry.sellPrice !== null) {
-      const sell = make("button", undefined, t("market.sell"));
-      sell.addEventListener("click", () => {
-        void trade("sell", entry.shopEntryId, quantity.valueAsNumber);
-      });
-      row.appendChild(sell);
-    }
-    container.appendChild(row);
+  const direction = marketDirection();
+  const entries = state.shop.filter((entry) =>
+    direction === "buy" ? entry.buyPrice !== null : entry.sellPrice !== null
+  );
+  if (entries.length === 0) {
+    container.appendChild(make("p", "muted", t(direction === "buy" ? "market.noBuy" : "market.noSell")));
+    return;
   }
+  for (const entry of entries) {
+    container.appendChild(shopRow(entry, direction));
+  }
+}
+
+/**
+ * One market row: what it is, what it costs, how many, and the one action that applies.
+ *
+ * Rows rather than cards. The server decides the directions a row offers, so the tab and the button
+ * are read from `ShopEntryDTO` and never from a client-side guess; prices come from the same DTO and
+ * are never computed here.
+ */
+function shopRow(entry: ShopEntryDTO, direction: MarketDirection): HTMLDivElement {
+  const currency = currencyLabel(entry.currencyId, entry.currencyDisplayNameKey);
+  const price = direction === "buy" ? entry.buyPrice : entry.sellPrice;
+  const row = make("div", "shop-row");
+  row.appendChild(
+    make("span", "shop-name", itemName(entry.itemDefinitionId, entry.itemDisplayNameKey))
+  );
+  row.appendChild(make("span", "shop-price", `${String(price ?? 0)} ${currency}`));
+
+  const quantity = make("input");
+  quantity.type = "number";
+  quantity.min = "1";
+  quantity.max = String(entry.maxQuantityPerRequest);
+  quantity.value = "1";
+  quantity.className = "quantity";
+  quantity.setAttribute("aria-label", t("market.quantity"));
+
+  const stepper = make("div", "stepper");
+  const decrease = make("button", "stepper-button", "−");
+  decrease.type = "button";
+  decrease.setAttribute("aria-label", t("market.decrease"));
+  decrease.addEventListener("click", () => {
+    const next = Math.max(1, (quantity.valueAsNumber || 1) - 1);
+    quantity.value = String(next);
+  });
+  const increase = make("button", "stepper-button", "+");
+  increase.type = "button";
+  increase.setAttribute("aria-label", t("market.increase"));
+  increase.addEventListener("click", () => {
+    const max = entry.maxQuantityPerRequest;
+    const next = Math.min(max, (quantity.valueAsNumber || 1) + 1);
+    quantity.value = String(next);
+  });
+  // `appendChild` rather than `append`: the repository typechecks against both the DOM and the
+  // Workers lib, whose `append` signatures disagree.
+  stepper.appendChild(decrease);
+  stepper.appendChild(quantity);
+  stepper.appendChild(increase);
+  row.appendChild(stepper);
+
+  const action = make("button", "shop-action", t(direction === "buy" ? "market.buy" : "market.sell"));
+  action.addEventListener("click", () => {
+    void trade(direction, entry.shopEntryId, quantity.valueAsNumber);
+  });
+  row.appendChild(action);
+  return row;
 }
 
 /** Every string the layout itself owns, so a language change reaches the panel headings too. */
@@ -849,6 +878,8 @@ function renderChrome(): void {
   element<HTMLElement>("inventory-title").textContent = t("panel.inventory");
   element<HTMLElement>("land-title").textContent = t("panel.land");
   element<HTMLElement>("market-title").textContent = t("panel.market");
+  element<HTMLElement>("module-rail").setAttribute("aria-label", t("hud.modules"));
+  renderMarketTabs();
   element<HTMLElement>("crop-label").textContent = t("dock.crop");
   element<HTMLButtonElement>("plant").textContent = t("dock.plant");
   element<HTMLButtonElement>("harvest").textContent = t("dock.harvest");
@@ -890,57 +921,61 @@ function render(): void {
  * off-screen. A resize that stays inside a breakpoint leaves the player's own choice alone.
  */
 
-interface PanelRefs {
-  readonly id: string;
-  readonly toggleId: string;
-  /** The glyph shown on the folded tab. */
-  readonly glyph: string;
-  readonly tabKey: MessageKey;
-  readonly collapseKey: MessageKey;
-  readonly expandKey: MessageKey;
-}
-
-const PANELS: readonly (readonly [keyof PanelState, PanelRefs])[] = [
-  [
-    "market",
-    {
-      id: "market-panel",
-      toggleId: "market-toggle",
-      glyph: "🛒",
-      tabKey: "market.tab",
-      collapseKey: "market.collapse",
-      expandKey: "market.expand"
-    }
-  ],
-  [
-    "inventory",
-    {
-      id: "inventory-panel",
-      toggleId: "inventory-toggle",
-      glyph: "🎒",
-      tabKey: "panel.bag",
-      collapseKey: "panel.collapse",
-      expandKey: "panel.expand"
-    }
-  ]
-];
-
-let panels: PanelState = panelStateForWidth(window.innerWidth);
+let panels: PanelState = defaultPanelState();
 let lastViewportWidth = window.innerWidth;
 
-function renderPanels(): void {
-  for (const [name, refs] of PANELS) {
-    const expanded = panels[name];
-    const label = t(expanded ? refs.collapseKey : refs.expandKey);
-    const toggle = element<HTMLButtonElement>(refs.toggleId);
-    element<HTMLElement>(refs.id).classList.toggle("collapsed", !expanded);
-    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    // Folded, the button is the tab itself: glyph plus the panel's own name. Expanded, it is the
-    // close control, so the glyph would only add noise to a heading that already says what it is.
-    toggle.textContent = expanded ? "✕" : `${refs.glyph} ${t(refs.tabKey)}`;
-    toggle.setAttribute("aria-label", label);
-    toggle.title = label;
+/**
+ * Which direction the market is showing.
+ *
+ * Buy and sell are the same list read two ways, so the tab is presentation: it filters rows the
+ * server already marked as buyable or sellable, and it never changes what a row can do.
+ */
+type MarketDirection = "buy" | "sell";
+
+let shopDirection: MarketDirection = "buy";
+
+function marketDirection(): MarketDirection {
+  return shopDirection;
+}
+
+function renderMarketTabs(): void {
+  for (const direction of ["buy", "sell"] as const) {
+    const tab = element<HTMLButtonElement>(direction === "buy" ? "market-tab-buy" : "market-tab-sell");
+    tab.textContent = t(direction === "buy" ? "market.buy" : "market.sell");
+    const active = shopDirection === direction;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
   }
+}
+
+/**
+ * Applies the panel state to the document.
+ *
+ * One module is open or none: the open panel loses `hidden`, its launcher reports
+ * `aria-expanded="true"`, and every other panel is closed and reports nothing is expanded. Closed
+ * panels are `hidden`, so the area they would occupy is canvas again rather than an invisible
+ * blocker.
+ */
+function renderPanels(): void {
+  for (const module of MODULES) {
+    const open = panels.active === module.id;
+    const label = t(module.labelKey);
+    element<HTMLElement>(module.panelId).hidden = !open;
+    const launcher = element<HTMLButtonElement>(module.launcherId);
+    launcher.setAttribute("aria-expanded", open ? "true" : "false");
+    launcher.setAttribute("aria-label", label);
+    launcher.title = label;
+    launcher.classList.toggle("is-active", open);
+    const close = element<HTMLButtonElement>(module.closeId);
+    close.setAttribute("aria-label", t("panel.close"));
+    close.title = t("panel.close");
+  }
+}
+
+function setActivePanel(next: PanelState): void {
+  panels = next;
+  renderPanels();
+  syncLayoutMetrics();
 }
 
 /**
@@ -954,7 +989,6 @@ function renderPanels(): void {
 function syncLayoutMetrics(): void {
   const root = document.documentElement;
   root.style.setProperty("--hud-height", `${String(Math.round(element<HTMLElement>("top-hud").getBoundingClientRect().height))}px`);
-  root.style.setProperty("--dock-height", `${String(Math.round(element<HTMLElement>("action-dock").getBoundingClientRect().height))}px`);
 }
 
 async function refreshAccount(): Promise<void> {
@@ -1517,18 +1551,34 @@ function wire(): void {
     playerRuntime.setDestination(tileToWorld({ x: selected.x, y: selected.y }, worldFrame()));
     setStatus(message("status.going", { at: at(selected) }));
   });
-  for (const [name, refs] of PANELS) {
-    element<HTMLButtonElement>(refs.toggleId).addEventListener("click", () => {
-      panels = toggledPanel(panels, name);
-      renderPanels();
-      syncLayoutMetrics();
+  for (const module of MODULES) {
+    const launcher = element<HTMLButtonElement>(module.launcherId);
+    launcher.addEventListener("click", () => {
+      setActivePanel(togglePanel(panels, module.id));
+    });
+    element<HTMLButtonElement>(module.closeId).addEventListener("click", () => {
+      setActivePanel(closePanel(panels));
+      launcher.focus();
     });
   }
+  for (const direction of ["buy", "sell"] as const) {
+    element<HTMLButtonElement>(direction === "buy" ? "market-tab-buy" : "market-tab-sell").addEventListener(
+      "click",
+      () => {
+        shopDirection = direction;
+        renderMarketTabs();
+        renderShop();
+      }
+    );
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && panels.active !== null) setActivePanel(closePanel(panels));
+  });
   window.addEventListener("resize", () => {
     const width = window.innerWidth;
     if (crossesPanelBreakpoint(lastViewportWidth, width)) {
-      panels = panelStateForWidth(width);
-      renderPanels();
+      // The panel's presentation changed underneath it, so it closes rather than half-adapting.
+      setActivePanel(defaultPanelState());
     }
     lastViewportWidth = width;
     syncLayoutMetrics();

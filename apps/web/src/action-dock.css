@@ -1,8 +1,0 @@
-/* Selection-driven controls in the bottom action dock. */
-.action-controls{display:flex;align-items:center;gap:.55rem}
-.action-controls[hidden]{display:none}
-button.harvest{border-color:#ffd77a;background:linear-gradient(180deg,#f6b93b,#d9822b);color:#3a2410;font-weight:900;text-shadow:0 1px #ffe9b8;font-size:.95rem;padding:.7rem 1.4rem}
-/* Uproot is the secondary action: on a mature crop harvesting is primary, and on a growing crop
-   uproot is the only way to free a mis-planted tile. */
-button.uproot{border-color:#d3a48d;background:#4a352c;color:#ffe6da;font-size:.85rem;padding:.6rem .9rem}
-button.uproot[hidden]{display:none}

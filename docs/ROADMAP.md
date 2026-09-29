@@ -28,6 +28,7 @@ Implemented and locally verified in the current working tree, but **not shipped 
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the
   ground).
+- HUD architecture: world-first layout, a module registry with one active panel, contextual action surface, market rows with buy/sell views, compact inventory grid (ADR 0018).
 - Client character: a walkable local avatar on the fixed world, with depth-based collision against
   the shore, the pond, the farmhouse, a fence drawn from one derived geometry, and the farm's own
   crop and tree rows, plus a camera that follows the avatar through the player's own drag offset and
