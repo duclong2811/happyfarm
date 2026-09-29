@@ -47,6 +47,8 @@ export interface CameraRig {
   panByPixels(deltaX: number, deltaY: number, worldPerPixel: number): void;
   /** Applies one wheel event. */
   zoomByWheel(deltaY: number): void;
+  /** Applies a pinch: a factor above 1 zooms in, below 1 zooms out. */
+  zoomByScale(scale: number): void;
   /** Sets the zoom directly, for re-framing when the world itself changes. */
   setZoom(zoom: number): void;
 }
@@ -90,6 +92,12 @@ export function createCameraRig(): CameraRig {
     },
     zoomByWheel(deltaY: number): void {
       zoom = clamp(zoom * Math.exp(deltaY * ZOOM_PER_WHEEL_UNIT), ZOOM_MIN, ZOOM_MAX);
+    },
+    zoomByScale(scale: number): void {
+      // A pinch that reports a nonsense factor (a zero-length finger span, a cancelled pointer)
+      // leaves the zoom alone rather than sending it to a clamp rail.
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      zoom = clamp(zoom * scale, ZOOM_MIN, ZOOM_MAX);
     },
     setZoom(next: number): void {
       zoom = clamp(next, ZOOM_MIN, ZOOM_MAX);

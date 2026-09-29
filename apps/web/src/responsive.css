@@ -1,0 +1,131 @@
+/* ================================================================================================
+   Touch and responsive layer
+
+   `styles.css` is the desktop farm. Everything here changes how much room the controls take and how
+   a gesture is captured - never what a control means, and never what the server is told. It is
+   imported last so it can adapt the base layer without rewriting it.
+
+   The breakpoint mirrors `PANEL_BREAKPOINT_PX` in `apps/web/src/panels.ts`: at 900 CSS px and below
+   the side panels fold into tabs, and a narrow viewport starts with them folded.
+   ================================================================================================ */
+
+/* The canvas owns its gestures. A finger that lands on the world is panning or pinching the camera,
+   so the browser must not scroll or zoom the page out from under it. Nothing else loses its own
+   scrolling: the panels and the shop list keep theirs. */
+.scene{touch-action:none;-webkit-user-select:none;user-select:none}
+
+/* Floating controls keep clear of notches and home indicators. Desktop is unaffected, because the
+   env() values are zero without a safe area. */
+.top-hud{padding-top:max(1rem,env(safe-area-inset-top));padding-left:max(1.25rem,env(safe-area-inset-left));padding-right:max(1.25rem,env(safe-area-inset-right))}
+.action-dock{bottom:max(1.25rem,env(safe-area-inset-bottom))}
+.left-panel{left:max(1rem,env(safe-area-inset-left))}
+.right-panel{right:max(1rem,env(safe-area-inset-right))}
+
+/* Every control is reachable and visible from the keyboard, on any viewport. */
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #ffe08a;outline-offset:2px}
+
+/* Measured by `syncLayoutMetrics`: the real height of the top HUD and the action dock, so overlays
+   can be placed between them without hard-coded guesses. */
+:root{--hud-height:5rem;--dock-height:5rem}
+
+/* The collapse/expand control: a real button in the panel header, never a clickable div. */
+.panel-toggle{margin-left:auto;min-width:2rem;height:2rem;padding:0 .5rem;display:inline-flex;align-items:center;justify-content:center;gap:.35rem;border-radius:.6rem;font-size:.8rem;font-weight:800;white-space:nowrap}
+.panel-body{display:block}
+
+/* Folded, a panel is a tab: the same element, shrunk to its own bounds, so the area it used to cover
+   belongs to the world again instead of swallowing taps. */
+.game-panel.collapsed{width:auto;max-height:none;padding:.35rem;border-radius:1rem}
+.game-panel.collapsed .panel-title{margin-bottom:0;gap:.35rem}
+.game-panel.collapsed .panel-title h2{display:none}
+.game-panel.collapsed .panel-body{display:none}
+
+/* "Go": walk the character to the selected tile. Present on every viewport, touch included. */
+button.go{border-color:#ffe08a;background:#2f5b45;font-weight:800;white-space:nowrap}
+button.go[hidden]{display:none}
+
+/* Tablet portrait and phones: the panels stop reserving columns and become overlays that open over
+   the world. The world keeps the whole viewport, and the dock spans it. */
+@media(max-width:900px){
+  /* The resource row is the widest thing in the HUD; let it wrap and shrink instead of pushing the
+     page wider than the viewport. */
+  .top-hud{flex-wrap:wrap;gap:.5rem}
+  .brand{min-width:0}
+  .brand h1{white-space:nowrap}
+  .brand p{max-width:12rem}
+  .hud-resources{flex-wrap:wrap;justify-content:flex-end;gap:.4rem}
+  .resource-pill,.level-pill{min-height:2.6rem;padding:.35rem .6rem}
+  .level-pill{min-width:0}
+  .level-pill #progression{min-width:0}
+  .level-pill .big{white-space:nowrap}
+  .status{max-width:calc(100vw - 2rem);text-align:center}
+  /* The folded tabs sit just under the HUD and the status line just above the dock, so the two can
+     never land on each other however long the status text wraps, and the opened panel still fits
+     between them. */
+  .status-wrap{top:auto;bottom:calc(var(--dock-height) + .8rem)}
+  .game-panel{top:calc(var(--hud-height) + .6rem);bottom:auto;width:min(19rem,calc(100% - 1.5rem));max-height:min(52vh,20rem);overflow:auto;z-index:6}
+  .left-panel{left:max(.75rem,env(safe-area-inset-left));right:auto}
+  .right-panel{right:max(.75rem,env(safe-area-inset-right));left:auto}
+  .game-panel.collapsed{top:calc(var(--hud-height) + .6rem)}
+  .action-dock{left:max(.6rem,env(safe-area-inset-left));right:max(.6rem,env(safe-area-inset-right));bottom:max(.6rem,env(safe-area-inset-bottom));width:auto;min-width:0;transform:none;flex-wrap:wrap}
+  .action-copy{display:block;flex:1 1 100%;min-width:0}
+  .action-controls{flex-wrap:wrap;min-width:0}
+}
+
+/* Phones. The HUD keeps what a player acts on - gold, level, language, refresh, the dock, the
+   selection readout - and drops the descriptive text that only costs height. */
+@media(max-width:760px){
+  body{overflow:hidden}
+  .world{min-height:0}
+  .top-hud{align-items:center;gap:.4rem;padding:.5rem max(.6rem,env(safe-area-inset-right)) .5rem max(.6rem,env(safe-area-inset-left))}
+  .brand{gap:.45rem}
+  .brand-mark{width:2.2rem;height:2.2rem;border-radius:.7rem;font-size:1.15rem}
+  .brand h1{font-size:1.02rem}
+  .brand p{display:none}
+  .hud-resources{flex-wrap:nowrap;gap:.3rem}
+  .resource-pill,.level-pill{display:flex;min-height:2.4rem;padding:.3rem .5rem;border-radius:.8rem;gap:.35rem}
+  .resource-pill>span,.level-pill>span{font-size:1rem}
+  .resource-pill small{display:none}
+  .resource-pill strong{font-size:.82rem}
+  .level-pill #progression{min-width:0}
+  .level-pill .muted,.level-pill .xp-bar{display:none}
+  .level-pill .big{font-size:.78rem}
+  .icon-button{width:2.4rem;height:2.4rem;font-size:1.05rem}
+  .lang-button{padding:.35rem .5rem;font-size:.66rem}
+  .game-panel{max-height:min(48vh,17rem)}
+  .status{font-size:.68rem;max-width:calc(100vw - 1.5rem)}
+  .renderer-state{display:none}
+  .action-dock{gap:.4rem;padding:.45rem;border-radius:1rem}
+  .selection-orb{flex:0 0 2.2rem;height:2.2rem;font-size:1.05rem}
+  .action-copy strong{font-size:.78rem}
+  .action-copy span{display:none}
+  .action-dock label{display:none}
+  .action-controls{gap:.4rem}
+  .action-controls button,.action-dock button{min-height:2.75rem}
+  /* Keep the crop select and its action on one row, so the dock stays a small band: the select
+     grows into the free space, and the action keeps its own width instead of wrapping its label. */
+  #plant-controls,#crop-controls,#tree-controls{flex-wrap:nowrap;flex:1 1 100%;min-width:0}
+  .action-dock button{flex:0 0 auto;white-space:nowrap}
+  /* A select's minimum width is the width of its longest option, which is what pushed the dock past
+     the screen edge; letting it shrink keeps the row on one line inside the dock. */
+  select{flex:1 1 6rem;min-width:0;max-width:none}
+}
+
+/* Phones held sideways: height is the scarce resource, so overlays open smaller and the dock
+   tightens rather than the world disappearing behind chrome. */
+@media(max-height:520px) and (orientation:landscape){
+  /* Height is what is scarce: the world fills the window instead of keeping its portrait size, and
+     the page never scrolls behind it. */
+  body{overflow:hidden}
+  .world{min-height:0}
+  .top-hud{flex-wrap:nowrap;gap:.4rem}
+  .hud-resources{flex-wrap:nowrap}
+  .brand p{max-width:8rem}
+  .top-hud{padding-top:max(.4rem,env(safe-area-inset-top))}
+  .brand p{display:none}
+  .brand-mark{width:2.2rem;height:2.2rem;font-size:1.15rem}
+  .game-panel{max-height:min(56vh,14rem)}
+  .action-dock{padding:.35rem .5rem;gap:.35rem}
+  .action-copy span{display:none}
+  .action-controls button,.action-dock button{min-height:2.5rem;padding:.45rem .7rem}
+  .renderer-state{display:none}
+}

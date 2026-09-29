@@ -140,6 +140,29 @@ The character is client-local and non-authoritative. Never send a position, neve
 state, and never let a client-side position gate planting, harvesting, or land. The server owns
 those, and multiplayer positions belong to the FarmRoom phase, not here.
 
+## Responsive HUD and touch interaction (player UX)
+
+Read `docs/decisions/0017-responsive-touch-interaction.md` before editing the canvas pointer
+handling, the action dock, the side panels, or any responsive style.
+
+- Gestures: `apps/web/src/render/pointer-gesture.ts` (tap / pan / pinch arbitration, pure) and the
+  canvas wiring in `apps/web/src/render/scene.ts`.
+- Camera: `apps/web/src/render/camera.ts` is the only camera rig; touch feeds it a pinch scale and
+  nothing else. `tests/web/farm-camera.test.ts`.
+- Walking: `apps/web/src/player/intent.ts` (the `MovementIntent` boundary: directional or
+  destination) and `apps/web/src/player/runtime.ts` (destination lifecycle, stall, arrival). The
+  dock's `👣 Go` button lives in `apps/web/src/main.ts` with `apps/web/src/render/layout.ts` doing
+  the tile-to-world conversion.
+- Panels and breakpoints: `apps/web/src/panels.ts` owns the open/folded defaults (mirroring the
+  900 px breakpoint) and `apps/web/src/responsive.css` owns every responsive rule; it is imported
+  after `styles.css` on purpose. `--hud-height` and `--dock-height` are measured in `main.ts` by
+  `syncLayoutMetrics()`.
+- Tests: `tests/web/pointer-gesture.test.ts`, `tests/web/farm-panels.test.ts`,
+  `tests/web/movement-intent.test.ts`, `tests/web/player-runtime.test.ts`.
+
+Responsive layout is CSS, never user-agent sniffing, and panel state is UI-only: never store it,
+never send it, never let it gate a game rule.
+
 Read `docs/decisions/0014-trees-and-repeating-harvests.md` before editing tree definitions, the
 repeating cycle, cross-occupancy, or either tree settlement.
 

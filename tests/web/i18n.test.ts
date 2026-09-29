@@ -171,10 +171,18 @@ describe("HUD wording", () => {
       "panel.inventory",
       "panel.land",
       "panel.market",
+      "panel.bag",
+      "panel.collapse",
+      "panel.expand",
+      "market.tab",
+      "market.collapse",
+      "market.expand",
       "dock.crop",
       "dock.plant",
       "dock.harvest",
       "dock.uproot",
+      "dock.go",
+      "dock.goTitle",
       "dock.uproot.confirm",
       "dock.seedCount",
       "land.unlock",
@@ -238,7 +246,8 @@ describe("HUD wording", () => {
       "status.uprooted",
       "status.loadFarm",
       "status.selectMature",
-      "status.quantity"
+      "status.quantity",
+      "status.going"
     ];
     expect(keys.length).toBeGreaterThan(50);
     for (const language of ["en", "vi"] as const) {

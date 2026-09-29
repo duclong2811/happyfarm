@@ -88,6 +88,12 @@ sent, or read back as game state, so a tampered client can move a picture and no
 blocked by the static world plus the farm's own crop, tree, and terrain rows, never by a second map
 the client keeps for itself.
 
+Input follows the same rule: one pointer pipeline feeds one camera rig and one selection path, so
+mouse, pen, and touch differ only in how a gesture is recognised, never in what it means. A `Go`
+command is a client-local destination the runtime resolves into the same directional steps a key
+produces; the server is told nothing about it, and the HUD's responsive layout only changes how much
+room the controls take.
+
 ## Security boundary
 Everything from browser, query strings, storage, headers, HTTP body, and WebSocket messages is untrusted until validated, authenticated, and authorized server-side.
 

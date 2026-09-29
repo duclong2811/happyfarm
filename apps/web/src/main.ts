@@ -27,10 +27,12 @@ import {
   type Translate
 } from "./i18n";
 import { progressionSummary } from "./progression";
+import { crossesPanelBreakpoint, panelStateForWidth, toggledPanel, type PanelState } from "./panels";
 import type { PlayerState } from "./player/controller";
 import { createMovementInput, NEUTRAL_INPUT, type MovementInput } from "./player/input";
 import { createPlayerRuntime } from "./player/runtime";
 import { describeSelection, formatRemainingGrowth, type SelectionView } from "./selection";
+import { tileToWorld, worldFrame } from "./render/layout";
 import {
   buildFarmSceneInput,
   createFarmScene,
@@ -43,6 +45,7 @@ import { SPAWN_WORLD } from "./render/world-config";
 import "./action-dock.css";
 import "./hud.css";
 import "./styles.css";
+import "./responsive.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
 const REFRESH_INTERVAL_MS = 2_000;
@@ -661,6 +664,23 @@ function renderActionControls(selection: SelectionView): void {
       : t(`tree.state.${selection.tree.phase}` as MessageKey);
 }
 
+/**
+ * "Go": walk the character to the selected tile.
+ *
+ * The destination is client-local and travels through the same runtime the keyboard drives, so the
+ * collision world still has the final word and no position is ever sent to the server. It is offered
+ * on every viewport, which is how a touch player walks without a joystick or a keyboard.
+ */
+function renderGo(): void {
+  const button = element<HTMLButtonElement>("go");
+  const selected = state.selected;
+  button.hidden = selected === null;
+  button.disabled = scene === null || selected === null;
+  button.textContent = `👣 ${t("dock.go")}`;
+  button.title = t("dock.goTitle");
+  button.setAttribute("aria-label", t("dock.goTitle"));
+}
+
 function tileNode(tile: FarmTileDTO): HTMLDivElement {
   const crop = cropAt(tile.x, tile.y);
   const node = make("div", "tile");
@@ -845,6 +865,7 @@ function renderChrome(): void {
 
 function render(): void {
   renderChrome();
+  renderPanels();
   renderFarm();
   renderWallet();
   renderProgression();
@@ -852,10 +873,88 @@ function render(): void {
   renderCrops();
   renderField();
   renderSelection();
+  renderGo();
   renderInventory();
   renderShop();
   renderStatus();
   renderSceneState();
+  syncLayoutMetrics();
+}
+
+/*
+ * The side panels, as UI state only.
+ *
+ * Open or folded is a property of this page, never of the farm: nothing here is stored, sent, or
+ * read by a game rule. A wide viewport opens both panels, a narrow one folds them into tabs, and a
+ * resize that crosses the breakpoint re-applies those defaults so a panel can never end up parked
+ * off-screen. A resize that stays inside a breakpoint leaves the player's own choice alone.
+ */
+
+interface PanelRefs {
+  readonly id: string;
+  readonly toggleId: string;
+  /** The glyph shown on the folded tab. */
+  readonly glyph: string;
+  readonly tabKey: MessageKey;
+  readonly collapseKey: MessageKey;
+  readonly expandKey: MessageKey;
+}
+
+const PANELS: readonly (readonly [keyof PanelState, PanelRefs])[] = [
+  [
+    "market",
+    {
+      id: "market-panel",
+      toggleId: "market-toggle",
+      glyph: "🛒",
+      tabKey: "market.tab",
+      collapseKey: "market.collapse",
+      expandKey: "market.expand"
+    }
+  ],
+  [
+    "inventory",
+    {
+      id: "inventory-panel",
+      toggleId: "inventory-toggle",
+      glyph: "🎒",
+      tabKey: "panel.bag",
+      collapseKey: "panel.collapse",
+      expandKey: "panel.expand"
+    }
+  ]
+];
+
+let panels: PanelState = panelStateForWidth(window.innerWidth);
+let lastViewportWidth = window.innerWidth;
+
+function renderPanels(): void {
+  for (const [name, refs] of PANELS) {
+    const expanded = panels[name];
+    const label = t(expanded ? refs.collapseKey : refs.expandKey);
+    const toggle = element<HTMLButtonElement>(refs.toggleId);
+    element<HTMLElement>(refs.id).classList.toggle("collapsed", !expanded);
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    // Folded, the button is the tab itself: glyph plus the panel's own name. Expanded, it is the
+    // close control, so the glyph would only add noise to a heading that already says what it is.
+    toggle.textContent = expanded ? "✕" : `${refs.glyph} ${t(refs.tabKey)}`;
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+  }
+}
+
+/**
+ * Publishes the measured height of the HUD bands as CSS variables.
+ *
+ * The responsive stylesheet places the status line and the folded panel tabs *below* the top HUD and
+ * above the action dock. Those bands change height with the viewport, the language, and whether a
+ * control wrapped, so the stylesheet reads their real size instead of guessing with a magic number:
+ * an overlay can never land on top of the controls it is supposed to sit beside.
+ */
+function syncLayoutMetrics(): void {
+  const root = document.documentElement;
+  root.style.setProperty("--hud-height", `${String(Math.round(element<HTMLElement>("top-hud").getBoundingClientRect().height))}px`);
+  root.style.setProperty("--dock-height", `${String(Math.round(element<HTMLElement>("action-dock").getBoundingClientRect().height))}px`);
 }
 
 async function refreshAccount(): Promise<void> {
@@ -959,6 +1058,8 @@ function selectTile(x: number, y: number): void {
   state.selected = { x, y };
   renderField();
   renderSelection();
+  // The walk command is part of what a selection offers, so it appears with the rest of the dock.
+  renderGo();
   refreshScene();
 }
 
@@ -1029,6 +1130,7 @@ function enable3D(): void {
     startPlayer();
   }
   refreshScene();
+  renderGo();
   setStatus(message("scene.ready"));
 }
 
@@ -1408,6 +1510,28 @@ function wire(): void {
   });
   element<HTMLButtonElement>("expand-farm").addEventListener("click", () => {
     void run(expandFarm);
+  });
+  element<HTMLButtonElement>("go").addEventListener("click", () => {
+    const selected = state.selected;
+    if (selected === null) return;
+    playerRuntime.setDestination(tileToWorld({ x: selected.x, y: selected.y }, worldFrame()));
+    setStatus(message("status.going", { at: at(selected) }));
+  });
+  for (const [name, refs] of PANELS) {
+    element<HTMLButtonElement>(refs.toggleId).addEventListener("click", () => {
+      panels = toggledPanel(panels, name);
+      renderPanels();
+      syncLayoutMetrics();
+    });
+  }
+  window.addEventListener("resize", () => {
+    const width = window.innerWidth;
+    if (crossesPanelBreakpoint(lastViewportWidth, width)) {
+      panels = panelStateForWidth(width);
+      renderPanels();
+    }
+    lastViewportWidth = width;
+    syncLayoutMetrics();
   });
   element<HTMLButtonElement>("render-3d").addEventListener("click", enable3D);
   // A page restored from the back/forward cache would otherwise return with a disposed renderer and

@@ -32,6 +32,10 @@ Implemented and locally verified in the current working tree, but **not shipped 
   the shore, the pond, the farmhouse, a fence drawn from one derived geometry, and the farm's own
   crop and tree rows, plus a camera that follows the avatar through the player's own drag offset and
   wakes only while a movement key is held (ADR 0016).
+- Client input and layout for touch: one pointer pipeline (tap selects, one-finger drag pans, pinch
+  zooms within the same range, with deterministic arbitration), a `Go / Đi tới` command that walks
+  the character to the selected tile, collapsible market and bag panels with a 900 px breakpoint,
+  a reflowing action dock, and safe-area aware placement (ADR 0017). Verified in emulation only.
 
 Gateways available today: `npm run typecheck`, `npm run lint`, `npx vitest run` (42 files /
 385 tests), `npm run build --workspace @happy-farm/web`,

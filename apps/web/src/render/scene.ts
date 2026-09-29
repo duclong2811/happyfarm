@@ -20,10 +20,10 @@ import {
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
 import { createCameraRig } from "./camera";
-import { createDragGesture } from "./drag-gesture";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileMaterial, type SharedAssets } from "./materials";
 import { CROP_MODEL_URLS } from "./model-urls";
+import { createPointerGesture } from "./pointer-gesture";
 import { ENVIRONMENT_MODEL_URLS } from "./environment-model-urls";
 import { buildScenery, type SceneryKind } from "./scenery";
 import { buildLockedPlotOverlay, buildTerrain, TILE_THICKNESS } from "./terrain";
@@ -599,7 +599,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   let hoveredCoordinate: TileCoordinate | null = null;
-  const gesture = createDragGesture();
+  const gesture = createPointerGesture();
 
   function raycastTile(event: PointerEvent): TileCoordinate | null {
     const bounds = canvas.getBoundingClientRect();
@@ -627,34 +627,55 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     updateCamera();
   }
 
+  function zoomByPinch(scale: number): void {
+    cameraRig.zoomByScale(scale);
+    updateCamera();
+  }
+
   function onPointerDown(event: PointerEvent): void {
-    gesture.down(event.clientX, event.clientY);
+    // Capture keeps a drag or a pinch alive when it wanders off the canvas, which is also what keeps
+    // the browser from handing the rest of the gesture to the page underneath.
     canvas.setPointerCapture(event.pointerId);
+    gesture.down({ id: event.pointerId, x: event.clientX, y: event.clientY });
   }
 
   function onPointerMove(event: PointerEvent): void {
-    const move = gesture.move(event.clientX, event.clientY);
-    if (move.dragging) {
-      panBy(move.deltaX, move.deltaY);
-      draw();
-      return;
+    const intent = gesture.move({ id: event.pointerId, x: event.clientX, y: event.clientY });
+    switch (intent.kind) {
+      case "pan":
+        panBy(intent.deltaX, intent.deltaY);
+        draw();
+        return;
+      case "pinch":
+        zoomByPinch(intent.scale);
+        draw();
+        return;
+      case "none":
+        break;
     }
-    hoveredCoordinate = raycastTile(event);
-    canvas.style.cursor = hoveredCoordinate === null ? "grab" : "pointer";
-    updateMarkers();
-    draw();
+    // Only a pointer that can hover gets a hover marker: a finger has no hover, and lighting the
+    // tile up under it would read as a selection.
+    if (event.pointerType !== "touch") {
+      hoveredCoordinate = raycastTile(event);
+      canvas.style.cursor = hoveredCoordinate === null ? "grab" : "pointer";
+      updateMarkers();
+      draw();
+    }
   }
 
   function onPointerUp(event: PointerEvent): void {
-    const wasDragging = gesture.up();
-    canvas.releasePointerCapture(event.pointerId);
-    if (wasDragging) return;
+    const tap = gesture.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    if (!tap) return;
     const coordinate = raycastTile(event);
     if (coordinate !== null) options.onTileSelected?.(coordinate);
   }
 
+  function onPointerCancel(event: PointerEvent): void {
+    gesture.cancel(event.pointerId);
+  }
+
   function onPointerLeave(): void {
-    gesture.reset();
     hoveredCoordinate = null;
     if (hoverMarker !== null) hoverMarker.visible = false;
     draw();
@@ -677,6 +698,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerCancel);
   canvas.addEventListener("pointerleave", onPointerLeave);
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.style.cursor = "grab";
@@ -702,6 +724,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerCancel);
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("wheel", onWheel);
       observer?.disconnect();

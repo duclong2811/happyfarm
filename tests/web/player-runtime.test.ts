@@ -219,4 +219,86 @@ describe("player runtime", () => {
     expect(harness.runtime.pose?.z).toBeCloseTo(SPAWN.worldZ, 9);
     expect(harness.runtime.pose?.movementState).toBe("IDLE");
   });
+
+  it("walks to a queued destination and stops there", () => {
+    const harness = createHarness();
+    harness.runtime.start();
+    const targetZ = SPAWN.worldZ - 3;
+    harness.runtime.setDestination({ worldX: SPAWN.worldX, worldZ: targetZ });
+    // A destination wakes the loop the same way a held key does.
+    expect(harness.pendingFrames()).toBe(1);
+
+    let timestamp = 0;
+    for (let frame = 0; frame < 400 && harness.runtime.destination !== null; frame += 1) {
+      harness.runFrame(timestamp);
+      timestamp += 16;
+    }
+    expect(harness.runtime.destination).toBeNull();
+    // Arrival means stopping inside the arrival radius, on the near side of the target.
+    expect(Math.abs((harness.runtime.pose?.z ?? 0) - targetZ)).toBeLessThanOrEqual(0.4);
+    expect(harness.runtime.pose?.movementState).toBe("IDLE");
+    expect(harness.pendingFrames()).toBe(0);
+  });
+
+  it("never moves a destination without a frame", () => {
+    // Only a tick moves the character. Nothing else - a camera drag, a panel toggle, a refresh -
+    // can reach the pose, which is why a destination alone must leave it exactly where it was.
+    const harness = createHarness();
+    harness.runtime.start();
+    const before = harness.runtime.pose;
+    harness.runtime.setDestination({ worldX: SPAWN.worldX + 4, worldZ: SPAWN.worldZ });
+    expect(harness.runtime.pose).toBe(before);
+  });
+
+  it("cancels a destination the moment a movement key is pressed", () => {
+    const harness = createHarness();
+    harness.runtime.start();
+    harness.runtime.setDestination({ worldX: SPAWN.worldX, worldZ: SPAWN.worldZ - 5 });
+    harness.runFrame(0);
+    expect(harness.runtime.destination).not.toBeNull();
+
+    harness.setInput({ x: 0, z: 1 });
+    harness.runFrame(16);
+    expect(harness.runtime.destination).toBeNull();
+    // The hand wins: the character now walks south, away from the queued target.
+    expect(harness.runtime.pose?.z).toBeGreaterThan(SPAWN.worldZ);
+  });
+
+  it("replaces an old destination with a new one", () => {
+    const harness = createHarness();
+    harness.runtime.start();
+    harness.runtime.setDestination({ worldX: SPAWN.worldX, worldZ: SPAWN.worldZ - 5 });
+    harness.runFrame(0);
+    harness.runFrame(16);
+    harness.runtime.setDestination({ worldX: SPAWN.worldX + 2, worldZ: SPAWN.worldZ });
+    expect(harness.runtime.destination).toEqual({ worldX: SPAWN.worldX + 2, worldZ: SPAWN.worldZ });
+    // One walk at a time: the loop is alive for the new target, not the abandoned one.
+    expect(harness.pendingFrames()).toBe(1);
+  });
+
+  it("stops safely when a destination cannot be reached", () => {
+    const harness = createHarness();
+    harness.runtime.start();
+    // A crop sits on the target tile, so the walk can never arrive: the collision world refuses the
+    // last step and the queue is dropped instead of spinning against the obstacle.
+    const blockedTile = plantedTile(3, 25);
+    harness.runtime.setTiles([blockedTile]);
+    harness.runtime.setDestination({ worldX: blockedTile.worldX, worldZ: blockedTile.worldZ });
+
+    let timestamp = 0;
+    let frames = 0;
+    for (; frames < 600 && harness.runtime.destination !== null; frames += 1) {
+      harness.runFrame(timestamp);
+      timestamp += 16;
+    }
+    expect(harness.runtime.destination).toBeNull();
+    expect(harness.pendingFrames()).toBe(0);
+    // It stopped on the near side of the crop rather than standing on it.
+    expect(harness.runtime.pose?.movementState).toBe("IDLE");
+    const distance = Math.hypot(
+      (harness.runtime.pose?.x ?? 0) - blockedTile.worldX,
+      (harness.runtime.pose?.z ?? 0) - blockedTile.worldZ
+    );
+    expect(distance).toBeGreaterThan(0.4);
+  });
 });

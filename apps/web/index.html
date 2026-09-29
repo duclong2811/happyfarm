@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Happy Farm</title></head>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" /><title>Happy Farm</title></head>
   <body>
     <main class="game-shell"><section class="world" aria-label="Farm world">
       <canvas id="scene" class="scene" width="1440" height="900"></canvas><div class="world-vignette"></div>
-      <header class="top-hud">
+      <header id="top-hud" class="top-hud">
         <div class="brand"><span class="brand-mark">🌱</span><div><h1>Happy Farm</h1><p id="farm-info">Preparing your farm…</p></div></div>
         <div class="hud-resources">
           <div class="resource-pill"><span>🪙</span><div><small id="gold-label">Gold</small><strong id="wallet">0 gold</strong></div></div>
@@ -13,13 +13,26 @@
           <button id="refresh" class="icon-button" type="button" title="Refresh farm">↻</button>
         </div>
       </header>
-      <aside class="game-panel left-panel">
-        <section><div class="panel-title"><span>🎒</span><h2 id="inventory-title">Inventory</h2></div><ul id="inventory" class="inventory-list"></ul></section>
-        <section><div class="panel-title"><span>🗺️</span><h2 id="land-title">Land</h2></div><div id="plots"></div><button id="expand-farm" class="primary compact" type="button">Unlock next plot</button></section>
+      <aside id="inventory-panel" class="game-panel left-panel">
+        <div class="panel-title">
+          <span aria-hidden="true">🎒</span><h2 id="inventory-title">Inventory</h2>
+          <button id="inventory-toggle" class="panel-toggle" type="button" aria-expanded="true" aria-controls="inventory-body"><span aria-hidden="true">✕</span></button>
+        </div>
+        <div id="inventory-body" class="panel-body">
+          <section><ul id="inventory" class="inventory-list"></ul></section>
+          <section><div class="panel-title"><span aria-hidden="true">🗺️</span><h2 id="land-title">Land</h2></div><div id="plots"></div><button id="expand-farm" class="primary compact" type="button">Unlock next plot</button></section>
+        </div>
       </aside>
-      <aside class="game-panel right-panel"><div class="panel-title"><span>🛒</span><h2 id="market-title">Farm Market</h2></div><div id="shop" class="shop-list"></div></aside>
-      <section class="action-dock" aria-label="Farm actions">
+      <aside id="market-panel" class="game-panel right-panel">
+        <div class="panel-title">
+          <span aria-hidden="true">🛒</span><h2 id="market-title">Farm Market</h2>
+          <button id="market-toggle" class="panel-toggle" type="button" aria-expanded="true" aria-controls="market-body"><span aria-hidden="true">✕</span></button>
+        </div>
+        <div id="market-body" class="panel-body"><div id="shop" class="shop-list"></div></div>
+      </aside>
+      <section id="action-dock" class="action-dock" aria-label="Farm actions">
         <div class="selection-orb">🌾</div><div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>
+        <button id="go" class="go" type="button" hidden>👣 Go</button>
         <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled>Plant crop</button></div>
         <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button">Harvest</button><button id="uproot" class="uproot" type="button">Uproot</button></div>
         <div id="tree-controls" class="action-controls" hidden><span id="tree-state" class="muted"></span><button id="harvest-tree" class="primary harvest" type="button">Harvest</button><button id="remove-tree" class="uproot" type="button">Remove tree</button></div>
