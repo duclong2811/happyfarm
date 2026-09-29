@@ -28,6 +28,10 @@ export interface TilePlacement {
 export interface FarmLayout {
   readonly tileSize: number;
   readonly tileGap: number;
+  readonly pitch: number;
+  /** Tile coordinate the world origin sits on. Set by `frame` so land and scenery share one frame. */
+  readonly centerTileX: number;
+  readonly centerTileY: number;
   readonly columns: number;
   readonly rows: number;
   /** Extent of the tile area, excluding any ground margin the renderer adds around it. */
@@ -39,6 +43,20 @@ export interface FarmLayout {
 export interface FarmLayoutOptions {
   readonly tileSize?: number;
   readonly tileGap?: number;
+  /**
+   * Tiles the world is framed around. Without it the layout centres on the tiles it was given.
+   * Passing the unlocked-plus-locked frame keeps a growing farm, and the scenery around it, from
+   * sliding across the screen every time land is bought.
+   */
+  readonly frame?: TileBounds;
+}
+
+/** An inclusive rectangle of tile coordinates. */
+export interface TileBounds {
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
 }
 
 function finiteInRange(value: number, name: string, min: number, max: number): number {
@@ -49,8 +67,19 @@ function finiteInRange(value: number, name: string, min: number, max: number): n
 }
 
 function assertCoordinate(tile: TileCoordinate): void {
-  if (!Number.isSafeInteger(tile.x) || tile.x < 0 || !Number.isSafeInteger(tile.y) || tile.y < 0) {
-    throw new RangeError("tile coordinates must be non-negative safe integers");
+  if (!Number.isSafeInteger(tile.x) || !Number.isSafeInteger(tile.y)) {
+    throw new RangeError("tile coordinates must be safe integers");
+  }
+}
+
+function assertBounds(bounds: TileBounds): void {
+  for (const edge of [bounds.minX, bounds.maxX, bounds.minY, bounds.maxY]) {
+    if (!Number.isSafeInteger(edge)) {
+      throw new RangeError("frame coordinates must be safe integers");
+    }
+  }
+  if (bounds.minX > bounds.maxX || bounds.minY > bounds.maxY) {
+    throw new RangeError("frame must have minX <= maxX and minY <= maxY");
   }
 }
 
@@ -79,22 +108,48 @@ export function layoutFarmTiles(
   }
   const ordered = [...unique.values()].sort((left, right) => left.y - right.y || left.x - right.x);
 
-  const columns = ordered.reduce((max, tile) => Math.max(max, tile.x), -1) + 1;
-  const rows = ordered.reduce((max, tile) => Math.max(max, tile.y), -1) + 1;
+  const minX = ordered.reduce((min, tile) => Math.min(min, tile.x), Number.POSITIVE_INFINITY);
+  const maxX = ordered.reduce((max, tile) => Math.max(max, tile.x), Number.NEGATIVE_INFINITY);
+  const minY = ordered.reduce((min, tile) => Math.min(min, tile.y), Number.POSITIVE_INFINITY);
+  const maxY = ordered.reduce((max, tile) => Math.max(max, tile.y), Number.NEGATIVE_INFINITY);
+  const columns = ordered.length === 0 ? 0 : maxX - minX + 1;
+  const rows = ordered.length === 0 ? 0 : maxY - minY + 1;
+  const frame = options.frame;
+  if (frame !== undefined) assertBounds(frame);
+  const centerTileX = frame === undefined
+    ? ordered.length === 0 ? 0 : (minX + maxX) / 2
+    : (frame.minX + frame.maxX) / 2;
+  const centerTileY = frame === undefined
+    ? ordered.length === 0 ? 0 : (minY + maxY) / 2
+    : (frame.minY + frame.maxY) / 2;
   const placements = ordered.map((tile) => ({
     tileX: tile.x,
     tileY: tile.y,
-    worldX: (tile.x - (columns - 1) / 2) * pitch,
-    worldZ: (tile.y - (rows - 1) / 2) * pitch
+    worldX: (tile.x - centerTileX) * pitch,
+    worldZ: (tile.y - centerTileY) * pitch
   }));
 
   return {
     tileSize,
     tileGap,
+    pitch,
+    centerTileX,
+    centerTileY,
     columns,
     rows,
     tileAreaWidth: columns === 0 ? 0 : columns * pitch - tileGap,
     tileAreaDepth: rows === 0 ? 0 : rows * pitch - tileGap,
     placements
+  };
+}
+
+/** World position of a tile coordinate inside an existing layout's frame. */
+export function worldPositionInLayout(
+  layout: FarmLayout,
+  tile: TileCoordinate
+): { readonly worldX: number; readonly worldZ: number } {
+  return {
+    worldX: (tile.x - layout.centerTileX) * layout.pitch,
+    worldZ: (tile.y - layout.centerTileY) * layout.pitch
   };
 }

@@ -63,12 +63,10 @@ describe("layoutFarmTiles", () => {
 
   it("collapses a duplicated coordinate into one placement", () => {
     const layout = layoutFarmTiles([{ x: 2, y: 3 }, { x: 2, y: 3 }, { x: 2, y: 3 }]);
-    expect(layout.columns).toBe(3);
-    expect(layout.rows).toBe(4);
-    // The grid box is still centred on the origin, so one surviving tile sits in its corner rather
-    // than at the origin: centring follows the land's extent, not the coordinate count.
+    expect(layout.columns).toBe(1);
+    expect(layout.rows).toBe(1);
     expect(layout.placements).toEqual([
-      { tileX: 2, tileY: 3, worldX: (2 - (3 - 1) / 2) * PITCH, worldZ: (3 - (4 - 1) / 2) * PITCH }
+      { tileX: 2, tileY: 3, worldX: 0, worldZ: 0 }
     ]);
   });
 
@@ -88,8 +86,28 @@ describe("layoutFarmTiles", () => {
     expect(layout.placements.map((placement) => placement.worldX)).toEqual([-1, 1]);
   });
 
-  it("rejects coordinates that are not non-negative integers", () => {
-    for (const tile of [{ x: -1, y: 0 }, { x: 0, y: -1 }, { x: 1.5, y: 0 }, { x: Number.NaN, y: 0 }]) {
+  it("lays out negative X and Y coordinates without changing their world-axis direction", () => {
+    const layout = layoutFarmTiles([{ x: -2, y: -3 }, { x: 2, y: 1 }]);
+    expect(layout).toMatchObject({ columns: 5, rows: 5, centerTileX: 0, centerTileY: -1 });
+    expect(layout.placements).toEqual([
+      { tileX: -2, tileY: -3, worldX: -2 * PITCH, worldZ: -2 * PITCH },
+      { tileX: 2, tileY: 1, worldX: 2 * PITCH, worldZ: 2 * PITCH }
+    ]);
+  });
+
+  it("keeps a mixed-sign expanded frame stable around its explicit bounds", () => {
+    const layout = layoutFarmTiles(
+      [{ x: -6, y: 0 }, { x: 5, y: 11 }],
+      { frame: { minX: -6, maxX: 11, minY: -6, maxY: 11 } }
+    );
+    expect(layout.centerTileX).toBe(2.5);
+    expect(layout.centerTileY).toBe(2.5);
+    expect(layout.placements[0]).toMatchObject({ worldX: -8.5 * PITCH, worldZ: -2.5 * PITCH });
+    expect(layout.placements[1]).toMatchObject({ worldX: 2.5 * PITCH, worldZ: 8.5 * PITCH });
+  });
+
+  it("rejects coordinates that are not safe integers", () => {
+    for (const tile of [{ x: 1.5, y: 0 }, { x: Number.NaN, y: 0 }, { x: Number.POSITIVE_INFINITY, y: 0 }]) {
       expect(() => layoutFarmTiles([tile])).toThrow(RangeError);
     }
   });

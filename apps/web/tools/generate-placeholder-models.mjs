@@ -13,6 +13,11 @@
  *   - one world unit tall, with the base sitting exactly on y = 0
  *   - footprint inside a 1 x 1 square centred on the origin, so a model cannot overhang its tile
  *   - non-indexed triangle soup, one primitive per material, POSITION and NORMAL only
+ *   - non-interleaved accessors: one non-overlapping buffer view per accessor, with no byteStride
+ *
+ * The final bullet is this repository's deliberately narrow authoring convention, not a glTF 2.0
+ * requirement. A valid interleaved export must be converted to this subset before it is committed,
+ * or the asset test must be deliberately broadened together with a representative fixture.
  *
  * Run with: npm run assets:generate --workspace @happy-farm/web
  */

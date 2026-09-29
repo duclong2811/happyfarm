@@ -216,7 +216,7 @@ describe("shipped crop models", () => {
         }
       });
 
-      it("keeps every accessor inside a buffer view that fits the buffer", () => {
+      it("keeps every accessor inside the repository's non-interleaved buffer-view subset", () => {
         const bufferLength = model.document.buffers[0]?.byteLength ?? 0;
         expect(bufferLength).toBeGreaterThan(0);
         expect(model.binary.byteLength).toBeGreaterThanOrEqual(bufferLength);
