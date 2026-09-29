@@ -38,7 +38,8 @@ Windows host, so `wrangler dev` cannot start.
 ### Node development host
 
 - The development API keeps **one** implementation: `workers/api/src/dev-index.ts` with
-  `DevAuthenticator`. Production keeps `workers/api/src/index.ts` with `UnconfiguredAuthenticator`.
+  `DevAuthenticator`. The deployed entrypoint is `workers/api/src/index.ts`; since ADR 0019 it
+  authenticates with Cloudflare Access instead of `UnconfiguredAuthenticator`.
 - `workers/api/dev/api-host.ts` supplies only what `workerd` normally supplies — the `DB` binding and
   a `fetch(request, env)` entry — so that entrypoint can run on plain Node when `workerd` cannot
   start. It is development-only and is never referenced by `wrangler.toml`.

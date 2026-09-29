@@ -2,9 +2,9 @@ import { parsePlayerId, type PlayerId } from "@happy-farm/domain";
 import type { ActorContext, AuthenticationPort } from "@happy-farm/application";
 
 /**
- * Development-only authentication. This module must never be imported by the
- * production entrypoint (`src/index.ts`), which keeps `UnconfiguredAuthenticator`
- * and stays fail-closed.
+ * Development-only authentication. This module must never be imported by the deployed entrypoint
+ * (`src/index.ts`), which authenticates with Cloudflare Access and stays fail-closed without
+ * configuration. See `docs/deployment.md` and ADR 0019.
  */
 export const DEV_AUTH_BOOTSTRAP_PATH = "/__dev/bootstrap";
 export const DEV_PLAYER_DEFAULT_DISPLAY_NAME = "Dev Player";

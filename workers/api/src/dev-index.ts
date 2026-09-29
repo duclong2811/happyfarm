@@ -29,7 +29,8 @@ import type { D1DatabaseLike } from "./d1-types";
  * DEVELOPMENT-ONLY Worker entrypoint.
  *
  * Isolation contract:
- * - `src/index.ts` remains the production entrypoint and still wires `UnconfiguredAuthenticator`.
+ * - `src/index.ts` remains the deployed entrypoint and wires `CloudflareAccessAuthenticator`
+ *   (fail-closed without Access configuration). It never imports this file or `dev-auth.ts`.
  * - This file is selected only by `wrangler.dev.toml`; production config never references it.
  * - `DevAuthenticator` and the `/__dev/bootstrap` route exist only here and in `dev-auth.ts`.
  *
