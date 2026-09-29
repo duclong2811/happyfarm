@@ -24,6 +24,8 @@ export interface DevApiHost {
   readonly appliedMigrations: readonly string[];
   readonly configured: boolean;
   handle(request: Request): Promise<Response>;
+  /** Same-origin Vite traffic with the server-held dev credential attached. */
+  handleTrustedBrowserRequest(request: Request): Promise<Response>;
   /** Releases the local database handle. Long-lived servers keep the host open for their lifetime. */
   close(): void;
 }
@@ -62,12 +64,19 @@ export function createDevApiHost(options: DevApiHostOptions): DevApiHost {
   const database = new SqliteD1Database(sqlite);
   const env: DevEnv = { ...bindings, DB: database };
   const handle = createDevWorker(env);
+  const devToken = bindings.DEV_AUTH_TOKEN;
 
   return {
     databasePath,
     appliedMigrations,
     configured,
     handle,
+    handleTrustedBrowserRequest: (request: Request) => {
+      if (!configured || devToken === undefined) return handle(request);
+      const headers = new Headers(request.headers);
+      headers.set("authorization", `Bearer ${devToken}`);
+      return handle(new Request(request, { headers }));
+    },
     close: () => {
       database.close();
     }

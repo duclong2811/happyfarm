@@ -65,7 +65,11 @@ Authorization: Bearer <dev-token>
 - Requires a valid dev token; otherwise `NOT_AUTHENTICATED` and no row is written.
 - Creates only the one server-configured Player (`ACTIVE`) using the Phase 1 schema, and is
   idempotent — repeated calls return the same player with `created: false`.
-- Never creates wallet balance, items, farms, inventory, crops, progression, or XP.
+- Since Phase 5 it then performs onboarding: `GrantStarterSeed` gives that player their one-time 36
+  `item_carrot_seed`. The receipt is keyed by player, so a repeated bootstrap, a second farm, or a
+  replayed call grants nothing more. There is no HTTP route for granting items, and the browser never
+  names the item or the quantity.
+- Never creates wallet balance (gold), farms, crops, progression, or XP.
 - Returns `CONFLICT_STALE_STATE` if the configured player id already belongs to a different
   issuer/subject pair (change `DEV_PLAYER_ID` or reset the local database).
 
@@ -90,17 +94,39 @@ npm run dev
 ```
 
 This starts the Vite dev server, which serves the UI and forwards same-origin `/api/*` requests to
-the development Worker entrypoint. Open the printed URL and:
+the development Worker entrypoint. Open the printed localhost URL. The local proxy keeps the bearer
+credential server-side, automatically bootstraps the configured development player, and loads the
+last local Starter Farm (or creates one when none exists).
 
-1. Paste the `DEV_AUTH_TOKEN` from `workers/api/.dev.vars` into **Development token** and save it.
-   The token stays in this browser's storage and is never written to a URL or a cookie.
-2. Press **Bootstrap dev player**, then **Create farm** (or **Load farm** by id).
-3. Select a tile in **Field**, choose a crop, and press **Plant on selected tile**. The list comes
-   from `GET /crop-definitions`, not from the page: wheat needs level 2 and corn level 3, and a crop
-   this player has not unlocked yet is listed with the level it needs rather than hidden.
-4. Wait for the crop to mature (carrot 5 min, wheat 15 min, corn 30 min of server time), then press
-   **Harvest** on the tile. The field refreshes every two seconds from the server.
-5. Use **Sell** in **Shop** to turn harvested items into gold, and **Buy** to spend it.
+1. Select a tile in **Field**, choose a crop, and press **Plant crop**. The list comes from
+   `GET /crop-definitions`, not from the page: each option shows the crop and how many of its seeds
+   the player holds; wheat needs level 2 and corn level 3, and a crop this player has not unlocked
+   yet is listed with the level it needs rather than hidden. Planting spends one seed, so the button
+   is disabled, with the reason shown, when the tile is not empty soil, the crop is locked, or no
+   seed is left.
+2. A planted tile reports its crop name and growth state in the action dock. While it grows, the
+   plant button is disabled and the dock shows the remaining server-timed growth. Once the crop
+   matures (carrot 5 min, wheat 15 min, corn 30 min of server time), the dock replaces the plant
+   controls with a **Harvest** button. The field refreshes every two seconds from the server.
+3. Use **Sell** in **Farm Market** to turn harvested produce into gold, and **Buy** to spend it on
+   more seeds. The two directions are separate rows: seeds can only be bought and produce can only be
+   sold, so no item can be bought and sold back.
+4. Press **Uproot** to free a tile you planted by mistake. It asks for confirmation first, because
+   the seed is not refunded; a growing crop can be uprooted just as a mature one can.
+5. Use the **language button** in the top bar to switch the whole HUD between English and
+   Vietnamese. The choice is saved and applied without a reload; it changes only wording, never a
+   price, a level, or a count.
+
+The 36 starter tiles are the field, not the whole map. They sit on a larger island with a dirt
+apron, fence, path, pond, barn, and deterministic scenery. The next ring of land for sale is drawn
+as fogged, padlocked `6 x 6` plots around the field; buying a plot through **Land** turns that ring
+into field and previews the next one. Drag the 3D view to pan and use the wheel to zoom; both are
+clamped to the island, and clicking a tile selects it. The surrounding world is presentation only:
+unlocked land, prices, and levels still come from the server.
+
+Automatic authentication is intentionally limited to loopback Host headers (`localhost`,
+`127.0.0.1`, and `[::1]`). Running Vite with a LAN-facing host does not auto-authenticate remote
+requests. The production Worker remains unchanged and the dev token is never bundled into the UI.
 
 **Progression** shows the level and experience the server reports for the development player. A
 harvest is the only thing that moves it, because the award is written inside the harvest settlement
@@ -116,9 +142,12 @@ boundary — the server refuses the command with `CROP_LEVEL_REQUIRED` either wa
 The UI computes nothing authoritative: prices, rewards, maturity, and balances all come from the
 API, and every response is validated against the `@happy-farm/contracts` schemas before it is used.
 
-Because planting is free and only harvested produce is tradeable, the first useful order is
+Because planting costs a seed and only harvested produce is tradeable, the first useful order is
 plant → harvest → sell → buy. A brand-new player has no wallet row and therefore no gold, so
-`Buy` returns `INSUFFICIENT_FUNDS` until something has been sold.
+`Buy` returns `INSUFFICIENT_FUNDS` until something has been sold. The dev bootstrap grants 36
+carrot seeds -- three full plantings of the starting crop -- so a new player can plant immediately,
+and a player who has spent them all with nothing to sell sees `INSUFFICIENT_ITEMS` from `Plant crop`
+until the market is used.
 
 ## 3D view (Phase 3.6A, 3.6B, and 3.6C)
 

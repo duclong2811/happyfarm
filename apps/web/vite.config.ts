@@ -123,6 +123,17 @@ function toWebRequest(request: IncomingMessage, body: Uint8Array<ArrayBuffer>): 
   return new Request(url, init);
 }
 
+function isLoopbackRequest(request: IncomingMessage): boolean {
+  const host = request.headers.host;
+  if (host === undefined) return false;
+  try {
+    const hostname = new URL(`http://${host}`).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 async function respond(response: ServerResponse, apiResponse: Response): Promise<void> {
   response.statusCode = apiResponse.status;
   apiResponse.headers.forEach((value, key) => {
@@ -191,7 +202,13 @@ function devApiPlugin(): Plugin {
         void (async () => {
           try {
             const host = await loadHost();
-            await respond(response, await host.handle(toWebRequest(request, await readRequestBody(request))));
+            const workerRequest = toWebRequest(request, await readRequestBody(request));
+            await respond(
+              response,
+              await (isLoopbackRequest(request)
+                ? host.handleTrustedBrowserRequest(workerRequest)
+                : host.handle(workerRequest))
+            );
           } catch (error: unknown) {
             if (error instanceof RequestBodyTooLargeError) {
               server.config.logger.warn(

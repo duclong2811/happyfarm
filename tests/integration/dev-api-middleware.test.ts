@@ -182,11 +182,12 @@ describe("Vite development API bridge", () => {
       readonly body?: unknown;
       readonly rawChunks?: readonly string[];
       readonly declaredContentLength?: string;
+      readonly host?: string;
     } = {}
   ): Promise<CallResult> {
     const handler = middleware;
     if (handler === null) throw new Error("middleware was not installed");
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { host: options.host ?? "localhost:5173" };
     if (options.token !== undefined) headers.authorization = `Bearer ${options.token}`;
     if (options.declaredContentLength !== undefined) {
       headers["content-length"] = options.declaredContentLength;
@@ -245,13 +246,20 @@ describe("Vite development API bridge", () => {
     expect(health.headers["content-type"]).toContain("json");
   });
 
-  it("does not let the proxy bypass authentication", async () => {
-    const anonymous = await call("GET", "/api/wallet");
-    expect(anonymous.status).toBe(401);
-    expect(anonymous.body).toMatchObject({ ok: false, error: { code: "NOT_AUTHENTICATED" } });
+  it("attaches the server-held dev credential and ignores a browser-supplied bearer", async () => {
+    const automatic = await call("GET", "/api/wallet");
+    expect(automatic.status).toBe(200);
+    expect(automatic.body).toEqual({ ok: true, data: { wallets: [] } });
 
     const wrong = await call("GET", "/api/wallet", { token: "not-the-dev-token" });
-    expect(wrong.status).toBe(401);
+    expect(wrong.status).toBe(200);
+    expect(wrong.body).toEqual({ ok: true, data: { wallets: [] } });
+  });
+
+  it("does not auto-authenticate a non-loopback Host header", async () => {
+    const remote = await call("GET", "/api/wallet", { host: "192.168.1.50:5173" });
+    expect(remote.status).toBe(401);
+    expect(remote.body).toMatchObject({ ok: false, error: { code: "NOT_AUTHENTICATED" } });
   });
 
   it("forwards headers and JSON bodies to the real development Worker", async () => {
