@@ -112,8 +112,9 @@ becomes "seeds are a faster or better variant" instead.
 Goal: introduce a second crop pattern that pays out on a regrow timer.
 
 Status: **implemented on top of the audited backend** (migration `0008`, tree catalogue, use cases,
-routes, client dock, and 3D rendering). Pending: applying `0008` to the staging D1 database, the
-remote concurrency verification that follows it, and a manual browser pass. See
+routes, client dock, and 3D rendering). Migration `0008` and the repeating-harvest invariants
+(occupancy in both directions, one settlement per cycle, replay, races, removal) are verified on the
+staging D1 database. Pending: a manual browser pass. See
 `docs/decisions/0014-trees-and-repeating-harvests.md`.
 
 Player-facing result: plant a fruit tree, wait longer than a crop, then harvest it repeatedly. Each

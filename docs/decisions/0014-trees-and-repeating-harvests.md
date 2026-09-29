@@ -1,6 +1,7 @@
 # 0014 - Trees and repeating harvests
 
-Status: implemented; pending remote D1 verification for migration `0008` and a manual browser pass.
+Status: implemented; migration `0008` and the repeating-harvest invariants are verified on the
+staging D1 database (`happy-farm-staging`, 2026-09-29). A manual browser pass is still pending.
 Phase: 6 (backend `6B.1`-`6B.5`, client `6C`).
 
 ## Context
