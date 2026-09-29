@@ -16,6 +16,8 @@
     "dev": "npm run dev --workspace @happy-farm/web",
     "dev:worker": "wrangler dev --config workers/api/wrangler.dev.toml",
     "build:worker:dev": "wrangler deploy --dry-run --outdir ../../dist/worker-dev --config workers/api/wrangler.dev.toml",
+    "build:worker:staging": "wrangler deploy --dry-run --outdir ../../dist/worker-staging --config workers/api/wrangler.staging.toml",
+    "check:staging-config": "node scripts/checks/staging-config.mjs",
     "db:migrate:local": "wrangler d1 migrations apply happy-farm-local --local --config workers/api/wrangler.toml",
     "lint": "eslint \"apps/**/*.ts\" \"packages/**/*.ts\" \"workers/**/*.ts\" \"tests/**/*.ts\" \"vitest.config.ts\" --max-warnings=0",
     "test": "vitest run",

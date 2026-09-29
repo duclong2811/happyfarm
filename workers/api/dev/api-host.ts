@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { DevAuthBindings } from "../src/dev-auth";
+import { DEV_AUTH_BOOTSTRAP_PATH } from "../src/dev-auth";
 import { createDevWorker, type DevEnv } from "../src/dev-index";
 import { readDevVars } from "./dev-vars";
 import { applyMigrations } from "./migrations";
@@ -65,14 +66,35 @@ export function createDevApiHost(options: DevApiHostOptions): DevApiHost {
   const env: DevEnv = { ...bindings, DB: database };
   const handle = createDevWorker(env);
   const devToken = bindings.DEV_AUTH_TOKEN;
+  let bootstrapped = false;
+
+  /**
+   * Onboards the development identity, once, on the server.
+   *
+   * The browser no longer knows this route exists: it would only have carried a development-only
+   * path into the shipped bundle. The dev host performs the same onboarding the deployed Worker
+   * performs inside its authenticator, so both environments give a first-time visitor a Player row
+   * before their first command.
+   */
+  async function ensureBootstrapped(): Promise<void> {
+    if (!configured || devToken === undefined || bootstrapped) return;
+    bootstrapped = true;
+    await handle(
+      new Request(`http://localhost${DEV_AUTH_BOOTSTRAP_PATH}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${devToken}` }
+      })
+    );
+  }
 
   return {
     databasePath,
     appliedMigrations,
     configured,
     handle,
-    handleTrustedBrowserRequest: (request: Request) => {
+    handleTrustedBrowserRequest: async (request: Request) => {
       if (!configured || devToken === undefined) return handle(request);
+      await ensureBootstrapped();
       const headers = new Headers(request.headers);
       headers.set("authorization", `Bearer ${devToken}`);
       return handle(new Request(request, { headers }));

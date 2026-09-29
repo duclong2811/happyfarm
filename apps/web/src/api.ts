@@ -87,21 +87,6 @@ function settlementValidator<T>(inner: Validator<T>): Validator<{ readonly settl
   };
 }
 
-export interface DevBootstrapStatus {
-  readonly player: { readonly playerId: string; readonly status: string; readonly created: boolean };
-}
-
-const bootstrapValidator: Validator<DevBootstrapStatus> = {
-  parse(value: unknown): DevBootstrapStatus {
-    if (!isRecord(value) || !isRecord(value.player)) throw new Error("Malformed bootstrap response");
-    const { playerId, status, created } = value.player;
-    if (typeof playerId !== "string" || typeof status !== "string" || typeof created !== "boolean") {
-      throw new Error("Malformed bootstrap response");
-    }
-    return { player: { playerId, status, created } };
-  }
-};
-
 export interface CreateFarmResult {
   readonly farm: FarmDTO;
   readonly membership: FarmMemberDTO;
@@ -187,9 +172,6 @@ export class ApiClient {
     );
   }
 
-  bootstrap(): Promise<DevBootstrapStatus> {
-    return this.request("/__dev/bootstrap", { method: "POST", headers: this.authHeaders() }, bootstrapValidator);
-  }
 
   createFarm(name: string): Promise<CreateFarmResult> {
     return this.post("/farms", { name }, CreateFarmResponseSchema);

@@ -292,3 +292,15 @@ Read `docs/decisions/0018-game-hud-and-panel-architecture.md` before editing the
 - Tests: `tests/web/farm-panels.test.ts`, `tests/web/i18n.test.ts`.
 
 Panels are presentation: never store, send, or gate gameplay on panel state, and never render a second copy of inventory or market data.
+
+## Staging deployment foundation
+
+Read `docs/deployment.md` before touching the deployed entrypoint, the Access authenticator, the staging config, or static asset routing.
+
+- Entrypoint: `workers/api/src/index.ts` (`/api/*` ? handler, everything else ? `ASSETS`).
+- Access auth: `workers/api/src/access-auth.ts` (JWKS-verified JWT, deterministic `player_<uuid>` from `(issuer, subject)`, fail-closed without config).
+- Onboarding: `workers/api/src/player-onboarding.ts` (one Player row per verified visitor; nothing else).
+- Boundary: `workers/api/src/staging-routing.ts`; config: `workers/api/wrangler.staging.toml` (staging D1 + `[assets]`).
+- Tests: `tests/api/access-auth.test.ts`, `tests/api/staging-routing.test.ts` (includes an import-graph proof that the deployed entrypoint cannot reach the dev bridge).
+
+Never add an identity path that trusts a client-supplied value, never import the dev bridge into the deployed entrypoint, and never point staging at a production database.

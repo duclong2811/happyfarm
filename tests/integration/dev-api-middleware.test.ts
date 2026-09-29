@@ -265,7 +265,11 @@ describe("Vite development API bridge", () => {
   it("forwards headers and JSON bodies to the real development Worker", async () => {
     const bootstrap = await call("POST", "/api/__dev/bootstrap", { token: TOKEN });
     expect(bootstrap.status).toBe(200);
-    expect(bootstrap.body).toMatchObject({ ok: true, data: { player: { playerId: DEV_PLAYER_ID, created: true } } });
+    // The dev host now onboards the trusted identity itself on the first request, so an explicit
+    // bootstrap may find the row already there. What matters is one stable player, not who won.
+    expect(bootstrap.body).toMatchObject({ ok: true, data: { player: { playerId: DEV_PLAYER_ID } } });
+    const createdFlag = (bootstrap.body as { data?: { player?: { created?: unknown } } }).data?.player?.created;
+    expect(typeof createdFlag).toBe("boolean");
 
     const farm = await call("POST", "/api/farms", { token: TOKEN, body: { name: "Middleware Farm" } });
     expect(farm.status).toBe(201);
@@ -282,6 +286,15 @@ describe("Vite development API bridge", () => {
     const blocked = await call("POST", "/api/__dev/bootstrap", { token: TOKEN, body: { playerId: "player_evil" } });
     expect(blocked.status).toBe(400);
     expect(blocked.body).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+  });
+
+  it("onboards the trusted development identity without the client asking", async () => {
+    // The shipped client no longer knows a development route exists: the host performs the same
+    // onboarding the deployed Worker performs inside its authenticator.
+    const wallet = await call("GET", "/api/wallet", { token: TOKEN });
+    expect(wallet.status).toBe(200);
+    const farm = await call("POST", "/api/farms", { token: TOKEN, body: { name: "Auto Onboarded Farm" } });
+    expect(farm.status).toBe(201);
   });
 
   it("refuses a declared oversized body from the header alone, without reading the body", async () => {

@@ -1628,7 +1628,9 @@ wire();
 renderIcons();
 render();
 void run(async () => {
-  await api().bootstrap();
+  // No startup handshake: a deployed Worker authenticates the visitor and creates their Player row
+  // on the first API call, and the development host does the same server-side. Keeping the dev
+  // bootstrap out of the client is what keeps a development-only route out of the shipped bundle.
   const storedFarm = localStorage.getItem(FARM_KEY);
   if (storedFarm !== null) {
     try {

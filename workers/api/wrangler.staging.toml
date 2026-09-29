@@ -1,0 +1,43 @@
+# STAGING Worker configuration - the alpha environment, not production.
+#
+# Isolation:
+# - `main` is src/index.ts, the deployed entrypoint. The development bridge (dev-index.ts,
+#   dev-auth.ts, workers/api/dev/**) is not in its import graph, so /__dev/bootstrap cannot exist
+#   in a Worker built from this file.
+# - Identity comes from Cloudflare Access. Both values below must be replaced before deploying;
+#   while they hold the REPLACE_ sentinel the authenticator refuses every request (fail closed)
+#   rather than guessing a team or an audience.
+# - The database is the staging database. Do not point this at a production database.
+#
+# Create the resources once (see docs/deployment.md for the full checklist):
+#   wrangler d1 create happy-farm-staging
+#   # then paste the returned database_id below
+#
+# Deploy (after the checklist): wrangler deploy --config workers/api/wrangler.staging.toml
+
+name = "happy-farm-staging"
+main = "src/index.ts"
+compatibility_date = "2026-09-27"
+
+[vars]
+# Cloudflare Access team domain, e.g. https://<team-name>.cloudflareaccess.com
+ACCESS_TEAM_DOMAIN = "REPLACE_WITH_ACCESS_TEAM_DOMAIN"
+# Cloudflare Access application audience (AUD) tag for the staging application.
+ACCESS_AUD = "REPLACE_WITH_ACCESS_AUD"
+
+[assets]
+# The built web app: SPA shell, hashed JS/CSS, and the generated GLB models. The path is relative to
+# this config file (workers/api/), so it points at apps/web/dist.
+directory = "../../apps/web/dist"
+binding = "ASSETS"
+# Client-side routes are served the app shell; /api/* never reaches this branch because the Worker
+# routes it first (see workers/api/src/staging-routing.ts).
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "happy-farm-staging"
+# USER ACTION REQUIRED: replace with the id printed by `wrangler d1 create happy-farm-staging`.
+# The sentinel is deliberately not a UUID, so a deploy fails loudly instead of binding elsewhere.
+database_id = "REPLACE_WITH_STAGING_D1_ID"
+migrations_dir = "../../database/migrations"

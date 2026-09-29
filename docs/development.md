@@ -1,19 +1,21 @@
 # Local development
 
 This document covers the isolated development authentication bridge (Phase 3.5A). It is
-development tooling only and is not part of the production API surface.
+development tooling only and is not part of the deployed API surface. For the deployed topology see
+`docs/deployment.md`.
 
-## Production stays fail-closed
+## Development stays isolated
 
 | Entrypoint | Config | Authenticator | Dev bootstrap route |
 | --- | --- | --- | --- |
-| `workers/api/src/index.ts` | `workers/api/wrangler.toml` | `UnconfiguredAuthenticator` (always no actor) | absent |
 | `workers/api/src/dev-index.ts` | `workers/api/wrangler.dev.toml` | `DevAuthenticator` | `POST /__dev/bootstrap` |
+| `workers/api/src/index.ts` | `workers/api/wrangler.toml`, `workers/api/wrangler.staging.toml` | `CloudflareAccessAuthenticator` (fail-closed without Access configuration) | absent |
 
-The production entrypoint never imports `dev-auth.ts`, `dev-index.ts`, or the dev player
-bootstrap. The dev bearer token therefore has zero authority in production: `POST /farms` with a
-valid dev token still returns `NOT_AUTHENTICATED`, and `/__dev/bootstrap` returns
-`RESOURCE_NOT_FOUND`.
+The deployed entrypoint never imports `dev-auth.ts`, `dev-index.ts`, or the dev player bootstrap, and
+`tests/api/staging-routing.test.ts` walks its import graph to prove it. The dev bearer token
+therefore has zero authority in a deployment: `POST /api/farms` with a valid dev token returns
+`NOT_AUTHENTICATED`, and `/__dev/bootstrap` is not a route at all. Local development keeps working
+unchanged through `npm run dev` and `npm run dev:worker`.
 
 ## Configure local development
 
