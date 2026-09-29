@@ -19,6 +19,8 @@ import {
 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
+import { createCameraRig } from "./camera";
+import { createDragGesture } from "./drag-gesture";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileMaterial, type SharedAssets } from "./materials";
 import { CROP_MODEL_URLS } from "./model-urls";
@@ -51,18 +53,19 @@ export const MIN_CROP_HEIGHT = 0.14;
 
 const CAMERA_FOV = 45;
 const CAMERA_DIRECTION = new Vector3(0.66, 0.82, 0.74).normalize();
-const ZOOM_MIN = 0.62;
-const ZOOM_MAX = 2.4;
-const PAN_LIMIT_FACTOR = 0.55;
 const MIN_FRAMED_EXTENT = 7;
 const MAX_PIXEL_RATIO = 2;
-const CLICK_SLOP_PX = 6;
 const CROP_RADIUS_FACTOR = 0.32;
 const SKY_COLOR = 0x9fd4ef;
 /** Warm tint applied to a loaded model once the server calls the crop mature. Placeholder art. */
 const READY_EMISSIVE_COLOR = 0x4a3410;
-/** Height of the placeholder avatar, in world units. Art replaces the look, not the controller. */
-const PLAYER_HEIGHT = 1.3;
+/**
+ * Height of the placeholder avatar, in world units.
+ *
+ * Deliberately taller than one tile (pitch 1.08) so the character reads as a character at the
+ * follow distance rather than as another prop. Art replaces the look, not the scale contract.
+ */
+const PLAYER_HEIGHT = 1.6;
 /** How far the avatar's shoulders rise on each step, for a walk that reads without an animation. */
 const PLAYER_WALK_BOB = 0.035;
 /** Steps per second at full walking speed, used only to phase the bob. */
@@ -74,7 +77,7 @@ const PLAYER_STEP_FREQUENCY = 9;
  * avatar as a few pixels, so a character pulls the camera in to a fixed, much smaller extent while
  * zoom and the camera direction stay exactly as they were.
  */
-const FOLLOW_FRAME_EXTENT = 9;
+const FOLLOW_FRAME_EXTENT = 7.5;
 
 /** Thrown when the browser cannot give the page a WebGL context. */
 export class FarmRendererUnavailableError extends Error {
@@ -142,10 +145,6 @@ interface MeshLike extends Object3D {
 
 function isMeshLike(object: Object3D): object is MeshLike {
   return object instanceof Mesh;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 function toReadyMaterial(material: Material, cache: Map<Material, Material>): Material {
@@ -273,7 +272,14 @@ function buildPlayerAvatar(assets: SharedAssets): Group {
   visor.scale.set(PLAYER_HEIGHT * 0.22, PLAYER_HEIGHT * 0.03, PLAYER_HEIGHT * 0.06);
   visor.position.set(0, PLAYER_HEIGHT * 0.76, PLAYER_HEIGHT * 0.16);
 
-  avatar.add(legs, body, head, brim, hat, visor);
+  // A flat marker under the feet. It is what makes the avatar findable against a field of crops and
+  // a brown path, and it is part of the same group, so it can never drift away from the character.
+  const marker = new Mesh(assets.ring, assets.playerMarker);
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.y = 0.01;
+  marker.scale.setScalar(PLAYER_HEIGHT * 0.34);
+
+  avatar.add(legs, body, head, brim, hat, visor, marker);
   return avatar;
 }
 
@@ -327,9 +333,9 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   };
   let worldSignature = "";
   let worldExtent = MIN_FRAMED_EXTENT;
-  let zoom = 1;
-  let targetX = 0;
-  let targetZ = 0;
+  // Zoom and the player's manual pan live in the rig, so a farm refresh cannot quietly reset either
+  // one: `applyState` never touches them.
+  const cameraRig = createCameraRig();
   let playerPose: FarmScenePlayer | null = null;
 
   const loader = new GLTFLoader();
@@ -428,7 +434,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function cameraDistance(): number {
-    return framedExtent() * 2.35 * zoom;
+    return framedExtent() * 2.35 * cameraRig.zoom;
   }
 
   function framedExtent(): number {
@@ -436,24 +442,22 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function updateCamera(): void {
-    if (playerPose === null) {
-      // Panning stays near the world's centre, whichever way the player has framed the farm.
-      const limit = worldExtent * PAN_LIMIT_FACTOR;
-      targetX = clamp(targetX, state.world.centerWorldX - limit, state.world.centerWorldX + limit);
-      targetZ = clamp(targetZ, state.world.centerWorldZ - limit, state.world.centerWorldZ + limit);
-    } else {
-      // A character owns the camera target; the pan clamp cannot apply, because the spawn sits
-      // outside the framed land.
-      targetX = playerPose.worldX;
-      targetZ = playerPose.worldZ;
-    }
+    // The target is the character's position plus the player's own drag, clamped so the camera can
+    // never leave the farm. The character is not moved by any of it.
+    const target = cameraRig.target({
+      playerWorldX: playerPose?.worldX ?? null,
+      playerWorldZ: playerPose?.worldZ ?? null,
+      centerWorldX: state.world.centerWorldX,
+      centerWorldZ: state.world.centerWorldZ,
+      worldExtent
+    });
     const distance = cameraDistance();
     camera.position.set(
-      targetX + CAMERA_DIRECTION.x * distance,
+      target.worldX + CAMERA_DIRECTION.x * distance,
       CAMERA_DIRECTION.y * distance,
-      targetZ + CAMERA_DIRECTION.z * distance
+      target.worldZ + CAMERA_DIRECTION.z * distance
     );
-    camera.lookAt(targetX, playerPose === null ? 0.2 : PLAYER_HEIGHT * 0.5, targetZ);
+    camera.lookAt(target.worldX, playerPose === null ? 0.2 : PLAYER_HEIGHT * 0.5, target.worldZ);
   }
 
   function updatePlayer(): void {
@@ -536,10 +540,9 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       buildTerrain(worldGroup, assets, next.world, next.layout);
       buildScenery(worldGroup, assets, next.world.scenery, sceneryModels);
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
-      zoom = 1;
-      // The camera frames the fixed world's centre; the tile mapping does not depend on it.
-      targetX = next.world.centerWorldX;
-      targetZ = next.world.centerWorldZ;
+      // A world rebuild re-frames the zoom but keeps the player's own drag: buying land is not a
+      // reason to move the camera the player positioned.
+      cameraRig.setZoom(1);
       scene.fog = new Fog(SKY_COLOR, worldExtent * 1.35, worldExtent * 3.9);
     }
 
@@ -596,12 +599,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   let hoveredCoordinate: TileCoordinate | null = null;
-  let pointerDown = false;
-  let dragging = false;
-  let startX = 0;
-  let startY = 0;
-  let lastX = 0;
-  let lastY = 0;
+  const gesture = createDragGesture();
 
   function raycastTile(event: PointerEvent): TileCoordinate | null {
     const bounds = canvas.getBoundingClientRect();
@@ -623,48 +621,32 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function panBy(deltaX: number, deltaY: number): void {
-    // The follow camera owns the target while a character is on screen. The drag is still tracked,
-    // so a drag never turns into a tile selection; it simply does not move the camera.
-    if (playerPose !== null) return;
+    // Dragging moves the camera's offset, never the character: the two are separate on purpose.
     const worldPerPixel = (2 * cameraDistance() * Math.tan((CAMERA_FOV / 2) * (Math.PI / 180))) / Math.max(canvas.clientHeight, 1);
-    targetX -= deltaX * worldPerPixel;
-    targetZ -= deltaY * worldPerPixel;
+    cameraRig.panByPixels(deltaX, deltaY, worldPerPixel);
     updateCamera();
   }
 
   function onPointerDown(event: PointerEvent): void {
-    pointerDown = true;
-    dragging = false;
-    startX = event.clientX;
-    startY = event.clientY;
-    lastX = event.clientX;
-    lastY = event.clientY;
+    gesture.down(event.clientX, event.clientY);
     canvas.setPointerCapture(event.pointerId);
   }
 
   function onPointerMove(event: PointerEvent): void {
-    if (pointerDown) {
-      if (!dragging && Math.abs(event.clientX - startX) + Math.abs(event.clientY - startY) > CLICK_SLOP_PX) {
-        dragging = true;
-      }
-      if (dragging) {
-        panBy(event.clientX - lastX, event.clientY - lastY);
-        lastX = event.clientX;
-        lastY = event.clientY;
-        draw();
-        return;
-      }
+    const move = gesture.move(event.clientX, event.clientY);
+    if (move.dragging) {
+      panBy(move.deltaX, move.deltaY);
+      draw();
+      return;
     }
     hoveredCoordinate = raycastTile(event);
-    canvas.style.cursor = hoveredCoordinate === null ? (playerPose === null ? "grab" : "default") : "pointer";
+    canvas.style.cursor = hoveredCoordinate === null ? "grab" : "pointer";
     updateMarkers();
     draw();
   }
 
   function onPointerUp(event: PointerEvent): void {
-    const wasDragging = dragging;
-    pointerDown = false;
-    dragging = false;
+    const wasDragging = gesture.up();
     canvas.releasePointerCapture(event.pointerId);
     if (wasDragging) return;
     const coordinate = raycastTile(event);
@@ -672,8 +654,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function onPointerLeave(): void {
-    pointerDown = false;
-    dragging = false;
+    gesture.reset();
     hoveredCoordinate = null;
     if (hoverMarker !== null) hoverMarker.visible = false;
     draw();
@@ -681,7 +662,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
 
   function onWheel(event: WheelEvent): void {
     event.preventDefault();
-    zoom = clamp(zoom * Math.exp(event.deltaY * 0.0012), ZOOM_MIN, ZOOM_MAX);
+    cameraRig.zoomByWheel(event.deltaY);
     updateCamera();
     draw();
   }

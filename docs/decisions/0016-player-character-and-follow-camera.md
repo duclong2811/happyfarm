@@ -90,19 +90,36 @@ are now centred on the middle of `FENCE.bounds` - the middle of the field the ca
 south gate lands exactly on the spawn's line, so the first thing a player does is walk north from
 the spawn, through the gate, and into the field.
 
-### The camera follows the character, and stops panning
+### The camera follows the character, with the player's own pan on top
 
 The island view is framed to `worldExtent`; an avatar at that distance would be a few pixels. While a
-character is drawn the camera targets the character and pulls the framing extent in to
-`FOLLOW_FRAME_EXTENT`, which is only a smaller number in the same distance formula. Wheel zoom and
-the camera's fixed three-quarter direction are unchanged, so the view stays the same kind of view.
+character is drawn the camera pulls the framing extent in to `FOLLOW_FRAME_EXTENT`, which is only a
+smaller number in the same distance formula. Wheel zoom and the camera's fixed three-quarter
+direction are unchanged, so the view stays the same kind of view.
 
-The follow is synchronous: each frame the camera target is set to the character's position. There is
-no smoothing and therefore no camera motion left to finish after the loop sleeps, which is what lets
-the loop stop the moment the keys are released.
+The first pass made the follow total: the target was the character's position and dragging was
+disabled. That was wrong for a farming game - it removed map inspection at exactly the moment a
+character existed - and a manual pass confirmed it: the camera jumped to the spawn and the left-drag
+pan stopped working. The camera is now a farming camera:
 
-Panning is disabled while a character exists, because a drag would otherwise fight the follow. The
-drag is still tracked, so a drag never becomes a tile selection; it simply does not move the camera.
+```text
+cameraTarget = clamp(characterPosition + userPanOffset)
+```
+
+`camera.ts` owns that arithmetic as a pure rig. A left-drag adds to `userPanOffset` instead of
+setting a position, so the follow survives: walking with the camera pushed to one side keeps it
+pushed to that side, and nothing about the character is rewritten to pan the view. The clamp keeps
+the target within `PAN_LIMIT_FACTOR` of the world's centre, so the camera cannot be dragged off the
+farm; at the spawn the clamp is what makes the opening view the farm with the character on its path,
+rather than the island's southern shore.
+
+The follow is synchronous: each frame the target is recomputed from the character's position, the
+offset, and the clamp. There is no smoothing and therefore no camera motion left to finish after the
+loop sleeps, which is what lets the loop stop the moment the keys are released.
+
+The press that pans is the same press that selects. `drag-gesture.ts` decides which it was: a press
+that travels further than `CLICK_SLOP_PX` is a pan, and its release never becomes a tile selection,
+exactly as the pre-character camera behaved.
 
 ### Rendering is still on demand
 
@@ -122,10 +139,15 @@ soon as the keys are released. An idle farm costs nothing extra, which keeps the
   `tests/web/player-collision.test.ts` asserts the spawn is free even on an empty farm, so a future
   world change that buried the spawn under the sea would fail loudly.
 - **The walk is a placeholder.** Primitive limbs, a bob, and a yaw, with no animation rig. Art
-  replaces the look in roadmap 14 without touching the controller.
+  replaces the look in roadmap 14 without touching the controller. The avatar stands a little taller
+  than one tile pitch and carries a flat marker ring under its feet so it reads as a character on a
+  busy field rather than as another prop.
 - **The drawn fence and the collision fence are the same segments.** A gate the renderer draws open
   is passable, and every segment it draws is solid; the collision world never consults a second
   geometry.
+- **The camera and the character are independent.** `camera.ts` reads a position and writes only its
+  own offset and zoom, so a drag cannot move the character, and moving the character cannot change
+  the drag; `tests/web/farm-camera.test.ts` proves the offset survives both movement and a refresh.
 - **Known gap: the fence overlaps the next ring of locked land.** A fence around the field and a
   locked ring that starts on the tile next to it cannot both be true at the same time. It is
   cosmetic - locked squares are ground, and the fence is drawn over their edge - and map polish is

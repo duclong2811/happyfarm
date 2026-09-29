@@ -88,7 +88,13 @@ describe("player runtime", () => {
     expect(harness.runtime.running).toBe(true);
     expect(harness.runtime.pose?.x).toBeCloseTo(SPAWN.worldX, 9);
     expect(harness.runtime.pose?.z).toBeCloseTo(SPAWN.worldZ, 9);
+    expect(harness.runtime.pose?.y).toBeCloseTo(FEET_Y, 9);
+    // The first pose reaches the scene without a frame and without a key press: a character that
+    // only appeared once the player moved would be invisible on a farm nobody has touched.
+    expect(harness.pendingFrames()).toBe(0);
     expect(harness.poses).toHaveLength(1);
+    expect(harness.poses[0]?.x).toBeCloseTo(SPAWN.worldX, 9);
+    expect(harness.poses[0]?.z).toBeCloseTo(SPAWN.worldZ, 9);
 
     harness.runtime.stop();
     expect(harness.runtime.running).toBe(false);

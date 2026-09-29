@@ -125,12 +125,16 @@ the spawn, the avatar, or the camera while a character is drawn.
 - The fence: `fenceGeometry()` in `apps/web/src/render/world-config.ts` is the only derivation of
   `FENCE.bounds` + `FENCE.gates`. `apps/web/src/render/terrain.ts` draws its segments and
   `apps/web/src/player/collision.ts` blocks them; neither may hold a gate number of its own.
+- The camera: `apps/web/src/render/camera.ts` owns the target (`character + pan offset`, clamped to
+  the farm) and the zoom; `apps/web/src/render/drag-gesture.ts` decides whether a press is a click or
+  a pan. The camera reads a character position and never writes one.
 - The view: `apps/web/src/render/scene.ts` (`FarmScenePlayer`, `setPlayer`, the avatar placeholder,
   the follow camera) and the colour entries it uses in `apps/web/src/render/materials.ts`.
 - The wiring: `apps/web/src/main.ts` supplies the platform - the keyboard, `requestAnimationFrame`,
   the renderer to publish a pose to - and rebuilds the collision world on every farm refresh.
 - Tests: `tests/web/player-controller.test.ts`, `tests/web/player-input.test.ts`,
-  `tests/web/player-collision.test.ts`, `tests/web/player-runtime.test.ts`.
+  `tests/web/player-collision.test.ts`, `tests/web/player-runtime.test.ts`,
+  `tests/web/farm-camera.test.ts`, `tests/web/drag-gesture.test.ts`.
 
 The character is client-local and non-authoritative. Never send a position, never read one as game
 state, and never let a client-side position gate planting, harvesting, or land. The server owns

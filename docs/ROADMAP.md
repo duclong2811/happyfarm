@@ -30,7 +30,8 @@ Implemented and locally verified in the current working tree, but **not shipped 
   ground).
 - Client character: a walkable local avatar on the fixed world, with depth-based collision against
   the shore, the pond, the farmhouse, a fence drawn from one derived geometry, and the farm's own
-  crop and tree rows, plus a follow camera that wakes only while a movement key is held (ADR 0016).
+  crop and tree rows, plus a camera that follows the avatar through the player's own drag offset and
+  wakes only while a movement key is held (ADR 0016).
 
 Gateways available today: `npm run typecheck`, `npm run lint`, `npx vitest run` (42 files /
 385 tests), `npm run build --workspace @happy-farm/web`,

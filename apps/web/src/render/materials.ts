@@ -69,6 +69,8 @@ export interface SharedAssets {
   readonly playerLegs: MeshStandardMaterial;
   readonly playerSkin: MeshStandardMaterial;
   readonly playerHat: MeshStandardMaterial;
+  /** The flat marker under the avatar's feet, so the character is findable on a busy field. */
+  readonly playerMarker: MeshStandardMaterial;
   dispose(): void;
 }
 
@@ -144,6 +146,7 @@ export function createSharedAssets(): SharedAssets {
     playerLegs: material(standard(0x39435c)),
     playerSkin: material(standard(0xf1c7a1)),
     playerHat: material(standard(0xd9a441)),
+    playerMarker: material(standard(0xfdf6d8, { transparent: true, opacity: 0.75, depthWrite: false })),
     dispose(): void {
       for (const item of geometries) item.dispose();
       for (const item of materials) item.dispose();
