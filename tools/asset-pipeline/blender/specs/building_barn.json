@@ -1,0 +1,18 @@
+{
+  "id": "building_barn",
+  "kind": "building",
+  "envelope": { "height": 2.7, "half_footprint": 1.75 },
+  "budget": { "triangles": 1500, "materials": 6, "bytes": 40000 },
+  "notes": "Foundation, warm walls, a contrasting gable roof, a big door, two windows, trim, a chimney and a silo. Silhouette first: nothing smaller than ~0.1 world units, because the gameplay camera is 15-25 units away.",
+  "parts": [
+    { "type": "box", "material": "stone", "x": 0, "y": 0, "z": 0, "width": 3.0, "depth": 2.4, "height": 0.24, "top_scale": 0.97 },
+    { "type": "box", "material": "barn_wall", "x": 0, "y": 0.24, "z": 0, "width": 2.8, "depth": 2.2, "height": 1.5, "top_scale": 0.96 },
+    { "type": "box", "material": "barn_roof", "x": 0, "y": 1.74, "z": 0, "width": 3.16, "depth": 2.56, "height": 0.9, "top_scale": 0.08 },
+    { "type": "cylinder", "material": "stone", "x": 1.05, "y": 1.5, "z": -0.5, "bottom_radius": 0.13, "top_radius": 0.11, "height": 0.7, "segments": 6 },
+    { "type": "cylinder", "material": "barn_roof", "x": 1.2, "y": 1.6, "z": -0.5, "bottom_radius": 0.52, "top_radius": 0.04, "height": 0.66, "segments": 8 },
+    { "type": "box", "material": "wood", "x": 0, "y": 0.24, "z": 1.1, "width": 0.9, "depth": 0.12, "height": 1.05 },
+    { "type": "box", "material": "trim", "x": 0.85, "y": 1.05, "z": 1.09, "width": 0.44, "depth": 0.1, "height": 0.4 },
+    { "type": "box", "material": "trim", "x": -0.85, "y": 1.05, "z": 1.09, "width": 0.44, "depth": 0.1, "height": 0.4 },
+    { "type": "box", "material": "trim", "x": 0, "y": 1.6, "z": 0, "width": 2.9, "depth": 2.3, "height": 0.14 }
+  ]
+}

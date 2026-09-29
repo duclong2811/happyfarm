@@ -1,0 +1,21 @@
+{
+  "id": "character_farmer",
+  "kind": "character",
+  "envelope": { "height": 1.6, "half_footprint": 0.38 },
+  "budget": { "triangles": 1200, "materials": 6, "bytes": 40000 },
+  "notes": "Gameplay dimensions are not art: collision (radius 0.28), speed (2.6/s), feet height (0.02) and the camera live in apps/web/src/player and scene.ts and never read this mesh. Facing is +Z, marked by the small face block.",
+  "parts": [
+    { "type": "cylinder", "material": "player_legs", "x": -0.09, "y": 0.1, "z": 0, "bottom_radius": 0.06, "top_radius": 0.07, "height": 0.5, "segments": 6 },
+    { "type": "cylinder", "material": "player_legs", "x": 0.09, "y": 0.1, "z": 0, "bottom_radius": 0.06, "top_radius": 0.07, "height": 0.5, "segments": 6 },
+    { "type": "box", "material": "player_legs", "x": -0.09, "y": 0, "z": 0.03, "width": 0.15, "depth": 0.22, "height": 0.1 },
+    { "type": "box", "material": "player_legs", "x": 0.09, "y": 0, "z": 0.03, "width": 0.15, "depth": 0.22, "height": 0.1 },
+    { "type": "box", "material": "player_body", "x": 0, "y": 0.56, "z": 0, "width": 0.42, "depth": 0.28, "height": 0.5, "top_scale": 0.86 },
+    { "type": "cylinder", "material": "player_body", "x": -0.26, "y": 0.62, "z": 0, "bottom_radius": 0.055, "top_radius": 0.05, "height": 0.36, "segments": 6, "lean_x": -0.03 },
+    { "type": "cylinder", "material": "player_body", "x": 0.26, "y": 0.62, "z": 0, "bottom_radius": 0.055, "top_radius": 0.05, "height": 0.36, "segments": 6, "lean_x": 0.03 },
+    { "type": "cylinder", "material": "player_skin", "x": 0, "y": 1.11, "z": 0, "bottom_radius": 0.15, "top_radius": 0.15, "height": 0.3, "segments": 8 },
+    { "type": "box", "material": "player_skin", "x": 0, "y": 1.2, "z": 0.14, "width": 0.08, "depth": 0.06, "height": 0.06 },
+    { "type": "cylinder", "material": "player_hat", "x": 0, "y": 1.35, "z": 0, "bottom_radius": 0.26, "top_radius": 0.24, "height": 0.04, "segments": 8 },
+    { "type": "cylinder", "material": "player_hat", "x": 0, "y": 1.39, "z": 0, "bottom_radius": 0.15, "top_radius": 0.13, "height": 0.14, "segments": 8 },
+    { "type": "cylinder", "material": "player_hair", "x": 0, "y": 1.24, "z": -0.02, "bottom_radius": 0.155, "top_radius": 0.14, "height": 0.18, "segments": 8 }
+  ]
+}

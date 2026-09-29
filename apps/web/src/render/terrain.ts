@@ -1,4 +1,4 @@
-import { Group, Mesh, type Material } from "three";
+import { Group, Mesh, type Material, type Object3D } from "three";
 import type { FarmLayout } from "./layout";
 import type { SharedAssets } from "./materials";
 import type { FarmWorld, LockedPlotSquare, PondSpec } from "./world";
@@ -18,6 +18,8 @@ export const TILE_THICKNESS = 0.09;
 
 const APRON_TOP_Y = -0.01;
 const FENCE_HEIGHT = 0.62;
+/** The generated barn is authored with its base on y = 0; the ground under the yard is a hair lower. */
+const BARN_FEET_Y = -0.02;
 
 function box(assets: SharedAssets, material: Material, width: number, height: number, depth: number, x: number, y: number, z: number): Mesh {
   const mesh = new Mesh(assets.box, material);
@@ -97,8 +99,23 @@ function addPond(group: Group, assets: SharedAssets, pond: PondSpec): void {
   }
 }
 
-function addBarn(group: Group, assets: SharedAssets, world: FarmWorld): void {
+/**
+ * The farmhouse/barn.
+ *
+ * The generated model is the barn; the primitives below are the fallback while it loads or if it
+ * cannot be loaded at all, which is the same convention the crop and scenery models already follow.
+ * The model is cloned, never re-fetched, and its footprint is presentation only: the yard's
+ * collision is the canonical `STATIC_OBSTACLES` circle in `world-config.ts`.
+ */
+function addBarn(group: Group, assets: SharedAssets, world: FarmWorld, model: Object3D | undefined): void {
   if (world.barn === null) return;
+  if (model !== undefined) {
+    const barn = model.clone(true);
+    barn.position.set(world.barn.worldX, BARN_FEET_Y, world.barn.worldZ);
+    barn.rotation.y = world.barn.rotationY;
+    group.add(barn);
+    return;
+  }
   const barn = new Group();
   barn.position.set(world.barn.worldX, -0.04, world.barn.worldZ);
   barn.rotation.y = world.barn.rotationY;
@@ -182,7 +199,13 @@ function addLockedPlots(group: Group, assets: SharedAssets, world: FarmWorld): v
   }
 }
 
-export function buildTerrain(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
+export function buildTerrain(
+  group: Group,
+  assets: SharedAssets,
+  world: FarmWorld,
+  layout: FarmLayout,
+  barnModel?: Object3D
+): void {
   // The fence is derived from the world config and the tile pitch, exactly as the player's collision
   // is: one description, drawn here, walked around there.
   const fence = fenceGeometry(layout.pitch);
@@ -190,7 +213,7 @@ export function buildTerrain(group: Group, assets: SharedAssets, world: FarmWorl
   addFieldGround(group, assets, world, fence);
   addFence(group, assets, fence, layout.pitch);
   if (world.pond !== null) addPond(group, assets, world.pond);
-  addBarn(group, assets, world);
+  addBarn(group, assets, world, barnModel);
 }
 
 /**

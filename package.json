@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspace @happy-farm/web && npm run build --workspace @happy-farm/api",
+    "assets:generate": "node tools/asset-pipeline/node/generate-models.mjs",
+    "assets:validate": "node tools/asset-pipeline/node/validate.mjs",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "dev": "npm run dev --workspace @happy-farm/web",
     "dev:worker": "wrangler dev --config workers/api/wrangler.dev.toml",

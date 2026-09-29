@@ -20,6 +20,7 @@ import {
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
 import { createCameraRig } from "./camera";
+import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileMaterial, type SharedAssets } from "./materials";
 import { CROP_MODEL_URLS } from "./model-urls";
@@ -245,8 +246,21 @@ function treePlant(
  * controller's `facingYaw` uses, so the renderer only has to copy one rotation. The visor and the
  * hat brim make that facing readable from the isometric camera; neither is a gameplay marker.
  */
-function buildPlayerAvatar(assets: SharedAssets): Group {
+function buildPlayerAvatar(assets: SharedAssets, farmer: Object3D | undefined): Group {
   const avatar = new Group();
+
+  if (farmer !== undefined) {
+    // The generated farmer is the avatar; cloning is enough because the model is one node tree with
+    // no per-instance state. Collision, speed, feet height and camera behaviour stay in the player
+    // modules and never read this mesh.
+    avatar.add(farmer.clone(true));
+    const modelMarker = new Mesh(assets.ring, assets.playerMarker);
+    modelMarker.rotation.x = -Math.PI / 2;
+    modelMarker.position.y = 0.01;
+    modelMarker.scale.setScalar(PLAYER_HEIGHT * 0.34);
+    avatar.add(modelMarker);
+    return avatar;
+  }
 
   const legs = new Mesh(assets.box, assets.playerLegs);
   legs.scale.set(0.36, PLAYER_HEIGHT * 0.32, 0.3);
@@ -306,9 +320,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const overlayGroup = new Group();
   // The character is its own group: it is rebuilt never and repainted every walking frame, so it
   // must not be cleared with the farm state.
+  // Generated models arrive from `tools/asset-pipeline`: the barn replaces the primitive building and
+  // the farmer replaces the primitive avatar, each falling back to the primitive until it loads.
+  const generatedModels: Partial<Record<GeneratedModelId, Object3D>> = {};
+  const loadingGenerated = new Set<GeneratedModelId>();
+  const unavailableGenerated = new Set<GeneratedModelId>();
   const playerGroup = new Group();
   playerGroup.visible = false;
-  playerGroup.add(buildPlayerAvatar(assets));
+  playerGroup.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
   scene.add(worldGroup, tileGroup, cropGroup, treeGroup, overlayGroup, playerGroup);
 
   scene.add(new HemisphereLight(0xdfefff, 0x4a6a3f, 1.15));
@@ -374,6 +393,48 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
         }
       );
     }
+  }
+
+  /**
+   * Loads the generated structure and character models once each.
+   *
+   * The barn lands behind the same world signature as the scenery, so its arrival rebuilds the
+   * static layer a single time; the farmer rebuilds only the avatar group. Neither is fetched per
+   * instance, and neither is refetched on a farm refresh.
+   */
+  function requestGeneratedModels(): void {
+    for (const id of Object.keys(GENERATED_MODEL_URLS) as GeneratedModelId[]) {
+      if (loadingGenerated.has(id) || unavailableGenerated.has(id) || generatedModels[id] !== undefined) continue;
+      loadingGenerated.add(id);
+      loader.load(
+        GENERATED_MODEL_URLS[id],
+        (gltf) => {
+          loadingGenerated.delete(id);
+          if (disposed) {
+            disposeModelResources(gltf.scene);
+            return;
+          }
+          generatedModels[id] = gltf.scene;
+          if (id === "building_barn") worldSignature = "";
+          if (id === "character_farmer") rebuildAvatar();
+          applyState(state);
+          draw();
+        },
+        undefined,
+        (error: unknown) => {
+          loadingGenerated.delete(id);
+          unavailableGenerated.add(id);
+          if (!disposed) options.onAssetProblem?.(id, error);
+        }
+      );
+    }
+  }
+
+  /** Rebuilds the avatar group from whatever models are available now. */
+  function rebuildAvatar(): void {
+    playerGroup.clear();
+    playerGroup.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
+    updatePlayer();
   }
 
   function modelVariants(definitionId: string): ModelVariants | undefined {
@@ -537,7 +598,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     if (signature !== worldSignature) {
       worldSignature = signature;
       worldGroup.clear();
-      buildTerrain(worldGroup, assets, next.world, next.layout);
+      buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn);
       buildScenery(worldGroup, assets, next.world.scenery, sceneryModels);
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
       // A world rebuild re-frames the zoom but keeps the player's own drag: buying land is not a
@@ -705,6 +766,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
 
   applyState(state);
   requestSceneryModels();
+  requestGeneratedModels();
 
   return {
     canvas,
