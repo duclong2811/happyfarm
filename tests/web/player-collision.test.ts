@@ -18,14 +18,11 @@ import {
   SPAWN_TILE,
   SPAWN_WORLD,
   STATIC_OBSTACLES,
-  type FenceGate,
-  type FenceSide
 } from "../../apps/web/src/render/world-config";
 
 const frame = worldFrame();
 const PITCH = frame.pitch;
 const fence = fenceGeometry(PITCH);
-const FENCE_SIDES: readonly FenceSide[] = ["SOUTH", "EAST", "NORTH", "WEST"];
 
 interface TileOptions {
   readonly terrainType?: FarmTileDTO["terrainType"];
@@ -81,34 +78,6 @@ function walk(
     state = stepPlayer(state, direction, 0.05, world);
   }
   return state;
-}
-
-/** World position of the point on the fence line that a gate opens. */
-function gateCenterWorld(gate: FenceGate): { readonly worldX: number; readonly worldZ: number } {
-  const center = tileToWorld(
-    { x: (FENCE.bounds.minX + FENCE.bounds.maxX) / 2, y: (FENCE.bounds.minY + FENCE.bounds.maxY) / 2 },
-    frame
-  );
-  const alongTile = (gate.from + gate.to) / 2;
-  return gate.side === "SOUTH" || gate.side === "NORTH"
-    ? {
-        worldX: tileToWorld({ x: alongTile, y: 0 }, frame).worldX,
-        worldZ: gate.side === "SOUTH" ? center.worldZ + fence.halfDepthWorld : center.worldZ - fence.halfDepthWorld
-      }
-    : {
-        worldX: gate.side === "WEST" ? center.worldX - fence.halfWidthWorld : center.worldX + fence.halfWidthWorld,
-        worldZ: tileToWorld({ x: 0, y: alongTile }, frame).worldZ
-      };
-}
-
-/** A point on the fence line just outside a gate, past the post that frames it. */
-function besideGateWorld(gate: FenceGate, distanceWorld: number): { readonly worldX: number; readonly worldZ: number } {
-  const center = gateCenterWorld(gate);
-  const halfOpening = Math.abs((gate.to - gate.from) / 2) * PITCH;
-  const offset = halfOpening + distanceWorld;
-  return gate.side === "SOUTH" || gate.side === "NORTH"
-    ? { worldX: center.worldX + offset, worldZ: center.worldZ }
-    : { worldX: center.worldX, worldZ: center.worldZ + offset };
 }
 
 describe("player collision world", () => {
@@ -224,56 +193,36 @@ describe("player collision world", () => {
   });
 });
 
-describe("fence", () => {
-  it("derives a closed fence on every side", () => {
-    const covered = new Set(fence.segments.map((segment) => segment.side));
-    for (const side of FENCE_SIDES) {
-      expect(covered.has(side), side).toBe(true);
-    }
-    for (const segment of fence.segments) {
-      expect(segment.maxWorldX, segment.id).toBeGreaterThan(segment.minWorldX);
-      expect(segment.maxWorldZ, segment.id).toBeGreaterThan(segment.minWorldZ);
-    }
-  });
-
-  it("blocks the middle of every segment it draws", () => {
-    const world = createPlayerCollisionWorld([]);
-    for (const segment of fence.segments) {
-      const middleX = (segment.minWorldX + segment.maxWorldX) / 2;
-      const middleZ = (segment.minWorldZ + segment.maxWorldZ) / 2;
-      expect(world.depth(middleX, middleZ), segment.id).toBeGreaterThan(0);
-    }
-  });
-
-  it("leaves every configured gate open", () => {
-    const world = createPlayerCollisionWorld([]);
-    expect(FENCE.gates.length).toBeGreaterThanOrEqual(3);
-    for (const gate of FENCE.gates) {
-      const center = gateCenterWorld(gate);
-      expect(world.depth(center.worldX, center.worldZ), `${gate.side} gate`).toBeLessThanOrEqual(0);
-    }
-  });
-
-  it("blocks the fence immediately beside every configured gate", () => {
-    const world = createPlayerCollisionWorld([]);
-    for (const gate of FENCE.gates) {
-      const beside = besideGateWorld(gate, 0.3);
-      expect(world.depth(beside.worldX, beside.worldZ), `${gate.side} post`).toBeGreaterThan(0);
-    }
-  });
-
-  it("lets the character walk from the spawn through the south gate into the field", () => {
-    // North is -Z. The spawn is south of the fence, in front of the south gate, and this walk ends
-    // well inside the field, so the gate is genuinely passable rather than merely "not blocked".
+/**
+ * V11 removed the fence that used to enclose the agricultural reserve.
+ *
+ * It was the clearest visual statement that the farm was a board sitting on the island, and the
+ * island is now one coordinate system in which the field is farmland rather than a walled compound.
+ * What a walker is kept out of is what is actually solid - a building, a trunk, the sea - and these
+ * are the tests for the field now being open ground.
+ */
+describe("the field is open ground", () => {
+  it("lets the character walk from the spawn straight into the middle of the field", () => {
+    // North is -Z. The spawn is south of the reserve, in front of where the south gate used to be,
+    // and the walk ends well inside the field: nothing stands between the road and the crops.
     const reached = walk(SPAWN_WORLD, { x: 0, z: -1 });
-    expect(reached.z).toBeLessThan(fence.centerWorldZ + fence.halfDepthWorld - 1);
+    expect(reached.z).toBeLessThan(SPAWN_WORLD.worldZ - 30);
   });
 
-  it("stops the character at the fence beside that gate", () => {
-    const gate = FENCE.gates[0];
-    if (gate === undefined) throw new Error("the world config must declare a first gate");
-    const beside = besideGateWorld(gate, 0.6);
-    const reached = walk({ worldX: beside.worldX, worldZ: SPAWN_WORLD.worldZ }, { x: 0, z: -1 });
-    expect(reached.z).toBeGreaterThan(fence.centerWorldZ + fence.halfDepthWorld);
+  it("does not block the reserve's own boundary anywhere", () => {
+    const world = createPlayerCollisionWorld([]);
+    // Along the line the fence used to stand on, from corner to corner: all of it is walkable.
+    for (let tile = FENCE.bounds.minX; tile <= FENCE.bounds.maxX; tile += 2) {
+      for (const z of [FENCE.bounds.minY, FENCE.bounds.maxY]) {
+        const point = tileToWorld({ x: tile, y: z }, worldFrame());
+        expect(world.depth(point.worldX, point.worldZ), `north/south edge at ${String(tile)}`).toBeLessThanOrEqual(0);
+      }
+    }
+    for (let tile = FENCE.bounds.minY; tile <= FENCE.bounds.maxY; tile += 2) {
+      for (const x of [FENCE.bounds.minX, FENCE.bounds.maxX]) {
+        const point = tileToWorld({ x, y: tile }, worldFrame());
+        expect(world.depth(point.worldX, point.worldZ), `west/east edge at ${String(tile)}`).toBeLessThanOrEqual(0);
+      }
+    }
   });
 });

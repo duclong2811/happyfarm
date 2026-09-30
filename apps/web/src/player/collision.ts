@@ -1,11 +1,9 @@
 import type { SceneTile } from "../render/view-model";
 import {
-  fenceGeometry,
   ISLAND_HALF_DEPTH_WORLD,
   ISLAND_HALF_WIDTH_WORLD,
   ISLAND_SHAPE,
-  STATIC_OBSTACLES,
-  type FenceSegment
+  STATIC_OBSTACLES
 } from "../render/world-config";
 import { islandRadiusAt } from "../render/terrain-height";
 import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
@@ -17,12 +15,11 @@ import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
  * one thing the controller asks about: a signed depth at a point. The result is a plain value with
  * no three, no DOM, and no network, which is why movement can be tested without a canvas.
  *
- * Four sources block a step:
+ * Three sources block a step:
  *
  * 1. The island shore, which the character stays inside.
  * 2. The static obstacles the world config already declares: the pond, the barn, and the landmarks.
- * 3. The fence, from the same `fenceGeometry` the renderer draws. A drawn gate is a walkable gate.
- * 4. The farm's own rows: a crop or a tree blocks a circle at its centre, and terrain that is not
+ * 3. The farm's own rows: a crop or a tree blocks a circle at its centre, and terrain that is not
  *    soil or grass (water today) blocks its whole tile.
  *
  * Everything else is open ground, so the paths, the apron, and the grass between plots are walkable
@@ -30,6 +27,11 @@ import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
  * action would be allowed on it: walking is presentation, planting is authority, and the two must not
  * be confused. Locked land is not in this list at all, so a character may walk over land the farm has
  * not bought; the only farm rows consulted are the ones that physically occupy ground.
+ *
+ * V11 removed the last of these - the fence that used to enclose the reserve. It was the strongest
+ * visual statement that the farm was a board sitting on the island, and with the island now one
+ * coordinate system the field is farmland, not a walled compound. What a walker is kept out of is
+ * what is actually solid: a building, a trunk, the sea.
  *
  * Nothing here is authority. The server neither receives nor trusts a position: this only decides
  * where the local avatar is drawn.
@@ -103,18 +105,6 @@ function boxDepth(
   return PLAYER_RADIUS - (outside + inside);
 }
 
-/** Depth of a fence segment, expressed as the rectangle the renderer draws for it. */
-function fenceDepth(x: number, z: number, segment: FenceSegment): number {
-  return boxDepth(
-    x,
-    z,
-    (segment.minWorldX + segment.maxWorldX) / 2,
-    (segment.minWorldZ + segment.maxWorldZ) / 2,
-    (segment.maxWorldX - segment.minWorldX) / 2,
-    (segment.maxWorldZ - segment.minWorldZ) / 2
-  );
-}
-
 interface BlockCircle {
   readonly centerWorldX: number;
   readonly centerWorldZ: number;
@@ -158,7 +148,6 @@ function farmBlocks(tiles: readonly SceneTile[]): { readonly circles: readonly B
  * under the character starts blocking the next step and a crop that is harvested stops blocking it.
  */
 export function createPlayerCollisionWorld(tiles: readonly SceneTile[]): CollisionWorld {
-  const fence = fenceGeometry().segments;
   const farm = farmBlocks(tiles);
 
   return {
@@ -166,9 +155,6 @@ export function createPlayerCollisionWorld(tiles: readonly SceneTile[]): Collisi
       let depth = islandDepth(x, z);
       for (const obstacle of STATIC_OBSTACLES) {
         depth = Math.max(depth, circleDepth(x, z, obstacle.centerWorldX, obstacle.centerWorldZ, obstacle.radiusWorld));
-      }
-      for (const segment of fence) {
-        depth = Math.max(depth, fenceDepth(x, z, segment));
       }
       for (const circle of farm.circles) {
         depth = Math.max(depth, circleDepth(x, z, circle.centerWorldX, circle.centerWorldZ, circle.radiusWorld));

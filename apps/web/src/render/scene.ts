@@ -39,10 +39,18 @@ import { PROP_MODEL_URL_BY_ID } from "./prop-model-urls";
 import { BUILDING_MODELS } from "./building-model-urls";
 import { buildScenery } from "./scenery";
 import { buildInteractionGrid } from "./interaction-grid";
+import { worldToCell } from "./world-cell";
+import { planCellOverlay, buildCellOutlines, buildDebugGrid, buildSelectionQuad } from "./world-cell-overlay";
+import { CELL_OVERLAY_LIFT_WORLD } from "./world-cell-overlay";
+import { CELL_OVERLAY_TILE_LIFT_WORLD } from "./world-cell-overlay";
+import { SEA_SURFACE_Y } from "./world-cell-overlay";
+import { cellKey } from "./world-cell";
+import { worldFrame } from "./layout";
 import { buildLockedPlotOverlay, buildTerrain, TILE_THICKNESS } from "./terrain";
 import { GROUND_SURFACE_Y, terrainHeightAt } from "./terrain-height";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
+import { EMPTY_WORLD_CELL_MAP } from "./world-cell";
 
 /**
  * Three.js view of the farm.
@@ -122,10 +130,10 @@ export class FarmRendererUnavailableError extends Error {
 
 export interface FarmSceneOptions {
   /**
-   * Called with an authoritative tile coordinate when the player clicks a tile. The renderer reports
-   * the coordinate only; selecting it, and what that means, stays with the caller.
+   * Called with the island cell the player clicked. The renderer reports the coordinate only;
+   * selecting it, walking to it, and what it means stay with the caller.
    */
-  readonly onTileSelected?: (coordinate: TileCoordinate) => void;
+  readonly onCellSelected?: (cell: TileCoordinate) => void;
   /**
    * Called when a crop model could not be loaded. The scene keeps drawing that crop's placeholder,
    * so this is a diagnosis for the caller to report, not a failure the caller has to recover from.
@@ -151,6 +159,21 @@ export interface FarmSceneHandle {
    * could not say before this pass.
    */
   setInteraction(mode: FarmInteractionMode): void;
+  /**
+   * Draws the island's cell overlay for the selected cell, or nothing when the selection is null.
+   *
+   * Normal play shows *one* cell: the one the player pointed at, lifted onto the ground it lies on,
+   * plus a faint hint of its neighbours. The island's whole grid is never drawn unless debug mode is
+   * on, and even then it is this same call that draws it.
+   */
+  setSelection(cell: TileCoordinate | null): void;
+  /**
+   * Turns the developer overlay on or off: every cell, colour-coded by land use.
+   *
+   * Off by default, and there is no gameplay path that turns it on - it is a development tool, and
+   * the brief for this pass is that the grid the engine thinks in is invisible to a player.
+   */
+  setDebugMode(on: boolean): void;
   /** Re-measures the canvas and redraws. */
   resize(): void;
   /** Releases GPU resources, detaches observers and listeners, and leaves the canvas unusable. */
@@ -438,6 +461,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const overlayDetailGroup = new Group();
   // The planting grid is its own group: it follows the tiles, the mode, and nothing else.
   const interactionGroup = new Group();
+  // The cell overlay: the island's own selection feedback, and the debug lattice when asked for.
+  const cellOverlayGroup = new Group();
   scene.add(
     worldGroup,
     detailGroup,
@@ -447,6 +472,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     overlayGroup,
     overlayDetailGroup,
     interactionGroup,
+    cellOverlayGroup,
     playerGroup
   );
 
@@ -498,7 +524,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   let state: FarmSceneInput = {
     layout: emptyLayout,
     world: buildFarmWorld({ layout: emptyLayout, tiles: [], plots: [] }),
-    tiles: []
+    tiles: [],
+    cells: EMPTY_WORLD_CELL_MAP
   };
   let worldSignature = "";
   /**
@@ -527,6 +554,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // one: `applyState` never touches them.
   const cameraRig = createCameraRig();
   let playerPose: FarmScenePlayer | null = null;
+  /** The island's ground surface: what a click on open ground lands on. */
+  let groundMesh: Object3D | null = null;
+  /** The cell the player has selected, or null. Presentation only; it is never sent anywhere. */
+  let selectedCell: TileCoordinate | null = null;
+  /** Developer overlay. Off in every shipped path. */
+  let debugMode = false;
+  /** The overlay's own instanced geometry, kept so a rebuild can release the one it replaces. */
+  let cellOverlayGeometry: BufferGeometry | null = null;
 /** Whether the planting grid is showing. Client presentation state; it decides no rule. */
 let interactionMode: FarmInteractionMode = "NONE";
 /** The geometry of the current grid, kept so a rebuild can release the one it replaces. */
@@ -850,6 +885,50 @@ let interactionGeometry: BufferGeometry | null = null;
     );
   }
 
+  /**
+   * Rebuilds the island's cell overlay.
+   *
+   * Called when the selection changes, when debug mode changes, and when the farm state does - never
+   * per frame. With nothing selected and debug off the group is empty, which is the whole point: the
+   * island does not show a grid in normal play, and this function is the only thing that could.
+   */
+  function rebuildCellOverlay(): void {
+    cellOverlayGroup.clear();
+    cellOverlayGeometry?.dispose();
+    cellOverlayGeometry = null;
+    const plan = planCellOverlay(state.cells, selectedCell === null ? null : { cell: selectedCell }, debugMode);
+    // The farm's own tiles are a layer of ground nine centimetres thick, so a cell the player owns
+    // has to be marked on top of them rather than inside them.
+    const owned = state.world.inner;
+    const liftFor = (x: number, z: number): number =>
+      owned !== null && x >= owned.minX && x <= owned.maxX && z >= owned.minY && z <= owned.maxY
+        ? CELL_OVERLAY_TILE_LIFT_WORLD
+        : CELL_OVERLAY_LIFT_WORLD;
+    const overlayHeightAt = (worldX: number, worldZ: number): number => {
+      const cell = worldToCell({ worldX, worldZ }, state.cells.frame);
+      const onSea = state.cells.cells.get(cellKey(cell.x, cell.y))?.terrain === "WATER";
+      // Open water has its own surface: a selected aquaculture cell is marked on the sea the cages
+      // float in rather than at the height of the ground six tenths of a metre beneath it.
+      const base = onSea ? SEA_SURFACE_Y : GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, state.world.terrain);
+      return base + liftFor(cell.x, cell.y);
+    };
+    if (plan.debugCells.length > 0) {
+      cellOverlayGeometry = buildDebugGrid(cellOverlayGroup, plan.debugCells, state.layout.pitch, assets.cellDebug, overlayHeightAt);
+      return;
+    }
+    if (plan.selection === null) return;
+    cellOverlayGroup.add(
+      buildSelectionQuad(plan.selection, state.cells, assets.cellSelection, overlayHeightAt)
+    );
+    cellOverlayGeometry = buildCellOutlines(
+      cellOverlayGroup,
+      plan.neighbourhood,
+      state.layout.pitch,
+      assets.cellNeighbour,
+      overlayHeightAt
+    );
+  }
+
   function updateMarkers(): void {
     const selected = state.tiles.find((tile) => tile.selected);
     selectionMarker.visible = selected !== undefined;
@@ -892,9 +971,11 @@ let interactionGeometry: BufferGeometry | null = null;
     tiles.forEach((tile, index) => {
       coordinates.push({ x: tile.tileX, y: tile.tileY });
       position.set(tile.worldX, TILE_THICKNESS / 2, tile.worldZ);
-      // Slightly wider than a bare tile, so the seam between two slabs is a furrow line rather than
-      // the 8% gap of a chessboard. The soil bed underneath is what shows through it.
-      const footprint = state.layout.tileSize + state.layout.tileGap * 0.45;
+      // The tiles meet, exactly. The 8% gap that used to separate them was what made the farm read
+      // as a board of squares from the estate camera: a field is one surface, and the rows in it are
+      // drawn as furrows rather than as the seams between two hundred little plates. The footprint is
+      // the *pitch*, so two neighbours touch rather than leaving a sliver of the bed showing.
+      const footprint = state.layout.tileSize + state.layout.tileGap;
       scale.set(footprint, TILE_THICKNESS, footprint);
       matrix.compose(position, rotation, scale);
       slabs.setMatrixAt(index, matrix);
@@ -950,7 +1031,7 @@ let interactionGeometry: BufferGeometry | null = null;
     if (signature !== worldSignature) {
       worldSignature = signature;
       worldGroup.clear();
-      buildTerrain(
+      groundMesh = buildTerrain(
         worldGroup,
         assets,
         next.world,
@@ -1055,6 +1136,7 @@ let interactionGeometry: BufferGeometry | null = null;
 
     updateMarkers();
     updateCamera();
+    rebuildCellOverlay();
   }
 
   let hoveredCoordinate: TileCoordinate | null = null;
@@ -1068,7 +1150,11 @@ let interactionGeometry: BufferGeometry | null = null;
       -((event.clientY - bounds.top) / bounds.height) * 2 + 1
     );
     raycaster.setFromCamera(pointer, camera);
+    // Crops, trees and tile slabs first: a click on something standing on the ground selects the
+    // cell that thing stands on, not the ground behind it. The island itself is the last candidate,
+    // which is what makes *any* cell on the island selectable rather than only the farm's own tiles.
     const candidates: Object3D[] = [...pickTargets.keys(), ...pickedInstances.keys()];
+    if (groundMesh !== null) candidates.push(groundMesh);
     for (const intersection of raycaster.intersectObjects(candidates, true)) {
       const instanced = pickedInstances.get(intersection.object);
       if (instanced !== undefined) {
@@ -1081,6 +1167,13 @@ let interactionGeometry: BufferGeometry | null = null;
         const coordinate = pickTargets.get(node);
         if (coordinate !== undefined) return coordinate;
         node = node.parent;
+      }
+      if (intersection.object === groundMesh) {
+        // Open ground: the cell the hit point falls in, through the one conversion.
+        return worldToCell(
+          { worldX: intersection.point.x, worldZ: intersection.point.z },
+          worldFrame(state.layout.pitch)
+        );
       }
     }
     return null;
@@ -1134,7 +1227,7 @@ let interactionGeometry: BufferGeometry | null = null;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!tap) return;
     const coordinate = raycastTile(event);
-    if (coordinate !== null) options.onTileSelected?.(coordinate);
+    if (coordinate !== null) options.onCellSelected?.(coordinate);
   }
 
   function onPointerCancel(event: PointerEvent): void {
@@ -1190,6 +1283,21 @@ let interactionGeometry: BufferGeometry | null = null;
       if (mode === interactionMode) return;
       interactionMode = mode;
       rebuildInteractionGrid();
+      draw();
+    },
+    setSelection(cell: TileCoordinate | null): void {
+      const same =
+        (cell === null && selectedCell === null) ||
+        (cell !== null && selectedCell !== null && cell.x === selectedCell.x && cell.y === selectedCell.y);
+      if (same) return;
+      selectedCell = cell === null ? null : { x: cell.x, y: cell.y };
+      rebuildCellOverlay();
+      draw();
+    },
+    setDebugMode(on: boolean): void {
+      if (on === debugMode) return;
+      debugMode = on;
+      rebuildCellOverlay();
       draw();
     },
     resize: draw,

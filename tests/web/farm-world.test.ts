@@ -273,6 +273,9 @@ describe("buildFarmWorld", () => {
     for (const road of world.roads) {
       expect(road.samples.length, road.id).toBeGreaterThan(2);
       expect(road.widthWorld, road.id).toBeGreaterThan(0);
+      // The farm track is a `PATH` and is the one route allowed to cross the reserve: it is the way
+      // between two fields, not a road through the land the catalogue sells.
+      if (road.kind === "PATH") continue;
       for (const sample of road.samples) {
         const tile = worldToTile({ worldX: sample.worldX, worldZ: sample.worldZ }, worldFrame());
         const overField =

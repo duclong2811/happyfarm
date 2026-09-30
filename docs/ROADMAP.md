@@ -68,9 +68,14 @@ Committed and verified through `46915e0`:
   furnishes six places (barn yard, market square, farmhouse yard, orchard pack-house, timber yard,
   quay), plantation rows that read as rows from the estate camera, and a material fix in the import
   pipeline that had been breaking every model that ships an ORM map.
+- One world cell V11 (ADR 0026): the island is one logical coordinate system whose cell *is* a farm
+  tile; terrain, land use, occupancy, walkability and production capability are classified once from
+  the island's own coastline; selection and movement name cells; land use reads as farmland, town,
+  wood, water, quarry reserve and wild land rather than as a board; the fence, the stake line and the
+  tile grid are gone from normal play, and the full lattice exists only behind `?debug=1`.
 
-Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (68 files /
-653 tests), `npm run build --workspace @happy-farm/web`,
+Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (69 files /
+668 tests), `npm run build --workspace @happy-farm/web`,
 `npm run build --workspace @happy-farm/api`, and a local playable dev host (ADR 0011) where the
 browser never sees the development token.
 

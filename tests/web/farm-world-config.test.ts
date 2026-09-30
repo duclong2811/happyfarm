@@ -162,11 +162,14 @@ describe("static world config", () => {
   });
 
   it("keeps every road off the reserved field", () => {
-    // A road is landscape. If one crossed the reserve it would be drawn across land the catalogue
-    // sells, and the first plot a player bought would have a road through it.
+    // A *road* is landscape: if one crossed the reserve it would be drawn across land the catalogue
+    // sells, and the first plot a player bought would have a road through it. V11 allows one
+    // exception, and only one: a `PATH` is a farm track - what a tractor follows between two fields -
+    // and the agricultural district is the one place such a track belongs.
     expect(ROADS.length).toBeGreaterThan(3);
     const clearance = 1.2;
     for (const road of ROADS) {
+      if (road.kind === "PATH") continue;
       for (const point of road.points) {
         const insideReserve =
           point.x >= FARM_FIELD_BOUNDS.minX - clearance &&

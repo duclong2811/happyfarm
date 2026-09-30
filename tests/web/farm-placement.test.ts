@@ -166,6 +166,9 @@ describe("the plan is reachable", () => {
 
   it("keeps every road out of the crop reserve", () => {
     for (const road of ROADS) {
+      // V11's one exception: a `PATH` is a farm track and the agricultural district is where a farm
+      // track belongs. Every road proper still runs around the reserve rather than through it.
+      if (road.kind === "PATH") continue;
       for (const point of road.points) {
         const insideReserve =
           point.x >= FARM_FIELD_BOUNDS.minX - 1.2 &&

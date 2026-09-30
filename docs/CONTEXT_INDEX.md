@@ -206,6 +206,22 @@ Read `docs/decisions/0025-v10-asset-library-and-set-dressing.md` before changing
 dressing, the prop manifest, the importer, or the plantation latices again. Read
 `docs/V10_ASSET_CATALOG.md` before adding, replacing or removing any third-party model.
 
+Read `docs/decisions/0026-unified-world-cell-system.md` before touching coordinates, selection,
+navigation, land use, occupancy, or the visibility of any grid.
+
+- One coordinate system: `apps/web/src/render/world-cell.ts` (`WorldCell`, `worldToCell`,
+  `cellToWorld`, the capability rule). A cell *is* a farm tile, so the conversion is the existing
+  tile mapping and nothing else may divide by a pitch.
+- The map: `apps/web/src/render/world-cell-map.ts` (`buildWorldCellMap`, terrain from
+  `islandRadiusAt`, zones from the districts plus the aquaculture and mining reserves, occupancy from
+  buildings, planted rows and large scenery). `FarmSceneInput.cells` is the one map every reader uses.
+- Selection and movement: `apps/web/src/render/world-cell-selection.ts`; actions:
+  `apps/web/src/render/world-cell-actions.ts`; the overlay and the debug lattice:
+  `apps/web/src/render/world-cell-overlay.ts`.
+- Compatibility: `apps/web/src/render/legacy-farm-cell-adapter.ts`. Never add a second conversion.
+- The island's grid is invisible in normal play and the full lattice only exists behind `?debug=1`.
+  Selection draws one cell and at most its eight neighbours.
+
 - Set dressing is data: `apps/web/src/render/composition.ts` (types and the pure builder) and
   `COMPOSITION_PRESETS` in `world-config.ts` (the authored places). Props are resolved by
   `apps/web/src/render/prop-model-urls.ts` and drawn by `apps/web/src/render/dressing.ts`; the

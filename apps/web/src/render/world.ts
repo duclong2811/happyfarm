@@ -467,6 +467,8 @@ const SECTION_BUDGET = {
   district: 80,
   shore: 34,
   hedge: 30,
+  /** The planted edges of the agricultural parcels, which V11 made the field's boundary. */
+  fieldHedge: 60,
   wilderness: 88
 } as const;
 /** How far outside the fence a planted thing has to be to count as countryside rather than field. */
@@ -1022,6 +1024,34 @@ function buildScenery(
     const kind: SceneryKind = rand() < 0.78 ? "bush" : "tree";
     if (isOpenGround(-3.4, along + jitter)) {
       hedgeBudget(kind, -3.4, along + jitter, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2);
+    }
+  }
+
+  // 8. The field hedgerows.
+  //
+  // A worked field is bounded by something, and on this island that something is a hedge rather than
+  // the fence V11 removed: a planted edge along the roadside of the larger parcels, with gaps where a
+  // cart would go through. It is scenery like the rest, so the placement rules - the coastline, the
+  // roads, the clearings - still decide where it may stand.
+  const fieldHedgeBudget = within(SECTION_BUDGET.fieldHedge);
+  for (const block of FIELD_BLOCKS) {
+    if (block.kind === "YARD") continue;
+    for (const edge of [
+      { fixed: block.bounds.minY, along: "X", close: true },
+      { fixed: block.bounds.maxY, along: "X", close: false }
+    ] as const) {
+      for (let along = block.bounds.minX + 1; along <= block.bounds.maxX - 1; along += 2.4) {
+        // A gap every third step: a hedge with an entrance in it, which is what a field has.
+        if (Math.round(along) % 8 < 2) continue;
+        const jitter = (rand() - 0.5) * 0.5;
+        const sizeRoll = rand();
+        const rotationRoll = rand();
+        const tileX = along + jitter;
+        // The hedge stands on the parcel's own edge line, so it frames the field rather than cutting it.
+        const tileY = edge.fixed + (edge.close ? -0.6 : 0.6);
+        if (!isOpenGround(tileX, tileY)) continue;
+        fieldHedgeBudget("bush", tileX, tileY, unitScaleFor("bush", sizeRoll) * 0.9, rotationRoll * Math.PI * 2);
+      }
     }
   }
 

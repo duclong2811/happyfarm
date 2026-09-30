@@ -50,6 +50,11 @@ import {
   type FarmSceneHandle
 } from "./render";
 import { SPAWN_WORLD } from "./render/world-config";
+import { cellKey, type WorldCell } from "./render/world-cell";
+import { movementDestination } from "./render/world-cell-selection";
+import { cellActionKey, cellLandKey, getAvailableCellActions } from "./render/world-cell-actions";
+import { createPlayerCollisionWorld } from "./player/collision";
+import type { CollisionWorld } from "./player/controller";
 import "./styles.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
@@ -557,6 +562,19 @@ function renderSelection(): void {
       detail.textContent = t("selection.none.detail");
       break;
     case "missing":
+      // A coordinate that is not one of the farm's own rows is still a place on the island. If it is
+      // a cell, the dock says what the land is for and what may be done with it - in words, never in
+      // coordinates, because a player reads "wild land", not "20, 5".
+      {
+        const cell = selectionCell(selection.coordinate);
+        if (cell !== null) {
+          node.textContent = t("cell.land.title", { land: t(cellLandKey(cell)) });
+          detail.textContent = t("cell.actions.detail", {
+            actions: availableActionNames(cell, selection)
+          });
+          break;
+        }
+      }
       node.textContent = t("selection.missing.title", { at: where });
       detail.textContent = t("selection.missing.detail");
       break;
@@ -651,6 +669,30 @@ function emptyDetail(selection: SelectionView): string {
     default:
       return t("selection.empty.detail");
   }
+}
+
+/** The island cell behind a selection, or null when the coordinate is off the island. */
+function selectionCell(coordinate: SelectedTile | null): WorldCell | null {
+  if (coordinate === null) return null;
+  return sceneInput().cells.cells.get(cellKey(coordinate.x, coordinate.y)) ?? null;
+}
+
+/**
+ * The actions the selected cell offers, in the player's language, and only the ones that are usable.
+ *
+ * `selection.canPlant` and friends are the server-derived preconditions the dock already honours, so
+ * the resolver reports what *would* be offered rather than a second opinion about what is allowed.
+ */
+function availableActionNames(cell: WorldCell, selection: SelectionView): string {
+  const actions = getAvailableCellActions(cell, {
+    canPlant: selection.canPlant,
+    crop: selection.crop === null ? null : { mature: selection.canHarvest },
+    tree: selection.tree === null ? null : { ready: selection.canHarvestTree }
+  });
+  const names = actions
+    .filter((action) => action.enabled)
+    .map((action) => t(cellActionKey(action.id) as MessageKey));
+  return names.length === 0 ? t("selection.none.detail") : names.join(", ");
 }
 
 /**
@@ -764,7 +806,7 @@ function tileNode(tile: FarmTileDTO): HTMLDivElement {
   }
 
   const select = (): void => {
-    selectTile(tile.x, tile.y);
+    selectCell(tile.x, tile.y);
   };
   node.addEventListener("click", select);
   node.addEventListener("keydown", (event) => {
@@ -1090,6 +1132,14 @@ const playerRuntime = createPlayerRuntime({
   }
 });
 
+/**
+ * The collision world the *selection* reads, kept in step with the one the character walks in.
+ *
+ * A click and a step have to agree about what is solid: if they did not, the game would offer a
+ * destination the walker then refuses to reach.
+ */
+let selectionCollision: CollisionWorld = createPlayerCollisionWorld([]);
+
 function startPlayer(): void {
   stopPlayer();
   movement = createMovementInput({
@@ -1107,14 +1157,49 @@ function stopPlayer(): void {
   playerRuntime.stop();
 }
 
-/** Applies a selection from either the 2D grid or the 3D view; both read and write this one state. */
-function selectTile(x: number, y: number): void {
+/**
+ * Whether this session asked for the developer overlay.
+ *
+ * A query parameter rather than a button, because it is not a player feature: the brief for this pass
+ * is that the island's grid is invisible in normal play, and the only thing allowed to draw it is a
+ * developer who asked for it by name.
+ */
+function debugRequested(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get("debug") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Applies a selection from either the 2D field or the 3D view; both read and write this one state. */
+function selectCell(x: number, y: number): void {
   state.selected = { x, y };
   renderField();
   renderSelection();
   // The walk command is part of what a selection offers, so it appears with the rest of the dock.
   renderGo();
   refreshScene();
+  scene?.setSelection(state.selected);
+  // Clicking the ground is also how a player says "walk there". The destination is offered only for
+  // a cell a character can actually stand on, and it is never an *action*: planting and harvesting
+  // stay on the dock's own buttons, so a mis-click cannot change the farm.
+  const destination = walkDestinationFor(state.selected);
+  if (destination !== null) playerRuntime.setDestination(destination);
+}
+
+/**
+ * Where a click on this cell should send the character, or null when it cannot be walked to.
+ *
+ * The collision world is the one the character actually walks in - rebuilt whenever the farm state
+ * is - so a destination this accepts is a destination the controller will reach, and one it refuses
+ * is one the walker would have had to cross a building, a trunk, or the sea to get to.
+ */
+function walkDestinationFor(coordinate: { readonly x: number; readonly y: number }): { readonly worldX: number; readonly worldZ: number } | null {
+  const cells = sceneInput().cells;
+  const cell: WorldCell | undefined = cells.cells.get(cellKey(coordinate.x, coordinate.y));
+  if (cell === undefined) return null;
+  return movementDestination(cell, cells, (worldX, worldZ) => selectionCollision.depth(worldX, worldZ) > 0);
 }
 
 /** The renderer's view of the farm right now: one descriptor set for drawing and for collision. */
@@ -1135,6 +1220,9 @@ function refreshScene(): void {
   // character starts blocking the next step without a second refresh path. Rebuilding the collision
   // world never moves the character: it only changes where the next step may go.
   playerRuntime.setTiles(input.tiles);
+  // The selection asks the same world whether a cell can be walked to, so a destination can never be
+  // offered for ground the character would refuse.
+  selectionCollision = createPlayerCollisionWorld(input.tiles);
   if (scene === null) return;
   try {
     scene.setState(input);
@@ -1155,8 +1243,8 @@ function enable3D(): void {
   if (scene === null) {
     try {
       scene = createFarmScene(element<HTMLCanvasElement>("scene"), {
-        onTileSelected: (coordinate) => {
-          selectTile(coordinate.x, coordinate.y);
+        onCellSelected: (cell) => {
+          selectCell(cell.x, cell.y);
         },
         onAssetProblem: (assetId, error) => {
           // The crop keeps its placeholder art, so this is information rather than a failure the page
@@ -1182,6 +1270,9 @@ function enable3D(): void {
     // The character exists exactly as long as the 3D view does: it listens for movement keys and
     // wakes the render loop while a key is held.
     startPlayer();
+    // The cell grid is a development tool: it is on only when the page was opened with `?debug=1`,
+    // so a normal session never sees the lattice the engine thinks in.
+    scene.setDebugMode(debugRequested());
   }
   refreshScene();
   renderGo();

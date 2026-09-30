@@ -527,6 +527,33 @@ export const ROADS: readonly Road[] = [
       { x: 53, y: 53 },
       { x: 55, y: 56 }
     ]
+  },
+  {
+    id: "mining_road",
+    kind: "SECONDARY",
+    points: [
+      // Off the ring into the highland the island is keeping for quarrying: the reserve has no
+      // building and no system yet, but a piece of land nothing can reach is not part of the island.
+      { x: 28, y: -9 },
+      { x: 30, y: -15 },
+      { x: 33, y: -20 },
+      { x: 34, y: -25 }
+    ]
+  },
+  {
+    id: "farm_track",
+    kind: "PATH",
+    points: [
+      // The farm's own track: from the barn's yard, across the fields, to the western parcels. A path
+      // and not a road - it is what a tractor follows between two fields - which is why it is the one
+      // way the network is allowed to cross the land the catalogue sells.
+      { x: 39, y: -4 },
+      { x: 33, y: 0 },
+      { x: 26, y: 5 },
+      { x: 18, y: 9 },
+      { x: 10, y: 12 },
+      { x: 3, y: 16 }
+    ]
   }
 ];
 
@@ -604,6 +631,34 @@ export const FISH_FARM = {
   rowDistances: [1.06, 1.14],
   /** Cages per row. */
   perRow: 3
+} as const;
+
+/**
+ * The planned aquaculture water: the bay the fish farm is moored in, and nothing else.
+ *
+ * An `AQUACULTURE` cell is a cell of *planned production water*. The open sea is not one: a player
+ * who clicks mid-ocean must be told the cell has no use, which is only possible if the plan drew a
+ * line around the part of the bay that does. The area is centred on the cages the renderer already
+ * places, so the logical cells and the floating frames are the same place.
+ */
+export const AQUACULTURE_ZONE = {
+  center: { x: 64, y: 47 },
+  radiusX: 7,
+  radiusY: 5.5
+} as const;
+
+/**
+ * The mining reserve: highland the island is keeping for quarrying it has not designed yet.
+ *
+ * On the northern ridge between the two woods - rocky, high, and as far from the town, the fields,
+ * the lake, and the harbour as the island allows, which is what a quarry needs before it needs
+ * anything else. Zone metadata only: no building, no resource, no gameplay, and the ground stays as
+ * natural as it was.
+ */
+export const MINING_RESERVE = {
+  center: { x: 34, y: -22 },
+  radiusX: 7,
+  radiusY: 5.5
 } as const;
 
 /**

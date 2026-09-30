@@ -25,10 +25,7 @@ import {
 import { GROUND_SURFACE_Y, islandRadiusAt, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
 import {
   DISTRICTS,
-  FENCE_THICKNESS_WORLD,
   TERRAIN_SHAPE,
-  fenceGeometry,
-  type FenceGeometry
 } from "./world-config";
 import { buildLandmarks } from "./landmarks";
 import { buildScenery } from "./scenery";
@@ -56,7 +53,6 @@ const APRON_TOP_Y = -0.01;
  * base, so it never pokes through them.
  */
 const FIELD_BED_TOP_Y = -0.004;
-const FENCE_HEIGHT = 0.62;
 /** The generated barn is authored with its base on y = 0; the ground under the yard is a hair lower. */
 const BARN_FEET_Y = -0.02;
 /** Top of the island's ground surface where it is flat: level with the old grass slab. */
@@ -292,7 +288,7 @@ function islandBeachGeometry(terrain: TerrainShape, marginWorld: number, topY: n
  * outline, so the silhouette is solid from the side and the waterline follows the shape the collision
  * world uses rather than a circle that only approximates it.
  */
-function addIsland(group: Group, assets: SharedAssets, world: FarmWorld): void {
+function addIsland(group: Group, assets: SharedAssets, world: FarmWorld): Mesh {
   const terrain = world.terrain;
 
   const water = new Mesh(assets.circle, assets.waterDeep);
@@ -309,6 +305,8 @@ function addIsland(group: Group, assets: SharedAssets, world: FarmWorld): void {
 
   const ground = new Mesh(islandGroundGeometry(terrain), assets.terrainGrass);
   ground.receiveShadow = true;
+  // Named so the picking pass can find the one mesh a click on open ground lands on.
+  ground.name = "island-ground";
   group.add(ground);
 
   // A darker band a little inside the waterline: the wet sand the tide leaves behind.
@@ -324,16 +322,18 @@ function addIsland(group: Group, assets: SharedAssets, world: FarmWorld): void {
     assets.wetSand
   );
   group.add(wetRim);
+  return ground;
 }
 
 /**
- * The dirt apron under the field, and the darker bed under the tiles themselves.
+ * The soil under the field the player works, and the furrows across it.
  *
- * Placed where the fence is, not at the world origin: the apron wraps the plots the catalogue can
- * hand out, which is the middle of `FENCE.bounds`, not the middle of the starter plot. Taking the
- * centre from the same derived geometry as the fence is what keeps them from drifting apart.
+ * The apron hugs the land the farm owns rather than the whole reserve, so the field has a worked
+ * margin and the reserve around it stays ground. The furrows are what makes it read as a field
+ * instead of a brown rectangle: one ridge along every tile boundary, drawn as a single instanced
+ * mesh, at the height the tile slabs' own surface sits at.
  */
-function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld): void {
+function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
   if (world.apron !== null) {
     // Top at the apron level, thick enough to stand proud of the grass on every side.
     group.add(
@@ -345,6 +345,34 @@ function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld): v
       box(assets, assets.dirtDark, world.bed.widthWorld, 0.02, world.bed.depthWorld, world.bed.worldX, FIELD_BED_TOP_Y - 0.01, world.bed.worldZ)
     );
   }
+  // The furrows: one ridge along every tile boundary of the land the farm owns, from the same
+  // `inner` bounds the tiles themselves are laid out from, so a bought plot's rows line up with the
+  // rows that were already there.
+  const owned = world.inner;
+  if (owned === null) return;
+  const ridges: { readonly worldX: number; readonly worldZ: number; readonly length: number }[] = [];
+  const centreX = (owned.minX + owned.maxX + 1) / 2;
+  const widthWorld = (owned.maxX - owned.minX + 1) * layout.pitch;
+  for (let y = owned.minY; y <= owned.maxY + 1; y += 1) {
+    const position = tileToWorld({ x: centreX, y: y - 0.5 }, worldFrame(layout.pitch));
+    ridges.push({ worldX: position.worldX, worldZ: position.worldZ, length: widthWorld });
+  }
+  if (ridges.length === 0) return;
+  const mesh = new InstancedMesh(assets.box, assets.dirtDark, ridges.length);
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  ridges.forEach((ridge, index) => {
+    position.set(ridge.worldX, TILE_THICKNESS + 0.004, ridge.worldZ);
+    scale.set(ridge.length, 0.012, 0.3);
+    matrix.compose(position, rotation, scale);
+    mesh.setMatrixAt(index, matrix);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.receiveShadow = true;
+  mesh.computeBoundingSphere();
+  group.add(mesh);
 }
 
 /**
@@ -950,66 +978,6 @@ function addBarn(
   group.add(barn);
 }
 
-/**
- * The fence: posts and rails along every segment the world config derives.
- *
- * There are no gate numbers here. A gap exists because `fenceGeometry` cut it out of the side, so the
- * drawing cannot disagree with what the player can walk through.
- */
-function addFence(group: Group, assets: SharedAssets, fence: FenceGeometry, postSpacing: number): void {
-  // A continuous fence around the whole reserve draws the gameplay square as a hard outline, which at
-  // estate zoom is the single clearest sign that the world is a grid underneath. The fence is drawn
-  // as *sections* with gaps between them instead: a farm boundary that a hedge, a gate, or a field
-  // entrance interrupts - which is what a farm boundary actually looks like.
-  let sectionIndex = 0;
-  for (const segment of fence.segments) {
-    const horizontal = segment.side === "SOUTH" || segment.side === "NORTH";
-    const from = horizontal ? segment.minWorldX : segment.minWorldZ;
-    const to = horizontal ? segment.maxWorldX : segment.maxWorldZ;
-    const line = horizontal
-      ? (segment.minWorldZ + segment.maxWorldZ) / 2
-      : (segment.minWorldX + segment.maxWorldX) / 2;
-    const length = to - from;
-    if (length <= 0) continue;
-    sectionIndex += 1;
-    // Deterministic, and different on every side: the gaps must not line up into a rhythm either.
-    const covered = 0.5 + 0.22 * Math.sin(sectionIndex * 2.3);
-    const start = from + (to - from) * (sectionIndex % 2 === 0 ? 0.06 : 0.3);
-    const sectionTo = Math.min(to, start + (to - from) * covered);
-    const middle = (start + sectionTo) / 2;
-    const sectionLength = sectionTo - start;
-
-    for (const height of [0.28, 0.46]) {
-      const rail = horizontal
-        ? box(assets, assets.wood, sectionLength, 0.07, FENCE_THICKNESS_WORLD, middle, height, line)
-        : box(assets, assets.wood, FENCE_THICKNESS_WORLD, 0.07, sectionLength, line, height, middle);
-      rail.castShadow = true;
-      group.add(rail);
-    }
-
-    // Posts every pitch, plus one at each end, so a gate is framed by two posts.
-    const spacings = Math.max(1, Math.round(sectionLength / postSpacing));
-    for (let index = 0; index <= spacings; index += 1) {
-      const at = start + (sectionLength * index) / spacings;
-      const post = box(assets, assets.wood, 0.1, FENCE_HEIGHT, 0.1, horizontal ? at : line, FENCE_HEIGHT / 2, horizontal ? line : at);
-      post.castShadow = true;
-      group.add(post);
-    }
-  }
-}
-
-/** A survey stake: a short post with a lighter cap, marking one point on the land's edge. */
-function addStake(group: Group, assets: SharedAssets, worldX: number, worldY: number, worldZ: number): void {
-  const post = box(assets, assets.stakeWood, 0.09, 0.5, 0.09, worldX, worldY + 0.25, worldZ);
-  post.castShadow = true;
-  group.add(post);
-  // A weathered cap rather than a bright one: a line of white dots along the field's edge read as
-  // marker posts in a tutorial, not as a farm boundary.
-  const cap = box(assets, assets.dirt, 0.11, 0.08, 0.11, worldX, worldY + 0.5, worldZ);
-  cap.castShadow = true;
-  group.add(cap);
-}
-
 /** A signboard: a post and a plank, the readable "this land is not yours yet" marker. */
 function addSignpost(group: Group, assets: SharedAssets, plot: LockedPlotSquare, layout: FarmLayout): void {
   const position = tileToWorld({ x: plot.minX - 0.5, y: plot.minY - 0.5 }, worldFrame(layout.pitch));
@@ -1154,10 +1122,6 @@ function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, lay
   for (const plot of world.lockedPlots) {
     addSignpost(group, assets, plot, layout);
   }
-
-  for (const stake of world.lockedBoundary) {
-    addStake(group, assets, stake.worldX, stake.worldY, stake.worldZ);
-  }
 }
 
 /**
@@ -1235,17 +1199,13 @@ export function buildTerrain(
   barnModel?: Object3D,
   getBuildingModel: (id: string) => Object3D | undefined = () => undefined,
   getPropModel: (id: string) => Object3D | undefined = () => undefined
-): void {
-  // The fence is derived from the world config and the tile pitch, exactly as the player's collision
-  // is: one description, drawn here, walked around there.
-  const fence = fenceGeometry(layout.pitch);
-  addIsland(group, assets, world);
+): Object3D {
+  const ground = addIsland(group, assets, world);
   addMeadows(group, assets, world);
   addProductionRowBeds(group, assets, layout);
   addPlaza(group, assets, world.plaza);
   if (world.loggingYard !== null) addLoggingYard(group, assets, world.loggingYard, layout);
   addRoads(group, assets, world);
-  addFence(group, assets, fence, layout.pitch);
   if (world.pond !== null) addPond(group, assets, world.pond);
   addHarbour(group, assets, world.harbour, layout);
   addAquaculture(group, assets, world.aquaculture);
@@ -1257,6 +1217,7 @@ export function buildTerrain(
   const curatedBarn = getBuildingModel("farm.barn.t2");
   addBarn(group, assets, world, curatedBarn ?? barnModel, curatedBarn === undefined ? 1 : 6.4);
   buildLandmarks(group, assets, world.landmarks, getBuildingModel);
+  return ground;
 }
 
 /**
@@ -1272,7 +1233,7 @@ export function buildLockedPlotOverlay(
   layout: FarmLayout,
   getModel: (id: string) => Object3D | undefined = () => undefined
 ): void {
-  addFieldGround(group, assets, world);
+  addFieldGround(group, assets, world, layout);
   addLockedLand(group, assets, world, layout);
   buildScenery(group, assets, world.lockedScenery, getModel);
 }

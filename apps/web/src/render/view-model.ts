@@ -1,6 +1,8 @@
 import type { CropStateDTO, FarmTileDTO, PlotDTO, TreeStateDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type FarmLayout, type TilePlacement } from "./layout";
 import { buildFarmWorld, landFrame, type FarmWorld } from "./world";
+import { buildWorldCellMap } from "./world-cell-map";
+import type { WorldCellMap } from "./world-cell";
 
 /**
  * Turns authoritative farm state into render descriptors.
@@ -54,6 +56,15 @@ export interface FarmSceneInput {
   readonly layout: FarmLayout;
   readonly world: FarmWorld;
   readonly tiles: readonly SceneTile[];
+  /**
+   * The island, cell by cell.
+   *
+   * Built from the world plus the farm's own rows, because occupancy is *current* state: a cell is
+   * `PRODUCTION` while a crop stands on it and empty again the moment it is harvested. It travels
+   * with the scene input so the renderer, the selection layer, the action resolver and the player's
+   * collision all read one map rather than each asking the world its own question.
+   */
+  readonly cells: WorldCellMap;
 }
 
 export interface FarmViewState {
@@ -155,5 +166,17 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
     });
   }
 
-  return { layout, world, tiles };
+  // The cell map is built last, from the world and the rows: terrain and land use come from the
+  // config, occupancy comes from what is actually growing.
+  const cells = buildWorldCellMap({
+    layout,
+    tiles: uniqueTiles,
+    plantedTiles: state.crops.map((crop) => ({ x: crop.tileX, y: crop.tileY })).concat(
+      state.trees.map((tree) => ({ x: tree.tileX, y: tree.tileY }))
+    ),
+    scenery: world.scenery,
+    roads: world.roads
+  }, world.terrain);
+
+  return { layout, world, tiles, cells };
 }

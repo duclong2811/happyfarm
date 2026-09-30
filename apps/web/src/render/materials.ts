@@ -114,6 +114,16 @@ export interface SharedAssets {
    * on the other, which is the difference between a hint and a light show.
    */
   readonly interactionGrid: MeshBasicMaterial;
+  /**
+   * The cell overlay: the one square a selection draws, the faint hint of its neighbours, and the
+   * developer lattice.
+   *
+   * Flat colour and no lighting, like the planting grid, because a cell overlay is a mark on the
+   * ground rather than a surface of it - and quiet, because normal play must never see a grid.
+   */
+  readonly cellSelection: MeshBasicMaterial;
+  readonly cellNeighbour: MeshBasicMaterial;
+  readonly cellDebug: MeshBasicMaterial;
   readonly cropGrowing: MeshStandardMaterial;
   readonly cropMature: MeshStandardMaterial;
   /** Placeholder avatar colours. Art replaces these; nothing reads them back. */
@@ -235,6 +245,11 @@ export function createSharedAssets(): SharedAssets {
     ready: material(standard(0xffcf3f)),
     // Pale, low, and quiet: the planting grid is a hint at where a seed may go, not an editor.
     interactionGrid: flatMaterial(flat(0xe8f7d8, { opacity: 0.42, depthWrite: false })),
+    // A selection is a soft wash of light on the ground; its neighbours are a hint of one; the debug
+    // lattice is drawn in its own colours per cell and only ever on a developer's machine.
+    cellSelection: flatMaterial(flat(0xf3f7e4, { opacity: 0.34, depthWrite: false })),
+    cellNeighbour: flatMaterial(flat(0xdfe9cf, { opacity: 0.16, depthWrite: false })),
+    cellDebug: flatMaterial(flat(0xffffff, { opacity: 0.62, depthWrite: false })),
     cropGrowing: material(standard(0x6fbf7f)),
     cropMature: material(standard(0xe0b64a)),
     playerBody: material(standard(0x3f6fd8)),
@@ -257,8 +272,11 @@ export function createSharedAssets(): SharedAssets {
  * variation reads as ground that was actually worked. The variation is a property of the coordinate,
  * so a tile keeps its shade when the farm grows and two clients see the same field.
  */
-const SOIL_TONES: readonly number[] = [0xb28356, 0xbb8c5e];
-const SOIL_OCCUPIED_TONES: readonly number[] = [0x7f5a3a, 0x886340];
+// Two tones a shade apart rather than two colours: with the tile seams gone, a wide tonal difference
+// between neighbouring tiles is what would put the grid back on screen. The furrows are what carry
+// the field's structure now.
+const SOIL_TONES: readonly number[] = [0xb4835a, 0xb88a5e];
+const SOIL_OCCUPIED_TONES: readonly number[] = [0x7f5a3a, 0x83603f];
 const GRASS_TONES: readonly number[] = [0x6cae52, 0x74b757];
 
 /** Water and blocked ground are one colour each: they are a state, not a cultivated surface. */
