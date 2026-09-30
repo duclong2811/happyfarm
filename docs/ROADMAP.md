@@ -40,6 +40,12 @@ Committed and verified through `46915e0`:
   forestry district beside the natural woodland, a settlement plan with reserved plots, a shoreline
   band instead of a wall of trees, and `BuildingDefinition` with visual tiers ready for a structure
   pass.
+- Island master planning (V6): the nine-function plan (civic core, crop agriculture, orchard,
+  pasture, managed forestry, natural forest, freshwater, fishery/harbour, and a reserved *future*
+  district), roads re-laid around the plan rather than around the reserve, terrain uplift moved to
+  the north-east where the natural forest stands, district ground tints removed in favour of
+  vegetation and land use, small scenery hidden at estate zoom, and unclaimed land calmed to a
+  fraction of its former prop count.
 - Client work: fullscreen HUD, Three.js island world, camera pan/zoom, locked-land frontier,
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the

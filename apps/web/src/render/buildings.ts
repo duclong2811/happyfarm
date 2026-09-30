@@ -124,25 +124,27 @@ export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
     id: "town_hall",
     kind: "TOWN_HALL",
     district: "SETTLEMENT",
-    tile: { x: 52, y: -4 },
+    tile: { x: 46, y: -6 },
     rotationY: Math.PI,
-    footprint: { halfWidthWorld: 3.2, halfDepthWorld: 2.6 }
+    // The reserved footprint is the *largest* the building will ever be, so a tier-3 town hall has
+    // the ground it needs before anybody decides to build it.
+    footprint: { halfWidthWorld: 5, halfDepthWorld: 4 }
   },
   {
     id: "warehouse",
     kind: "WAREHOUSE",
     district: "SETTLEMENT",
-    tile: { x: 52, y: 4 },
+    tile: { x: 47, y: 5 },
     rotationY: -Math.PI / 2,
-    footprint: { halfWidthWorld: 3.6, halfDepthWorld: 2.4 }
+    footprint: { halfWidthWorld: 5, halfDepthWorld: 3.5 }
   },
   {
     id: "fishery_store",
     kind: "WAREHOUSE",
     district: "COAST",
-    tile: { x: 44, y: 47 },
+    tile: { x: 42, y: 47 },
     rotationY: Math.PI / 4,
-    footprint: { halfWidthWorld: 2.4, halfDepthWorld: 2 }
+    footprint: { halfWidthWorld: 3.5, halfDepthWorld: 2.5 }
   }
 ];
 

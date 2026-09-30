@@ -411,7 +411,16 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const playerGroup = new Group();
   playerGroup.visible = false;
   playerGroup.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
-  scene.add(worldGroup, tileGroup, cropGroup, treeGroup, overlayGroup, playerGroup);
+  /**
+   * Small scenery - flowers, tufts of grass - lives in its own pair of groups.
+   *
+   * At estate zoom these are noise: a thousand of them hide the fields, the roads, and the forest
+   * masses that the world plan is actually made of. Switched off as a group, the estate view costs
+   * less and reads better, and nothing has to be recomputed per frame to do it.
+   */
+  const detailGroup = new Group();
+  const overlayDetailGroup = new Group();
+  scene.add(worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, overlayGroup, overlayDetailGroup, playerGroup);
 
   /**
    * The sky: one inside-out sphere that fades from a warm horizon to a deeper zenith.
@@ -661,6 +670,20 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     });
   }
 
+  /**
+   * How far out the camera may be before small scenery stops being worth drawing.
+   *
+   * Roughly the estate view: past it, a flower is a fraction of a pixel and a hundred of them are a
+   * haze over the fields. One comparison per camera update, and the group toggles with it.
+   */
+  const DETAIL_ZOOM_LIMIT = 2.2;
+
+  function updateDetailVisibility(): void {
+    const visible = cameraRig.zoom <= DETAIL_ZOOM_LIMIT;
+    detailGroup.visible = visible;
+    overlayDetailGroup.visible = visible;
+  }
+
   function updateCamera(): void {
     // The target is the character's position plus the player's own drag, clamped so the camera can
     // never leave the farm. The character is not moved by any of it.
@@ -684,6 +707,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       target.worldZ + CAMERA_DIRECTION.z * distance
     );
     camera.lookAt(target.worldX, playerPose === null ? 0.2 : PLAYER_HEIGHT * 0.5, target.worldZ);
+    updateDetailVisibility();
   }
 
   function updatePlayer(): void {
@@ -801,7 +825,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       worldSignature = signature;
       worldGroup.clear();
       buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn);
-      buildScenery(worldGroup, assets, next.world.scenery, sceneryModel);
+      // Two passes, one destination each: mass scenery into the world group and small detail into the
+      // group the camera switches off when it pulls back.
+      buildScenery(worldGroup, assets, next.world.scenery.filter((entry) => !entry.detail), sceneryModel);
+      buildScenery(detailGroup, assets, next.world.scenery.filter((entry) => entry.detail), sceneryModel);
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
       // A world rebuild re-frames the zoom but keeps the player's own drag: buying land is not a
       // reason to move the camera the player positioned.
@@ -832,7 +859,21 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     cropGroup.clear();
     treeGroup.clear();
     overlayGroup.clear();
-    buildLockedPlotOverlay(overlayGroup, assets, next.world, next.layout, sceneryModel);
+    detailGroup.clear();
+    overlayDetailGroup.clear();
+    buildLockedPlotOverlay(
+      overlayGroup,
+      assets,
+      { ...next.world, lockedScenery: next.world.lockedScenery.filter((entry) => !entry.detail) },
+      next.layout,
+      sceneryModel
+    );
+    buildScenery(
+      overlayDetailGroup,
+      assets,
+      next.world.lockedScenery.filter((entry) => entry.detail),
+      sceneryModel
+    );
     pickTargets.clear();
     pickedInstances.clear();
     buildTileSlabs(state.tiles);

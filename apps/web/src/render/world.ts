@@ -104,6 +104,15 @@ export interface SceneryInstance {
   readonly tier: SceneryTier;
   /** 0..1, chosen from the world seed: which variant of the tier's family this one is. */
   readonly variantRoll: number;
+  /**
+   * Whether this is small detail - a flower, a tuft of grass - rather than a mass.
+   *
+   * At estate zoom a thousand of these are visual noise that hides the things the plan is actually
+   * made of: the fields, the roads, the forest masses, the settlement. The renderer keeps them in
+   * their own group and switches that group off when the camera is far enough away, which is a one
+   * flag per zoom change rather than anything per frame.
+   */
+  readonly detail: boolean;
 }
 
 /** A stake on the boundary of the land that is still locked. */
@@ -360,7 +369,14 @@ const FIELD_CLEARANCE_TILES = 1.4;
 /** Tile spacing between the stakes that mark the edge of the land that is still locked. */
 const LOCKED_STAKE_SPACING_TILES = 3;
 /** How many wild props a locked plot grows, before the per-prop open-ground filter. */
-const LOCKED_PROPS_PER_PLOT = 40;
+/**
+ * How much scrub a plot of unclaimed land grows.
+ *
+ * Deliberately sparse. Locked land is landscape that happens not to be the player's yet, not a
+ * state to be signalled with objects: forty small props per plot read as confetti from the estate
+ * camera and drowned out the fields they sat beside.
+ */
+const LOCKED_PROPS_PER_PLOT = 14;
 /** Tree spacing inside an orchard's rows, in tiles. */
 const ORCHARD_ROW_SPACING_TILES = 4.2;
 /** How far a prop has to stay from a road's centreline, in tiles. */
@@ -406,6 +422,9 @@ function clusterKindFor(kind: DistrictKind, roll: number): ClusterKind {
       return roll < 0.6 ? "SHRUBS" : "FLOWERS";
     case "SETTLEMENT":
       return roll < 0.6 ? "SHRUBS" : "FLOWERS";
+    case "FUTURE":
+      // Meadow with the occasional thicket: land nobody has decided about yet, not a building site.
+      return roll < 0.55 ? "SHRUBS" : "FLOWERS";
     case "CROPLAND":
       return "FLOWERS";
   }
@@ -553,7 +572,8 @@ function buildScenery(
       scale,
       rotationY,
       tier: "HERO",
-      variantRoll: rand()
+      variantRoll: rand(),
+      detail: kind === "flower" || kind === "plant"
     });
   }
 
@@ -783,9 +803,9 @@ function buildLockedScenery(
       const scaleRoll = rand();
       const rotationRoll = rand();
       const kind: SceneryKind =
-        // Deliberately not flower-heavy: a flowering bush is a strong colour, and a whole unclaimed
-        // ring of them reads as one dark blotch from the estate camera.
-        kindRoll < 0.6 ? "bush" : kindRoll < 0.78 ? "plant" : kindRoll < 0.92 ? "rock" : "tree";
+        // Grass, the occasional shrub, the occasional rock: the colours that make unclaimed land look
+        // like land rather than like a debug overlay.
+        kindRoll < 0.42 ? "plant" : kindRoll < 0.78 ? "bush" : kindRoll < 0.94 ? "rock" : "tree";
       const position = tileToWorld({ x, y }, frame);
       scenery.push({
         kind,
@@ -800,7 +820,8 @@ function buildLockedScenery(
         // Unclaimed ground sits immediately beside the field, so it is foreground: the light set is
         // for the island's rim, where a flat, cheap prop is seen in silhouette at a hundred metres.
         tier: "HERO",
-        variantRoll: rand()
+        variantRoll: rand(),
+        detail: kind === "plant"
       });
     }
   }

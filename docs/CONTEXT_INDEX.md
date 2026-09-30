@@ -157,6 +157,13 @@ Read `apps/web/src/render/placement.ts` before adding, moving, or re-shaping any
 - District functions and their vegetation profile live in `DISTRICTS` in `world-config.ts`: one row
   per function (crops, civic, orchard, pasture, water, woodland, managed woodland, coast), with the
   density and tree share that make the districts read differently from the estate camera.
+- The plan itself: nine functions with explicit adjacency and a reserved **`FUTURE`** district that
+  is deliberately undeveloped land - see the V6 section of `docs/ROADMAP.md`. Districts carry **no
+  ground tint**: identity comes from vegetation, rows, paths, and buildings, because painted ellipses
+  read as a debug overlay from the estate camera.
+- Roads follow the plan rather than the terrain's convenience: one primary from the harbour through
+  the civic core past the field's gate, secondaries to orchard, forestry, freshwater, and pasture.
+  The primary and its secondaries stay outside the reserve, and a test proves the route.
 - `tests/web/farm-placement.test.ts` holds the invariants: nothing outside the island, no large tree
   near the water, buildings inside their own district, no scenery in the crop reserve, and one
   primary road reaching the settlement, the fields' gate, and the harbour.

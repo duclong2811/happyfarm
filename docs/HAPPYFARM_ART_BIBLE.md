@@ -41,6 +41,10 @@ complexity the renderer does not use.
 | Cultivated apron | 1.5 tiles of dirt around the land the farm owns | `world.ts` (`APRON_MARGIN_TILES`) |
 | Road widths | 1.9 / 1.3 / 0.8 tiles for primary / secondary / path | `world-config.ts` (`ROAD_WIDTH_TILES`) |
 | Scenery instances | capped at 700, of which at most 200 are the curated set | `world.ts` (`MAX_SCENERY`, `HERO_SCENERY_BUDGET`) |
+| Scenery detail | flowers and grass tufts hide above zoom 2.2, so the estate view is masses and roads | `scene.ts` (`DETAIL_ZOOM_LIMIT`) |
+| District ground | the plan uses **no** colour patches: identity is trees, rows, paths and buildings | `world-config.ts` (`DISTRICTS.ground`) |
+| Unclaimed land | 14 props per plot, grass-heavy | `world.ts` (`LOCKED_PROPS_PER_PLOT`) |
+| Island upland | rises toward the north-east, where the natural forest stands | `world-config.ts` (`ISLAND_UPLANDS`) |
 | Environment model contract | one world unit across its **largest** dimension, centred on X/Z, base on `y = 0` | `tools/asset-pipeline/node/import-cc0.mjs`, `tests/integration/environment-model-assets.test.ts` |
 | Scenery size | `instance.scale` **is** the size in world metres (the player is 1.6) | `environment-model-urls.ts` (`unitScale`), `world.ts` (`unitScaleFor`) |
 | One plot cohort | 12 x 12 tiles | `packages/domain/src/plot.ts` |
