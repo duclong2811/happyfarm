@@ -9,9 +9,9 @@ import {
 
 /** A world the size of the shipped island, centred where its camera frames it. */
 const WORLD = {
-  centerWorldX: 6.48,
-  centerWorldZ: 6.48,
-  worldExtent: 23.76
+  centerWorldX: 12.96,
+  centerWorldZ: 12.96,
+  worldExtent: 35.1
 } as const;
 
 const LIMIT = WORLD.worldExtent * PAN_LIMIT_FACTOR;
@@ -82,14 +82,12 @@ describe("farming camera", () => {
     expect(target.worldZ).toBeLessThanOrEqual(WORLD.centerWorldZ + LIMIT);
   });
 
-  it("keeps the character on screen at the spawn by clamping rather than by moving the camera home", () => {
-    // The spawn sits south of the framed land, so the target is clamped north of it. The character
-    // is then below the centre of the view - visible, and with the farm still in frame - which is
-    // the framing the game opens with.
+  it("follows the character out to the landmarks at the island's edge", () => {
+    // The pond and the farmyard are a long way from the field, so the bound has to let the camera
+    // reach them. A tighter clamp is what used to leave them permanently out of frame.
     const rig = createCameraRig();
-    const target = rig.target(view(0, 23.22));
-    expect(target.worldZ).toBeCloseTo(WORLD.centerWorldZ + LIMIT, 9);
-    expect(target.worldZ).toBeLessThan(23.22);
+    expect(rig.target(view(40, 4))).toEqual({ worldX: 40, worldZ: 4 });
+    expect(rig.target(view(-20, 30))).toEqual({ worldX: -20, worldZ: 30 });
   });
 
   it("zooms within its range without touching the pan offset or the target", () => {

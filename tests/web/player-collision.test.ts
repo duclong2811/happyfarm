@@ -7,7 +7,7 @@ import type { InputVector } from "../../apps/web/src/player/input";
 import { tileToWorld, worldFrame, type TileCoordinate } from "../../apps/web/src/render/layout";
 import type { SceneTile } from "../../apps/web/src/render/view-model";
 import {
-  FARMHOUSE_WORLD,
+  FARMSTEAD_WORLD,
   FENCE,
   fenceGeometry,
   ISLAND_HALF_DEPTH_WORLD,
@@ -151,7 +151,7 @@ describe("player collision world", () => {
       expect(world.depth(obstacle.centerWorldX, obstacle.centerWorldZ), obstacle.id).toBeGreaterThan(0);
     }
     expect(world.depth(POND_WORLD.worldX, POND_WORLD.worldZ)).toBeGreaterThan(0);
-    expect(world.depth(FARMHOUSE_WORLD.worldX, FARMHOUSE_WORLD.worldZ)).toBeGreaterThan(0);
+    expect(world.depth(FARMSTEAD_WORLD.worldX, FARMSTEAD_WORLD.worldZ)).toBeGreaterThan(0);
   });
 
   it("blocks a crop as a circle at the tile centre, not as the whole tile", () => {

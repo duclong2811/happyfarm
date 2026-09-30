@@ -12,10 +12,25 @@
  * without a canvas.
  */
 
-/** How far the target may drift from the world's centre, as a fraction of the world's half-size. */
-export const PAN_LIMIT_FACTOR = 0.55;
+/**
+ * How far the target may drift from the world's centre, as a fraction of the world's half-size.
+ *
+ * It has to be wide enough that the camera can look at everything on the island - the orchard, the
+ * pond, the farmyard - not just the field in the middle. The camera's framing *centre* is the farm,
+ * so a tighter bound than the island's own radius would have made those places unreachable, however
+ * far the character walked or the player dragged.
+ */
+export const PAN_LIMIT_FACTOR = 1.25;
 export const ZOOM_MIN = 0.62;
-export const ZOOM_MAX = 2.4;
+/**
+ * How far out the wheel may go.
+ *
+ * The camera opens framing the field - the smallest thing in the world and the only thing the player
+ * can act on - so the range has to be wide enough that the far end reaches the island. At the shipped
+ * sizes the island is a little over four times the field's frame, so a narrower range would have left
+ * the widest view showing part of the map instead of all of it.
+ */
+export const ZOOM_MAX = 4.4;
 const ZOOM_PER_WHEEL_UNIT = 0.0012;
 
 /** What the camera needs to know about the world to aim itself. */

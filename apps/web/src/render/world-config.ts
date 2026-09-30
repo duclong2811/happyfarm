@@ -1,5 +1,6 @@
 import type { TileBounds, TileCoordinate, WorldFrame } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, WORLD_ORIGIN_TILE_X, worldFrame } from "./layout";
+import { islandRadiusAt, type IslandShape, type LevelArea, type TerrainShape } from "./terrain-height";
 
 /**
  * The static farm world.
@@ -15,7 +16,7 @@ import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, WORLD_ORIGIN_TILE_X, 
  * fixed frame in `layout.ts` is the only place that turns them into world metres.
  */
 
-export const WORLD_CONFIG_VERSION = 2;
+export const WORLD_CONFIG_VERSION = 3;
 
 /**
  * The land the shipped plot catalogue can hand out: 8 plots of 12x12 make a 36x36 field at [0,35]^2.
@@ -34,6 +35,24 @@ export const FARM_FIELD_BOUNDS: TileBounds = { minX: 0, maxX: 35, minY: 0, maxY:
  * lines, and meadow that reads as one continuous place instead of a plot on an empty plane.
  */
 export const VISUAL_BOUNDS: TileBounds = { minX: -13, maxX: 48, minY: -13, maxY: 48 };
+
+/**
+ * How far the shore reaches past the visual bounds, in tiles.
+ *
+ * The visual bounds is the rectangle every reserved zone has to fit inside; the island is that
+ * rectangle plus a beach. The margin is what leaves room for a shoreline the player can see rather
+ * than the awkward edge where the land simply stops.
+ */
+export const ISLAND_SHORE_MARGIN_TILES = 1.5;
+
+/**
+ * The island's superellipse exponent.
+ *
+ * 2 would be an ellipse. At 2 the corners of the reserve - the far end of the orchard, the farmyard
+ * - fall outside the outline, which is why the alpha's barn stood over water. 4 rounds the rectangle
+ * off without squaring it, so the whole reserved ring is land while the silhouette still curves.
+ */
+export const ISLAND_SHAPE_EXPONENT = 4;
 
 export type RegionKind = "ORCHARD" | "RANCH" | "POND" | "FARMHOUSE";
 
@@ -130,8 +149,16 @@ export const MEADOWS: readonly MeadowPatch[] = [
   { id: "west_meadow", kind: "MEADOW", center: { x: -7.5, y: 24 }, radiusX: 3.6, radiusY: 11, rotationY: -0.08 },
   { id: "east_meadow", kind: "MEADOW", center: { x: 42, y: 24 }, radiusX: 4.2, radiusY: 8.5, rotationY: 0.2 },
   { id: "south_meadow", kind: "MEADOW", center: { x: 12, y: 42 }, radiusX: 10, radiusY: 3.4, rotationY: -0.15 },
+  { id: "north_west_meadow", kind: "MEADOW", center: { x: -9, y: 6 }, radiusX: 3.2, radiusY: 6.5, rotationY: 0.35 },
+  { id: "east_shore_meadow", kind: "MEADOW", center: { x: 44, y: 33 }, radiusX: 3.4, radiusY: 7, rotationY: -0.25 },
+  { id: "south_west_meadow", kind: "MEADOW", center: { x: -6, y: 40 }, radiusX: 6, radiusY: 3.2, rotationY: 0.1 },
+  // Inside the fence: the part of the reserve the catalogue does not even preview yet. A patch is
+  // ground colour only, so it neither promises nor blocks anything - and buying the land paints the
+  // apron over it, which is why it can sit there at all.
+  { id: "reserve_east_meadow", kind: "MEADOW", center: { x: 28, y: 6 }, radiusX: 4, radiusY: 3.5, rotationY: 0.3 },
+  { id: "reserve_south_meadow", kind: "MEADOW", center: { x: 6, y: 28 }, radiusX: 3.5, radiusY: 4, rotationY: -0.2 },
   { id: "ranch_dirt", kind: "DIRT", center: { x: -7, y: 14 }, radiusX: 3.4, radiusY: 7, rotationY: 0 },
-  { id: "orchard_dirt", kind: "DIRT", center: { x: 20, y: -7 }, radiusX: 12, radiusY: 3.2, rotationY: 0 },
+  { id: "orchard_dirt", kind: "DIRT", center: { x: 20, y: -7 }, radiusX: 8.5, radiusY: 2.6, rotationY: 0 },
   { id: "south_shore", kind: "SAND", center: { x: 5.5, y: 44 }, radiusX: 12, radiusY: 3, rotationY: 0 },
   { id: "pond_shore", kind: "SAND", center: { x: 43, y: 9 }, radiusX: 4.6, radiusY: 4.4, rotationY: 0 }
 ];
@@ -306,11 +333,57 @@ export const POND = {
   radiusY: 3
 } as const;
 
-/** The farmhouse/barn yard, a static building placeholder. */
-export const FARMHOUSE = {
+/**
+ * The barn and the yard it stands in.
+ *
+ * The barn is the one structure the world has always drawn; the yard around it is a reserved region,
+ * a path branch, and a collision circle. It moved from being the whole "farmhouse" to being one
+ * landmark among several when the cottage, the windmill, and the rest arrived.
+ */
+export const FARMSTEAD = {
   center: { x: 42.5, y: -6.5 },
   rotationY: Math.PI * 0.75
 } as const;
+
+/**
+ * The kinds of decorative structure the world places.
+ *
+ * Each has a builder in `landmarks.ts` that draws it from shared primitives. They are scenery: none
+ * of them unlocks, produces, stores, or prices anything. They exist so the island has things to
+ * navigate by, which is the difference between a map and an empty field.
+ */
+export type LandmarkKind = "FARMHOUSE" | "WINDMILL" | "WELL" | "MARKET_STALL" | "STORAGE_SHED";
+
+/**
+ * A placed landmark.
+ *
+ * `blockingRadiusWorld` is the circle a walker goes around. It is 0 only for a structure the player
+ * is meant to walk through - none today - and every landmark is placed clear of the field, the
+ * paths, the water, the spawn, and the rim so a landmark can never seal a route.
+ */
+export interface LandmarkSpec {
+  readonly id: string;
+  readonly kind: LandmarkKind;
+  readonly tile: TileCoordinate;
+  readonly rotationY: number;
+  readonly blockingRadiusWorld: number;
+}
+
+/**
+ * The landmark layout.
+ *
+ * Chosen for navigation rather than for filling space: the stall and the well flank the south gate
+ * so the farm's entrance has a readable front door, the windmill and the shed give the west side two
+ * silhouettes at different distances, the cottage extends the barnyard, and every one of them is far
+ * enough from the field that the camera can frame the farm without them cropping into it.
+ */
+export const LANDMARKS: readonly LandmarkSpec[] = [
+  { id: "farmhouse", kind: "FARMHOUSE", tile: { x: 43.5, y: -10.5 }, rotationY: Math.PI * 0.42, blockingRadiusWorld: 2.6 },
+  { id: "windmill", kind: "WINDMILL", tile: { x: -9.5, y: 12 }, rotationY: 0.35, blockingRadiusWorld: 1.8 },
+  { id: "well", kind: "WELL", tile: { x: 9.5, y: 39.5 }, rotationY: 0, blockingRadiusWorld: 0.85 },
+  { id: "market_stall", kind: "MARKET_STALL", tile: { x: 2, y: 39.5 }, rotationY: -0.25, blockingRadiusWorld: 1.2 },
+  { id: "storage_shed", kind: "STORAGE_SHED", tile: { x: -6.5, y: 26 }, rotationY: 0.2, blockingRadiusWorld: 1.6 }
+];
 
 /**
  * Where the character appears: on the main path, south of the fence and outside every tile the farm
@@ -335,23 +408,47 @@ function toWorld(tile: TileCoordinate): { readonly worldX: number; readonly worl
 
 export const SPAWN_WORLD = toWorld(SPAWN_TILE);
 export const POND_WORLD = { ...toWorld(POND.center), radiusWorldX: POND.radiusX * frame.pitch, radiusWorldZ: POND.radiusY * frame.pitch };
-export const FARMHOUSE_WORLD = toWorld(FARMHOUSE.center);
+export const FARMSTEAD_WORLD = toWorld(FARMSTEAD.center);
+
+/** One landmark, in world metres: what the renderer draws and what collision blocks. */
+export interface PlacedLandmark extends LandmarkSpec {
+  readonly worldX: number;
+  readonly worldZ: number;
+}
+
+export const LANDMARKS_WORLD: readonly PlacedLandmark[] = LANDMARKS.map((landmark) => ({
+  ...landmark,
+  ...toWorld(landmark.tile)
+}));
 
 /**
  * Static obstacles a character must walk around.
  *
- * Deliberately a short list of circles: the barn, the pond, and one per region marker. Crops and
- * trees are *not* here - they are authoritative runtime state, and Phase 8 will read them from
- * `crop_instances`/`tree_instances` the same way the renderer does today.
+ * Deliberately a short list of circles: the barn, the pond, and one per landmark. Crops and trees
+ * are *not* here - they are authoritative runtime state, and the collision world reads them from the
+ * farm's own rows the same way the renderer does today.
  */
 export const STATIC_OBSTACLES: readonly WorldObstacle[] = [
-  { id: "farmhouse", centerWorldX: FARMHOUSE_WORLD.worldX, centerWorldZ: FARMHOUSE_WORLD.worldZ, radiusWorld: 2.2 },
-  { id: "pond", centerWorldX: POND_WORLD.worldX, centerWorldZ: POND_WORLD.worldZ, radiusWorld: Math.max(POND_WORLD.radiusWorldX, POND_WORLD.radiusWorldZ) }
+  { id: "barn", centerWorldX: FARMSTEAD_WORLD.worldX, centerWorldZ: FARMSTEAD_WORLD.worldZ, radiusWorld: 2.2 },
+  { id: "pond", centerWorldX: POND_WORLD.worldX, centerWorldZ: POND_WORLD.worldZ, radiusWorld: Math.max(POND_WORLD.radiusWorldX, POND_WORLD.radiusWorldZ) },
+  ...LANDMARKS_WORLD.map((landmark) => ({
+    id: landmark.id,
+    centerWorldX: landmark.worldX,
+    centerWorldZ: landmark.worldZ,
+    radiusWorld: landmark.blockingRadiusWorld
+  }))
 ];
 
-/** The island in world metres, from the fixed visual bounds. */
-export const ISLAND_HALF_WIDTH_WORLD = ((VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2) * frame.pitch;
-export const ISLAND_HALF_DEPTH_WORLD = ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2) * frame.pitch;
+/**
+ * The island in world metres: the visual bounds plus a shore margin.
+ *
+ * The extra margin is what the beach and the shoreline scenery stand on. It does not change what the
+ * farm may own - that is `FARM_FIELD_BOUNDS` and the plot catalogue - and it does not move a tile.
+ */
+export const ISLAND_HALF_WIDTH_WORLD =
+  ((VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2 + ISLAND_SHORE_MARGIN_TILES) * frame.pitch;
+export const ISLAND_HALF_DEPTH_WORLD =
+  ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2 + ISLAND_SHORE_MARGIN_TILES) * frame.pitch;
 
 /**
  * Half the framed farm, in world metres: the fence rectangle, which is the land the plot catalogue
@@ -376,9 +473,59 @@ export const WORLD_CENTER_WORLD = toWorld({
   y: (VISUAL_BOUNDS.minY + VISUAL_BOUNDS.maxY) / 2
 });
 
-function inside(bounds: TileBounds, tile: TileCoordinate): boolean {
-  return tile.x >= bounds.minX && tile.x <= bounds.maxX && tile.y >= bounds.minY && tile.y <= bounds.maxY;
+/** The island's outline: one shape for the drawn shore and the walkable one. */
+export const ISLAND_SHAPE: IslandShape = {
+  centerWorldX: WORLD_CENTER_WORLD.worldX,
+  centerWorldZ: WORLD_CENTER_WORLD.worldZ,
+  halfWidthWorld: ISLAND_HALF_WIDTH_WORLD,
+  halfDepthWorld: ISLAND_HALF_DEPTH_WORLD,
+  exponent: ISLAND_SHAPE_EXPONENT
+};
+
+/**
+ * The normalised radius of the farm's flat plateau, measured on the island's own outline.
+ *
+ * The fence and the island share a centre, so the plateau's corner - the farthest the apron reaches -
+ * is what has to stay level. Everything past it is the rolling ring the terrain pass builds.
+ */
+export const FARM_PLATEAU_RADIUS = islandRadiusAt(
+  WORLD_CENTER_WORLD.worldX + FARM_HALF_EXTENT_WORLD,
+  WORLD_CENTER_WORLD.worldZ + FARM_HALF_EXTENT_WORLD,
+  ISLAND_SHAPE
+);
+
+/** Height of the tallest hill above the flat plateau, in world units. */
+export const TERRAIN_RELIEF_WORLD = 5.5;
+
+/**
+ * The discs of ground the terrain holds level.
+ *
+ * The reserved zones that hold water or a building: the pond has to be level or it drains down the
+ * hillside, and the barnyard has to be level or the barn stands on one corner of its footprint. The
+ * orchard and the pasture are deliberately left out - an orchard on a gentle slope is the point of
+ * having elevation at all.
+ */
+export function terrainLevelAreas(frame: WorldFrame = worldFrame()): readonly LevelArea[] {
+  const pond = tileToWorld(POND.center, frame);
+  const yard = tileToWorld(FARMSTEAD.center, frame);
+  return [
+    {
+      centerWorldX: pond.worldX,
+      centerWorldZ: pond.worldZ,
+      flatRadiusWorld: Math.max(POND.radiusX, POND.radiusY) * frame.pitch + 1.6,
+      blendRadiusWorld: 3.5
+    },
+    { centerWorldX: yard.worldX, centerWorldZ: yard.worldZ, flatRadiusWorld: 5, blendRadiusWorld: 3.5 }
+  ];
 }
+
+/** The island's outline and elevation, in world metres. Pure data; `terrainHeightAt` reads it. */
+export const TERRAIN_SHAPE: TerrainShape = {
+  ...ISLAND_SHAPE,
+  plateauRadius: FARM_PLATEAU_RADIUS,
+  reliefWorld: TERRAIN_RELIEF_WORLD,
+  levelAreas: terrainLevelAreas()
+};
 
 /** Whether a tile holds the pond's water. */
 export function isWaterTile(tile: TileCoordinate): boolean {
@@ -400,19 +547,33 @@ export function isStaticObstacleTile(tile: TileCoordinate): boolean {
 /**
  * Whether a point is on walkable ground.
  *
- * Grass, sand, and paths are walkable; water and anything outside the island is not; a static obstacle
- * is not. Crop and tree occupancy is deliberately *not* consulted here: that is authoritative runtime
- * state, and Phase 8 will combine this static answer with the farm's own rows.
+ * Grass, sand, and paths are walkable; water and anything past the shoreline is not; a static obstacle
+ * is not. The shore is the island's own outline rather than the visual bounds' rectangle, so the
+ * corners of the bounding box - which are sea - are not reported as ground. Crop and tree occupancy
+ * is deliberately *not* consulted here: that is authoritative runtime state, and the collision world
+ * combines this static answer with the farm's own rows.
  */
 export function isStaticWorldWalkable(tile: TileCoordinate): boolean {
-  if (!inside(VISUAL_BOUNDS, tile)) return false;
+  const world = toWorld(tile);
+  // A hair inside the waterline, so a point reported walkable is one the shore does not reject.
+  if (islandRadiusAt(world.worldX, world.worldZ, ISLAND_SHAPE) > 0.985) return false;
   if (isWaterTile(tile)) return false;
   if (isStaticObstacleTile(tile)) return false;
   return true;
 }
 
-/** The walkable tile bounds, for a future movement clamp. */
-export const WALKABLE_BOUNDS: TileBounds = VISUAL_BOUNDS;
+/**
+ * The rectangle the walkable island fits inside.
+ *
+ * A convenience bound for callers that need a box rather than the shape; the shore itself is
+ * `islandRadiusAt`, which is what the collision world tests.
+ */
+export const WALKABLE_BOUNDS: TileBounds = {
+  minX: Math.floor((VISUAL_BOUNDS.minX + VISUAL_BOUNDS.maxX) / 2 - (ISLAND_HALF_WIDTH_WORLD / frame.pitch)),
+  maxX: Math.ceil((VISUAL_BOUNDS.minX + VISUAL_BOUNDS.maxX) / 2 + (ISLAND_HALF_WIDTH_WORLD / frame.pitch)),
+  minY: Math.floor((VISUAL_BOUNDS.minY + VISUAL_BOUNDS.maxY) / 2 - (ISLAND_HALF_DEPTH_WORLD / frame.pitch)),
+  maxY: Math.ceil((VISUAL_BOUNDS.minY + VISUAL_BOUNDS.maxY) / 2 + (ISLAND_HALF_DEPTH_WORLD / frame.pitch))
+};
 
 /** Every gameplay-relevant number the static world exposes, for tests and Phase 8. */
 export const WORLD_CONFIG = {
@@ -428,11 +589,14 @@ export const WORLD_CONFIG = {
   fence: FENCE,
   paths: PATHS,
   pond: POND,
-  farmhouse: FARMHOUSE,
+  farmstead: FARMSTEAD,
+  landmarks: LANDMARKS,
   spawnTile: SPAWN_TILE,
   spawnWorld: SPAWN_WORLD,
   staticObstacles: STATIC_OBSTACLES,
   farmHalfExtentWorld: FARM_HALF_EXTENT_WORLD,
   islandHalfWidthWorld: ISLAND_HALF_WIDTH_WORLD,
-  islandHalfDepthWorld: ISLAND_HALF_DEPTH_WORLD
+  islandHalfDepthWorld: ISLAND_HALF_DEPTH_WORLD,
+  islandShape: ISLAND_SHAPE,
+  terrainShape: TERRAIN_SHAPE
 } as const;

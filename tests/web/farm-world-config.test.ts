@@ -13,6 +13,7 @@ import {
   FARM_HALF_EXTENT_WORLD,
   FARM_FIELD_BOUNDS,
   FENCE,
+  ISLAND_SHORE_MARGIN_TILES,
   ISLAND_HALF_DEPTH_WORLD,
   ISLAND_HALF_WIDTH_WORLD,
   isStaticWorldWalkable,
@@ -26,6 +27,7 @@ import {
   WORLD_CONFIG_VERSION,
   WORLD_REGIONS
 } from "../../apps/web/src/render/world-config";
+import { APRON_MARGIN_TILES } from "../../apps/web/src/render/world";
 
 const PITCH = DEFAULT_TILE_SIZE + DEFAULT_TILE_GAP;
 const frame = worldFrame();
@@ -153,18 +155,20 @@ describe("static world config", () => {
     }
   });
 
-  it("keeps every terrain patch off the field, the fence, and the water", () => {
+  it("keeps every terrain patch off the land the farm owns at the start", () => {
     expect(MEADOWS.length).toBeGreaterThan(0);
     for (const patch of MEADOWS) {
       expect(patch.radiusX, patch.id).toBeGreaterThan(0);
       expect(patch.radiusY, patch.id).toBeGreaterThan(0);
-      // The patch's own extent has to stay clear of the fence line, or it would paint over the apron.
-      const overlapsFence =
-        patch.center.x - patch.radiusX <= FENCE.bounds.maxX &&
-        patch.center.x + patch.radiusX >= FENCE.bounds.minX &&
-        patch.center.y - patch.radiusY <= FENCE.bounds.maxY &&
-        patch.center.y + patch.radiusY >= FENCE.bounds.minY;
-      expect(overlapsFence, patch.id).toBe(false);
+      // A patch may lie inside the reserve - the ground there is pasture the farm has not bought -
+      // but it may never cover the starter square or the apron around it, because the tiles and the
+      // cultivated ground are drawn on top of it.
+      const overlapsStarter =
+        patch.center.x - patch.radiusX <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES &&
+        patch.center.x + patch.radiusX >= -APRON_MARGIN_TILES &&
+        patch.center.y - patch.radiusY <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES &&
+        patch.center.y + patch.radiusY >= -APRON_MARGIN_TILES;
+      expect(overlapsStarter, patch.id).toBe(false);
       const insideIsland =
         patch.center.x - patch.radiusX >= VISUAL_BOUNDS.minX &&
         patch.center.x + patch.radiusX <= VISUAL_BOUNDS.maxX &&
@@ -174,12 +178,28 @@ describe("static world config", () => {
     }
   });
 
-  it("treats water, the world's outside, and static obstacles as non-walkable", () => {
+  it("treats water, the sea, and static obstacles as non-walkable", () => {
     expect(isStaticWorldWalkable({ x: 0, y: 0 })).toBe(true);
     expect(isStaticWorldWalkable(SPAWN_TILE)).toBe(true);
     expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX + 1, y: VISUAL_BOUNDS.maxY + 1 })).toBe(false);
     expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.minX - 1, y: 0 })).toBe(false);
-    expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX, y: VISUAL_BOUNDS.maxY })).toBe(true);
+    // The island is a rounded rectangle, not the bounding box: the box's own corners are sea, while
+    // the middle of its edge is land and so is the corner of the reserve the old ellipse cut off.
+    expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX, y: VISUAL_BOUNDS.maxY })).toBe(false);
+    expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX, y: 17 })).toBe(true);
+    expect(isStaticWorldWalkable({ x: 36, y: -6 })).toBe(true);
     expect(WORLD_CONFIG_VERSION).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reaches the shore a margin past the visual bounds", () => {
+    // The island is wider than the rectangle every reserved zone has to fit inside, which is what the
+    // beach and the shoreline scenery stand on.
+    const halfTiles = (VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2;
+    expect(ISLAND_HALF_WIDTH_WORLD).toBeCloseTo((halfTiles + ISLAND_SHORE_MARGIN_TILES) * PITCH, 9);
+    expect(ISLAND_HALF_DEPTH_WORLD).toBeCloseTo(
+      ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2 + ISLAND_SHORE_MARGIN_TILES) * PITCH,
+      9
+    );
+    expect(ISLAND_HALF_WIDTH_WORLD).toBeGreaterThan(halfTiles * PITCH);
   });
 });

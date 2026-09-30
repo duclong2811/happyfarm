@@ -31,10 +31,15 @@ complexity the renderer does not use.
 | Fence thickness / height / post | 0.09 / 0.62 / 0.1 square | `world-config.ts`, `terrain.ts` |
 | Barn footprint (gameplay) | circle radius 2.2 at the canonical yard position | `world-config.ts` (`STATIC_OBSTACLES`) |
 | Scenery tree scale | 0.78 on the shared model | `scene.ts` |
-| Camera | perspective, FOV 45, direction (0.66, 0.82, 0.74), near 0.1, far 800 | `scene.ts` |
-| Camera distance | `framedExtent * 2.35 * zoom`; opens on the farm, follow framing 9, zoom 0.62..2.4 | `scene.ts`, `camera.ts` |
+| Camera | perspective, FOV 45, direction (0.62, 0.95, 0.62), near 0.5, far 1400 | `scene.ts` |
+| Camera distance | `framedExtent * 2.35 * zoom`; opens on the owned field, follow framing 9, zoom 0.62..4.4 | `scene.ts`, `camera.ts` |
 | Farm field reservation | tiles [0, 35]^2 (36 x 36) | `world-config.ts` (`FARM_FIELD_BOUNDS`) |
 | Playable island | tiles [-13, 48]^2 (62 x 62) | `world-config.ts` (`VISUAL_BOUNDS`) |
+| Island outline | a superellipse, exponent 4, plus 1.5 tiles of shore margin | `world-config.ts`, `terrain-height.ts` |
+| Ground surface where level | `y = -0.04` | `terrain-height.ts` (`GROUND_SURFACE_Y`) |
+| Hill relief | up to 5.5 world units, in the ring outside the reserved field | `world-config.ts` (`TERRAIN_RELIEF_WORLD`) |
+| Cultivated apron | 1.5 tiles of dirt around the land the farm owns | `world.ts` (`APRON_MARGIN_TILES`) |
+| Scenery instances | capped at 360, placed as clusters, instanced by kind | `world.ts`, `scenery.ts` |
 | One plot cohort | 12 x 12 tiles | `packages/domain/src/plot.ts` |
 
 Assets are authored in **world metres**, and the base of every model sits on `y = 0` so it can be
@@ -58,19 +63,24 @@ placed by a tile coordinate without a per-model offset.
 
 ## 5. Palette and materials
 
-One shared, flat palette. The renderer lights the scene with a hemisphere light (sky `#dfefff`,
-ground `#4a6a3f`, intensity 1.15), an ambient light (0.45) and a warm directional sun (`#fff4d6`,
-1.9), so materials should be mid-tone and warm rather than dark or glossy.
+One shared, flat palette. The renderer lights the scene with a hemisphere light (sky `#dcf0ff`,
+ground `#6d8f52`, intensity 0.9), a small ambient light (0.16) and a warm directional sun
+(`#fff0cd`, 2.3) that casts the scene's only shadows, and it tone-maps the result with ACES at 1.05
+exposure, so materials should be mid-tone and warm rather than dark or glossy. Vertex colours are
+used for two surfaces - the island's own ground and the rough ground on locked plots - and nowhere
+else.
 
 Base colours in use (`apps/web/src/render/materials.ts`):
 
 | Slot | Hex | Use |
 | --- | --- | --- |
-| grass / foliage / pine | `#7dc35a` / `#4f9d45` / `#3c7f4a` | ground, leaves, conifers |
-| soil empty / soil occupied | `#b98a5a` / `#8a6440` | bare and planted tiles |
-| dirt / dirt dark | `#c9a26a` / `#b0854f` | apron, paths |
-| sand / rock / water | `#e7d59a` / `#9aa3ab` / `#49a7dd` | shore, stones, pond |
-| wood / barn wall / barn roof / barn trim | `#a9763f` / `#d1574a` / `#8d3f38` / `#f3e3c8` | fences, buildings |
+| grass / meadow / foliage / pine | `#7dc35a` / `#8fd06a` / `#4f9d45` / `#3c7f4a` | ground, leaves, conifers |
+| soil empty / soil occupied | `#b28356`+`#bb8c5e` / `#7f5a3a`+`#886340` | bare and planted tiles, alternating by row |
+| dirt / dirt dark / bare earth | `#c9a26a` / `#b0854f` / `#c4a97b` | apron, paths, dry ground |
+| sand / wet sand / rock / stone | `#e7d59a` / `#c9b184` / `#9aa3ab` / `#b4b1a6` | shore, stones, walls |
+| water / water deep | `#49a7dd` / `#2b7fbf` | pond and shallows |
+| wood / stake wood / barn wall / barn roof / barn trim | `#a9763f` / `#8a6440` / `#d1574a` / `#8d3f38` / `#f3e3c8` | fences, buildings |
+| plaster / roof tile / timber / canvas / mill blade | `#f2e6d0` / `#a8503f` / `#7d5a3c` / `#e4585a` / `#e8dcbb` | landmarks |
 | crop growing / crop mature | `#6fbf7f` / `#e0b64a` | crop readiness tint |
 | player body / legs / skin / hat | `#3f6fd8` / `#39435c` / `#f1c7a1` / `#d9a441` | the farmer |
 

@@ -1,15 +1,24 @@
-import {
+﻿import {
+  ACESFilmicToneMapping,
   AmbientLight,
+  BackSide,
   Color,
   DirectionalLight,
+  Float32BufferAttribute,
   Fog,
   Group,
   HemisphereLight,
+  InstancedMesh,
+  Matrix4,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
+  PCFShadowMap,
   PerspectiveCamera,
+  Quaternion,
   Raycaster,
   Scene,
+  SphereGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -22,7 +31,7 @@ import { cropModelId, type CropModelId } from "./assets";
 import { cameraFrameExtent, createCameraRig } from "./camera";
 import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
-import { createSharedAssets, tileMaterial, type SharedAssets } from "./materials";
+import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials";
 import { CROP_MODEL_URLS } from "./model-urls";
 import { createPointerGesture } from "./pointer-gesture";
 import { ENVIRONMENT_MODEL_URLS } from "./environment-model-urls";
@@ -53,11 +62,28 @@ export const CROP_MAX_HEIGHT = 0.95;
 export const MIN_CROP_HEIGHT = 0.14;
 
 const CAMERA_FOV = 45;
-const CAMERA_DIRECTION = new Vector3(0.66, 0.82, 0.74).normalize();
+/**
+ * Where the camera sits relative to what it looks at.
+ *
+ * A three-quarter view: far enough off the vertical to show the sides of a building and the slope of
+ * the ground, high enough that a field of crops reads as rows rather than as a wall of them.
+ */
+const CAMERA_DIRECTION = new Vector3(0.62, 0.95, 0.62).normalize();
+/** Near and far planes. The near plane is far enough out to keep the depth buffer quiet at zoom. */
+const CAMERA_NEAR = 0.5;
+const CAMERA_FAR = 1400;
+/** Radius of the sky dome. Inside the far plane, and far outside the island. */
+const SKY_RADIUS = 600;
 const MIN_FRAMED_EXTENT = 7;
 const MAX_PIXEL_RATIO = 2;
 const CROP_RADIUS_FACTOR = 0.32;
-const SKY_COLOR = 0x9fd4ef;
+/** The horizon colour: the sky's bottom band, the fog, and the shallows all agree with it. */
+const HORIZON_COLOR = 0xcfe9f7;
+const SKY_ZENITH_COLOR = 0x69b4e8;
+/** Where the sun stands relative to whatever the camera is framing, and how tall. */
+const SUN_OFFSET = new Vector3(28, 46, 20);
+/** Half-width of the sun's shadow box, in world metres: the island plus its beach. */
+const SHADOW_EXTENT_WORLD = 30;
 /** Warm tint applied to a loaded model once the server calls the crop mature. Placeholder art. */
 const READY_EMISSIVE_COLOR = 0x4a3410;
 /**
@@ -174,6 +200,38 @@ function disposeModelResources(root: Object3D): void {
 }
 
 /**
+ * The sky dome: one inside-out sphere with the gradient baked into its vertex colours.
+ *
+ * A flat background colour is what makes a 3D scene read as a viewport rather than as a place. This
+ * costs one draw call and no texture, and it gives the fog something to dissolve into: the horizon
+ * band of the dome is the same colour the fog is, so the island's far edge melts into the sky
+ * instead of ending against a hard line.
+ */
+function createSkyDome(): Mesh {
+  const geometry = new SphereGeometry(1, 24, 16);
+  const position = geometry.getAttribute("position");
+  const colors = new Float32Array(position.count * 3);
+  const horizon = new Color(HORIZON_COLOR);
+  const zenith = new Color(SKY_ZENITH_COLOR);
+  const colour = new Color();
+  for (let index = 0; index < position.count; index += 1) {
+    const height = Math.min(1, Math.max(0, position.getY(index) * 0.5 + 0.5));
+    colour.copy(horizon).lerp(zenith, Math.pow(height, 0.85));
+    colors[index * 3] = colour.r;
+    colors[index * 3 + 1] = colour.g;
+    colors[index * 3 + 2] = colour.b;
+  }
+  geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+  const material = new MeshBasicMaterial({ vertexColors: true, side: BackSide, fog: false, depthWrite: false });
+  const mesh = new Mesh(geometry, material);
+  mesh.scale.setScalar(SKY_RADIUS);
+  // Never culled: it always surrounds the camera, whatever direction it is looking.
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -1;
+  return mesh;
+}
+
+/**
  * Scale of the shared tree model, matching the normalization the scenery applies to the same file.
  *
  * One model serves every tree: the visual stage is a scale and a decoration, not another asset, so a
@@ -237,6 +295,9 @@ function treePlant(
       plant.add(fruit);
     }
   }
+  plant.traverse((child) => {
+    child.castShadow = true;
+  });
   return plant;
 }
 
@@ -260,6 +321,9 @@ function buildPlayerAvatar(assets: SharedAssets, farmer: Object3D | undefined): 
     modelMarker.position.y = 0.01;
     modelMarker.scale.setScalar(PLAYER_HEIGHT * 0.34);
     avatar.add(modelMarker);
+    avatar.traverse((child) => {
+      if (child !== modelMarker) child.castShadow = true;
+    });
     return avatar;
   }
 
@@ -295,6 +359,11 @@ function buildPlayerAvatar(assets: SharedAssets, farmer: Object3D | undefined): 
   marker.scale.setScalar(PLAYER_HEIGHT * 0.34);
 
   avatar.add(legs, body, head, brim, hat, visor, marker);
+  // Everything but the ground marker casts; the marker is a decal-ish ring that would only darken
+  // the ground under the feet twice.
+  avatar.traverse((child) => {
+    if (child !== marker) child.castShadow = true;
+  });
   return avatar;
 }
 
@@ -306,10 +375,17 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     throw new FarmRendererUnavailableError(error);
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+  // A filmic curve keeps the sunlit grass and the shaded sides of a building from clipping to flat
+  // colour, which is most of what separated the alpha's look from a stylised one. It is a few lines of
+  // shader work, not a post-processing pass.
+  renderer.toneMapping = ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = PCFShadowMap;
 
   const scene = new Scene();
-  scene.background = new Color(SKY_COLOR);
-  const camera = new PerspectiveCamera(CAMERA_FOV, 1, 0.1, 800);
+  scene.background = new Color(HORIZON_COLOR);
+  const camera = new PerspectiveCamera(CAMERA_FOV, 1, CAMERA_NEAR, CAMERA_FAR);
 
   const assets = createSharedAssets();
   const worldGroup = new Group();
@@ -331,11 +407,33 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   playerGroup.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
   scene.add(worldGroup, tileGroup, cropGroup, treeGroup, overlayGroup, playerGroup);
 
-  scene.add(new HemisphereLight(0xdfefff, 0x4a6a3f, 1.15));
-  scene.add(new AmbientLight(0xffffff, 0.45));
-  const sun = new DirectionalLight(0xfff4d6, 1.9);
-  sun.position.set(9, 16, 7);
-  scene.add(sun);
+  /**
+   * The sky: one inside-out sphere that fades from a warm horizon to a deeper zenith.
+   *
+   * A flat background colour was most of why the alpha read as a viewport rather than as a place.
+   * The dome costs one draw call, carries no texture, and gives the fog something to dissolve into.
+   * It neither receives nor casts anything, and it is excluded from fog because it *is* the horizon.
+   */
+  const sky = createSkyDome();
+  scene.add(sky);
+
+  // Sky light, ground bounce, and one warm sun. The hemisphere carries the colour that makes shade
+  // read as shade rather than as darkness: cool from above, green from the ground.
+  scene.add(new HemisphereLight(0xdcf0ff, 0x6d8f52, 0.9));
+  scene.add(new AmbientLight(0xffffff, 0.16));
+  const sun = new DirectionalLight(0xfff0cd, 2.3);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -SHADOW_EXTENT_WORLD;
+  sun.shadow.camera.right = SHADOW_EXTENT_WORLD;
+  sun.shadow.camera.top = SHADOW_EXTENT_WORLD;
+  sun.shadow.camera.bottom = -SHADOW_EXTENT_WORLD;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 190;
+  sun.shadow.bias = -0.0008;
+  sun.shadow.normalBias = 0.08;
+  sun.shadow.camera.updateProjectionMatrix();
+  scene.add(sun, sun.target);
 
   const selectionMarker = new Mesh(assets.ring, assets.selection);
   selectionMarker.rotation.x = -Math.PI / 2;
@@ -343,6 +441,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   let hoverMarker: Mesh | null = null;
 
   const pickTargets = new Map<Object3D, TileCoordinate>();
+  /**
+   * The instanced meshes and the coordinate each of their instances stands for.
+   *
+   * A raycast against an `InstancedMesh` reports the instance index rather than an object, so the
+   * mapping from index to authoritative tile coordinate lives beside the mapping from object to
+   * coordinate rather than inside the renderer's geometry.
+   */
+  const pickedInstances = new Map<Object3D, readonly TileCoordinate[]>();
   const raycaster = new Raycaster();
   const pointer = new Vector2();
   const emptyLayout = layoutFarmTiles([]);
@@ -352,6 +458,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     tiles: []
   };
   let worldSignature = "";
+  /**
+   * True when the next static rebuild is caused by an asset arriving rather than by the world moving.
+   *
+   * A model finishing its download must not re-frame a camera the player has positioned; land being
+   * bought may, because the farm the camera frames has changed size. Without this, zooming out and
+   * then waiting for the trees to load snapped the view back every time.
+   */
+  let keepZoomOnRebuild = false;
   /**
    * How far the camera may drift from the world's centre, and how far the fog starts.
    *
@@ -395,6 +509,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
           sceneryModels[kind] = gltf.scene;
           // Static scenery is cached behind the world signature. Invalidate that cache once when
           // each asset arrives so primitive fallbacks are replaced without changing world state.
+          keepZoomOnRebuild = true;
           worldSignature = "";
           applyState(state);
           draw();
@@ -429,7 +544,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
             return;
           }
           generatedModels[id] = gltf.scene;
-          if (id === "building_barn") worldSignature = "";
+          if (id === "building_barn") {
+            keepZoomOnRebuild = true;
+            worldSignature = "";
+          }
           if (id === "character_farmer") rebuildAvatar();
           applyState(state);
           draw();
@@ -524,11 +642,17 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   function updateCamera(): void {
     // The target is the character's position plus the player's own drag, clamped so the camera can
     // never leave the farm. The character is not moved by any of it.
+    //
+    // With no character yet the camera frames the *field*, not the island's centre: the farm the
+    // player owns is the smallest thing in the world and the only thing they can act on, so it is
+    // what a first view has to land on. The pan clamp is centred on the same point, which is what
+    // keeps a dragged view from wandering off the farm while a zoomed-out one can still reach the sea.
+    const frameCentre = state.world.apron;
     const target = cameraRig.target({
       playerWorldX: playerPose?.worldX ?? null,
       playerWorldZ: playerPose?.worldZ ?? null,
-      centerWorldX: state.world.centerWorldX,
-      centerWorldZ: state.world.centerWorldZ,
+      centerWorldX: frameCentre?.worldX ?? state.world.centerWorldX,
+      centerWorldZ: frameCentre?.worldZ ?? state.world.centerWorldZ,
       worldExtent
     });
     const distance = cameraDistance();
@@ -575,11 +699,44 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     return coordinate !== null && tile.tileX === coordinate.x && tile.tileY === coordinate.y;
   }
 
-  function tileMesh(tile: SceneTile, geometry: BufferGeometry, material: Material, baseY: number, height: number): Mesh {
-    const mesh = new Mesh(geometry, material);
-    mesh.position.set(tile.worldX, baseY + height / 2, tile.worldZ);
-    mesh.scale.set(state.layout.tileSize, height, state.layout.tileSize);
-    return mesh;
+  /**
+   * Every unlocked tile slab, as one `InstancedMesh`.
+   *
+   * A mature farm owns more than a thousand tiles, and one mesh each was a thousand draw calls a
+   * frame - twice over, once for the camera and once for the shadow map. Instancing collapses that to
+   * one, and colour-per-instance keeps the soil variation that per-tile meshes used to carry. The
+   * instance order is the same order `state.tiles` arrived in, which is what lets a click resolve
+   * back to the authoritative coordinate.
+   */
+  function buildTileSlabs(tiles: readonly SceneTile[]): void {
+    if (tiles.length === 0) return;
+    const slabs = new InstancedMesh(assets.box, assets.tileSurface, tiles.length);
+    const matrix = new Matrix4();
+    const position = new Vector3();
+    const scale = new Vector3();
+    const rotation = new Quaternion();
+    const colour = new Color();
+    const coordinates: TileCoordinate[] = [];
+    tiles.forEach((tile, index) => {
+      coordinates.push({ x: tile.tileX, y: tile.tileY });
+      position.set(tile.worldX, TILE_THICKNESS / 2, tile.worldZ);
+      // Slightly wider than a bare tile, so the seam between two slabs is a furrow line rather than
+      // the 8% gap of a chessboard. The soil bed underneath is what shows through it.
+      const footprint = state.layout.tileSize + state.layout.tileGap * 0.45;
+      scale.set(footprint, TILE_THICKNESS, footprint);
+      matrix.compose(position, rotation, scale);
+      slabs.setMatrixAt(index, matrix);
+      slabs.setColorAt(
+        index,
+        colour.setHex(tileColorFor(tile.terrainType, tile.crop !== null, tile.tileX, tile.tileY))
+      );
+    });
+    slabs.instanceMatrix.needsUpdate = true;
+    if (slabs.instanceColor !== null) slabs.instanceColor.needsUpdate = true;
+    slabs.receiveShadow = true;
+    slabs.computeBoundingSphere();
+    tileGroup.add(slabs);
+    pickedInstances.set(slabs, coordinates);
   }
 
   function modelPlant(tile: SceneTile, variants: ModelVariants, mature: boolean, height: number): Group {
@@ -587,6 +744,9 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     plant.add((mature ? variants.ready : variants.growing).clone(true));
     plant.position.set(tile.worldX, TILE_THICKNESS, tile.worldZ);
     plant.scale.setScalar(height);
+    plant.traverse((child) => {
+      child.castShadow = true;
+    });
     return plant;
   }
 
@@ -595,6 +755,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     const mesh = new Mesh(assets.cone, material);
     mesh.position.set(tile.worldX, TILE_THICKNESS + height / 2, tile.worldZ);
     mesh.scale.set(state.layout.tileSize * CROP_RADIUS_FACTOR, height, state.layout.tileSize * CROP_RADIUS_FACTOR);
+    mesh.castShadow = true;
     return mesh;
   }
 
@@ -620,26 +781,38 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn);
       buildScenery(worldGroup, assets, next.world.scenery, sceneryModels);
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
-      farmExtent = Math.max(next.world.farmHalfExtentWorld, MIN_FRAMED_EXTENT);
       // A world rebuild re-frames the zoom but keeps the player's own drag: buying land is not a
       // reason to move the camera the player positioned.
-      cameraRig.setZoom(1);
-      scene.fog = new Fog(SKY_COLOR, worldExtent * 1.35, worldExtent * 3.9);
+      if (!keepZoomOnRebuild) cameraRig.setZoom(1);
+      keepZoomOnRebuild = false;
+      // Fog the colour of the sky's horizon band, starting well past the field: the far shore and the
+      // hills dissolve into the sky instead of ending against a hard edge.
+      scene.fog = new Fog(HORIZON_COLOR, worldExtent * 2, worldExtent * 5);
+      sky.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
+      // The sun and its shadow box follow the island rather than sitting at the coordinate origin.
+      sun.position.set(
+        next.world.centerWorldX + SUN_OFFSET.x,
+        SUN_OFFSET.y,
+        next.world.centerWorldZ + SUN_OFFSET.z
+      );
+      sun.target.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
+      sun.target.updateMatrixWorld();
     }
+    // Outside the signature: the framing extent follows the land the farm owns, and that changes when
+    // a plot is bought without the island itself changing.
+    farmExtent = Math.max(next.world.farmHalfExtentWorld, MIN_FRAMED_EXTENT);
 
     tileGroup.clear();
     cropGroup.clear();
     treeGroup.clear();
     overlayGroup.clear();
-    buildLockedPlotOverlay(overlayGroup, assets, next.world);
+    buildLockedPlotOverlay(overlayGroup, assets, next.world, next.layout, sceneryModels);
     pickTargets.clear();
+    pickedInstances.clear();
+    buildTileSlabs(state.tiles);
 
     for (const tile of state.tiles) {
       const coordinate = { x: tile.tileX, y: tile.tileY };
-      const occupied = tile.crop !== null;
-      const slab = tileMesh(tile, assets.box, tileMaterial(assets, tile.terrainType, occupied), 0, TILE_THICKNESS);
-      tileGroup.add(slab);
-      pickTargets.set(slab, coordinate);
 
       const crop = tile.crop;
       const tree = tile.tree;
@@ -690,7 +863,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       -((event.clientY - bounds.top) / bounds.height) * 2 + 1
     );
     raycaster.setFromCamera(pointer, camera);
-    for (const intersection of raycaster.intersectObjects([...pickTargets.keys()], true)) {
+    const candidates: Object3D[] = [...pickTargets.keys(), ...pickedInstances.keys()];
+    for (const intersection of raycaster.intersectObjects(candidates, true)) {
+      const instanced = pickedInstances.get(intersection.object);
+      if (instanced !== undefined) {
+        const index = intersection.instanceId;
+        if (index === undefined) continue;
+        return instanced[index] ?? null;
+      }
       let node: Object3D | null = intersection.object;
       while (node !== null) {
         const coordinate = pickTargets.get(node);
@@ -817,6 +997,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       overlayGroup.clear();
       playerGroup.clear();
       pickTargets.clear();
+      pickedInstances.clear();
+      sky.geometry.dispose();
+      const skyMaterial = sky.material;
+      if (Array.isArray(skyMaterial)) {
+        for (const item of skyMaterial) item.dispose();
+      } else {
+        skyMaterial.dispose();
+      }
       for (const variants of models.values()) {
         disposeModelResources(variants.growing);
         disposeModelResources(variants.ready);

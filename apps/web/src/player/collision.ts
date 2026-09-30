@@ -3,10 +3,11 @@ import {
   fenceGeometry,
   ISLAND_HALF_DEPTH_WORLD,
   ISLAND_HALF_WIDTH_WORLD,
+  ISLAND_SHAPE,
   STATIC_OBSTACLES,
-  WORLD_CENTER_WORLD,
   type FenceSegment
 } from "../render/world-config";
+import { islandRadiusAt } from "../render/terrain-height";
 import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
 
 /**
@@ -19,7 +20,7 @@ import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
  * Four sources block a step:
  *
  * 1. The island shore, which the character stays inside.
- * 2. The static obstacles the world config already declares: the pond and the farmhouse yard.
+ * 2. The static obstacles the world config already declares: the pond, the barn, and the landmarks.
  * 3. The fence, from the same `fenceGeometry` the renderer draws. A drawn gate is a walkable gate.
  * 4. The farm's own rows: a crop or a tree blocks a circle at its centre, and terrain that is not
  *    soil or grass (water today) blocks its whole tile.
@@ -53,23 +54,28 @@ const TREE_BLOCK_RADIUS_WORLD = 0.34;
  * Depth at the island shore: negative well inland, zero on the shore, positive once the player
  * circle hangs over the water.
  *
- * The ellipse is centred on the island's own centre - the middle of the visual bounds - rather than
- * on the world origin, which is the middle of the starter square. Those are two different points: a
- * farm grows to the south-east of the square it started on, so a shore centred on the square would
- * cut the southern and eastern land the player is supposed to walk on.
+ * The shore is the same superellipse the drawn island uses, centred on the middle of the visual
+ * bounds rather than on the world origin (the middle of the starter square). Those are two different
+ * points: a farm grows to the south-east of the square it started on, so a shore centred on the
+ * square would cut the southern and eastern land the player is supposed to walk on - and an ellipse
+ * instead of a superellipse would cut the orchard and the farmyard off the island entirely.
  *
  * Because the gradient points outward, a character already at the edge may step inland but never
  * further out: the controller's "overlapping may escape, never sink" rule keeps the avatar on the
  * island without a separate clamp.
  */
 function islandDepth(x: number, z: number): number {
-  const normalisedX = (x - WORLD_CENTER_WORLD.worldX) / ISLAND_HALF_WIDTH_WORLD;
-  const normalisedZ = (z - WORLD_CENTER_WORLD.worldZ) / ISLAND_HALF_DEPTH_WORLD;
-  const radius = Math.hypot(normalisedX, normalisedZ);
-  const gradient = Math.hypot(normalisedX / ISLAND_HALF_WIDTH_WORLD, normalisedZ / ISLAND_HALF_DEPTH_WORLD);
+  const radius = islandRadiusAt(x, z, ISLAND_SHAPE);
+  // A numerical gradient keeps the superellipse's true normal, so the shore stays smooth whatever
+  // the exponent is and there is no second formula to keep in step with the outline.
+  const step = 0.01;
+  const gradient = Math.hypot(
+    (islandRadiusAt(x + step, z, ISLAND_SHAPE) - islandRadiusAt(x - step, z, ISLAND_SHAPE)) / (2 * step),
+    (islandRadiusAt(x, z + step, ISLAND_SHAPE) - islandRadiusAt(x, z - step, ISLAND_SHAPE)) / (2 * step)
+  );
   if (gradient === 0) return PLAYER_RADIUS - Math.min(ISLAND_HALF_WIDTH_WORLD, ISLAND_HALF_DEPTH_WORLD);
-  // The ellipse's own signed distance, approximated along its normal, keeps the shore smooth
-  // instead of stair-stepping with whole tiles.
+  // The outline's own signed distance, approximated along its normal, keeps the shore smooth instead
+  // of stair-stepping with whole tiles.
   return (radius - 1) / gradient + PLAYER_RADIUS;
 }
 

@@ -12,18 +12,21 @@ commit). A phase is finished only when its own acceptance criteria and the repos
 
 ## Where the project stands
 
-Committed and verified through `0857e93`:
+Committed and verified through `46915e0`:
 
 - Phase 1 foundation: players, farms, memberships, tiles, stable IDs, game-data registries.
 - Phase 2 crop simulation: plant, timestamp-based growth, offline progression, harvest.
 - Phase 3 economy: inventory, wallet, ledger, shop buy/sell, idempotency.
 - Phase 4A/4B progression: XP on harvest, level curve, and level-gated crops.
-
-Implemented and locally verified in the current working tree, but **not shipped or committed**:
-
 - Phase 4C farm expansion: server-selected purchasable 12 x 12 land plots.
-- Phase 5 seed economy: seed items and a `SEED` category, planting that spends exactly one seed, a
-  one-time starter package (10 carrot seeds and 100 gold), uprooting, and a bilingual (vi/en) HUD.
+- Phase 5 seed economy, seed items and a `SEED` category, planting that spends exactly one seed,
+  uprooting, and a bilingual (vi/en) HUD.
+- The starter package (ADR 0020): 10 carrot seeds and 100 gold, granted once by deployed onboarding,
+  with a staging-only repair script for players who predate it.
+- The larger farm and the composed island (ADR 0021), then the visual foundation V2 (ADR 0022):
+  an island with a real outline and gentle elevation, ground that hugs the land the farm owns, land
+  for sale that looks like land, clustered scenery, five landmarks, a gradient sky, tone mapping,
+  shadows, and instanced tiles and props.
 - Client work: fullscreen HUD, Three.js island world, camera pan/zoom, locked-land frontier,
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the
@@ -38,8 +41,8 @@ Implemented and locally verified in the current working tree, but **not shipped 
   the character to the selected tile, collapsible market and bag panels with a 900 px breakpoint,
   a reflowing action dock, and safe-area aware placement (ADR 0017). Verified in emulation only.
 
-Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (64 files /
-609 tests), `npm run build --workspace @happy-farm/web`,
+Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (65 files /
+619 tests), `npm run build --workspace @happy-farm/web`,
 `npm run build --workspace @happy-farm/api`, and a local playable dev host (ADR 0011) where the
 browser never sees the development token.
 

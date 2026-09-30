@@ -113,6 +113,24 @@ plot cohort size, the island bounds, or the composition of the scenery.
 - Tests: `tests/web/farm-world-config.test.ts` (coordinates, round-trip, config validity,
   walkability) and `tests/web/farm-world.test.ts` (the world does not move when the farm grows).
 
+Read `docs/decisions/0022-world-visual-foundation-v2.md` before changing the island's outline, its
+elevation, the cultivated apron, the treatment of locked land, the scenery distribution, the
+landmark set, or the renderer's lighting, sky, shadows, and instancing.
+
+- Shape and elevation, pure and tested: `apps/web/src/render/terrain-height.ts`
+  (`islandRadiusAt`, `islandRimPoint`, `terrainHeightAt`, `GROUND_SURFACE_Y`), its config in
+  `world-config.ts` (`ISLAND_SHAPE`, `TERRAIN_SHAPE`, `TERRAIN_RELIEF_WORLD`, `terrainLevelAreas`),
+  and `tests/web/farm-terrain.test.ts`.
+- The cultivated apron and the bed follow the land the farm *owns* (`FarmWorld.apron`/`.bed`,
+  `APRON_MARGIN_TILES`); locked land is ground, scrub, a stake line, and a sign
+  (`FarmWorld.lockedScenery`/`.lockedBoundary`). Both are rebuilt with the overlay, never with the
+  static layer.
+- Landmarks: `LANDMARKS`/`LANDMARKS_WORLD`/`STATIC_OBSTACLES` in `world-config.ts` and the builders
+  in `apps/web/src/render/landmarks.ts`. A landmark is scenery with a collision circle; it unlocks,
+  stores, and prices nothing.
+- Scenery is clustered and deterministically seeded in `world.ts`, and drawn instanced by kind in
+  `apps/web/src/render/scenery.ts`. Tile slabs are one `InstancedMesh` built in `scene.ts`.
+
 Regions are client/static and visual only: they are not domain concepts, not D1 rows, and never gate
 gameplay. Land authority stays `farm_tiles` plus the plot catalogue.
 

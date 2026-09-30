@@ -9,13 +9,21 @@ import type { PlotDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type TileCoordinate } from "../../apps/web/src/render/layout";
 import { worldFrame, worldToTile } from "../../apps/web/src/render/layout";
 import {
+  APRON_MARGIN_TILES,
   buildFarmWorld,
   landFrame,
   plotRing,
   plotSquare,
   previewLockedPlots,
 } from "../../apps/web/src/render/world";
-import { FENCE, TREE_BANDS, VISUAL_BOUNDS } from "../../apps/web/src/render/world-config";
+import {
+  FENCE,
+  ISLAND_SHORE_MARGIN_TILES,
+  LANDMARKS,
+  POND,
+  TREE_BANDS,
+  VISUAL_BOUNDS
+} from "../../apps/web/src/render/world-config";
 
 function plot(plotIndex: number, unlocked: boolean): PlotDTO {
   return {
@@ -128,14 +136,14 @@ describe("buildFarmWorld", () => {
       maxY: PLOT_TILE_SIZE * 2 - 1
     });
     expect(world.lockedPlots.map((entry) => entry.plotIndex)).toEqual([1, 2, 3]);
-    // The static world is a function of the config, in tile pitches, and the island is one tile wider
-    // on each side than the reserved field is with the locked ring previewed.
+    // The static world is a function of the config, in tile pitches. The island is the visual bounds
+    // plus its shore margin: the rectangle the reserves fit inside, plus the beach around it.
     expect(world.islandHalfWidthWorld).toBeCloseTo(
-      ((VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2) * 1.08,
+      ((VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2 + ISLAND_SHORE_MARGIN_TILES) * 1.08,
       6
     );
     expect(world.islandHalfDepthWorld).toBeCloseTo(
-      ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2) * 1.08,
+      ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2 + ISLAND_SHORE_MARGIN_TILES) * 1.08,
       6
     );
     expect(world.path).not.toBeNull();
@@ -157,7 +165,6 @@ describe("buildFarmWorld", () => {
     expect(grown.inner).not.toEqual(small.inner);
     expect(grown.islandHalfWidthWorld).toBe(small.islandHalfWidthWorld);
     expect(grown.islandHalfDepthWorld).toBe(small.islandHalfDepthWorld);
-    expect(grown.apronWidth).toBe(small.apronWidth);
     expect(grown.centerWorldX).toBe(small.centerWorldX);
     expect(grown.centerWorldZ).toBe(small.centerWorldZ);
     expect(grown.pond).toEqual(small.pond);
@@ -165,6 +172,30 @@ describe("buildFarmWorld", () => {
     expect(grown.path).toEqual(small.path);
     expect(grown.scenery).toEqual(small.scenery);
     expect(grown.meadows).toEqual(small.meadows);
+    expect(grown.landmarks).toEqual(small.landmarks);
+    expect(grown.terrain).toEqual(small.terrain);
+    // The apron and the bed are the exception, and deliberately so: they follow the land the farm
+    // owns, which is why the alpha's field sat in the middle of a paved yard.
+    expect(grown.apron).not.toEqual(small.apron);
+    expect(grown.bed).not.toEqual(small.bed);
+  });
+
+  it("keeps the cultivated apron around the field the farm owns, not the whole reserve", () => {
+    const world = worldFor(starterTiles(), CATALOGUE);
+    expect(world.apron).not.toBeNull();
+    expect(world.bed).not.toBeNull();
+    const apron = world.apron;
+    if (apron === null) throw new Error("the starter farm must have an apron");
+    const bed = world.bed;
+    if (bed === null) throw new Error("the starter farm must have a bed");
+    // Twelve tiles of field, plus the margin on both sides.
+    expect(apron.widthWorld).toBeCloseTo((INITIAL_LAND_SIZE + APRON_MARGIN_TILES * 2) * 1.08, 6);
+    expect(apron.depthWorld).toBeCloseTo(apron.widthWorld, 6);
+    // The bed is the tile area itself, so a gap between two slabs shows soil rather than the apron.
+    expect(bed.widthWorld).toBeCloseTo(INITIAL_LAND_SIZE * 1.08, 6);
+    expect(apron.widthWorld).toBeGreaterThan(bed.widthWorld);
+    // And the whole thing is far smaller than the fence it stands inside.
+    expect(apron.widthWorld).toBeLessThan(FENCE.bounds.maxX - FENCE.bounds.minX);
   });
 
   it("lays locked plot squares outside the unlocked field", () => {
@@ -218,6 +249,49 @@ describe("buildFarmWorld", () => {
         );
       });
       expect(inside.length, band.id).toBeGreaterThan(0);
+    }
+  });
+
+  it("furnishes the land the farm has not bought instead of leaving a slab on it", () => {
+    const world = worldFor(starterTiles(), CATALOGUE);
+    expect(world.lockedScenery.length).toBeGreaterThan(0);
+    expect(world.lockedBoundary.length).toBeGreaterThan(0);
+    expect(world.lockedScenery).toEqual(worldFor(starterTiles(), CATALOGUE).lockedScenery);
+
+    for (const prop of world.lockedScenery) {
+      const tile = worldToTile({ worldX: prop.worldX, worldZ: prop.worldZ }, worldFrame());
+      const insideAPlot = world.lockedPlots.some(
+        (plot) => tile.x >= plot.minX && tile.x <= plot.maxX && tile.y >= plot.minY && tile.y <= plot.maxY
+      );
+      expect(insideAPlot, `${prop.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(true);
+      // Wild growth stands on the ground the same way open-country scenery does, so a prop on a rise
+      // is not left floating at the plateau's height.
+      expect(prop.worldY).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("places landmarks clear of the field, the paths, the pond, and each other", () => {
+    const world = worldFor(starterTiles(), CATALOGUE);
+    expect(world.landmarks.map((landmark) => landmark.id)).toEqual(LANDMARKS.map((landmark) => landmark.id));
+
+    for (const landmark of world.landmarks) {
+      const tile = landmark.tile;
+      const insideField =
+        tile.x >= FENCE.bounds.minX && tile.x <= FENCE.bounds.maxX && tile.y >= FENCE.bounds.minY && tile.y <= FENCE.bounds.maxY;
+      expect(insideField, landmark.id).toBe(false);
+      const pondDx = (tile.x - POND.center.x) / (POND.radiusX + 2);
+      const pondDy = (tile.y - POND.center.y) / (POND.radiusY + 2);
+      expect(pondDx * pondDx + pondDy * pondDy, landmark.id).toBeGreaterThan(1);
+    }
+
+    for (let left = 0; left < world.landmarks.length; left += 1) {
+      for (let right = left + 1; right < world.landmarks.length; right += 1) {
+        const a = world.landmarks[left];
+        const b = world.landmarks[right];
+        if (a === undefined || b === undefined) continue;
+        const gap = Math.hypot(a.worldX - b.worldX, a.worldZ - b.worldZ);
+        expect(gap, `${a.id}/${b.id}`).toBeGreaterThan(a.blockingRadiusWorld + b.blockingRadiusWorld);
+      }
     }
   });
 });

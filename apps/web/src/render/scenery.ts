@@ -1,4 +1,14 @@
-import { Group, Mesh, type BufferGeometry, type Material, type Object3D } from "three";
+import {
+  Group,
+  InstancedMesh,
+  Matrix4,
+  Mesh,
+  Quaternion,
+  Vector3,
+  type BufferGeometry,
+  type Material,
+  type Object3D
+} from "three";
 import type { SharedAssets } from "./materials";
 import type { SceneryInstance } from "./world";
 
@@ -76,17 +86,29 @@ export function buildScenery(
   instances: readonly SceneryInstance[],
   models: SceneryModels = {}
 ): void {
-  instances.forEach((instance, index) => {
-    const node = new Group();
-    node.position.set(instance.worldX, 0, instance.worldZ);
-    node.rotation.y = instance.rotationY;
-    const model = models[instance.kind];
-    if (model !== undefined) {
-      node.add(model.clone(true));
-      node.scale.setScalar(instance.scale * MODEL_SCALE[instance.kind]);
-      group.add(node);
-      return;
+  // A loaded model is drawn as one `InstancedMesh` per mesh it contains: the forest, the rim tree
+  // line, and the scrub on locked land all share a single draw call per model part however many
+  // copies stand in the world. The primitive groups below are the fallback for a kind whose model has
+  // not arrived or cannot be loaded, which is why they stay as ordinary nodes.
+  const byKind = new Map<SceneryKind, SceneryInstance[]>();
+  for (const instance of instances) {
+    const bucket = byKind.get(instance.kind);
+    if (bucket === undefined) byKind.set(instance.kind, [instance]);
+    else bucket.push(instance);
+  }
+
+  for (const [kind, bucket] of byKind) {
+    const model = models[kind];
+    if (model !== undefined && bucket.length > 0) {
+      addInstancedModel(group, model, bucket, MODEL_SCALE[kind]);
     }
+  }
+
+  instances.forEach((instance, index) => {
+    if (models[instance.kind] !== undefined) return;
+    const node = new Group();
+    node.position.set(instance.worldX, instance.worldY, instance.worldZ);
+    node.rotation.y = instance.rotationY;
     node.scale.setScalar(instance.scale);
     switch (instance.kind) {
       case "tree":
@@ -106,5 +128,52 @@ export function buildScenery(
         break;
     }
     group.add(node);
+  });
+}
+
+/** The unit vector every scenery instance is rotated about. */
+const UP = new Vector3(0, 1, 0);
+
+/**
+ * Draws every instance of one kind as instances of one loaded model.
+ *
+ * Each mesh inside the model becomes its own `InstancedMesh`, carrying the model's own node transform
+ * in every instance matrix, so a multi-part GLB keeps its shape without being merged or rebuilt. The
+ * geometry and material stay the model's, which means the renderer can still dispose them exactly once
+ * when the model itself goes away.
+ */
+function addInstancedModel(
+  group: Group,
+  model: Object3D,
+  instances: readonly SceneryInstance[],
+  modelScale: number
+): void {
+  model.updateMatrixWorld(true);
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+
+  model.traverse((child) => {
+    if (!(child instanceof Mesh)) return;
+    const instanced = new InstancedMesh(child.geometry, child.material, instances.length);
+    instances.forEach((instance, index) => {
+      const size = instance.scale * modelScale;
+      position.set(instance.worldX, instance.worldY, instance.worldZ);
+      scale.set(size, size, size);
+      rotation.setFromAxisAngle(UP, instance.rotationY);
+      matrix.compose(position, rotation, scale);
+      // The instance places the model's root; the mesh's own world matrix puts it where it sits
+      // inside that model.
+      matrix.multiply(child.matrixWorld);
+      instanced.setMatrixAt(index, matrix);
+    });
+    instanced.instanceMatrix.needsUpdate = true;
+    instanced.castShadow = true;
+    instanced.receiveShadow = false;
+    // The bounding sphere has to account for the instance matrices, or the whole group would be
+    // culled as soon as the model's own origin left the frustum.
+    instanced.computeBoundingSphere();
+    group.add(instanced);
   });
 }
