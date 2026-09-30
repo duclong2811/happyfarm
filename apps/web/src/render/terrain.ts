@@ -32,6 +32,7 @@ import {
 } from "./world-config";
 import { buildLandmarks } from "./landmarks";
 import { buildScenery } from "./scenery";
+import { buildCompositionProps } from "./dressing";
 
 /**
  * The static world's geometry: the island and its elevation, the beach and the shallows, the field's
@@ -482,7 +483,9 @@ function addMeadows(group: Group, assets: SharedAssets, world: FarmWorld): void 
     const scale = inlandScale(patch.worldX, patch.worldZ, patch.radiusWorldX, patch.radiusWorldZ, terrain);
     const geometry = radialSurface({
       rings: 4,
-      sectors: 28,
+      // A patch is small and is often seen from directly above, so its outline is the first thing the
+      // eye reads: at 28 sectors the lake's bank was a visible polygon rather than a shore.
+      sectors: 48,
       rimAt: (angle) => {
         const local = {
           x: Math.cos(angle) * patch.radiusWorldX * scale,
@@ -1034,8 +1037,15 @@ const FURROW_SPACING_TILES = 0.68;
  * boards laid on the grass rather than as ground that had been ploughed. Flatter ridges hold the
  * same rhythm without the highlight.
  */
-const FURROW_RIDGE_WIDTH_WORLD = 0.26;
-const FURROW_RIDGE_HEIGHT_WORLD = 0.025;
+const FURROW_RIDGE_WIDTH_WORLD = 0.34;
+/**
+ * A furrow is a *line in the soil*, not a plank on it.
+ *
+ * At close range the first version caught the sun along its top edge and read as timber: too tall,
+ * too narrow, too pale. A ridge this flat is a change of shade rather than an object, which is what
+ * ploughing looks like from a metre away and what survives being seen from a hundred.
+ */
+const FURROW_RIDGE_HEIGHT_WORLD = 0.016;
 /** How wide the grass verge around a field parcel is, in world metres. */
 const FIELD_VERGE_WORLD = 0.9;
 
@@ -1209,7 +1219,7 @@ function addProductionRowBeds(group: Group, assets: SharedAssets, layout: FarmLa
       // managed wood keeps the bare earth, because a working stand is worked.
       const bed = new Mesh(
         ribbonGeometry(positions, indices),
-        district.kind === "ORCHARD" ? assets.meadow : assets.bareEarth
+        district.kind === "ORCHARD" ? assets.mownLane : assets.bareEarth
       );
       bed.receiveShadow = true;
       group.add(bed);
@@ -1223,7 +1233,8 @@ export function buildTerrain(
   world: FarmWorld,
   layout: FarmLayout,
   barnModel?: Object3D,
-  getBuildingModel: (id: string) => Object3D | undefined = () => undefined
+  getBuildingModel: (id: string) => Object3D | undefined = () => undefined,
+  getPropModel: (id: string) => Object3D | undefined = () => undefined
 ): void {
   // The fence is derived from the world config and the tile pitch, exactly as the player's collision
   // is: one description, drawn here, walked around there.
@@ -1238,6 +1249,9 @@ export function buildTerrain(
   if (world.pond !== null) addPond(group, assets, world.pond);
   addHarbour(group, assets, world.harbour, layout);
   addAquaculture(group, assets, world.aquaculture);
+  // The set dressing is part of the static world: it is a function of the presets alone, and buying
+  // a plot must not move a barrel.
+  buildCompositionProps(group, world.compositions.props, getPropModel);
   // The curated barn is normalized to one world unit, so it is drawn at its own size; the generated
   // placeholder is already authored at the right scale.
   const curatedBarn = getBuildingModel("farm.barn.t2");

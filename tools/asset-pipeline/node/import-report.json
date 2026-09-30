@@ -1,5 +1,415 @@
 [
   {
+    "id": "bush_flowering",
+    "category": "environment",
+    "source": "Bush_Common_Flowers",
+    "triangles": 1368,
+    "bytes": 202328,
+    "textures": [
+      "Leaves_NormalTree_C.png",
+      "Flowers.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "bush_leafy",
+    "category": "environment",
+    "source": "Bush_Common",
+    "triangles": 900,
+    "bytes": 103052,
+    "textures": [
+      "Leaves_TwistedTree_C.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "flower_group_1",
+    "category": "environment",
+    "source": "Flower_3_Group",
+    "triangles": 755,
+    "bytes": 171112,
+    "textures": [
+      "Leaves.png",
+      "Flowers.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "flower_group_2",
+    "category": "environment",
+    "source": "Flower_4_Group",
+    "triangles": 1690,
+    "bytes": 205572,
+    "textures": [
+      "Leaves.png",
+      "Flowers.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "plant_clover",
+    "category": "environment",
+    "source": "Clover_2",
+    "triangles": 615,
+    "bytes": 105908,
+    "textures": [
+      "Leaves.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "plant_fern",
+    "category": "environment",
+    "source": "Fern_1",
+    "triangles": 288,
+    "bytes": 96332,
+    "textures": [
+      "Leaves.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "plant_grass_tall",
+    "category": "environment",
+    "source": "Grass_Common_Tall",
+    "triangles": 326,
+    "bytes": 24716,
+    "textures": [
+      "Grass.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "plant_grass_wispy",
+    "category": "environment",
+    "source": "Grass_Wispy_Tall",
+    "triangles": 622,
+    "bytes": 40120,
+    "textures": [
+      "Grass.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_anvil_log",
+    "category": "props",
+    "source": "Anvil_Log",
+    "triangles": 3808,
+    "bytes": 377588,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png",
+      "T_Trim_Props_BaseColor.png"
+    ],
+    "materials": 3
+  },
+  {
+    "id": "prop_axe",
+    "category": "props",
+    "source": "Axe_Bronze",
+    "triangles": 826,
+    "bytes": 134392,
+    "textures": [
+      "T_Trim_Props_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_barrel",
+    "category": "props",
+    "source": "Barrel",
+    "triangles": 824,
+    "bytes": 201712,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_barrel_apples",
+    "category": "props",
+    "source": "Barrel_Apples",
+    "triangles": 2480,
+    "bytes": 351800,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png",
+      "T_Trim_Props_BaseColor.png"
+    ],
+    "materials": 3
+  },
+  {
+    "id": "prop_bench",
+    "category": "props",
+    "source": "Bench",
+    "triangles": 404,
+    "bytes": 163844,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_bucket",
+    "category": "props",
+    "source": "Bucket_Wooden_1",
+    "triangles": 976,
+    "bytes": 176824,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_cage_small",
+    "category": "props",
+    "source": "Cage_Small",
+    "triangles": 4588,
+    "bytes": 232916,
+    "textures": [
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_chest",
+    "category": "props",
+    "source": "Chest_Wood",
+    "triangles": 2546,
+    "bytes": 340380,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_crate",
+    "category": "props",
+    "source": "Prop_Crate",
+    "triangles": 230,
+    "bytes": 101788,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_crate_carrot",
+    "category": "props",
+    "source": "FarmCrate_Carrot",
+    "triangles": 5262,
+    "bytes": 451504,
+    "textures": [
+      "T_Trim_Props_BaseColor.png",
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 3
+  },
+  {
+    "id": "prop_crate_empty",
+    "category": "props",
+    "source": "FarmCrate_Empty",
+    "triangles": 1928,
+    "bytes": 198948,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_crate_produce",
+    "category": "props",
+    "source": "FarmCrate_Apple",
+    "triangles": 4028,
+    "bytes": 381672,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png",
+      "T_Trim_Props_BaseColor.png"
+    ],
+    "materials": 3
+  },
+  {
+    "id": "prop_crate_wooden",
+    "category": "props",
+    "source": "Crate_Wooden",
+    "triangles": 1576,
+    "bytes": 211056,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_fence_rail",
+    "category": "props",
+    "source": "Prop_WoodenFence_Single",
+    "triangles": 40,
+    "bytes": 88512,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_fence_rail_long",
+    "category": "props",
+    "source": "Prop_WoodenFence_Extension1",
+    "triangles": 32,
+    "bytes": 87952,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_lantern",
+    "category": "props",
+    "source": "Lantern_Wall",
+    "triangles": 2822,
+    "bytes": 181100,
+    "textures": [
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_planter",
+    "category": "props",
+    "source": "Pot_1",
+    "triangles": 1068,
+    "bytes": 98168,
+    "textures": [
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_rope",
+    "category": "props",
+    "source": "Rope_1",
+    "triangles": 1748,
+    "bytes": 125412,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_sack",
+    "category": "props",
+    "source": "Bag",
+    "triangles": 858,
+    "bytes": 182224,
+    "textures": [
+      "T_Trim_Cloth_BaseColor.png",
+      "T_Trim_Furniture_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_stall",
+    "category": "props",
+    "source": "Stall_Empty",
+    "triangles": 1496,
+    "bytes": 304276,
+    "textures": [
+      "T_Trim_Metal_BaseColor.png",
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Cloth_BaseColor.png"
+    ],
+    "materials": 3
+  },
+  {
+    "id": "prop_stall_cart",
+    "category": "props",
+    "source": "Stall_Cart_Empty",
+    "triangles": 3936,
+    "bytes": 453412,
+    "textures": [
+      "T_Trim_Metal_BaseColor.png",
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Cloth_BaseColor.png"
+    ],
+    "materials": 3
+  },
+  {
+    "id": "prop_wagon",
+    "category": "props",
+    "source": "Prop_Wagon",
+    "triangles": 1672,
+    "bytes": 189124,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_whetstone",
+    "category": "props",
+    "source": "Whetstone",
+    "triangles": 1100,
+    "bytes": 306452,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png",
+      "T_Trim_Props_BaseColor.png"
+    ],
+    "materials": 3
+  },
+  {
+    "id": "prop_workbench",
+    "category": "props",
+    "source": "Workbench",
+    "triangles": 1368,
+    "bytes": 207988,
+    "textures": [
+      "T_Trim_Furniture_BaseColor.png",
+      "T_Trim_Metal_BaseColor.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "rock_boulder_1",
+    "category": "environment",
+    "source": "Rock_Medium_1",
+    "triangles": 342,
+    "bytes": 161352,
+    "textures": [
+      "Rocks_Diffuse.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "rock_boulder_2",
+    "category": "environment",
+    "source": "Rock_Medium_2",
+    "triangles": 244,
+    "bytes": 157496,
+    "textures": [
+      "Rocks_Diffuse.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "rock_boulder_3",
+    "category": "environment",
+    "source": "Rock_Medium_3",
+    "triangles": 522,
+    "bytes": 168192,
+    "textures": [
+      "Rocks_Diffuse.png"
+    ],
+    "materials": 1
+  },
+  {
     "id": "tree_broad_1",
     "category": "environment",
     "source": "CommonTree_5",
@@ -82,173 +492,5 @@
       "Leaf_Pine_C.png"
     ],
     "materials": 2
-  },
-  {
-    "id": "bush_leafy",
-    "category": "environment",
-    "source": "Bush_Common",
-    "triangles": 900,
-    "bytes": 103052,
-    "textures": [
-      "Leaves_TwistedTree_C.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "bush_flowering",
-    "category": "environment",
-    "source": "Bush_Common_Flowers",
-    "triangles": 1368,
-    "bytes": 202328,
-    "textures": [
-      "Leaves_NormalTree_C.png",
-      "Flowers.png"
-    ],
-    "materials": 2
-  },
-  {
-    "id": "rock_boulder_1",
-    "category": "environment",
-    "source": "Rock_Medium_1",
-    "triangles": 342,
-    "bytes": 161352,
-    "textures": [
-      "Rocks_Diffuse.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "rock_boulder_2",
-    "category": "environment",
-    "source": "Rock_Medium_2",
-    "triangles": 244,
-    "bytes": 157496,
-    "textures": [
-      "Rocks_Diffuse.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "rock_boulder_3",
-    "category": "environment",
-    "source": "Rock_Medium_3",
-    "triangles": 522,
-    "bytes": 168192,
-    "textures": [
-      "Rocks_Diffuse.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "plant_fern",
-    "category": "environment",
-    "source": "Fern_1",
-    "triangles": 288,
-    "bytes": 96332,
-    "textures": [
-      "Leaves.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "plant_grass_tall",
-    "category": "environment",
-    "source": "Grass_Common_Tall",
-    "triangles": 326,
-    "bytes": 24716,
-    "textures": [
-      "Grass.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "plant_grass_wispy",
-    "category": "environment",
-    "source": "Grass_Wispy_Tall",
-    "triangles": 622,
-    "bytes": 40120,
-    "textures": [
-      "Grass.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "plant_clover",
-    "category": "environment",
-    "source": "Clover_2",
-    "triangles": 615,
-    "bytes": 105908,
-    "textures": [
-      "Leaves.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "flower_group_1",
-    "category": "environment",
-    "source": "Flower_3_Group",
-    "triangles": 755,
-    "bytes": 171112,
-    "textures": [
-      "Leaves.png",
-      "Flowers.png"
-    ],
-    "materials": 2
-  },
-  {
-    "id": "flower_group_2",
-    "category": "environment",
-    "source": "Flower_4_Group",
-    "triangles": 1690,
-    "bytes": 205572,
-    "textures": [
-      "Leaves.png",
-      "Flowers.png"
-    ],
-    "materials": 2
-  },
-  {
-    "id": "prop_crate",
-    "category": "props",
-    "source": "Prop_Crate",
-    "triangles": 230,
-    "bytes": 101804,
-    "textures": [
-      "T_WoodTrim_BaseColor.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "prop_wagon",
-    "category": "props",
-    "source": "Prop_Wagon",
-    "triangles": 1672,
-    "bytes": 189140,
-    "textures": [
-      "T_WoodTrim_BaseColor.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "prop_fence_rail",
-    "category": "props",
-    "source": "Prop_WoodenFence_Single",
-    "triangles": 40,
-    "bytes": 88528,
-    "textures": [
-      "T_WoodTrim_BaseColor.png"
-    ],
-    "materials": 1
-  },
-  {
-    "id": "prop_fence_rail_long",
-    "category": "props",
-    "source": "Prop_WoodenFence_Extension1",
-    "triangles": 32,
-    "bytes": 87972,
-    "textures": [
-      "T_WoodTrim_BaseColor.png"
-    ],
-    "materials": 1
   }
 ]

@@ -35,6 +35,7 @@ import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials
 import { CROP_MODEL_URLS } from "./model-urls";
 import { createPointerGesture } from "./pointer-gesture";
 import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
+import { PROP_MODEL_URL_BY_ID } from "./prop-model-urls";
 import { BUILDING_MODELS } from "./building-model-urls";
 import { buildScenery } from "./scenery";
 import { buildInteractionGrid } from "./interaction-grid";
@@ -565,9 +566,22 @@ let interactionGeometry: BufferGeometry | null = null;
     return undefined;
   }
 
+  /**
+   * The loaded model for a set-dressing prop.
+   *
+   * Deliberately the same cache and the same loader as scenery: a prop and a tree are both "a GLB
+   * this scene may need", and a second cache would be a second place for a model to be loaded twice.
+   */
+  function propModel(id: string): Object3D | undefined {
+    const model = sceneryModels.get(id);
+    if (model !== undefined) return model;
+    requestSceneryModel(id);
+    return undefined;
+  }
+
   function requestSceneryModel(id: string): void {
     if (loadingScenery.has(id) || unavailableScenery.has(id)) return;
-    const url = ENVIRONMENT_MODEL_URL_BY_ID.get(id);
+    const url = ENVIRONMENT_MODEL_URL_BY_ID.get(id) ?? PROP_MODEL_URL_BY_ID.get(id);
     if (url === undefined) return;
     loadingScenery.add(id);
     loader.load(
@@ -936,7 +950,15 @@ let interactionGeometry: BufferGeometry | null = null;
     if (signature !== worldSignature) {
       worldSignature = signature;
       worldGroup.clear();
-      buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn, buildingModel);
+      buildTerrain(
+        worldGroup,
+        assets,
+        next.world,
+        next.layout,
+        generatedModels.building_barn,
+        buildingModel,
+        propModel
+      );
       // Two passes, one destination each: mass scenery into the world group and small detail into the
       // group the camera switches off when it pulls back.
       buildScenery(worldGroup, assets, next.world.scenery.filter((entry) => !entry.detail), sceneryModel);

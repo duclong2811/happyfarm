@@ -199,13 +199,42 @@ function encodePng(image) {
 
 /** Which glTF properties name a texture slot that is worth keeping. */
 const KEPT_SLOTS = ["baseColorTexture"];
-const DROPPED_SLOTS = ["metallicRoughnessTexture", "normalTexture", "occlusionTexture", "emissiveTexture"];
+/**
+ * Texture slots to drop, and where each one lives.
+ *
+ * The split matters and was a real bug: `metallicRoughnessTexture` is nested inside
+ * `pbrMetallicRoughness` while the rest sit on the material, so a single `delete material[slot]` pass
+ * removed three of the four and left the occlusion-roughness-metalness map's *index* behind. That
+ * index survived into the exported GLB pointing at a texture that no longer existed, and the model
+ * failed to load at all - visible only for a pack that ships ORM maps, which the first two packs did
+ * not.
+ */
+const DROPPED_MATERIAL_SLOTS = ["normalTexture", "occlusionTexture", "emissiveTexture"];
+const DROPPED_PBR_SLOTS = ["metallicRoughnessTexture"];
 
-async function convertModel(spec, sourceDir, outDir, textureCache, maxTexture, report) {
+async function convertModel(spec, sourceDir, outDir, textureCache, maxTexture, report, textureDir = null) {
   const gltfPath = join(sourceDir, `${spec.source}.gltf`);
   const gltf = JSON.parse(await readFile(gltfPath, "utf8"));
   const binPath = join(sourceDir, gltf.buffers[0].uri);
   const bin = await readFile(binPath);
+
+  /**
+   * Where an image URI actually lives.
+   *
+   * Some packs keep every `.gltf` in one folder and every shared PNG in another, and the glTF points
+   * at the PNG by bare filename. The pack's own layout is authoritative, so the lookup is "beside the
+   * model first, then in the pack's texture folder" rather than a copied tree in a temporary
+   * directory that nobody can review.
+   */
+  function resolveImage(uri) {
+    const beside = join(sourceDir, uri);
+    if (existsSync(beside)) return beside;
+    if (textureDir !== null) {
+      const inTextureDir = join(textureDir, basename(uri));
+      if (existsSync(inTextureDir)) return inTextureDir;
+    }
+    return beside;
+  }
 
   // Keep only the base-colour images this model actually uses, and remap every reference to them.
   const keptImages = new Map();
@@ -214,8 +243,14 @@ async function convertModel(spec, sourceDir, outDir, textureCache, maxTexture, r
   const textureRemap = new Map();
 
   for (const material of gltf.materials ?? []) {
-    for (const slot of DROPPED_SLOTS) delete material[slot];
+    for (const slot of DROPPED_MATERIAL_SLOTS) delete material[slot];
     const pbr = material.pbrMetallicRoughness ?? {};
+    for (const slot of DROPPED_PBR_SLOTS) delete pbr[slot];
+    // With the ORM map gone, glTF's own default of a fully metallic surface would render the model
+    // black in a scene with no environment map. The art direction is flat stylized, so the props are
+    // dielectric and rough: the same surface the world's own materials use.
+    pbr.metallicFactor = 0;
+    if (pbr.roughnessFactor === undefined) pbr.roughnessFactor = 0.9;
     const base = pbr.baseColorTexture;
     const oldTextureIndex = base?.index;
     if (oldTextureIndex === undefined) {
@@ -227,7 +262,7 @@ async function convertModel(spec, sourceDir, outDir, textureCache, maxTexture, r
     const source = gltf.textures[oldTextureIndex].source;
     const uri = gltf.images[source].uri;
     if (!keptImages.has(uri)) {
-      const bytes = await convertTexture(join(sourceDir, uri), textureCache, maxTexture);
+      const bytes = await convertTexture(resolveImage(uri), textureCache, maxTexture);
       keptImages.set(uri, { uri, bytes });
     }
     const entry = keptImages.get(uri);
@@ -400,6 +435,38 @@ const PROPS = [
   { id: "prop_fence_rail_long", source: "Prop_WoodenFence_Extension1", category: "props" }
 ];
 
+/**
+ * Quaternius Fantasy Props MegaKit (Standard, CC0): the working vocabulary of the estate.
+ *
+ * The pack has ninety-odd models and most of them are interiors - books, candles, potions, tableware
+ * - which no estate camera will ever see. What is left is a small set of objects that each say what
+ * a place *is*: a barrel and a crate are a yard, a stall is a market, a rope and a bucket are a quay,
+ * a log and an axe are a timber yard. Twenty of them, repeated intelligently, dress five
+ * compositions; twenty more would be a bundle cost and a busier map.
+ */
+const FANTASY_PROPS = [
+  { id: "prop_barrel", source: "Barrel", category: "props" },
+  { id: "prop_barrel_apples", source: "Barrel_Apples", category: "props" },
+  { id: "prop_crate_wooden", source: "Crate_Wooden", category: "props" },
+  { id: "prop_crate_produce", source: "FarmCrate_Apple", category: "props" },
+  { id: "prop_crate_carrot", source: "FarmCrate_Carrot", category: "props" },
+  { id: "prop_crate_empty", source: "FarmCrate_Empty", category: "props" },
+  { id: "prop_sack", source: "Bag", category: "props" },
+  { id: "prop_bucket", source: "Bucket_Wooden_1", category: "props" },
+  { id: "prop_bench", source: "Bench", category: "props" },
+  { id: "prop_stall", source: "Stall_Empty", category: "props" },
+  { id: "prop_stall_cart", source: "Stall_Cart_Empty", category: "props" },
+  { id: "prop_rope", source: "Rope_1", category: "props" },
+  { id: "prop_lantern", source: "Lantern_Wall", category: "props" },
+  { id: "prop_planter", source: "Pot_1", category: "props" },
+  { id: "prop_axe", source: "Axe_Bronze", category: "props" },
+  { id: "prop_anvil_log", source: "Anvil_Log", category: "props" },
+  { id: "prop_workbench", source: "Workbench", category: "props" },
+  { id: "prop_chest", source: "Chest_Wood", category: "props" },
+  { id: "prop_cage_small", source: "Cage_Small", category: "props" },
+  { id: "prop_whetstone", source: "Whetstone", category: "props" }
+];
+
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
   return index === -1 ? fallback : process.argv[index + 1];
@@ -408,27 +475,54 @@ function arg(name, fallback) {
 async function main() {
   const maxTexture = Number(arg("max-texture", "256"));
   const outDir = arg("out", "apps/web/src/assets/models");
-  const natureDir = arg("nature", arg("source"));
-  const villageDir = arg("village", arg("source"));
+  // `--source` is the one-directory form: a pack that ships both families, or a quick run against a
+  // single extracted pack. Pointing at a directory is what decides whether its models are converted,
+  // so a developer who has one pack does not silently rewrite the provenance of the others.
+  const natureDir = arg("nature", arg("source", null));
+  const villageDir = arg("village", arg("source", null));
+  const fantasyDir = arg("fantasy", null);
+  const fantasyTextures = arg("fantasy-textures", null);
+  const reportPath = arg("report", "tools/asset-pipeline/node/import-report.json");
   const report = [];
   const textureCache = new Map();
 
-  for (const spec of NATURE) {
-    await convertModel(spec, natureDir, outDir, textureCache, maxTexture, report);
+  // A pack that is not pointed at is *skipped*, not reported as missing: the report is the record of
+  // what shipped, and a developer converting one pack must not erase the provenance of the rest.
+  if (natureDir !== null) {
+    for (const spec of NATURE) {
+      await convertModel(spec, natureDir, outDir, textureCache, maxTexture, report);
+    }
   }
-  for (const spec of PROPS) {
-    if (existsSync(join(villageDir, `${spec.source}.gltf`))) {
-      await convertModel(spec, villageDir, outDir, textureCache, maxTexture, report);
-    } else {
-      report.push({ id: spec.id, category: spec.category, source: spec.source, missing: true });
+  if (villageDir !== null) {
+    for (const spec of PROPS) {
+      if (existsSync(join(villageDir, `${spec.source}.gltf`))) {
+        await convertModel(spec, villageDir, outDir, textureCache, maxTexture, report);
+      } else {
+        report.push({ id: spec.id, category: spec.category, source: spec.source, missing: true });
+      }
+    }
+  }
+  // Only runs when the pack is pointed at, so a developer without the download still gets the
+  // models the repository already ships and a report that says exactly what was skipped.
+  if (fantasyDir !== null) {
+    for (const spec of FANTASY_PROPS) {
+      if (existsSync(join(fantasyDir, `${spec.source}.gltf`))) {
+        await convertModel(spec, fantasyDir, outDir, textureCache, maxTexture, report, fantasyTextures);
+      } else {
+        report.push({ id: spec.id, category: spec.category, source: spec.source, missing: true });
+      }
     }
   }
 
-  const reportPath = arg("report", "tools/asset-pipeline/node/import-report.json");
-  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  const total = report.reduce((sum, entry) => sum + (entry.bytes ?? 0), 0);
-  const triangles = report.reduce((sum, entry) => sum + (entry.triangles ?? 0), 0);
-  console.log(`${report.length} models, ${(total / 1024 / 1024).toFixed(2)} MB, ${Math.round(triangles)} triangles`);
+  const previous = existsSync(reportPath) ? JSON.parse(await readFile(reportPath, "utf8")) : [];
+  const byId = new Map(previous.map((entry) => [entry.id, entry]));
+  for (const entry of report) byId.set(entry.id, entry);
+  const merged = [...byId.values()].sort((left, right) => String(left.id).localeCompare(String(right.id)));
+
+  await writeFile(reportPath, `${JSON.stringify(merged, null, 2)}\n`);
+  const total = merged.reduce((sum, entry) => sum + (entry.bytes ?? 0), 0);
+  const triangles = merged.reduce((sum, entry) => sum + (entry.triangles ?? 0), 0);
+  console.log(`${merged.length} models, ${(total / 1024 / 1024).toFixed(2)} MB, ${Math.round(triangles)} triangles`);
   for (const entry of report) {
     console.log(`  ${entry.id.padEnd(20)} ${String(Math.round(entry.triangles ?? 0)).padStart(6)} tris  ${String(Math.round((entry.bytes ?? 0) / 1024)).padStart(5)} kB  ${(entry.textures ?? []).join(",")}`);
   }

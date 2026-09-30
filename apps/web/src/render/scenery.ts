@@ -194,14 +194,19 @@ export function buildScenery(
 
   instances.forEach((instance) => {
     const entry = environmentModelFor(instance.kind, instance.tier, instance.variantRoll);
-    const model = entry === null ? undefined : getModel(entry.id);
-    if (entry === null || model === undefined) {
+    // A district may name the model it plants rather than letting the roll pick one: an orchard row
+    // is one cultivar, and a natural forest is a family. Every model in the manifest is normalized to
+    // one world unit, so an override needs no scale of its own.
+    const named = instance.modelId === undefined ? undefined : getModel(instance.modelId);
+    const model = named ?? (entry === null ? undefined : getModel(entry.id));
+    const id = instance.modelId ?? entry?.id;
+    if (id === undefined || model === undefined) {
       missing.push(instance);
       return;
     }
-    const bucket = buckets.get(entry.id);
+    const bucket = buckets.get(id);
     if (bucket === undefined) {
-      buckets.set(entry.id, { model, unitScale: entry.unitScale, instances: [instance] });
+      buckets.set(id, { model, unitScale: entry?.unitScale ?? 1, instances: [instance] });
     } else {
       bucket.instances.push(instance);
     }

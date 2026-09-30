@@ -1,6 +1,7 @@
 import type { TileBounds, TileCoordinate, WorldFrame } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, WORLD_ORIGIN_TILE_X, worldFrame } from "./layout";
 import { islandRadiusAt, type FlatArea, type IslandLobe, type IslandShape, type TerrainShape, type UplandBias } from "./terrain-height";
+import type { EnvironmentCompositionPreset } from "./composition";
 
 /**
  * The static world: the island's outline, its districts, its roads, its water, its landmarks, and
@@ -173,10 +174,15 @@ export const DISTRICTS: readonly District[] = [
     labelKey: "world.district.orchard",
     // North-west of the fields, on the gentle shoulder between the lowland and the high wood. Rows
     // run with the slope, so a lane on its own axis is a lane that does not climb.
-    center: { x: -12, y: -10.5 },
-    radiusX: 8,
-    radiusY: 6,
-    rotationY: -0.22,
+    // Turned to follow the coast rather than to follow the compass. The island's north-west is a
+    // curved band, and an orchard laid out on the first axis that came to mind ran its far corner
+    // into the sea; laid along the shoreline it fits twice the plantation on the same land - and its
+    // rows end up running across the estate camera's view instead of away from it, which is what
+    // makes a row of trees read as a row.
+    center: { x: -14, y: -14 },
+    radiusX: 14,
+    radiusY: 8,
+    rotationY: -0.78,
     // District identity comes from rows, paths and trees, not from a tinted ellipse: the ground
     // treatments that used to paint each district a different colour are switched off, because at
     // estate zoom they read as a debug overlay rather than as land.
@@ -185,9 +191,14 @@ export const DISTRICTS: readonly District[] = [
     // of them is what stops the rows reading at all.
     density: 0.18,
     treeShare: 0.98,
-    rowSpacingTiles: 3.8,
-    rowBedWidthTiles: 1.2,
-    rowLaneWidthTiles: 2.6
+    // Rows at 3.6 tiles and a tree every 2.4 along them: dense enough that a row reads as a line of
+    // trees rather than as three dots, wide enough that the lane between two rows is still a lane.
+    // Rows a tree and a bit apart, a tree every 1.4 tiles along them, and a mown lane two tiles wide
+    // between the rows. That ratio - tight along the line, wide across it - is what a plantation looks
+    // like from above, and it is the only spacing that survives the estate camera.
+    rowSpacingTiles: 2.6,
+    rowBedWidthTiles: 1.7,
+    rowLaneWidthTiles: 1
   },
   {
     id: "forest_north",
@@ -277,8 +288,8 @@ export const DISTRICTS: readonly District[] = [
     ground: "NONE",
     density: 0.28,
     treeShare: 1,
-    rowSpacingTiles: 2.8,
-    rowBedWidthTiles: 1.1,
+    rowSpacingTiles: 2,
+    rowBedWidthTiles: 1.3,
     rowLaneWidthTiles: 2.2
   },
   {
@@ -819,7 +830,13 @@ export const MEADOWS: readonly MeadowPatch[] = [
   { id: "ranch_dirt", kind: "DIRT", center: { x: -17, y: 10 }, radiusX: 4.4, radiusY: 6, rotationY: 0 },
   { id: "barn_yard_dirt", kind: "DIRT", center: { x: 38, y: -7 }, radiusX: 5, radiusY: 4, rotationY: 0 },
   { id: "harbour_apron", kind: "DIRT", center: { x: 50, y: 50 }, radiusX: 6, radiusY: 4.5, rotationY: 0.4 },
-  { id: "lake_shore", kind: "SAND", center: { x: -3, y: 45 }, radiusX: 5.6, radiusY: 4.3, rotationY: 0.05 }
+  { id: "lake_shore", kind: "SAND", center: { x: -3, y: 45 }, radiusX: 5.6, radiusY: 4.3, rotationY: 0.05 },
+  // The path the residents wear between the farmhouse and the square, and the meadow variation the
+  // wilderness needs so it reads as land with a shape rather than as the island's leftover green.
+  { id: "farmhouse_path", kind: "DIRT", center: { x: 45, y: -0.6 }, radiusX: 2.2, radiusY: 1.1, rotationY: 0 },
+  { id: "wild_meadow_east", kind: "MEADOW", center: { x: 30, y: 52 }, radiusX: 6, radiusY: 3, rotationY: 0.15 },
+  { id: "wild_meadow_west", kind: "MEADOW", center: { x: 12, y: 48 }, radiusX: 5, radiusY: 2.6, rotationY: -0.1 },
+  { id: "forest_edge_meadow", kind: "MEADOW", center: { x: 30, y: -24 }, radiusX: 7, radiusY: 2.4, rotationY: 0.08 }
 ];
 
 /**
@@ -901,6 +918,148 @@ export const LANDMARKS: readonly LandmarkSpec[] = [
  * onto the same road, so walking north from here enters the field.
  */
 export const SPAWN_TILE: TileCoordinate = { x: WORLD_ORIGIN_TILE_X, y: 41 };
+
+/**
+ * The island's set dressing: the six places that are furnished rather than decorated.
+ *
+ * This is the composition layer V10 adds, and it is the reason a building no longer stands alone. A
+ * preset is an anchor, a facing, and a handful of authored props in the anchor's own frame; every
+ * offset here was placed by eye against a screenshot, which is the only way a yard ends up looking
+ * like a yard. The props are decoration in the strict sense: nothing here is a tile, a rule, a price,
+ * or a collision, and the only thing the rest of the world reads from a preset is the ground it asks
+ * to keep clear.
+ *
+ * Six places, in the order the island's economy happens in them: the barn works the fields, the
+ * market sells what the fields grew, the farmhouse is where the farmer lives, the orchard packs its
+ * fruit, the timber yard stacks what the wood produced, and the quay lands the catch.
+ */
+export const COMPOSITION_PRESETS: readonly EnvironmentCompositionPreset[] = [
+  {
+    id: "barn_yard_t1",
+    district: "SETTLEMENT",
+    anchor: FARMSTEAD.center,
+    rotationY: 0,
+    clearanceTiles: 6.5,
+    props: [
+      // The working half of the yard, on the side the barn doors open onto and clear of the open barn
+      // four tiles east: the wagon is turned, the produce is stacked where the cart can reach it, and
+      // the tools are kept on the dry side against the fence.
+      { assetId: "prop_wagon", offsetX: -3.0, offsetY: 3.0, rotationY: 0.42, scale: 1 },
+      { assetId: "prop_crate_produce", offsetX: -4.2, offsetY: 1.4, rotationY: -0.3, scale: 1 },
+      { assetId: "prop_crate_empty", offsetX: -4.8, offsetY: 2.3, rotationY: 0.2, scale: 1 },
+      { assetId: "prop_sack", offsetX: -2.2, offsetY: 3.6, rotationY: 0.6, scale: 1 },
+      { assetId: "prop_sack", offsetX: -1.5, offsetY: 4.0, rotationY: -0.4, scale: 0.9 },
+      { assetId: "prop_barrel", offsetX: 0.6, offsetY: 3.4, rotationY: 0.2, scale: 1 },
+      { assetId: "prop_barrel", offsetX: 1.3, offsetY: 4.0, rotationY: -0.5, scale: 0.9 },
+      { assetId: "prop_bucket", offsetX: -1.0, offsetY: 3.0, rotationY: 0.9, scale: 1 },
+      { assetId: "prop_workbench", offsetX: -5.0, offsetY: -1.2, rotationY: Math.PI / 2, scale: 1 },
+      { assetId: "prop_chest", offsetX: -4.6, offsetY: -2.4, rotationY: 0.3, scale: 1 },
+      { assetId: "prop_whetstone", offsetX: -3.6, offsetY: -3.0, rotationY: 0, scale: 1 },
+      // A short fence run on the field side, so the yard has an edge rather than fading into grass.
+      { assetId: "prop_fence_rail_long", offsetX: -6.2, offsetY: -0.5, rotationY: 0, scale: 1 },
+      { assetId: "prop_fence_rail_long", offsetX: -6.2, offsetY: 1.7, rotationY: 0, scale: 1 },
+      { assetId: "prop_fence_rail", offsetX: -6.2, offsetY: 3.7, rotationY: 0, scale: 1 }
+    ]
+  },
+  {
+    id: "market_square_t1",
+    district: "SETTLEMENT",
+    anchor: PLAZA.center,
+    rotationY: 0,
+    clearanceTiles: 6,
+    props: [
+      // Two stalls face into the square from opposite sides, with the produce they sell between them.
+      { assetId: "prop_stall", offsetX: -2.9, offsetY: -0.8, rotationY: -Math.PI / 2, scale: 1 },
+      { assetId: "prop_stall_cart", offsetX: 2.2, offsetY: 1.3, rotationY: 0.35, scale: 1 },
+      { assetId: "prop_crate_produce", offsetX: -1.8, offsetY: 1.3, rotationY: 0.3, scale: 1 },
+      { assetId: "prop_crate_carrot", offsetX: -1.1, offsetY: 1.6, rotationY: -0.2, scale: 1 },
+      { assetId: "prop_barrel_apples", offsetX: 1.1, offsetY: -1.5, rotationY: 0.4, scale: 1 },
+      { assetId: "prop_barrel", offsetX: 1.7, offsetY: -1.0, rotationY: -0.3, scale: 0.95 },
+      { assetId: "prop_sack", offsetX: 0.5, offsetY: 1.9, rotationY: 0.5, scale: 1 },
+      { assetId: "prop_sack", offsetX: 1.0, offsetY: 1.5, rotationY: -0.3, scale: 0.9 },
+      { assetId: "prop_bench", offsetX: -0.4, offsetY: -2.1, rotationY: 0, scale: 1 },
+      { assetId: "prop_bench", offsetX: 2.4, offsetY: 0.5, rotationY: Math.PI / 2, scale: 1 },
+      { assetId: "prop_planter", offsetX: -2.1, offsetY: -1.9, rotationY: 0.2, scale: 1 },
+      { assetId: "prop_planter", offsetX: 2.7, offsetY: -1.7, rotationY: -0.4, scale: 0.9 },
+      { assetId: "prop_lantern", offsetX: -3.1, offsetY: -2.3, rotationY: 0, scale: 1 },
+      { assetId: "prop_crate_empty", offsetX: 0.3, offsetY: -0.7, rotationY: 0.8, scale: 1 }
+    ]
+  },
+  {
+    id: "farmhouse_yard_t1",
+    district: "SETTLEMENT",
+    anchor: { x: 45, y: -2 },
+    rotationY: 0,
+    clearanceTiles: 5,
+    props: [
+      // Inhabited rather than busy: two planters on the frontage, a bench under the window, and the
+      // utility props the residents would leave at the back of the house.
+      { assetId: "prop_planter", offsetX: -3.4, offsetY: 0.7, rotationY: 0.2, scale: 1 },
+      { assetId: "prop_planter", offsetX: 3.4, offsetY: 0.7, rotationY: -0.2, scale: 1 },
+      { assetId: "prop_bench", offsetX: 0, offsetY: -3.3, rotationY: Math.PI, scale: 1 },
+      { assetId: "prop_barrel", offsetX: -4.3, offsetY: -0.8, rotationY: 0.3, scale: 1 },
+      { assetId: "prop_crate_empty", offsetX: 4.3, offsetY: -1.0, rotationY: 0.5, scale: 1 },
+      { assetId: "prop_bucket", offsetX: -2.9, offsetY: -2.7, rotationY: 0.6, scale: 1 },
+      { assetId: "prop_lantern", offsetX: 2.7, offsetY: -2.9, rotationY: 0, scale: 1 },
+      { assetId: "prop_sack", offsetX: 4.1, offsetY: 1.9, rotationY: 0.4, scale: 1 },
+      { assetId: "prop_chest", offsetX: -4.5, offsetY: 1.3, rotationY: 0.15, scale: 1 }
+    ]
+  },
+  {
+    id: "orchard_yard_t1",
+    district: "ORCHARD",
+    anchor: { x: -19.5, y: -16 },
+    rotationY: -0.22,
+    clearanceTiles: 3.4,
+    props: [
+      // The picking station at the end of the row the orchard lane runs to: what was picked, and what
+      // it is carried away in.
+      { assetId: "prop_crate_produce", offsetX: 0.7, offsetY: 1.0, rotationY: 0.3, scale: 1 },
+      { assetId: "prop_crate_carrot", offsetX: -0.6, offsetY: 1.2, rotationY: -0.2, scale: 1 },
+      { assetId: "prop_sack", offsetX: 0.2, offsetY: 1.9, rotationY: 0.5, scale: 1 },
+      { assetId: "prop_barrel_apples", offsetX: -1.5, offsetY: 0.6, rotationY: 0.4, scale: 1 },
+      { assetId: "prop_wagon", offsetX: 2.1, offsetY: -0.4, rotationY: 0.5, scale: 1 }
+    ]
+  },
+  {
+    id: "logging_yard_t1",
+    district: "FORESTRY",
+    anchor: LOGGING_YARD.center,
+    rotationY: LOGGING_YARD.rotationY,
+    clearanceTiles: 4.6,
+    props: [
+      // The bench and the sharpening station are where the saws are worked on; the crates are where
+      // the sawn stock is stacked; the anvil log is the stump everything is cut on.
+      { assetId: "prop_workbench", offsetX: -1.7, offsetY: 1.3, rotationY: 0.4, scale: 1 },
+      { assetId: "prop_whetstone", offsetX: -2.7, offsetY: 1.9, rotationY: 0, scale: 1 },
+      { assetId: "prop_axe", offsetX: -1.1, offsetY: 2.1, rotationY: 0.3, scale: 1 },
+      { assetId: "prop_anvil_log", offsetX: -2.9, offsetY: -1.5, rotationY: 0.2, scale: 1 },
+      { assetId: "prop_crate_wooden", offsetX: 1.9, offsetY: -1.3, rotationY: -0.4, scale: 1 },
+      { assetId: "prop_crate_empty", offsetX: 2.5, offsetY: -0.7, rotationY: 0.2, scale: 1 },
+      { assetId: "prop_chest", offsetX: 0.7, offsetY: -2.1, rotationY: 0.5, scale: 1 },
+      { assetId: "prop_bucket", offsetX: 1.5, offsetY: 1.7, rotationY: 0.8, scale: 1 }
+    ]
+  },
+  {
+    id: "fishery_t1",
+    district: "COAST",
+    anchor: HARBOUR.yard,
+    rotationY: HARBOUR.bearing,
+    clearanceTiles: 5.5,
+    props: [
+      // Between the store and the deck, in the order a catch moves through a quay.
+      { assetId: "prop_barrel", offsetX: -1.9, offsetY: -1.3, rotationY: 0, scale: 1 },
+      { assetId: "prop_barrel", offsetX: 2.1, offsetY: -1.5, rotationY: 0.5, scale: 0.95 },
+      { assetId: "prop_crate_empty", offsetX: 0.7, offsetY: -1.9, rotationY: 0.3, scale: 1 },
+      { assetId: "prop_crate_wooden", offsetX: 1.7, offsetY: 0.5, rotationY: -0.3, scale: 1 },
+      { assetId: "prop_bucket", offsetX: 0.3, offsetY: 1.3, rotationY: 0.7, scale: 1 },
+      { assetId: "prop_rope", offsetX: -1.5, offsetY: 1.7, rotationY: 0.6, scale: 1 },
+      { assetId: "prop_rope", offsetX: 1.1, offsetY: 2.3, rotationY: -0.5, scale: 0.9 },
+      { assetId: "prop_cage_small", offsetX: -2.5, offsetY: 1.1, rotationY: 0.2, scale: 1 },
+      { assetId: "prop_chest", offsetX: -0.9, offsetY: -1.7, rotationY: 0.4, scale: 1 }
+    ]
+  }
+];
 
 export interface WorldObstacle {
   readonly id: string;

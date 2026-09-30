@@ -54,6 +54,14 @@ export interface SharedAssets {
   readonly terrainGrass: MeshStandardMaterial;
   /** Lighter, cooler green for the meadow patches that break up the island's single plane. */
   readonly meadow: MeshStandardMaterial;
+  /**
+   * The mown lane between two orchard rows.
+   *
+   * A row of trees is a line; a row of trees standing on a strip of cut grass is a *plantation*. The
+   * difference between this and the island's own grass is small on purpose - a lane is mown, not
+   * paved - and it is the only thing that makes the rows read from the estate camera.
+   */
+  readonly mownLane: MeshStandardMaterial;
   readonly sand: MeshStandardMaterial;
   /** The darker, wetter band where the land meets the water. */
   readonly wetSand: MeshStandardMaterial;
@@ -192,6 +200,7 @@ export function createSharedAssets(): SharedAssets {
     grass: material(standard(0x7dc35a)),
     terrainGrass: material(standard(0xffffff, { vertexColors: true, roughness: 0.92 })),
     meadow: material(standard(0x8fd06a)),
+    mownLane: material(standard(0xa6c86a, { roughness: 0.95 })),
     sand: material(standard(0xe7d59a)),
     wetSand: material(standard(0xc9b184, { roughness: 0.7 })),
     dirt: material(standard(0xc9a26a)),

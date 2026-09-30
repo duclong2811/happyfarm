@@ -202,6 +202,20 @@ layout of its districts, the road network's clearance rule, the field parcels, t
 managed-wood lattices, the harbour and fish-farm geometry, the camera's framing rule, or the planting
 grid.
 
+Read `docs/decisions/0025-v10-asset-library-and-set-dressing.md` before changing the estate's set
+dressing, the prop manifest, the importer, or the plantation latices again. Read
+`docs/V10_ASSET_CATALOG.md` before adding, replacing or removing any third-party model.
+
+- Set dressing is data: `apps/web/src/render/composition.ts` (types and the pure builder) and
+  `COMPOSITION_PRESETS` in `world-config.ts` (the authored places). Props are resolved by
+  `apps/web/src/render/prop-model-urls.ts` and drawn by `apps/web/src/render/dressing.ts`; the
+  scenery pass keeps out of every preset's clearing.
+- A planted district names the model it plants (`SceneryInstance.modelId`): an orchard row is one
+  cultivar, a natural forest is a family.
+- Import a pack with `tools/asset-pipeline/node/import-cc0.mjs --nature|--village|--fantasy <dir>`.
+  A dropped texture slot must be deleted where it actually lives, and a model whose ORM map is
+  dropped must not keep glTF's default metallic factor.
+
 - `VISUAL_BOUNDS` is `[-34, 70]^2`; the reserve, the fence, the starter square, and the tile mapping
   are unchanged, and every district's centre sits at 50-65 per cent of the way to the shore.
 - Placement rules: `placementRejection` takes the road network as centreline samples plus each road's

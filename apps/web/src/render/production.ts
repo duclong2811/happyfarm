@@ -76,13 +76,23 @@ export function buildProductionZones(input: ProductionInput): readonly Productio
   const orchard: TileCoordinate[] = [];
   const orchardDistrict = districtOfKind("ORCHARD");
   if (orchardDistrict !== null) {
-    for (let row = -6; row <= 6; row += 4.2) {
-      for (let column = -12; column <= 12; column += 4.2) {
+    // The lattice is the district's *own*: its row spacing, its radii, its rotation. A second, hand-
+    // written lattice here is how a future orchard system ends up planting somewhere the orchard is
+    // not - which is exactly what the first version of this did when the orchard was re-laid.
+    const spacing = orchardDistrict.rowSpacingTiles ?? 4;
+    const columnSpacing = spacing * 0.42;
+    for (let row = -orchardDistrict.radiusY; row <= orchardDistrict.radiusY; row += spacing) {
+      for (let column = -orchardDistrict.radiusX; column <= orchardDistrict.radiusX; column += columnSpacing) {
         // The lattice is clipped to the district's own outline, so a row can never run out of the
         // orchard and into the field beside it.
         const normalised = Math.hypot(column / orchardDistrict.radiusX, row / orchardDistrict.radiusY);
-        if (normalised > 0.9) continue;
-        orchard.push({ x: orchardDistrict.center.x + column, y: orchardDistrict.center.y + row });
+        if (normalised > 0.88) continue;
+        const cos = Math.cos(orchardDistrict.rotationY);
+        const sin = Math.sin(orchardDistrict.rotationY);
+        orchard.push({
+          x: orchardDistrict.center.x + column * cos - row * sin,
+          y: orchardDistrict.center.y + column * sin + row * cos
+        });
       }
     }
   }

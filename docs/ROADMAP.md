@@ -59,9 +59,18 @@ Committed and verified through `46915e0`:
   zooms within the same range, with deterministic arbitration), a `Go / Đi tới` command that walks
   the character to the selected tile, collapsible market and bag panels with a 900 px breakpoint,
   a reflowing action dock, and safe-area aware placement (ADR 0017). Verified in emulation only.
+- World composition V9 (ADR 0024): a 105-tile island, ten districts with room of their own, a ring
+  primary road, eight field parcels with instanced furrows, plantation lattices, a harbour that
+  crosses the waterline by construction, a fish farm in the bay, a camera that frames a district as
+  well as the island, and a planting grid drawn from the tiles the server calls plantable.
+- Curated asset library and set dressing V10 (ADR 0025): twenty CC0 props from the Quaternius Fantasy
+  Props MegaKit behind a prop manifest of their own, an `EnvironmentCompositionPreset` layer that
+  furnishes six places (barn yard, market square, farmhouse yard, orchard pack-house, timber yard,
+  quay), plantation rows that read as rows from the estate camera, and a material fix in the import
+  pipeline that had been breaking every model that ships an ORM map.
 
-Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (65 files /
-634 tests), `npm run build --workspace @happy-farm/web`,
+Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (68 files /
+653 tests), `npm run build --workspace @happy-farm/web`,
 `npm run build --workspace @happy-farm/api`, and a local playable dev host (ADR 0011) where the
 browser never sees the development token.
 

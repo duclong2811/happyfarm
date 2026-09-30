@@ -44,7 +44,35 @@ const EXPECTED = {
     "tree_pine_2",
     "tree_pine_3"
   ],
-  props: ["prop_crate", "prop_fence_rail", "prop_fence_rail_long", "prop_wagon"]
+  props: [
+    // Medieval Village: the first four props the project imported.
+    "prop_crate",
+    "prop_fence_rail",
+    "prop_fence_rail_long",
+    "prop_wagon",
+    // Fantasy Props: the set-dressing vocabulary V10 curates. One barrel, one crate, one bench, one
+    // stall - the point of the list is that sixty compositions can be dressed without sixty models.
+    "prop_anvil_log",
+    "prop_axe",
+    "prop_barrel",
+    "prop_barrel_apples",
+    "prop_bench",
+    "prop_bucket",
+    "prop_cage_small",
+    "prop_chest",
+    "prop_crate_carrot",
+    "prop_crate_empty",
+    "prop_crate_produce",
+    "prop_crate_wooden",
+    "prop_lantern",
+    "prop_planter",
+    "prop_rope",
+    "prop_sack",
+    "prop_stall",
+    "prop_stall_cart",
+    "prop_whetstone",
+    "prop_workbench"
+  ]
 } as const;
 
 /**

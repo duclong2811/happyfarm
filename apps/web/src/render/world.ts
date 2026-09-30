@@ -3,6 +3,7 @@ import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTile } from "./layout";
 import {
   DISTRICTS,
+  COMPOSITION_PRESETS,
   FIELD_BLOCKS,
   FISH_FARM,
   FARMSTEAD,
@@ -32,6 +33,8 @@ import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt, type TerrainShape } 
 import { buildRoadSpec, type RoadSpec } from "./roads";
 export type { RoadSpec } from "./roads";
 import { placementRejection, type PlacementWorld, type ShorelineClass } from "./placement";
+import { buildCompositions, type CompositionClearing, type CompositionWorld } from "./composition";
+import { PROP_MODELS } from "./prop-model-urls";
 
 /**
  * The world model the renderer draws.
@@ -100,6 +103,14 @@ export type SceneryTier = "HERO" | "FILLER";
 
 export interface SceneryInstance {
   readonly kind: SceneryKind;
+  /**
+   * An explicit model, when the *place* decides which one rather than the kind.
+   *
+   * A forest is a family of variants on purpose - a wood of one clone reads as wallpaper - but a row
+   * of orchard trees is planted, so every tree in it is the same tree. An override is how a district
+   * says "this row is one cultivar" without the renderer having to guess from a roll.
+   */
+  readonly modelId?: string;
   readonly worldX: number;
   /** Height of the ground under it, so a prop on a hill stands on the hill instead of inside it. */
   readonly worldY: number;
@@ -251,6 +262,14 @@ export interface FarmWorld {
   /** The clearing where the managed wood's timber is stacked. */
   readonly loggingYard: LoggingYardSpec | null;
   /**
+   * The island's set dressing: every authored prop on its authored spot.
+   *
+   * Presentation only, and deliberately its own field rather than part of `scenery`: scenery is a
+   * scatter and this is a list of decisions, so a caller that wants to know what was *placed* (as
+   * opposed to what grew) reads this one.
+   */
+  readonly compositions: CompositionWorld;
+  /**
    * The fishery's aquaculture cages.
    *
    * Placed from the island's own outline rather than from hand-picked coordinates: each one sits a
@@ -295,6 +314,7 @@ const EMPTY_WORLD: FarmWorld = {
   plaza: { worldX: 0, worldZ: 0, radiusWorldX: 0, radiusWorldZ: 0, rotationY: 0 },
   harbour: { worldX: 0, worldZ: 0, rotationY: 0, lengthWorld: 0, deckWidthWorld: 0, yardWorldX: 0, yardWorldZ: 0 },
   loggingYard: null,
+  compositions: { props: [], clearings: [] },
   aquaculture: [],
   scenery: [],
   pond: null,
@@ -422,7 +442,7 @@ const LOCKED_SCENERY_SEED = 0x2c9e11;
  * and rebuild cost rather than batches. The island is an estate rather than a field, so the budget
  * is larger than the alpha's - and still a number, so a future district cannot quietly spend it.
  */
-const MAX_SCENERY = 720;
+const MAX_SCENERY = 1000;
 /**
  * How many placements may draw a curated model before the rest fall back to the light set.
  *
@@ -430,7 +450,7 @@ const MAX_SCENERY = 720;
  * generous for the districts a player walks and tight enough that the far side of the island is
  * filler, which is what the estate camera wants anyway.
  */
-const HERO_SCENERY_BUDGET = 520;
+const HERO_SCENERY_BUDGET = 820;
 /**
  * How many props each part of the island may spend.
  *
@@ -442,8 +462,8 @@ const HERO_SCENERY_BUDGET = 520;
 const SECTION_BUDGET = {
   /** Per wood, not for all of them: two woods of 55 trees each is a forest, one of 110 is a lump. */
   forest: 80,
-  orchard: 60,
-  forestry: 90,
+  orchard: 110,
+  forestry: 150,
   district: 80,
   shore: 34,
   hedge: 30,
@@ -545,7 +565,8 @@ export function districtOutlinePhase(id: string): number {
 function buildScenery(
   layout: FarmLayout,
   terrain: TerrainShape,
-  roads: readonly RoadSpec[]
+  roads: readonly RoadSpec[],
+  compositionClearings: readonly CompositionClearing[]
 ): SceneryInstance[] {
   const rand = mulberry32(SCENERY_SEED);
   const scenery: SceneryInstance[] = [];
@@ -597,6 +618,13 @@ function buildScenery(
       { ...tileToWorld(HARBOUR.root, frame), radiusWorld: 6 * layout.pitch },
       { ...tileToWorld(HARBOUR.yard, frame), radiusWorld: 4 * layout.pitch },
       { ...tileToWorld(LOGGING_YARD.center, frame), radiusWorld: (LOGGING_YARD.radiusTiles + 1.5) * layout.pitch },
+      // Every furnished place keeps its own ground clear, so a thicket cannot grow through the middle
+      // of a market square or a timber yard. The preset declares the radius; the scenery pass obeys it.
+      ...compositionClearings.map((clearing) => ({
+        worldX: clearing.worldX,
+        worldZ: clearing.worldZ,
+        radiusWorld: clearing.radiusWorld
+      })),
       ...LANDMARKS_WORLD.map((landmark) => ({
         worldX: landmark.worldX,
         worldZ: landmark.worldZ,
@@ -621,7 +649,7 @@ function buildScenery(
     }
   }
 
-  function place(kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number): void {
+  function place(kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number, modelId?: string): void {
     // The budget bounds how much detail the island carries. Past it a placement is *skipped*, not
     // downgraded to a primitive: filling the rest with placeholder shapes is what made the earlier
     // passes noisy, and negative space is worth more than a full map.
@@ -638,6 +666,7 @@ function buildScenery(
     heroBudget -= 1;
     scenery.push({
       kind,
+      ...(modelId === undefined ? {} : { modelId }),
       worldX: position.worldX,
       // Stands on the ground rather than under it: the same function the terrain mesh is built from.
       worldY: GROUND_SURFACE_Y + terrainHeightAt(position.worldX, position.worldZ, terrain),
@@ -681,12 +710,15 @@ function buildScenery(
    * list. Rejected candidates cost nothing, which is what keeps a budget about *what stands* rather
    * than about how many attempts were made to stand it.
    */
-  function within(limit: number): (kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number) => void {
+  function within(
+    limit: number
+  ): (kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number, modelId?: string) => void {
     let remaining = limit;
-    return (kind, tileX, tileY, scale, rotationY) => {
+    return (kind, tileX, tileY, scale, rotationY, modelId) => {
       if (remaining <= 0) return;
       const before = scenery.length;
-      place(kind, tileX, tileY, scale, rotationY);
+      if (modelId === undefined) place(kind, tileX, tileY, scale, rotationY);
+      else place(kind, tileX, tileY, scale, rotationY, modelId);
       if (scenery.length > before) remaining -= 1;
     };
   }
@@ -708,7 +740,21 @@ function buildScenery(
     readonly scaleBase: number;
     readonly scaleSpread: number;
     readonly pineShare: number;
-    readonly placement: (kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number) => void;
+    /**
+     * The model every tree in this lattice draws, or absent to let the roll choose within the kind.
+     *
+     * A plantation is one cultivar and a wood is a mixture: an orchard row that mixes four canopy
+     * shapes does not read as a row from the estate camera, however regular the lattice is.
+     */
+    readonly modelId?: string;
+    readonly placement: (
+      kind: SceneryKind,
+      tileX: number,
+      tileY: number,
+      scale: number,
+      rotationY: number,
+      modelId?: string
+    ) => void;
   }): void {
     const district = options.district;
     const cos = Math.cos(district.rotationY);
@@ -729,7 +775,14 @@ function buildScenery(
         const tileY = district.center.y + localX * sin + localZ * cos;
         if (!isOpenGround(tileX, tileY)) continue;
         const kind: SceneryKind = kindRoll < options.pineShare ? "pine" : "tree";
-        options.placement(kind, tileX, tileY, options.scaleBase + scaleRoll * options.scaleSpread, rotationRoll * Math.PI * 2);
+        options.placement(
+          kind,
+          tileX,
+          tileY,
+          options.scaleBase + scaleRoll * options.scaleSpread,
+          rotationRoll * Math.PI * 2,
+          options.modelId
+        );
       }
     }
   }
@@ -746,11 +799,18 @@ function buildScenery(
       // A fruit orchard is planted tighter along the row than between rows: four metres between the
       // lines, a tree every three. The two spacings are what make a stand of trees read as an
       // orchard rather than as a grid.
-      columnSpacingTiles: (district.rowSpacingTiles ?? 4) * 0.62,
-      jitter: 0.35,
-      scaleBase: 1.9,
+      // Tight along the row, wide between rows: that ratio *is* the orchard's signature. An even
+      // lattice at any spacing reads as a block of trees; trees almost touching along a line, with a
+      // lane between the lines, read as rows.
+      columnSpacingTiles: (district.rowSpacingTiles ?? 4) * 0.42,
+      jitter: 0.3,
+      // One cultivar, one size, one silhouette: a row of four canopy shapes is a thicket, however
+      // regular the lattice under it. `tree_broad_2` is the roundest canopy in the curated set, which
+      // is what a fruit tree should look like from the estate camera.
+      scaleBase: 2.9,
       scaleSpread: 0.4,
       pineShare: 0,
+      modelId: "tree_broad_2",
       placement: orchardBudget
     });
   }
@@ -876,11 +936,14 @@ function buildScenery(
     plantRows({
       district,
       spacingTiles: district.rowSpacingTiles ?? 3.2,
-      columnSpacingTiles: (district.rowSpacingTiles ?? 3.2) * 0.72,
+      columnSpacingTiles: (district.rowSpacingTiles ?? 3.2) * 0.7,
       jitter: 0.5,
-      scaleBase: 2.7,
-      scaleSpread: 1.1,
-      pineShare: 0.6,
+      // A working stand is conifers, in rows, of a size: tall enough to read as timber rather than as
+      // scrub, and visually the opposite of the orchard's round canopy at the same distance.
+      scaleBase: 3.4,
+      scaleSpread: 0.8,
+      pineShare: 1,
+      modelId: "tree_pine_2",
       placement: forestryBudget
     });
   }
@@ -1255,6 +1318,21 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
   const harbourYard = tileToWorld(HARBOUR.yard, mapping);
   const loggingCentre = tileToWorld(LOGGING_YARD.center, mapping);
 
+  /**
+   * The set dressing, built from the authored presets.
+   *
+   * A prop whose id nothing imported is skipped rather than drawn as a placeholder: a missing model
+   * is a hole in the yard, and a hole is easier to see and to fix than a wrong shape standing in it.
+   * `PROP_MODELS` is the one place that knows a prop's real size, so the preset only has to say
+   * "one barrel, here, turned this way".
+   */
+  const compositions = buildCompositions(
+    COMPOSITION_PRESETS,
+    input.layout,
+    terrain,
+    (assetId) => PROP_MODELS.get(assetId)?.sizeWorld ?? 1
+  );
+
   const pondCentre = tileToWorld(POND.center, mapping);
   const yardCentre = tileToWorld(FARMSTEAD.center, mapping);
 
@@ -1314,8 +1392,9 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
       radiusWorld: LOGGING_YARD.radiusTiles * input.layout.pitch,
       rotationY: LOGGING_YARD.rotationY
     },
+    compositions,
     aquaculture,
-    scenery: buildScenery(input.layout, terrain, roads),
+    scenery: buildScenery(input.layout, terrain, roads, compositions.clearings),
     meadows: MEADOWS.map((patch) => {
       const centre = tileToWorld(patch.center, mapping);
       return {

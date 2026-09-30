@@ -17,6 +17,7 @@ alternative is not "assume CC0"; it is to stop and ask.
 | Stylized Nature MegaKit | Quaternius | https://quaternius.com/packs/stylizednaturemegakit.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | glTF → GLB | environment: trees, bushes, rocks, flowers, plants | Yes - see "Normalization" |
 | Medieval Village MegaKit | Quaternius | https://quaternius.com/packs/medievalvillagemegakit.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | glTF → GLB | props: crate, wagon, fence rails | Yes - see "Normalization" |
 | Lowpoly Farm Buildings | Quaternius | https://quaternius.com/packs/farmbuildings.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | FBX → GLB | buildings: barn (three tiers), open barn, silo, silo house, tower windmill, well, coop | Yes - see "Normalization" |
+| Fantasy Props MegaKit (Standard) | Quaternius | https://quaternius.com/packs/fantasypropsmegakit.html | CC0 1.0 (stated in the pack's own `License_Standard.txt`, published inside the download, and on the pack page) | 2026-10-01 | glTF → GLB | props: barrels, crates, sacks, bucket, bench, market stall and cart, rope, lantern, planter, axe, chopping block, workbench, chest, cage, whetstone | Yes - see "Normalization" |
 | ~~Kenney Nature Kit~~ | Kenney | https://kenney.nl/assets/nature-kit | CC0 1.0 | shipped 2026-09-2x, **removed in V5** | - | - | - |
 
 **Removed in V5.** The Kenney Nature Kit was the project's first scenery family and its licence was
@@ -52,6 +53,17 @@ triangles, which are smaller than a single tile.
 
 **Selected from Medieval Village:** `Prop_Crate`, `Prop_Wagon`, `Prop_WoodenFence_Single`,
 `Prop_WoodenFence_Extension1`.
+
+**Re-imported in V10.** The Medieval Village four were re-converted when the pipeline's material bug
+was found (see "Normalization"): they had been carrying a stale occlusion-roughness-metalness texture
+index since V8 and had never loaded in the browser - nothing placed them, so nothing noticed.
+
+**Selected from Fantasy Props (V10):** twenty of the pack's ninety-odd models, chosen because each one
+says what a place *is*: `Barrel`, `Barrel_Apples`, `Crate_Wooden`, `FarmCrate_Apple`,
+`FarmCrate_Carrot`, `FarmCrate_Empty`, `Bag`, `Bucket_Wooden_1`, `Bench`, `Stall_Empty`,
+`Stall_Cart_Empty`, `Rope_1`, `Lantern_Wall`, `Pot_1`, `Axe_Bronze`, `Anvil_Log`, `Workbench`,
+`Chest_Wood`, `Cage_Small`, `Whetstone`. They dress six compositions; see
+`docs/V10_ASSET_CATALOG.md` for the full table and the rejection list.
 
 **Rejected from Medieval Village:** the whole modular building kit - walls, roofs, doors, windows,
 stairs, balconies, towers. Two reasons, and both matter: assembling a farmhouse out of modular pieces
@@ -91,6 +103,18 @@ one self-contained `.glb`:
    the height, because half of a nature pack is flat: dividing a flower by its height would make it
    metres wide. The world model then says "this tree is 3.4 metres" and is right.
 4. **Self-contained.** One embedded buffer, embedded PNGs, no sibling files.
+
+5. **Dielectric and rough.** The pipeline drops the occlusion-roughness-metalness map along with the
+   normal and emissive maps, and writes `metallicFactor = 0` / `roughnessFactor = 0.9` in its place.
+   glTF's default metallic factor is 1.0, which is invisible while the ORM map is present and renders a
+   model black the moment it is removed in a scene with no environment map. This was found in V10, on
+   the first pack that ships ORM maps.
+
+   A related bug was fixed at the same time: `metallicRoughnessTexture` lives *inside*
+   `pbrMetallicRoughness` while the other dropped slots live on the material, so a single
+   `delete material[slot]` pass left that one index behind - pointing at a texture that no longer
+   existed, which fails the whole GLB at load. The four Medieval Village props had shipped with it
+   since V8 and never loaded; the four are re-imported by this pass.
 
 The per-model result - triangles, bytes, and which textures were kept - is committed as
 `tools/asset-pipeline/node/import-report.json`, so a change in the source packs is visible in review.
