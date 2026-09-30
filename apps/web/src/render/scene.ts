@@ -34,8 +34,8 @@ import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials";
 import { CROP_MODEL_URLS } from "./model-urls";
 import { createPointerGesture } from "./pointer-gesture";
-import { ENVIRONMENT_MODEL_URLS } from "./environment-model-urls";
-import { buildScenery, type SceneryKind } from "./scenery";
+import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
+import { buildScenery } from "./scenery";
 import { buildLockedPlotOverlay, buildTerrain, TILE_THICKNESS } from "./terrain";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
@@ -237,7 +237,14 @@ function createSkyDome(): Mesh {
  * One model serves every tree: the visual stage is a scale and a decoration, not another asset, so a
  * farm with many trees loads and caches exactly one tree model.
  */
-const TREE_MODEL_SCALE = 0.78;
+/**
+ * How tall a fully grown gameplay tree is drawn, in world metres.
+ *
+ * The player is 1.6 and the world's scenery is authored in metres, so a tree the player plants has to
+ * stand above them the way the ones around it do. The Kenney model is 1.708 units tall as authored,
+ * which is why the factor is a little over one and a half.
+ */
+const TREE_MODEL_SCALE = 2.6 / 1.708;
 
 /** Fruit positions on a ready tree, in the model's own units. Decoration, never a reward count. */
 const FRUIT_OFFSETS: readonly (readonly [number, number, number])[] = [
@@ -489,39 +496,55 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const models = new Map<CropModelId, ModelVariants>();
   const loadingModels = new Set<CropModelId>();
   const unavailableModels = new Set<CropModelId>();
-  const sceneryModels: Partial<Record<SceneryKind, Object3D>> = {};
-  const loadingScenery = new Set<SceneryKind>();
-  const unavailableScenery = new Set<SceneryKind>();
+  /**
+   * Loaded environment models, by provenance id.
+   *
+   * The world model names an id and a tier; the manifest resolves the id to a file. Loading is lazy,
+   * so a world that places no flowers never downloads one - and when a model does arrive the static
+   * layer is rebuilt once, which is what turns the fallback primitives into a frame of scaffolding
+   * rather than a permanent look.
+   */
+  const sceneryModels = new Map<string, Object3D>();
+  const loadingScenery = new Set<string>();
+  const unavailableScenery = new Set<string>();
   let disposed = false;
 
-  function requestSceneryModels(): void {
-    for (const kind of Object.keys(ENVIRONMENT_MODEL_URLS) as SceneryKind[]) {
-      if (loadingScenery.has(kind) || unavailableScenery.has(kind) || sceneryModels[kind] !== undefined) continue;
-      loadingScenery.add(kind);
-      loader.load(
-        ENVIRONMENT_MODEL_URLS[kind],
-        (gltf) => {
-          loadingScenery.delete(kind);
-          if (disposed) {
-            disposeModelResources(gltf.scene);
-            return;
-          }
-          sceneryModels[kind] = gltf.scene;
-          // Static scenery is cached behind the world signature. Invalidate that cache once when
-          // each asset arrives so primitive fallbacks are replaced without changing world state.
-          keepZoomOnRebuild = true;
-          worldSignature = "";
-          applyState(state);
-          draw();
-        },
-        undefined,
-        (error: unknown) => {
-          loadingScenery.delete(kind);
-          unavailableScenery.add(kind);
-          if (!disposed) options.onAssetProblem?.(`kenney-nature:${kind}`, error);
+  /** The loaded model for an id, starting its download the first time something asks for it. */
+  function sceneryModel(id: string): Object3D | undefined {
+    const model = sceneryModels.get(id);
+    if (model !== undefined) return model;
+    requestSceneryModel(id);
+    return undefined;
+  }
+
+  function requestSceneryModel(id: string): void {
+    if (loadingScenery.has(id) || unavailableScenery.has(id)) return;
+    const url = ENVIRONMENT_MODEL_URL_BY_ID.get(id);
+    if (url === undefined) return;
+    loadingScenery.add(id);
+    loader.load(
+      url,
+      (gltf) => {
+        loadingScenery.delete(id);
+        if (disposed) {
+          disposeModelResources(gltf.scene);
+          return;
         }
-      );
-    }
+        sceneryModels.set(id, gltf.scene);
+        // Static scenery is cached behind the world signature. Invalidate that cache once when each
+        // asset arrives so primitive fallbacks are replaced without changing world state.
+        keepZoomOnRebuild = true;
+        worldSignature = "";
+        applyState(state);
+        draw();
+      },
+      undefined,
+      (error: unknown) => {
+        loadingScenery.delete(id);
+        unavailableScenery.add(id);
+        if (!disposed) options.onAssetProblem?.(id, error);
+      }
+    );
   }
 
   /**
@@ -779,7 +802,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       worldSignature = signature;
       worldGroup.clear();
       buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn);
-      buildScenery(worldGroup, assets, next.world.scenery, sceneryModels);
+      buildScenery(worldGroup, assets, next.world.scenery, sceneryModel);
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
       // A world rebuild re-frames the zoom but keeps the player's own drag: buying land is not a
       // reason to move the camera the player positioned.
@@ -810,7 +833,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     cropGroup.clear();
     treeGroup.clear();
     overlayGroup.clear();
-    buildLockedPlotOverlay(overlayGroup, assets, next.world, next.layout, sceneryModels);
+    buildLockedPlotOverlay(overlayGroup, assets, next.world, next.layout, sceneryModel);
     pickTargets.clear();
     pickedInstances.clear();
     buildTileSlabs(state.tiles);
@@ -824,7 +847,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
         // A tree keeps its tile, so it is drawn in its own group and never as a crop. Selection maps
         // to the tile coordinate the authoritative tree row is looked up by, never to a mesh, a
         // display name, or an array index.
-        const treePlantNode = treePlant(tile, assets, sceneryModels.tree, tree);
+        const treePlantNode = treePlant(tile, assets, sceneryModels.get("kenney_tree"), tree);
         treeGroup.add(treePlantNode);
         pickTargets.set(treePlantNode, coordinate);
       }
@@ -969,7 +992,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   canvas.style.cursor = "grab";
 
   applyState(state);
-  requestSceneryModels();
+  // Environment models are requested lazily by `sceneryModel`, so only the ones this world actually
+  // places are ever downloaded.
   requestGeneratedModels();
 
   return {
@@ -1014,7 +1038,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
         disposeModelResources(variants.ready);
       }
       models.clear();
-      for (const model of Object.values(sceneryModels)) {
+      for (const model of sceneryModels.values()) {
         disposeModelResources(model);
       }
       assets.dispose();

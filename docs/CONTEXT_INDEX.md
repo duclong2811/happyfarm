@@ -131,6 +131,22 @@ landmark set, or the renderer's lighting, sky, shadows, and instancing.
 - Scenery is clustered and deterministically seeded in `world.ts`, and drawn instanced by kind in
   `apps/web/src/render/scenery.ts`. Tile slabs are one `InstancedMesh` built in `scene.ts`.
 
+Read `docs/ASSET_LICENSES.md` before adding, replacing, or removing any third-party asset, and before
+touching the import pipeline.
+
+- Scenery assets are third-party CC0 models, curated by hand. The curation - which model, which
+  category, which tier, and the scale that turns "one world unit" into metres - is
+  `apps/web/src/render/environment-model-urls.ts`, and the model files are
+  `apps/web/src/assets/models/{environment,props}/`. Nothing else may name a `.glb`.
+- The world model names a *kind*, a *tier* (`HERO` for the curated set near the player, `FILLER` for
+  the light Kenney set at the island's rim) and a variant roll; `scenery.ts` resolves those to a
+  model. `HERO_SCENERY_BUDGET` in `world.ts` is what bounds the triangle cost of the whole island.
+- Importing a new model is `tools/asset-pipeline/node/import-cc0.mjs` (glTF → self-contained GLB,
+  base-colour textures downscaled, normalized to one world unit across its largest dimension with its
+  base on `y = 0`). Its output is recorded in `tools/asset-pipeline/node/import-report.json`.
+- `tests/integration/environment-model-assets.test.ts` holds the contract: the curated set is exactly
+  what ships, every model is self-contained and normalized, and no unpacked source pack is committed.
+
 Read `docs/decisions/0023-island-master-plan.md` before changing what the island *is*: its outline,
 its districts, its roads, its landmarks, or the assumption that one player owns one persistent
 island rather than one map.

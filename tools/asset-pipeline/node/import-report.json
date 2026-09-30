@@ -1,0 +1,254 @@
+[
+  {
+    "id": "tree_broad_1",
+    "category": "environment",
+    "source": "CommonTree_5",
+    "triangles": 3182,
+    "bytes": 363612,
+    "textures": [
+      "Bark_NormalTree.png",
+      "Leaves_NormalTree_C.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "tree_broad_2",
+    "category": "environment",
+    "source": "CommonTree_3",
+    "triangles": 3505,
+    "bytes": 407608,
+    "textures": [
+      "Bark_NormalTree.png",
+      "Leaves_NormalTree_C.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "tree_broad_3",
+    "category": "environment",
+    "source": "CommonTree_4",
+    "triangles": 4066,
+    "bytes": 418220,
+    "textures": [
+      "Bark_NormalTree.png",
+      "Leaves_NormalTree_C.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "tree_broad_4",
+    "category": "environment",
+    "source": "CommonTree_2",
+    "triangles": 5648,
+    "bytes": 533648,
+    "textures": [
+      "Bark_NormalTree.png",
+      "Leaves_NormalTree_C.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "tree_pine_1",
+    "category": "environment",
+    "source": "Pine_5",
+    "triangles": 1646,
+    "bytes": 222772,
+    "textures": [
+      "Bark_NormalTree.png",
+      "Leaf_Pine_C.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "tree_pine_2",
+    "category": "environment",
+    "source": "Pine_4",
+    "triangles": 3370,
+    "bytes": 356636,
+    "textures": [
+      "Bark_NormalTree.png",
+      "Leaf_Pine_C.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "tree_pine_3",
+    "category": "environment",
+    "source": "Pine_2",
+    "triangles": 3648,
+    "bytes": 360132,
+    "textures": [
+      "Bark_NormalTree.png",
+      "Leaf_Pine_C.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "bush_leafy",
+    "category": "environment",
+    "source": "Bush_Common",
+    "triangles": 900,
+    "bytes": 103052,
+    "textures": [
+      "Leaves_TwistedTree_C.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "bush_flowering",
+    "category": "environment",
+    "source": "Bush_Common_Flowers",
+    "triangles": 1368,
+    "bytes": 202328,
+    "textures": [
+      "Leaves_NormalTree_C.png",
+      "Flowers.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "rock_boulder_1",
+    "category": "environment",
+    "source": "Rock_Medium_1",
+    "triangles": 342,
+    "bytes": 161352,
+    "textures": [
+      "Rocks_Diffuse.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "rock_boulder_2",
+    "category": "environment",
+    "source": "Rock_Medium_2",
+    "triangles": 244,
+    "bytes": 157496,
+    "textures": [
+      "Rocks_Diffuse.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "rock_boulder_3",
+    "category": "environment",
+    "source": "Rock_Medium_3",
+    "triangles": 522,
+    "bytes": 168192,
+    "textures": [
+      "Rocks_Diffuse.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "plant_fern",
+    "category": "environment",
+    "source": "Fern_1",
+    "triangles": 288,
+    "bytes": 96332,
+    "textures": [
+      "Leaves.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "plant_grass_tall",
+    "category": "environment",
+    "source": "Grass_Common_Tall",
+    "triangles": 326,
+    "bytes": 24716,
+    "textures": [
+      "Grass.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "plant_grass_wispy",
+    "category": "environment",
+    "source": "Grass_Wispy_Tall",
+    "triangles": 622,
+    "bytes": 40120,
+    "textures": [
+      "Grass.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "plant_clover",
+    "category": "environment",
+    "source": "Clover_2",
+    "triangles": 615,
+    "bytes": 105908,
+    "textures": [
+      "Leaves.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "flower_group_1",
+    "category": "environment",
+    "source": "Flower_3_Group",
+    "triangles": 755,
+    "bytes": 171112,
+    "textures": [
+      "Leaves.png",
+      "Flowers.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "flower_group_2",
+    "category": "environment",
+    "source": "Flower_4_Group",
+    "triangles": 1690,
+    "bytes": 205572,
+    "textures": [
+      "Leaves.png",
+      "Flowers.png"
+    ],
+    "materials": 2
+  },
+  {
+    "id": "prop_crate",
+    "category": "props",
+    "source": "Prop_Crate",
+    "triangles": 230,
+    "bytes": 101804,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_wagon",
+    "category": "props",
+    "source": "Prop_Wagon",
+    "triangles": 1672,
+    "bytes": 189140,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_fence_rail",
+    "category": "props",
+    "source": "Prop_WoodenFence_Single",
+    "triangles": 40,
+    "bytes": 88528,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  },
+  {
+    "id": "prop_fence_rail_long",
+    "category": "props",
+    "source": "Prop_WoodenFence_Extension1",
+    "triangles": 32,
+    "bytes": 87972,
+    "textures": [
+      "T_WoodTrim_BaseColor.png"
+    ],
+    "materials": 1
+  }
+]

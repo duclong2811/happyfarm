@@ -40,7 +40,9 @@ complexity the renderer does not use.
 | Hill relief | up to 6.5 world units, on the upland side of the island | `world-config.ts` (`TERRAIN_RELIEF_WORLD`) |
 | Cultivated apron | 1.5 tiles of dirt around the land the farm owns | `world.ts` (`APRON_MARGIN_TILES`) |
 | Road widths | 1.9 / 1.3 / 0.8 tiles for primary / secondary / path | `world-config.ts` (`ROAD_WIDTH_TILES`) |
-| Scenery instances | capped at 900, placed by district as rows and clusters, instanced by kind | `world.ts`, `scenery.ts` |
+| Scenery instances | capped at 700, of which at most 200 are the curated set | `world.ts` (`MAX_SCENERY`, `HERO_SCENERY_BUDGET`) |
+| Environment model contract | one world unit across its **largest** dimension, centred on X/Z, base on `y = 0` | `tools/asset-pipeline/node/import-cc0.mjs`, `tests/integration/environment-model-assets.test.ts` |
+| Scenery size | `instance.scale` **is** the size in world metres (the player is 1.6) | `environment-model-urls.ts` (`unitScale`), `world.ts` (`unitScaleFor`) |
 | One plot cohort | 12 x 12 tiles | `packages/domain/src/plot.ts` |
 
 Assets are authored in **world metres**, and the base of every model sits on `y = 0` so it can be

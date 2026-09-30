@@ -4,6 +4,7 @@ import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTi
 import {
   DISTRICTS,
   FARMSTEAD,
+  FENCE,
   ISLAND_LOBES,
   ISLAND_SHAPE_EXPONENT,
   ISLAND_SHORE_MARGIN_TILES,
@@ -78,7 +79,17 @@ export interface BarnSpec {
   readonly rotationY: number;
 }
 
-export type SceneryKind = "tree" | "pine" | "bush" | "rock" | "flower";
+export type SceneryKind = "tree" | "pine" | "bush" | "rock" | "flower" | "plant" | "prop";
+
+/**
+ * Which art tier a placement draws from.
+ *
+ * `HERO` is the curated CC0 set, drawn where the player is or is looking; `FILLER` is the lighter
+ * set for the rim of the island and everything the estate camera sees as texture rather than as a
+ * plant. The world model chooses the tier, so "how good does this need to look" is a decision about
+ * the *place*, not something the renderer guesses from a distance it does not know.
+ */
+export type SceneryTier = "HERO" | "FILLER";
 
 export interface SceneryInstance {
   readonly kind: SceneryKind;
@@ -86,8 +97,12 @@ export interface SceneryInstance {
   /** Height of the ground under it, so a prop on a hill stands on the hill instead of inside it. */
   readonly worldY: number;
   readonly worldZ: number;
+  /** Height in world metres: every model is normalized to one unit, so this is the size it draws. */
   readonly scale: number;
   readonly rotationY: number;
+  readonly tier: SceneryTier;
+  /** 0..1, chosen from the world seed: which variant of the tier's family this one is. */
+  readonly variantRoll: number;
 }
 
 /** A stake on the boundary of the land that is still locked. */
@@ -328,7 +343,16 @@ const LOCKED_SCENERY_SEED = 0x2c9e11;
  * and rebuild cost rather than batches. The island is an estate rather than a field, so the budget
  * is larger than the alpha's - and still a number, so a future district cannot quietly spend it.
  */
-const MAX_SCENERY = 900;
+const MAX_SCENERY = 700;
+/**
+ * How many placements may draw a curated model before the rest fall back to the light set.
+ *
+ * The curated trees are ten times the triangles of the Kenney ones, so this is the number that keeps
+ * "make the districts look good" from becoming "make the island unrenderable". It is deliberately
+ * generous for the districts a player walks and tight enough that the far side of the island is
+ * filler, which is what the estate camera wants anyway.
+ */
+const HERO_SCENERY_BUDGET = 200;
 /** How many vegetation clusters are attempted. Rejected candidates cost only a turn of the seed. */
 const SCENERY_CLUSTER_ATTEMPTS = 220;
 /** How far outside the fence a planted thing has to be to count as countryside rather than field. */
@@ -336,7 +360,7 @@ const FIELD_CLEARANCE_TILES = 1.4;
 /** Tile spacing between the stakes that mark the edge of the land that is still locked. */
 const LOCKED_STAKE_SPACING_TILES = 3;
 /** How many wild props a locked plot grows, before the per-prop open-ground filter. */
-const LOCKED_PROPS_PER_PLOT = 70;
+const LOCKED_PROPS_PER_PLOT = 40;
 /** Tree spacing inside an orchard's rows, in tiles. */
 const ORCHARD_ROW_SPACING_TILES = 4.2;
 /** How far a prop has to stay from a road's centreline, in tiles. */
@@ -355,13 +379,13 @@ type ClusterKind = "FOREST" | "SHRUBS" | "ROCKS" | "FLOWERS";
 function clusterMemberKind(cluster: ClusterKind, roll: number): SceneryKind {
   switch (cluster) {
     case "FOREST":
-      return roll < 0.58 ? "tree" : roll < 0.83 ? "pine" : "bush";
+      return roll < 0.54 ? "tree" : roll < 0.78 ? "pine" : roll < 0.9 ? "bush" : "plant";
     case "SHRUBS":
-      return roll < 0.72 ? "bush" : roll < 0.9 ? "flower" : "rock";
+      return roll < 0.5 ? "bush" : roll < 0.7 ? "plant" : roll < 0.88 ? "flower" : "rock";
     case "ROCKS":
-      return roll < 0.78 ? "rock" : roll < 0.92 ? "bush" : "flower";
+      return roll < 0.68 ? "rock" : roll < 0.85 ? "bush" : roll < 0.94 ? "plant" : "flower";
     case "FLOWERS":
-      return roll < 0.86 ? "flower" : "bush";
+      return roll < 0.46 ? "flower" : roll < 0.82 ? "plant" : "bush";
   }
 }
 
@@ -419,12 +443,27 @@ export function districtOutlinePhase(id: string): number {
 function buildScenery(
   layout: FarmLayout,
   terrain: TerrainShape,
-  roads: readonly RoadSpec[],
-  clearings: readonly TileBounds[]
+  roads: readonly RoadSpec[]
 ): SceneryInstance[] {
   const rand = mulberry32(SCENERY_SEED);
   const scenery: SceneryInstance[] = [];
   const frame = worldFrame(layout.pitch);
+  /**
+   * How many high-detail props this world may draw.
+   *
+   * A curated tree is ten times the triangles of a filler one, so the budget is what stops "spend
+   * more on the districts" from becoming "spend everything". The first placements to claim it are
+   * the ones a player meets first - the orchard, then the districts around them - because the order
+   * below is fixed and the seed is fixed with it.
+   */
+  let heroBudget = HERO_SCENERY_BUDGET;
+
+  /** The tier a placement gets: the curated set while there is budget, the light set after that. */
+  function claimTier(): SceneryTier {
+    if (heroBudget <= 0) return "FILLER";
+    heroBudget -= 1;
+    return "HERO";
+  }
 
   /**
    * The tiles a road runs through, as a set.
@@ -446,7 +485,14 @@ function buildScenery(
     }
   }
 
-  function place(kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number): void {
+  function place(
+    kind: SceneryKind,
+    tileX: number,
+    tileY: number,
+    scale: number,
+    rotationY: number,
+    tier: SceneryTier
+  ): void {
     if (scenery.length >= MAX_SCENERY) return;
     const position = tileToWorld({ x: tileX, y: tileY }, frame);
     scenery.push({
@@ -456,15 +502,20 @@ function buildScenery(
       worldY: GROUND_SURFACE_Y + terrainHeightAt(position.worldX, position.worldZ, terrain),
       worldZ: position.worldZ,
       scale,
-      rotationY
+      rotationY,
+      tier,
+      variantRoll: rand()
     });
   }
 
   /**
    * Whether a candidate is standing room rather than field, water, road, or a landmark's clearing.
    *
-   * Every exclusion is a constant of the world config, so this answer never depends on how much land
-   * the farm owns.
+   * The reserved field is excluded whole, and that is deliberate rather than a leftover: this layer
+   * is *static*, and the land inside the reserve is exactly the land the player changes. Whatever
+   * vegetation the reserve does get is the wild growth built in the overlay, where following
+   * progression is the point. Anything here that read the farm's tiles would make the whole world
+   * reshuffle every time a plot was bought.
    */
   function isOpenGround(tileX: number, tileY: number): boolean {
     // Nothing grows past the map, whatever a district's blob or a cluster's radius reaches for.
@@ -476,18 +527,13 @@ function buildScenery(
     ) {
       return false;
     }
-    // The land the farm works, and the plots it is being offered, are the only places on the island
-    // that stay clear: everywhere else - including the reserve the catalogue has not reached yet - is
-    // countryside, because a field nobody has bought yet is still landscape.
-    for (const clearing of clearings) {
-      if (
-        tileX >= clearing.minX - FIELD_CLEARANCE_TILES &&
-        tileX <= clearing.maxX + FIELD_CLEARANCE_TILES &&
-        tileY >= clearing.minY - FIELD_CLEARANCE_TILES &&
-        tileY <= clearing.maxY + FIELD_CLEARANCE_TILES
-      ) {
-        return false;
-      }
+    if (
+      tileX >= FENCE.bounds.minX - FIELD_CLEARANCE_TILES &&
+      tileX <= FENCE.bounds.maxX + FIELD_CLEARANCE_TILES &&
+      tileY >= FENCE.bounds.minY - FIELD_CLEARANCE_TILES &&
+      tileY <= FENCE.bounds.maxY + FIELD_CLEARANCE_TILES
+    ) {
+      return false;
     }
     if (roadTiles.has(`${String(Math.round(tileX))},${String(Math.round(tileY))}`)) return false;
     const pondDx = (tileX - POND.center.x) / (POND.radiusX + 1.6);
@@ -518,7 +564,10 @@ function buildScenery(
       const rotationRoll = rand();
       const kind: SceneryKind = index % 2 === 0 ? "tree" : "pine";
       if (isOpenGround(x + jitterX, y + jitterY)) {
-        place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
+        // The rim is a screen around the island, so it is the one place the light set is right: it is
+        // seen from far away, in silhouette, and its job is to close the view rather than to be looked
+        // at. Height is in metres now, and the player is 1.6.
+        place(kind, x + jitterX, y + jitterY, 2.4 + scaleRoll * 1.2, rotationRoll * Math.PI * 2, "FILLER");
       }
     }
   }
@@ -530,7 +579,7 @@ function buildScenery(
       const rotationRoll = rand();
       const kind: SceneryKind = rand() < 0.5 ? "tree" : "pine";
       if (isOpenGround(x + jitterX, y + jitterY)) {
-        place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
+        place(kind, x + jitterX, y + jitterY, 2.4 + scaleRoll * 1.2, rotationRoll * Math.PI * 2, "FILLER");
       }
     }
   }
@@ -552,7 +601,9 @@ function buildScenery(
         const tileX = district.center.x + localX * cos - localZ * sin;
         const tileY = district.center.y + localX * sin + localZ * cos;
         if (!isOpenGround(tileX, tileY)) continue;
-        place("tree", tileX, tileY, 0.95 + scaleRoll * 0.35, rotationRoll * Math.PI * 2);
+        // A fruit tree is smaller than a woodland one and planted on a uniform grid, so an orchard
+        // reads as rows of the same tree at the same size.
+        place("tree", tileX, tileY, 2.1 + scaleRoll * 0.5, rotationRoll * Math.PI * 2, claimTier());
       }
     }
   }
@@ -600,11 +651,63 @@ function buildScenery(
       // scrub even where a wood's would be canopy.
       const rolled = clusterMemberKind(cluster, memberKindRoll);
       const kind: SceneryKind = memberKindRoll > district.treeShare && rolled === "tree" ? "bush" : rolled;
-      place(kind, at.x, at.y, 0.78 + scaleRoll * 0.55, rotationRoll * Math.PI * 2);
+      place(kind, at.x, at.y, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2, claimTier());
+    }
+  }
+
+  // 4. The hedgerow along the estate side of the fence.
+  //
+  // The fence draws the reserve as a hard square, and the plots inside it cannot hide that. A hedge
+  // on the outside of the boundary breaks the line into a planted edge - which is what a farm does
+  // with a boundary, and what stops a rectangle reading as the outline of a board. It stands outside
+  // the reserve because that land is never for sale, so the hedge can never end up inside a field the
+  // player buys.
+  for (let along = -1; along <= 38; along += 2.5) {
+    const jitter = (rand() - 0.5) * 0.9;
+    const sizeRoll = rand();
+    const rotationRoll = rand();
+    const kind: SceneryKind = rand() < 0.78 ? "bush" : "tree";
+    if (isOpenGround(along + jitter, 38.6)) {
+      place(kind, along + jitter, 38.6, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2, claimTier());
+    }
+  }
+  for (let along = 1; along <= 38; along += 2.5) {
+    const jitter = (rand() - 0.5) * 0.9;
+    const sizeRoll = rand();
+    const rotationRoll = rand();
+    const kind: SceneryKind = rand() < 0.78 ? "bush" : "tree";
+    if (isOpenGround(-3.4, along + jitter)) {
+      place(kind, -3.4, along + jitter, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2, claimTier());
     }
   }
 
   return scenery;
+}
+
+/**
+ * How tall a prop of each kind is drawn, in world metres.
+ *
+ * One table, in one place, because the alternative is what the alpha had: a scale factor per call
+ * site, tuned against whichever model happened to be there. Every model in the manifest is normalized
+ * to one unit tall, so these numbers *are* the world's sizes - the player is 1.6.
+ */
+function unitScaleFor(kind: SceneryKind, roll: number): number {
+  switch (kind) {
+    case "tree":
+      return 2.6 + roll * 1.3;
+    case "pine":
+      return 3.0 + roll * 1.6;
+    case "bush":
+      return 0.75 + roll * 0.5;
+    case "rock":
+      return 0.55 + roll * 0.6;
+    case "flower":
+      return 0.35 + roll * 0.25;
+    case "plant":
+      return 0.3 + roll * 0.35;
+    case "prop":
+      return 0.9;
+  }
 }
 
 /**
@@ -639,7 +742,9 @@ function buildLockedScenery(
       const scaleRoll = rand();
       const rotationRoll = rand();
       const kind: SceneryKind =
-        kindRoll < 0.42 ? "bush" : kindRoll < 0.72 ? "flower" : kindRoll < 0.9 ? "rock" : "tree";
+        // Deliberately not flower-heavy: a flowering bush is a strong colour, and a whole unclaimed
+        // ring of them reads as one dark blotch from the estate camera.
+        kindRoll < 0.6 ? "bush" : kindRoll < 0.78 ? "plant" : kindRoll < 0.92 ? "rock" : "tree";
       const position = tileToWorld({ x, y }, frame);
       scenery.push({
         kind,
@@ -649,8 +754,12 @@ function buildLockedScenery(
         worldY: LOCKED_GROUND_SURFACE_Y,
         worldZ: position.worldZ,
         // Smaller than open-country scenery: this is scrub coming up on neglected ground.
-        scale: 0.62 + scaleRoll * 0.42,
-        rotationY: rotationRoll * Math.PI * 2
+        scale: 0.5 + scaleRoll * 0.4,
+        rotationY: rotationRoll * Math.PI * 2,
+        // Unclaimed ground sits immediately beside the field, so it is foreground: the light set is
+        // for the island's rim, where a flat, cheap prop is seen in silhouette at a hundred metres.
+        tier: "HERO",
+        variantRoll: rand()
       });
     }
   }
@@ -800,23 +909,6 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
 
   const roads = ROADS.map((road) => buildRoadSpec(road, input.layout, terrain));
 
-  /**
-   * What scenery may not grow on: the land the farm works, and the plots it is being offered.
-   *
-   * Everything else is countryside, including the rest of the reserve. That is the point of the
-   * master plan: an unbought field is still landscape, and only the ring the catalogue is selling
-   * right now is cleared for its own treatment.
-   */
-  const clearings: TileBounds[] = [
-    {
-      minX: owned.minX - APRON_MARGIN_TILES,
-      maxX: owned.maxX + APRON_MARGIN_TILES,
-      minY: owned.minY - APRON_MARGIN_TILES,
-      maxY: owned.maxY + APRON_MARGIN_TILES
-    },
-    ...previewLockedPlots(input.plots).map((plot) => plotSquare(plot.plotIndex))
-  ];
-
   const pondCentre = tileToWorld(POND.center, mapping);
   const yardCentre = tileToWorld(FARMSTEAD.center, mapping);
 
@@ -854,7 +946,7 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
       };
     }),
     roads,
-    scenery: buildScenery(input.layout, terrain, roads, clearings),
+    scenery: buildScenery(input.layout, terrain, roads),
     meadows: MEADOWS.map((patch) => {
       const centre = tileToWorld(patch.center, mapping);
       return {

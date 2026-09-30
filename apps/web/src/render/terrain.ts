@@ -29,7 +29,7 @@ import {
   type FenceGeometry
 } from "./world-config";
 import { buildLandmarks } from "./landmarks";
-import { buildScenery, type SceneryModels } from "./scenery";
+import { buildScenery } from "./scenery";
 
 /**
  * The static world's geometry: the island and its elevation, the beach and the shallows, the field's
@@ -764,9 +764,9 @@ export function buildLockedPlotOverlay(
   assets: SharedAssets,
   world: FarmWorld,
   layout: FarmLayout,
-  models: SceneryModels = {}
+  getModel: (id: string) => Object3D | undefined = () => undefined
 ): void {
   addFieldGround(group, assets, world);
   addLockedLand(group, assets, world, layout);
-  buildScenery(group, assets, world.lockedScenery, models);
+  buildScenery(group, assets, world.lockedScenery, getModel);
 }

@@ -30,6 +30,10 @@ Committed and verified through `46915e0`:
 - The island master plan (ADR 0023): one persistent island per player, an asymmetric coastline with
   bays and headlands, eight districts, a three-class road network, a lowland/upland terrain, wild
   land on everything the catalogue has not sold, and a harbour where the primary road ends.
+- Curated CC0 environment art (Visual V4): Quaternius Stylized Nature as the primary style with the
+  Kenney kit demoted to the island's rim, a small set of Medieval Village farm props, an asset import
+  pipeline that normalizes every model to one world unit and one self-contained GLB, and
+  `docs/ASSET_LICENSES.md` recording the provenance of everything third-party.
 - Client work: fullscreen HUD, Three.js island world, camera pan/zoom, locked-land frontier,
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the
@@ -45,7 +49,7 @@ Committed and verified through `46915e0`:
   a reflowing action dock, and safe-area aware placement (ADR 0017). Verified in emulation only.
 
 Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (65 files /
-626 tests), `npm run build --workspace @happy-farm/web`,
+623 tests), `npm run build --workspace @happy-farm/web`,
 `npm run build --workspace @happy-farm/api`, and a local playable dev host (ADR 0011) where the
 browser never sees the development token.
 
