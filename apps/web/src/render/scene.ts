@@ -37,7 +37,9 @@ import { createPointerGesture } from "./pointer-gesture";
 import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
 import { BUILDING_MODELS } from "./building-model-urls";
 import { buildScenery } from "./scenery";
+import { buildInteractionGrid } from "./interaction-grid";
 import { buildLockedPlotOverlay, buildTerrain, TILE_THICKNESS } from "./terrain";
+import { GROUND_SURFACE_Y, terrainHeightAt } from "./terrain-height";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
 
@@ -139,6 +141,15 @@ export interface FarmSceneHandle {
    * never authoritative: the renderer copies the numbers it is given and decides nothing itself.
    */
   setPlayer(player: FarmScenePlayer | null): void;
+  /**
+   * Shows or hides the planting grid.
+   *
+   * `PLANT` draws a quiet outline over every tile the server reported plantable, and `NONE` removes
+   * it. It is a presentation state: showing the grid names no tile, sends nothing, and changes no
+   * rule - it is there so a player can see where a seed may go, which is the one thing the 3D view
+   * could not say before this pass.
+   */
+  setInteraction(mode: FarmInteractionMode): void;
   /** Re-measures the canvas and redraws. */
   resize(): void;
   /** Releases GPU resources, detaches observers and listeners, and leaves the canvas unusable. */
@@ -161,6 +172,9 @@ export interface FarmScenePlayer {
   /** Seconds spent walking, for the step bob. Never a gameplay quantity. */
   readonly elapsedWalk: number;
 }
+
+/** Whether the scene is showing the planting grid. Presentation only; the server owns the rules. */
+export type FarmInteractionMode = "NONE" | "PLANT";
 
 interface ModelVariants {
   readonly growing: Group;
@@ -421,7 +435,19 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
    */
   const detailGroup = new Group();
   const overlayDetailGroup = new Group();
-  scene.add(worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, overlayGroup, overlayDetailGroup, playerGroup);
+  // The planting grid is its own group: it follows the tiles, the mode, and nothing else.
+  const interactionGroup = new Group();
+  scene.add(
+    worldGroup,
+    detailGroup,
+    tileGroup,
+    cropGroup,
+    treeGroup,
+    overlayGroup,
+    overlayDetailGroup,
+    interactionGroup,
+    playerGroup
+  );
 
   /**
    * The sky: one inside-out sphere that fades from a warm horizon to a deeper zenith.
@@ -500,6 +526,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // one: `applyState` never touches them.
   const cameraRig = createCameraRig();
   let playerPose: FarmScenePlayer | null = null;
+/** Whether the planting grid is showing. Client presentation state; it decides no rule. */
+let interactionMode: FarmInteractionMode = "NONE";
+/** The geometry of the current grid, kept so a rebuild can release the one it replaces. */
+let interactionGeometry: BufferGeometry | null = null;
 
   const loader = new GLTFLoader();
   const models = new Map<CropModelId, ModelVariants>();
@@ -708,7 +738,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       islandExtent: worldExtent,
       farmExtent,
       followExtent: FOLLOW_FRAME_EXTENT,
-      hasCharacter: playerPose !== null
+      hasCharacter: playerPose !== null,
+      // The zoom is what decides how much of the world the frame covers once a character exists:
+      // close in it is the follow distance, pulled back it becomes the island's own frame.
+      zoom: cameraRig.zoom
     });
   }
 
@@ -738,7 +771,11 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     // Zoomed out, the camera frames the *island*, not the field: the estate view is where the plan is
     // supposed to be legible, and framing the farm put the island off to one side of the screen with
     // the settlement half out of shot.
-    const islandFraming = cameraRig.zoom > 3;
+    // The camera follows the character until the *island itself* is in frame, and only then centres
+    // on the island. Switching earlier - at the follow distance, say - would put the camera on the
+    // island's middle as soon as the player zoomed past arm's length, so a district could never be
+    // looked at: walking to the orchard and zooming out showed the fields instead.
+    const islandFraming = playerPose === null || cameraRig.zoom * FOLLOW_FRAME_EXTENT >= worldExtent;
     const targetX = islandFraming ? state.world.centerWorldX : frameCentre?.worldX ?? state.world.centerWorldX;
     const targetZ = islandFraming ? state.world.centerWorldZ : frameCentre?.worldZ ?? state.world.centerWorldZ;
     const target = cameraRig.target({
@@ -754,7 +791,12 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       CAMERA_DIRECTION.y * distance,
       target.worldZ + CAMERA_DIRECTION.z * distance
     );
-    camera.lookAt(target.worldX, playerPose === null ? 0.2 : PLAYER_HEIGHT * 0.5, target.worldZ);
+    // Look at the *ground* the camera is framing, not at sea level. The island is eleven metres of
+    // relief, so a camera aimed at y = 0 from an orchard on a hill points into the hillside: the
+    // orchard lands above the frame and the shot is of whatever slope happens to be behind it.
+    const groundY =
+      GROUND_SURFACE_Y + terrainHeightAt(target.worldX, target.worldZ, state.world.terrain);
+    camera.lookAt(target.worldX, groundY + (playerPose === null ? 0.6 : PLAYER_HEIGHT * 0.5), target.worldZ);
     updateDetailVisibility();
   }
 
@@ -770,6 +812,28 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
         : 0;
     playerGroup.position.set(playerPose.worldX, playerPose.worldY + bob, playerPose.worldZ);
     playerGroup.rotation.y = playerPose.facingYaw;
+  }
+
+  /**
+   * Rebuilds the planting grid from the tiles on screen.
+   *
+   * Called when the mode changes and when the farm state does, never per frame: the grid is a
+   * function of which tiles are plantable and where they are, and both of those only move when the
+   * server says so.
+   */
+  function rebuildInteractionGrid(): void {
+    interactionGroup.clear();
+    interactionGeometry?.dispose();
+    interactionGeometry = null;
+    if (interactionMode === "NONE") return;
+    const plantable = state.tiles.filter((tile) => tile.plantable);
+    interactionGeometry = buildInteractionGrid(
+      interactionGroup,
+      plantable,
+      state.layout.tileSize,
+      TILE_THICKNESS + 0.015,
+      assets.interactionGrid
+    );
   }
 
   function updateMarkers(): void {
@@ -925,6 +989,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     pickTargets.clear();
     pickedInstances.clear();
     buildTileSlabs(state.tiles);
+    rebuildInteractionGrid();
 
     for (const tile of state.tiles) {
       const coordinate = { x: tile.tileX, y: tile.tileY };
@@ -1099,6 +1164,12 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       updateCamera();
       draw();
     },
+    setInteraction(mode: FarmInteractionMode): void {
+      if (mode === interactionMode) return;
+      interactionMode = mode;
+      rebuildInteractionGrid();
+      draw();
+    },
     resize: draw,
     dispose(): void {
       disposed = true;
@@ -1114,6 +1185,9 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       cropGroup.clear();
       treeGroup.clear();
       overlayGroup.clear();
+      interactionGroup.clear();
+      interactionGeometry?.dispose();
+      interactionGeometry = null;
       playerGroup.clear();
       pickTargets.clear();
       pickedInstances.clear();

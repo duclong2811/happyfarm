@@ -142,57 +142,30 @@ function buildStorageShed(assets: SharedAssets): Group {
 }
 
 /**
- * A harbour: a timber quay with a warehouse at its root and mooring posts along its edge.
+ * The fishery's store: the shed the quay works out of.
  *
- * The future port district's anchor. It is built to be read from the estate camera - a long straight
- * edge against the water, which is the one silhouette nothing else on the island has - and its
- * placement is the only thing that claims the coast is for trade rather than for scenery.
+ * The pier itself is *not* here. It is derived from the harbour's own geometry in `terrain.ts`, so
+ * its deck starts on the beach and ends over water wherever the coastline is, and this building is
+ * only the store that stands at the landward end of it, among the crates and the barrels.
  */
 function buildHarbor(assets: SharedAssets): Group {
   const group = new Group();
-  // A pier, not a slab. It is built the way a wooden pier is: a narrow footbridge of planks on piles
-  // walking out from the shore, opening into a working head at the end. The old version was one box
-  // four and a half metres wide, which at estate zoom read as a plank lying across the water.
-  const DECK_Y = 0.42;
-  const planks = 9;
-  for (let index = 0; index < planks; index += 1) {
-    const z = 0.6 + index * 0.62;
-    group.add(
-      piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: DECK_Y, z, scaleX: 1.5, scaleY: 0.12, scaleZ: 0.5 })
-    );
-  }
-  // Piles under the deck, in pairs, so it stands on something and reads as a structure from the side.
-  for (const z of [0.8, 2.4, 4.0, 5.4]) {
-    for (const x of [-0.62, 0.62]) {
-      group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.05, z, scaleX: 0.11, scaleY: 1.3, scaleZ: 0.11 }));
-    }
-  }
-  // The working head: a wider platform at the end of the pier, where a boat ties up.
-  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: DECK_Y - 0.02, z: 6.1, scaleX: 2.6, scaleY: 0.12, scaleZ: 1.6 }));
-  for (const x of [-1.15, 1.15]) {
-    for (const z of [5.5, 6.7]) {
-      group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0, z, scaleX: 0.13, scaleY: 1.4, scaleZ: 0.13 }));
-    }
-  }
-  // Mooring posts and a rail along one edge, so the head is not an empty rectangle.
-  for (const x of [-1.25, 1.25]) {
-    group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.75, z: 6.9, scaleX: 0.17, scaleY: 0.9, scaleZ: 0.17 }));
-  }
-  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: -1.25, y: 0.95, z: 5.9, scaleX: 0.1, scaleY: 0.1, scaleZ: 1.8 }));
-
-  // A ramp where the pier meets the beach, so the deck does not simply stop in the air.
-  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: DECK_Y - 0.16, z: 0.05, scaleX: 1.5, scaleY: 0.1, scaleZ: 1.4, rotationX: -0.22 }));
-
-  // The yard at the landward end: the fishery's storage, and the few things a working quay has on it.
-  group.add(piece({ material: assets.timber, geometry: assets.box, x: 0, y: 0.85, z: -2.2, scaleX: 3.6, scaleY: 1.7, scaleZ: 2.2 }));
-  group.add(
-    piece({ material: assets.roofTile, geometry: assets.roof, x: 0, y: 2.15, z: -2.2, scaleX: 2.7, scaleY: 0.9, scaleZ: 1.7, rotationY: Math.PI / 4 })
+  // The store stands a few metres *behind* the yard it serves: the landmark is placed on the yard,
+  // and the boats, the crates and the deck are in front of it, between the store and the water.
+  const store = new Group();
+  store.position.z = -3.4;
+  store.add(piece({ material: assets.timber, geometry: assets.box, x: 0, y: 1.0, z: 0, scaleX: 4.2, scaleY: 2.0, scaleZ: 2.6 }));
+  store.add(
+    piece({ material: assets.roofTile, geometry: assets.roof, x: 0, y: 2.5, z: 0, scaleX: 3.1, scaleY: 1.0, scaleZ: 2.0, rotationY: Math.PI / 4 })
   );
-  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.55, z: -1.05, scaleX: 1.2, scaleY: 1.1, scaleZ: 0.12 }));
-  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.5, y: 0.35, z: -3.2, scaleX: 0.7, scaleY: 0.6, scaleZ: 0.7 }));
-  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.4, y: 0.72, z: -3.2, scaleX: 0.5, scaleY: 0.36, scaleZ: 0.5, rotationY: 0.4 }));
-  group.add(piece({ material: assets.timber, geometry: assets.cylinder, x: -1.55, y: 0.5, z: -2.4, scaleX: 0.32, scaleY: 0.64, scaleZ: 0.32 }));
-  group.add(piece({ material: assets.timber, geometry: assets.cylinder, x: 1.55, y: 0.5, z: -2.4, scaleX: 0.32, scaleY: 0.64, scaleZ: 0.32 }));
+  store.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.62, z: 1.32, scaleX: 1.3, scaleY: 1.24, scaleZ: 0.12 }));
+  // Nets drying on the wall, a barrel, and a crate: the small furniture of a working store.
+  for (const x of [-1.7, 1.7]) {
+    store.add(piece({ material: assets.canvas, geometry: assets.box, x, y: 1.3, z: 1.34, scaleX: 1.1, scaleY: 0.9, scaleZ: 0.06 }));
+  }
+  store.add(piece({ material: assets.timber, geometry: assets.cylinder, x: -2.6, y: 0.42, z: 0.6, scaleX: 0.4, scaleY: 0.84, scaleZ: 0.4 }));
+  store.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 2.5, y: 0.34, z: 0.7, scaleX: 0.68, scaleY: 0.68, scaleZ: 0.68, rotationY: 0.3 }));
+  group.add(store);
   return group;
 }
 
@@ -216,6 +189,53 @@ function buildSilo(assets: SharedAssets): Group {
   return group;
 }
 
+/**
+ * An open barn: the agricultural district's working shelter.
+ *
+ * Four posts and a low-pitched roof with only one wall, so what it shelters is visible from the
+ * estate camera - a hay bale, a crate, and a cart under cover. A hay barn is the one building that
+ * says "this is a farm" from five hundred metres up, and it is also the anchor the fields at the
+ * heartland's northern edge need so they are not just ground beside a fence.
+ */
+function buildOpenBarn(assets: SharedAssets): Group {
+  const group = new Group();
+  const postHeight = 2.2;
+  for (const x of [-1.9, -0.65, 0.65, 1.9]) {
+    for (const z of [-1.15, 1.15]) {
+      group.add(piece({ material: assets.timber, geometry: assets.box, x, y: postHeight / 2, z, scaleX: 0.16, scaleY: postHeight, scaleZ: 0.16 }));
+    }
+  }
+  // The back wall only: the other three sides stay open, which is the whole point of the building.
+  group.add(piece({ material: assets.timber, geometry: assets.box, x: 0, y: 1.0, z: -1.2, scaleX: 4.1, scaleY: 2.0, scaleZ: 0.14 }));
+  // A shallow gable, drawn as two slabs rather than a cone: an open barn's roof is a plane.
+  for (const side of [-1, 1]) {
+    group.add(
+      piece({
+        material: assets.barnRoof,
+        geometry: assets.box,
+        x: 0,
+        y: postHeight + 0.36,
+        z: side * 0.62,
+        scaleX: 4.5,
+        scaleY: 0.12,
+        scaleZ: 1.5,
+        rotationX: side * 0.3
+      })
+    );
+  }
+  group.add(piece({ material: assets.timber, geometry: assets.box, x: 0, y: postHeight + 0.62, z: 0, scaleX: 0.16, scaleY: 0.16, scaleZ: 2.2 }));
+  // Hay, a crate, and a cart under the roof: the shelter is furnished, not empty.
+  group.add(piece({ material: assets.millBlade, geometry: assets.cylinder, x: -1.1, y: 0.42, z: 0.15, scaleX: 0.62, scaleY: 0.84, scaleZ: 0.62, rotationZ: Math.PI / 2 }));
+  group.add(piece({ material: assets.millBlade, geometry: assets.cylinder, x: -1.1, y: 0.42, z: 0.95, scaleX: 0.62, scaleY: 0.84, scaleZ: 0.62, rotationZ: Math.PI / 2 }));
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 1.2, y: 0.34, z: 0.3, scaleX: 0.66, scaleY: 0.66, scaleZ: 0.66 }));
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 1.2, y: 0.98, z: 0.3, scaleX: 0.5, scaleY: 0.5, scaleZ: 0.5, rotationY: 0.4 }));
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 1.15, y: 0.55, z: -0.75, scaleX: 0.9, scaleY: 0.16, scaleZ: 1.5 }));
+  for (const z of [-1.4, -0.1]) {
+    group.add(piece({ material: assets.timber, geometry: assets.cylinder, x: 1.15, y: 0.28, z, scaleX: 0.3, scaleY: 0.56, scaleZ: 0.3, rotationZ: Math.PI / 2 }));
+  }
+  return group;
+}
+
 const BUILDERS: Readonly<Record<PlacedLandmark["kind"], (assets: SharedAssets) => Group>> = {
   FARMHOUSE: buildFarmhouse,
   WINDMILL: buildWindmill,
@@ -224,6 +244,7 @@ const BUILDERS: Readonly<Record<PlacedLandmark["kind"], (assets: SharedAssets) =
   STORAGE_SHED: buildStorageShed,
   HARBOR: buildHarbor,
   SILO: buildSilo,
+  OPEN_BARN: buildOpenBarn,
   COOP: buildCoop
 };
 

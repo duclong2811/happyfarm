@@ -3,6 +3,7 @@ import {
   CircleGeometry,
   ConeGeometry,
   CylinderGeometry,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   OctahedronGeometry,
   RingGeometry,
@@ -97,6 +98,14 @@ export interface SharedAssets {
   readonly selection: MeshStandardMaterial;
   readonly hover: MeshStandardMaterial;
   readonly ready: MeshStandardMaterial;
+  /**
+   * The planting grid: flat colour, no lighting.
+   *
+   * An interaction overlay is a *mark*, not a surface, so it must not change brightness as the sun
+   * moves across it - a standard material would already be pale on one side of the island and dark
+   * on the other, which is the difference between a hint and a light show.
+   */
+  readonly interactionGrid: MeshBasicMaterial;
   readonly cropGrowing: MeshStandardMaterial;
   readonly cropMature: MeshStandardMaterial;
   /** Placeholder avatar colours. Art replaces these; nothing reads them back. */
@@ -130,6 +139,17 @@ function standard(
   });
 }
 
+function flat(
+  color: number,
+  options: { readonly opacity?: number; readonly depthWrite?: boolean } = {}
+): MeshBasicMaterial {
+  return new MeshBasicMaterial({
+    color,
+    ...(options.opacity === undefined ? {} : { transparent: true, opacity: options.opacity }),
+    ...(options.depthWrite === undefined ? {} : { depthWrite: options.depthWrite })
+  });
+}
+
 export function createSharedAssets(): SharedAssets {
   const geometries: BufferGeometry[] = [];
   const materials: Material[] = [];
@@ -139,6 +159,10 @@ export function createSharedAssets(): SharedAssets {
     return value;
   }
   function material(value: MeshStandardMaterial): MeshStandardMaterial {
+    materials.push(value);
+    return value;
+  }
+  function flatMaterial(value: MeshBasicMaterial): MeshBasicMaterial {
     materials.push(value);
     return value;
   }
@@ -200,6 +224,8 @@ export function createSharedAssets(): SharedAssets {
     selection: material(standard(0x8ef0b0)),
     hover: material(standard(0xfff3a8, { transparent: true, opacity: 0.75 })),
     ready: material(standard(0xffcf3f)),
+    // Pale, low, and quiet: the planting grid is a hint at where a seed may go, not an editor.
+    interactionGrid: flatMaterial(flat(0xe8f7d8, { opacity: 0.42, depthWrite: false })),
     cropGrowing: material(standard(0x6fbf7f)),
     cropMature: material(standard(0xe0b64a)),
     playerBody: material(standard(0x3f6fd8)),

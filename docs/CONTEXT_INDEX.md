@@ -197,6 +197,19 @@ Read `docs/decisions/0023-island-master-plan.md` before changing what the island
 its districts, its roads, its landmarks, or the assumption that one player owns one persistent
 island rather than one map.
 
+Read `docs/decisions/0024-v9-world-composition-rebuild.md` before changing the island's *size*, the
+layout of its districts, the road network's clearance rule, the field parcels, the orchard and
+managed-wood lattices, the harbour and fish-farm geometry, the camera's framing rule, or the planting
+grid.
+
+- `VISUAL_BOUNDS` is `[-34, 70]^2`; the reserve, the fence, the starter square, and the tile mapping
+  are unchanged, and every district's centre sits at 50-65 per cent of the way to the shore.
+- Placement rules: `placementRejection` takes the road network as centreline samples plus each road's
+  own half-width, so a clearance is a distance and not a tile lookup.
+- The camera follows the character until `followExtent * zoom >= worldExtent`, and looks at
+  `terrainHeightAt` under whatever it frames. The planting grid is
+  `apps/web/src/render/interaction-grid.ts`, driven by `setInteraction` from `selection.canPlant`.
+
 - The single semantic world definition is `apps/web/src/render/world-config.ts`: `VISUAL_BOUNDS`,
   `ISLAND_LOBES`, `DISTRICTS`, `ROADS`/`ROAD_WIDTH_TILES`, `POND`, `FARMSTEAD`, `LANDMARKS`,
   `FENCE`, `SPAWN_TILE`, `terrainFlatAreas`, `ISLAND_UPLANDS`, and `TERRAIN_SHAPE`. No other module

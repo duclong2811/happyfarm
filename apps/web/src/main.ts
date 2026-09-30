@@ -681,6 +681,9 @@ function renderActionControls(selection: SelectionView): void {
       : t(`tree.state.${selection.tree.phase}` as MessageKey);
   // No selection, no surface: the world keeps the space instead of an empty bar.
   element<HTMLElement>("action-dock").hidden = state.selected === null;
+  // The planting grid follows the same state the dock does: it appears exactly when the planting
+  // control is offered, so a player can see where a seed may go. It names no tile and sends nothing.
+  scene?.setInteraction(selection.canPlant ? "PLANT" : "NONE");
 }
 
 /**

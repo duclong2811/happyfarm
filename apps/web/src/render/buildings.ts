@@ -92,6 +92,10 @@ const LADDERS: Readonly<Record<LandmarkKind, readonly BuildingVariant[]>> = {
     { tier: 1, modelId: "farm.silo.t1", labelKey: "building.silo.t1" },
     { tier: 2, modelId: "farm.silo_house.t2", labelKey: "building.silo.t2" }
   ],
+  OPEN_BARN: [
+    { tier: 1, modelId: "farm.openbarn.t1", labelKey: "building.openbarn.t1" },
+    { tier: 2, modelId: "farm.barn.t2", labelKey: "building.openbarn.t2" }
+  ],
   COOP: [
     { tier: 1, modelId: "farm.coop.t1", labelKey: "building.coop.t1" },
     { tier: 2, modelId: "farm.openbarn.t1", labelKey: "building.coop.t2" }
@@ -109,6 +113,7 @@ const DISTRICT_BY_KIND: Readonly<Record<LandmarkKind, DistrictKind>> = {
   // The silo stands with the settlement's working buildings, and the coop is out on the pasture where
   // the animals will be - which is also the only place on the island a coop belongs.
   SILO: "SETTLEMENT",
+  OPEN_BARN: "SETTLEMENT",
   COOP: "PASTURE"
 };
 
@@ -141,7 +146,7 @@ export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
     id: "town_hall",
     kind: "TOWN_HALL",
     district: "SETTLEMENT",
-    tile: { x: 46, y: -6 },
+    tile: { x: 47, y: -4 },
     rotationY: Math.PI,
     // The reserved footprint is the *largest* the building will ever be, so a tier-3 town hall has
     // the ground it needs before anybody decides to build it.
@@ -151,7 +156,7 @@ export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
     id: "warehouse",
     kind: "WAREHOUSE",
     district: "SETTLEMENT",
-    tile: { x: 47, y: 5 },
+    tile: { x: 51.5, y: 8 },
     rotationY: -Math.PI / 2,
     footprint: { halfWidthWorld: 5, halfDepthWorld: 3.5 }
   },
@@ -159,8 +164,8 @@ export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
     id: "fishery_store",
     kind: "WAREHOUSE",
     district: "COAST",
-    tile: { x: 42, y: 47 },
-    rotationY: Math.PI / 4,
+    tile: { x: 41.5, y: 48 },
+    rotationY: -Math.PI / 3,
     footprint: { halfWidthWorld: 3.5, halfDepthWorld: 2.5 }
   }
 ];

@@ -33,7 +33,7 @@ export const ZOOM_MIN = 0.62;
  * This is the *default*; a world whose island is much larger than its field raises the ceiling for
  * itself through `zoomRangeFor`, because the ratio is a property of the world rather than a constant.
  */
-export const ZOOM_MAX = 4.4;
+export const ZOOM_MAX = 2.9;
 /** The widest the camera may ever be pulled back, however large the island gets. */
 export const ZOOM_MAX_LIMIT = 16;
 const ZOOM_PER_WHEEL_UNIT = 0.0012;
@@ -92,7 +92,10 @@ export function zoomRangeFor(options: {
   readonly farmExtent: number;
 }): { readonly min: number; readonly max: number } {
   const base = Math.max(options.farmExtent, 0.001);
-  const max = Math.min(ZOOM_MAX_LIMIT, Math.max(ZOOM_MAX, (options.islandExtent / base) * 1.04));
+  // The margin over the exact ratio is what keeps the coast inside the frame: at the ratio itself the
+  // waterline lands exactly on the edge of the screen, and the harbour - which is half a pier past
+  // the shoreline - is the first thing to fall off it.
+  const max = Math.min(ZOOM_MAX_LIMIT, Math.max(ZOOM_MAX, (options.islandExtent / base) * 1.18));
   return { min: ZOOM_MIN, max };
 }
 
@@ -114,9 +117,19 @@ export function cameraFrameExtent(options: {
   readonly farmExtent: number;
   readonly followExtent: number;
   readonly hasCharacter: boolean;
+  /**
+   * The camera's current zoom.
+   *
+   * The follow frame is the *near* end of one range, not a different camera: it applies at the base
+   * zoom and gives way, a zoom step at a time, to the world's own frame as the camera pulls back.
+   * Without that, a character in the scene capped the whole view at the follow distance, and the
+   * island the plan is made of could never be framed at all.
+   */
+  readonly zoom?: number;
 }): number {
   const base = Math.min(options.islandExtent, options.farmExtent);
-  return options.hasCharacter ? Math.min(base, options.followExtent) : base;
+  if (!options.hasCharacter) return base;
+  return Math.min(base, options.followExtent * Math.max(1, options.zoom ?? 1));
 }
 
 function clamp(value: number, min: number, max: number): number {

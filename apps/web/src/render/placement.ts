@@ -1,5 +1,5 @@
 import { islandRadiusAt, type IslandShape } from "./terrain-height";
-import { worldToTile, type WorldFrame } from "./layout";
+import type { WorldFrame } from "./layout";
 
 /**
  * One door every decorative placement has to walk through.
@@ -23,8 +23,16 @@ export interface PlacementWorld {
   /** The one tile mapping, so a world position can be asked about as a tile. */
   readonly frame: WorldFrame;
   readonly bounds: { readonly minX: number; readonly maxX: number; readonly minY: number; readonly maxY: number };
-  /** Tiles a road runs through, so nothing stands in a road. */
-  readonly roadTiles: ReadonlySet<string>;
+  /**
+   * The road network's own centreline samples, with the half-width of the road that runs through
+   * each one, so "is this on a road" is a distance to the road rather than a tile lookup that has to
+   * guess how wide a tile's worth of clearance is.
+   */
+  readonly roads: readonly {
+    readonly worldX: number;
+    readonly worldZ: number;
+    readonly halfWidthWorld: number;
+  }[];
   /** Standing water, as ellipses in world metres. */
   readonly waterBodies: readonly {
     readonly worldX: number;
@@ -58,8 +66,8 @@ const INLAND_LIMIT: Readonly<Record<ShorelineClass, number>> = {
   SMALL: 0.975
 };
 
-/** How much room a placement keeps from a road, in world metres. */
-const ROAD_CLEARANCE_WORLD = 1.7;
+/** How much room a placement keeps from the *edge* of a road, in world metres. */
+const ROAD_CLEARANCE_WORLD = 1.2;
 
 export interface PlacementRequest {
   readonly worldX: number;
@@ -120,18 +128,17 @@ export function placementRejection(
 }
 
 /**
- * Whether a world position falls on a road's tile or one within `clearance` of it.
+ * Whether a world position falls within `clearance` of a road's own edge.
  *
- * The road set is built from the road network's own samples, so a road that moves moves its
- * no-build zone with it. A neighbourhood lookup rather than a distance query keeps the cost of
- * validating thousands of candidates at build time negligible.
+ * A distance rather than a tile lookup, because a road has a *width*: the primary is more than twice
+ * as wide as a path, and a tile-based clearance has to round both of them to the same grid - which
+ * is how a road that is 2.6 tiles across ends up clearing six tiles of ground. The cost is one
+ * distance per sample per candidate, which the world build does once.
  */
 function nearRoad(worldX: number, worldZ: number, clearanceWorld: number, world: PlacementWorld): boolean {
-  const tile = worldToTile({ worldX, worldZ }, world.frame);
-  const step = Math.max(1, Math.ceil(clearanceWorld / world.frame.pitch));
-  for (let dy = -step; dy <= step; dy += 1) {
-    for (let dx = -step; dx <= step; dx += 1) {
-      if (world.roadTiles.has(`${String(tile.x + dx)},${String(tile.y + dy)}`)) return true;
+  for (const road of world.roads) {
+    if (Math.hypot(worldX - road.worldX, worldZ - road.worldZ) < road.halfWidthWorld + clearanceWorld) {
+      return true;
     }
   }
   return false;
