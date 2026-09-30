@@ -2,9 +2,14 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
+import { layoutFarmTiles } from "../../apps/web/src/render/layout";
+import { buildFarmWorld, landFrame } from "../../apps/web/src/render/world";
 import { buildProductionZones, districtForCellType } from "../../apps/web/src/render/production";
 import { BUILDINGS, RESERVED_BUILDINGS, variantFor } from "../../apps/web/src/render/buildings";
 import { DISTRICTS, LANDMARKS, districtAt } from "../../apps/web/src/render/world-config";
+import { islandRadiusAt } from "../../apps/web/src/render/terrain-height";
+import { ISLAND_SHAPE } from "../../apps/web/src/render/world-config";
+import { INITIAL_LAND_SIZE as STARTER_SIZE } from "@happy-farm/domain";
 
 /**
  * The invariants of the island's production land and its buildings.
@@ -25,7 +30,54 @@ function ownedStarterTiles() {
   return tiles;
 }
 
+/** The starter world, which is what every visual invariant is checked against. */
+function starterWorld() {
+  const tiles = ownedStarterTiles().map((tile) => ({ x: tile.x, y: tile.y }));
+  const plots = [1, 2, 3, 4, 5].map((plotIndex) => ({
+    plotId: `plot_${String(plotIndex)}`,
+    plotIndex,
+    currencyId: "currency_gold",
+    currencyDisplayNameKey: "currency.gold.name",
+    price: 100,
+    requiredLevel: 1,
+    unlocked: false
+  }));
+  const frame = landFrame(tiles, plots);
+  const layout = layoutFarmTiles(tiles, frame === null ? {} : { frame });
+  return buildFarmWorld({ layout, tiles, plots });
+}
+
 describe("production cells", () => {
+  it("puts the fishery's cages in water, outside the shoreline, inside the map", () => {
+    const world = starterWorld();
+    expect(world.aquaculture.length).toBeGreaterThanOrEqual(4);
+    for (const cage of world.aquaculture) {
+      const radius = islandRadiusAt(cage.worldX, cage.worldZ, ISLAND_SHAPE);
+      // Past the waterline by a margin: a cage is in the sea, not on the beach and not inland.
+      expect(radius, `cage at ${cage.worldX.toFixed(1)},${cage.worldZ.toFixed(1)}`).toBeGreaterThan(1.01);
+      expect(radius).toBeLessThan(1.25);
+      expect(cage.radiusWorld).toBeGreaterThan(0.5);
+    }
+  });
+
+  it("keeps the agriculture fields in the reserve the catalogue sells", () => {
+    const world = starterWorld();
+    expect(world.fieldBlocks.length).toBeGreaterThanOrEqual(3);
+    for (const block of world.fieldBlocks) {
+      const tileX = block.worldX / 1.08 + 5.5;
+      const tileY = block.worldZ / 1.08 + 5.5;
+      const halfX = block.widthWorld / 2 / 1.08;
+      const halfY = block.depthWorld / 2 / 1.08;
+      // Inside the reserve, and outside the twelve tiles the player already farms.
+      expect(tileX - halfX).toBeGreaterThanOrEqual(0);
+      expect(tileX + halfX).toBeLessThanOrEqual(36);
+      expect(tileY - halfY).toBeGreaterThanOrEqual(0);
+      expect(tileY + halfY).toBeLessThanOrEqual(36);
+      const overlapsStarter = tileX - halfX < STARTER_SIZE && tileY - halfY < STARTER_SIZE;
+      expect(overlapsStarter, block.id).toBe(false);
+    }
+  });
+
   it("gives each cell type exactly one district, and a zone to live in", () => {
     const zones = buildProductionZones({ ownedTiles: ownedStarterTiles() });
     expect(zones.map((zone) => zone.cellType)).toEqual(["CROP", "ORCHARD", "AQUACULTURE"]);

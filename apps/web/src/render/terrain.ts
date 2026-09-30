@@ -23,6 +23,7 @@ import {
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
 import type { DistrictGround } from "./world-config";
 import {
+  DISTRICTS,
   FENCE_THICKNESS_WORLD,
   fenceGeometry,
   ISLAND_SHAPE_EXPONENT,
@@ -582,6 +583,56 @@ function addPond(group: Group, assets: SharedAssets, pond: PondSpec): void {
 }
 
 /**
+ * The fishery's cages: floating frames with a net, in the bay outside the harbour.
+ *
+ * They are placed from the island's outline, so "in water" is true by construction rather than by
+ * hand-picked coordinates that the next coastline change would invalidate. The water's own level is
+ * what they float on, so nothing hovers and nothing sinks.
+ */
+function addAquaculture(
+  group: Group,
+  assets: SharedAssets,
+  cages: FarmWorld["aquaculture"]
+): void {
+  const waterline = -0.56;
+  for (const [index, cage] of cages.entries()) {
+    const holder = new Group();
+    holder.position.set(cage.worldX, waterline, cage.worldZ);
+    holder.rotation.y = index % 2 === 0 ? 0 : Math.PI / 2;
+    const size = cage.radiusWorld;
+
+    // The net: a translucent square just under the surface, so the cage reads as a cage.
+    const net = new Mesh(assets.box, assets.water);
+    net.scale.set(size * 1.7, 0.06, size * 1.7);
+    net.position.y = -0.06;
+    holder.add(net);
+
+    // Four floats and four railings, which is the whole structure a cage needs to be legible.
+    for (const x of [-size / 2, size / 2]) {
+      for (const z of [-size / 2, size / 2]) {
+        const float = new Mesh(assets.sphere, assets.millBlade);
+        float.position.set(x, 0.12, z);
+        float.scale.setScalar(0.22);
+        holder.add(float);
+      }
+    }
+    for (const offset of [-size / 2, size / 2]) {
+      holder.add(rail(assets, 0, offset, size, true));
+      holder.add(rail(assets, offset, 0, size, false));
+    }
+    group.add(holder);
+  }
+}
+
+/** One side of a cage's railing: a single floating beam. */
+function rail(assets: SharedAssets, x: number, z: number, size: number, alongX: boolean): Mesh {
+  const beam = new Mesh(assets.box, assets.stakeWood);
+  beam.position.set(x, 0.16, z);
+  beam.scale.set(alongX ? size : 0.1, 0.1, alongX ? 0.1 : size);
+  return beam;
+}
+
+/**
  * The barn.
  *
  * The generated model is the barn; the primitives below are the fallback while it loads or if it
@@ -726,6 +777,45 @@ function addSignpost(group: Group, assets: SharedAssets, plot: LockedPlotSquare,
  * Nothing here is a rule; the price, the level, and the purchase still come from the server.
  */
 function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
+  // The agricultural fields first, so the plot patches and their scrub sit on top of them: a field
+  // block is the ground, and what is drawn over it is what is happening on that ground.
+  for (const block of world.fieldBlocks) {
+    const soil = box(assets, assets.dirt, block.widthWorld, 0.22, block.depthWorld, block.worldX, APRON_TOP_Y - 0.11, block.worldZ);
+    soil.rotation.y = block.rotationY;
+    soil.receiveShadow = true;
+    group.add(soil);
+    // A grass margin around the field, so two blocks are separated by ground rather than by a seam.
+    const margin = box(
+      assets,
+      assets.grass,
+      block.widthWorld + 1.6,
+      0.16,
+      block.depthWorld + 1.6,
+      block.worldX,
+      APRON_TOP_Y - 0.16,
+      block.worldZ
+    );
+    margin.rotation.y = block.rotationY;
+    group.add(margin);
+    // Furrows: three thin ridges across the field, which is what makes tilled ground read as tilled
+    // ground rather than as a brown rectangle at estate zoom.
+    for (let index = 1; index <= 3; index += 1) {
+      const across = (index / 4 - 0.5) * block.depthWorld;
+      const furrow = box(
+        assets,
+        assets.dirtDark,
+        block.widthWorld * 0.92,
+        0.06,
+        0.16,
+        block.worldX + Math.sin(block.rotationY) * across,
+        APRON_TOP_Y + 0.01,
+        block.worldZ + Math.cos(block.rotationY) * across
+      );
+      furrow.rotation.y = block.rotationY;
+      group.add(furrow);
+    }
+  }
+
   // Every unclaimed plot gets the rough ground; only the ring the catalogue is offering gets the
   // stakes and the sign, because those are what say "this one, next".
   for (const [index, plot] of world.wildPatches.entries()) {
@@ -784,6 +874,46 @@ function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, lay
   }
 }
 
+/**
+ * The row beds under the orchard and the managed woodland.
+ *
+ * A row of trees is not legible as a row unless the ground says so: at estate zoom a handful of trees
+ * on grass is a thicket, however regular the lattice they stand on. A shallow bed of bare earth under
+ * each row is what turns the same trees into an orchard or a stand of planted timber — and it is also
+ * the difference between them: the orchard gets wide beds on generous spacing, the managed woodland
+ * narrower beds on tighter rows, which is exactly the distinction the plan asks a viewer to make.
+ *
+ * Static, because neither district is land the catalogue can sell.
+ */
+function addProductionRowBeds(group: Group, assets: SharedAssets, layout: FarmLayout): void {
+  const frame = worldFrame(layout.pitch);
+  for (const district of DISTRICTS) {
+    if (district.kind !== "ORCHARD" && district.kind !== "FORESTRY") continue;
+    const spacingTiles = district.kind === "ORCHARD" ? 4.2 : 3.4;
+    const bedWidthTiles = district.kind === "ORCHARD" ? 1.5 : 1.1;
+    const lengthTiles = district.radiusX * 1.55;
+    const rows = Math.max(2, Math.floor((district.radiusY * 1.6) / spacingTiles));
+    for (let index = 0; index < rows; index += 1) {
+      const offsetTiles = (index - (rows - 1) / 2) * spacingTiles;
+      const position = tileToWorld({ x: district.center.x, y: district.center.y + offsetTiles }, frame);
+      const bed = box(
+        assets,
+        assets.bareEarth,
+        lengthTiles * layout.pitch,
+        0.04,
+        bedWidthTiles * layout.pitch,
+        position.worldX,
+        GROUND_SURFACE_Y + 0.02,
+        position.worldZ
+      );
+      // A local +x tile direction maps to (cos, sin) in tile space, which is -rotationY about Y here.
+      bed.rotation.y = -district.rotationY;
+      bed.receiveShadow = true;
+      group.add(bed);
+    }
+  }
+}
+
 export function buildTerrain(
   group: Group,
   assets: SharedAssets,
@@ -798,9 +928,11 @@ export function buildTerrain(
   addIsland(group, assets, world);
   addMeadows(group, assets, world);
   addDistrictGround(group, assets, world);
+  addProductionRowBeds(group, assets, layout);
   addRoads(group, assets, world);
   addFence(group, assets, fence, layout.pitch);
   if (world.pond !== null) addPond(group, assets, world.pond);
+  addAquaculture(group, assets, world.aquaculture);
   // The curated barn is normalized to one world unit, so it is drawn at its own size; the generated
   // placeholder is already authored at the right scale.
   const curatedBarn = getBuildingModel("farm.barn.t2");

@@ -150,29 +150,49 @@ function buildStorageShed(assets: SharedAssets): Group {
  */
 function buildHarbor(assets: SharedAssets): Group {
   const group = new Group();
-  // The quay deck, running out over the water.
-  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.42, z: 2.6, scaleX: 4.4, scaleY: 0.22, scaleZ: 5.6 }));
-  // Its piles, so the deck stands on something.
-  for (const x of [-1.9, -0.6, 0.6, 1.9]) {
-    for (const z of [0.4, 2.6, 4.8]) {
-      group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.2, z, scaleX: 0.16, scaleY: 0.9, scaleZ: 0.16 }));
+  // A pier, not a slab. It is built the way a wooden pier is: a narrow footbridge of planks on piles
+  // walking out from the shore, opening into a working head at the end. The old version was one box
+  // four and a half metres wide, which at estate zoom read as a plank lying across the water.
+  const DECK_Y = 0.42;
+  const planks = 9;
+  for (let index = 0; index < planks; index += 1) {
+    const z = 0.6 + index * 0.62;
+    group.add(
+      piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: DECK_Y, z, scaleX: 1.5, scaleY: 0.12, scaleZ: 0.5 })
+    );
+  }
+  // Piles under the deck, in pairs, so it stands on something and reads as a structure from the side.
+  for (const z of [0.8, 2.4, 4.0, 5.4]) {
+    for (const x of [-0.62, 0.62]) {
+      group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.05, z, scaleX: 0.11, scaleY: 1.3, scaleZ: 0.11 }));
     }
   }
-  // Mooring posts at the end of the quay.
-  for (const x of [-2.1, 2.1]) {
-    group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.75, z: 5.2, scaleX: 0.22, scaleY: 1.1, scaleZ: 0.22 }));
+  // The working head: a wider platform at the end of the pier, where a boat ties up.
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: DECK_Y - 0.02, z: 6.1, scaleX: 2.6, scaleY: 0.12, scaleZ: 1.6 }));
+  for (const x of [-1.15, 1.15]) {
+    for (const z of [5.5, 6.7]) {
+      group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0, z, scaleX: 0.13, scaleY: 1.4, scaleZ: 0.13 }));
+    }
   }
-  // The warehouse at the root of the quay.
-  group.add(piece({ material: assets.timber, geometry: assets.box, x: 0, y: 0.85, z: -1.6, scaleX: 4.2, scaleY: 1.7, scaleZ: 2.4 }));
+  // Mooring posts and a rail along one edge, so the head is not an empty rectangle.
+  for (const x of [-1.25, 1.25]) {
+    group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.75, z: 6.9, scaleX: 0.17, scaleY: 0.9, scaleZ: 0.17 }));
+  }
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: -1.25, y: 0.95, z: 5.9, scaleX: 0.1, scaleY: 0.1, scaleZ: 1.8 }));
+
+  // A ramp where the pier meets the beach, so the deck does not simply stop in the air.
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: DECK_Y - 0.16, z: 0.05, scaleX: 1.5, scaleY: 0.1, scaleZ: 1.4, rotationX: -0.22 }));
+
+  // The yard at the landward end: the fishery's storage, and the few things a working quay has on it.
+  group.add(piece({ material: assets.timber, geometry: assets.box, x: 0, y: 0.85, z: -2.2, scaleX: 3.6, scaleY: 1.7, scaleZ: 2.2 }));
   group.add(
-    piece({ material: assets.roofTile, geometry: assets.roof, x: 0, y: 2.2, z: -1.6, scaleX: 3.2, scaleY: 0.95, scaleZ: 1.9, rotationY: Math.PI / 4 })
+    piece({ material: assets.roofTile, geometry: assets.roof, x: 0, y: 2.15, z: -2.2, scaleX: 2.7, scaleY: 0.9, scaleZ: 1.7, rotationY: Math.PI / 4 })
   );
-  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.55, z: -0.4, scaleX: 1.4, scaleY: 1.1, scaleZ: 0.12 }));
-  // Crates waiting to be loaded, and a mast so the port reads from the far side of the island.
-  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.6, y: 0.7, z: 1.4, scaleX: 0.8, scaleY: 0.56, scaleZ: 0.8 }));
-  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.6, y: 1.1, z: 1.4, scaleX: 0.6, scaleY: 0.4, scaleZ: 0.6, rotationY: 0.5 }));
-  group.add(piece({ material: assets.timber, geometry: assets.cylinder, x: 2.6, y: 1.6, z: -1.2, scaleX: 0.14, scaleY: 3.2, scaleZ: 0.14 }));
-  group.add(piece({ material: assets.canvas, geometry: assets.box, x: 2.6, y: 2.9, z: -0.6, scaleX: 0.08, scaleY: 0.9, scaleZ: 1.2 }));
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.55, z: -1.05, scaleX: 1.2, scaleY: 1.1, scaleZ: 0.12 }));
+  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.5, y: 0.35, z: -3.2, scaleX: 0.7, scaleY: 0.6, scaleZ: 0.7 }));
+  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.4, y: 0.72, z: -3.2, scaleX: 0.5, scaleY: 0.36, scaleZ: 0.5, rotationY: 0.4 }));
+  group.add(piece({ material: assets.timber, geometry: assets.cylinder, x: -1.55, y: 0.5, z: -2.4, scaleX: 0.32, scaleY: 0.64, scaleZ: 0.32 }));
+  group.add(piece({ material: assets.timber, geometry: assets.cylinder, x: 1.55, y: 0.5, z: -2.4, scaleX: 0.32, scaleY: 0.64, scaleZ: 0.32 }));
   return group;
 }
 

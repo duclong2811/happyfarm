@@ -422,6 +422,29 @@ export const POND = {
   radiusY: 3
 } as const;
 
+/**
+ * The agricultural reserve's visual field blocks.
+ *
+ * The catalogue's grid is a square and has to stay one, so the *farm* is drawn as what a farm looks
+ * like: four fields of different sizes with grass margins and paths between them, in the quadrant of
+ * the reserve the catalogue has not sold yet. Each block is presentation only - no tile, no rule, no
+ * collision - and the moment a plot is bought the apron and its tiles are drawn on top of it, so a
+ * field block can never sit where the player is farming.
+ */
+export interface FieldBlock {
+  readonly id: string;
+  readonly bounds: TileBounds;
+  /** Which way the furrows run, in radians about Y. */
+  readonly rotationY: number;
+}
+
+export const FIELD_BLOCKS: readonly FieldBlock[] = [
+  { id: "field_a", bounds: { minX: 24, maxX: 29.5, minY: 24, maxY: 28.5 }, rotationY: 0 },
+  { id: "field_b", bounds: { minX: 30.5, maxX: 35, minY: 24, maxY: 29.5 }, rotationY: Math.PI / 2 },
+  { id: "field_c", bounds: { minX: 24, maxX: 31, minY: 30, maxY: 34.5 }, rotationY: 0 },
+  { id: "field_d", bounds: { minX: 32, maxX: 35, minY: 31, maxY: 34.5 }, rotationY: Math.PI / 2 }
+];
+
 export type FenceSide = "SOUTH" | "NORTH" | "WEST" | "EAST";
 
 /** One opening in the fence: a range of tile coordinates along its own side's axis. */

@@ -3,6 +3,7 @@ import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTile } from "./layout";
 import {
   DISTRICTS,
+  FIELD_BLOCKS,
   FARMSTEAD,
   FENCE,
   ISLAND_LOBES,
@@ -193,6 +194,21 @@ export interface FarmWorld {
   readonly districts: readonly DistrictPatch[];
   /** Every road, already resampled into a terrain-following centreline. */
   readonly roads: readonly RoadSpec[];
+  /**
+   * The agricultural reserve's visual fields.
+   *
+   * Presentation only, and drawn in the overlay: a field block is a picture of a field, and the apron
+   * and the tiles paint over it the moment the land it sits on is bought.
+   */
+  readonly fieldBlocks: readonly { readonly id: string; readonly worldX: number; readonly worldZ: number; readonly widthWorld: number; readonly depthWorld: number; readonly rotationY: number }[];
+  /**
+   * The fishery's aquaculture cages.
+   *
+   * Placed from the island's own outline rather than from hand-picked coordinates: each one sits a
+   * few per cent *outside* the shoreline along the bay, which is what guarantees a cage is in water
+   * and not on the beach, whatever the coastline does later.
+   */
+  readonly aquaculture: readonly { readonly worldX: number; readonly worldZ: number; readonly radiusWorld: number; readonly rotationY: number }[];
   readonly scenery: readonly SceneryInstance[];
   readonly pond: PondSpec | null;
   readonly barn: BarnSpec | null;
@@ -227,6 +243,8 @@ const EMPTY_WORLD: FarmWorld = {
   landmarks: [],
   districts: [],
   roads: [],
+  fieldBlocks: [],
+  aquaculture: [],
   scenery: [],
   pond: null,
   barn: null,
@@ -975,6 +993,38 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
 
   const roads = ROADS.map((road) => buildRoadSpec(road, input.layout, terrain));
 
+  // The agricultural fields: rectangles of the reserve the catalogue has not sold yet, drawn as
+  // fields. They are overlay work because they sit where the player will eventually farm, and the
+  // apron has to be able to paint over them.
+  const fieldBlocks = FIELD_BLOCKS.map((block) => {
+    const centre = tileToWorld(
+      { x: (block.bounds.minX + block.bounds.maxX + 1) / 2, y: (block.bounds.minY + block.bounds.maxY + 1) / 2 },
+      mapping
+    );
+    return {
+      id: block.id,
+      worldX: centre.worldX,
+      worldZ: centre.worldZ,
+      widthWorld: (block.bounds.maxX - block.bounds.minX + 1) * input.layout.pitch,
+      depthWorld: (block.bounds.maxY - block.bounds.minY + 1) * input.layout.pitch,
+      rotationY: block.rotationY
+    };
+  });
+
+  // The aquaculture cages: a row of them along the bay, just outside the waterline. Placing them from
+  // the outline rather than from coordinates is what makes "in water" true by construction.
+  const aquaculture = [0, 1, 2, 3, 4].map((index) => {
+    const angle = 0.56 + index * 0.095;
+    const rim = islandRimPoint(angle, terrain);
+    const outward = 1.05 + (index % 2) * 0.07;
+    return {
+      worldX: terrain.centerWorldX + (rim.worldX - terrain.centerWorldX) * outward,
+      worldZ: terrain.centerWorldZ + (rim.worldZ - terrain.centerWorldZ) * outward,
+      radiusWorld: 1.6 * input.layout.pitch,
+      rotationY: angle
+    };
+  });
+
   const pondCentre = tileToWorld(POND.center, mapping);
   const yardCentre = tileToWorld(FARMSTEAD.center, mapping);
 
@@ -1012,6 +1062,8 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
       };
     }),
     roads,
+    fieldBlocks,
+    aquaculture,
     scenery: buildScenery(input.layout, terrain, roads),
     meadows: MEADOWS.map((patch) => {
       const centre = tileToWorld(patch.center, mapping);
