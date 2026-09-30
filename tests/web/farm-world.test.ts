@@ -17,11 +17,12 @@ import {
   previewLockedPlots,
 } from "../../apps/web/src/render/world";
 import {
+  DISTRICTS,
   FENCE,
   ISLAND_SHORE_MARGIN_TILES,
   LANDMARKS,
   POND,
-  TREE_BANDS,
+  ROADS,
   VISUAL_BOUNDS
 } from "../../apps/web/src/render/world-config";
 
@@ -146,7 +147,8 @@ describe("buildFarmWorld", () => {
       ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2 + ISLAND_SHORE_MARGIN_TILES) * 1.08,
       6
     );
-    expect(world.path).not.toBeNull();
+    expect(world.roads.length).toBe(ROADS.length);
+    expect(world.districts.length).toBe(DISTRICTS.length);
     expect(world.pond).not.toBeNull();
     expect(world.barn).not.toBeNull();
     expect(world.meadows.length).toBeGreaterThan(0);
@@ -169,7 +171,8 @@ describe("buildFarmWorld", () => {
     expect(grown.centerWorldZ).toBe(small.centerWorldZ);
     expect(grown.pond).toEqual(small.pond);
     expect(grown.barn).toEqual(small.barn);
-    expect(grown.path).toEqual(small.path);
+    expect(grown.roads).toEqual(small.roads);
+    expect(grown.districts).toEqual(small.districts);
     expect(grown.scenery).toEqual(small.scenery);
     expect(grown.meadows).toEqual(small.meadows);
     expect(grown.landmarks).toEqual(small.landmarks);
@@ -227,28 +230,54 @@ describe("buildFarmWorld", () => {
         tile.y >= VISUAL_BOUNDS.minY &&
         tile.y <= VISUAL_BOUNDS.maxY;
       expect(insideIsland, `${entry.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(true);
-      const overField =
-        tile.x >= FENCE.bounds.minX - 1.2 &&
-        tile.x <= FENCE.bounds.maxX + 1.2 &&
-        tile.y >= FENCE.bounds.minY - 1.2 &&
-        tile.y <= FENCE.bounds.maxY + 1.2;
-      expect(overField, `${entry.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(false);
+      // The land the farm works is the one place nothing grows. The rest of the reserve is land the
+      // catalogue has not sold yet, and unbought land is countryside rather than a cleared board.
+      const overOwnedLand =
+        tile.x >= -1 - APRON_MARGIN_TILES &&
+        tile.x <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES &&
+        tile.y >= -1 - APRON_MARGIN_TILES &&
+        tile.y <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES;
+      expect(overOwnedLand, `${entry.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(false);
     }
   });
 
-  it("plants the reserved regions instead of leaving them empty", () => {
+  it("gives every wooded district trees, and the pasture almost none", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
-    for (const band of TREE_BANDS) {
-      const inside = world.scenery.filter((entry) => {
-        const tile = worldToTile({ worldX: entry.worldX, worldZ: entry.worldZ }, worldFrame());
-        return (
-          tile.x >= band.bounds.minX - 1 &&
-          tile.x <= band.bounds.maxX + 1 &&
-          tile.y >= band.bounds.minY - 1 &&
-          tile.y <= band.bounds.maxY + 1
-        );
-      });
-      expect(inside.length, band.id).toBeGreaterThan(0);
+    const inDistrict = (districtId: string): number => {
+      const patch = world.districts.find((entry) => entry.id === districtId);
+      if (patch === undefined) return -1;
+      return world.scenery.filter((entry) => {
+        const dx = entry.worldX - patch.worldX;
+        const dz = entry.worldZ - patch.worldZ;
+        const cos = Math.cos(-patch.rotationY);
+        const sin = Math.sin(-patch.rotationY);
+        const localX = (dx * cos - dz * sin) / patch.radiusWorldX;
+        const localZ = (dx * sin + dz * cos) / patch.radiusWorldZ;
+        return Math.hypot(localX, localZ) <= 1;
+      }).length;
+    };
+    // Woodland is dense, an orchard is planted in rows, and a pasture is nearly open ground. The gap
+    // between them is the composition: districts have to *look* different, not just be labelled.
+    expect(inDistrict("forest_north")).toBeGreaterThan(20);
+    expect(inDistrict("orchard")).toBeGreaterThan(8);
+    expect(inDistrict("pasture")).toBeLessThan(inDistrict("forest_north"));
+  });
+
+  it("keeps the roads off the farmland and inside the island", () => {
+    const world = worldFor(starterTiles(), CATALOGUE);
+    expect(world.roads.length).toBe(ROADS.length);
+    for (const road of world.roads) {
+      expect(road.samples.length, road.id).toBeGreaterThan(2);
+      expect(road.widthWorld, road.id).toBeGreaterThan(0);
+      for (const sample of road.samples) {
+        const tile = worldToTile({ worldX: sample.worldX, worldZ: sample.worldZ }, worldFrame());
+        const overField =
+          tile.x >= FENCE.bounds.minX - 1.2 &&
+          tile.x <= FENCE.bounds.maxX + 1.2 &&
+          tile.y >= FENCE.bounds.minY - 1.2 &&
+          tile.y <= FENCE.bounds.maxY + 1.2;
+        expect(overField, `${road.id} at ${String(tile.x)},${String(tile.y)}`).toBe(false);
+      }
     }
   });
 
@@ -260,9 +289,14 @@ describe("buildFarmWorld", () => {
 
     for (const prop of world.lockedScenery) {
       const tile = worldToTile({ worldX: prop.worldX, worldZ: prop.worldZ }, worldFrame());
+      // Every plot the catalogue has not sold, not only the ring it is offering right now: the whole
+      // unclaimed reserve has to read as rough land rather than as an empty lawn.
       const insideAPlot = world.lockedPlots.some(
         (plot) => tile.x >= plot.minX && tile.x <= plot.maxX && tile.y >= plot.minY && tile.y <= plot.maxY
-      );
+      ) || [1, 2, 3, 4, 5].some((plotIndex) => {
+        const square = plotSquare(plotIndex);
+        return tile.x >= square.minX && tile.x <= square.maxX && tile.y >= square.minY && tile.y <= square.maxY;
+      });
       expect(insideAPlot, `${prop.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(true);
       // Wild growth stands on the ground the same way open-country scenery does, so a prop on a rise
       // is not left floating at the plateau's height.

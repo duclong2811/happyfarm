@@ -29,8 +29,13 @@ export const ZOOM_MIN = 0.62;
  * can act on - so the range has to be wide enough that the far end reaches the island. At the shipped
  * sizes the island is a little over four times the field's frame, so a narrower range would have left
  * the widest view showing part of the map instead of all of it.
+ *
+ * This is the *default*; a world whose island is much larger than its field raises the ceiling for
+ * itself through `zoomRangeFor`, because the ratio is a property of the world rather than a constant.
  */
 export const ZOOM_MAX = 4.4;
+/** The widest the camera may ever be pulled back, however large the island gets. */
+export const ZOOM_MAX_LIMIT = 16;
 const ZOOM_PER_WHEEL_UNIT = 0.0012;
 
 /** What the camera needs to know about the world to aim itself. */
@@ -66,6 +71,29 @@ export interface CameraRig {
   zoomByScale(scale: number): void;
   /** Sets the zoom directly, for re-framing when the world itself changes. */
   setZoom(zoom: number): void;
+  /**
+   * Sets what the wheel and a pinch clamp to.
+   *
+   * `zoomRangeFor` is the only producer, so a view that can reach the whole island is a property of
+   * the world it is looking at rather than a number somebody tuned by hand.
+   */
+  setZoomRange(min: number, max: number): void;
+}
+
+/**
+ * The zoom range that lets one camera frame both the field and the island.
+ *
+ * The camera's base frame is the smaller of the two - the field, so the game opens on what the
+ * player can act on - and zoom multiplies it. Reaching the island therefore takes exactly the ratio
+ * between them, with a little margin so the coast is not cropped at the far end.
+ */
+export function zoomRangeFor(options: {
+  readonly islandExtent: number;
+  readonly farmExtent: number;
+}): { readonly min: number; readonly max: number } {
+  const base = Math.max(options.farmExtent, 0.001);
+  const max = Math.min(ZOOM_MAX_LIMIT, Math.max(ZOOM_MAX, (options.islandExtent / base) * 1.04));
+  return { min: ZOOM_MIN, max };
 }
 
 /**
@@ -97,6 +125,8 @@ function clamp(value: number, min: number, max: number): number {
 
 export function createCameraRig(): CameraRig {
   let zoom = 1;
+  let zoomMin = ZOOM_MIN;
+  let zoomMax = ZOOM_MAX;
   let panOffsetX = 0;
   let panOffsetZ = 0;
 
@@ -129,16 +159,23 @@ export function createCameraRig(): CameraRig {
       panOffsetZ -= deltaY * worldPerPixel;
     },
     zoomByWheel(deltaY: number): void {
-      zoom = clamp(zoom * Math.exp(deltaY * ZOOM_PER_WHEEL_UNIT), ZOOM_MIN, ZOOM_MAX);
+      zoom = clamp(zoom * Math.exp(deltaY * ZOOM_PER_WHEEL_UNIT), zoomMin, zoomMax);
     },
     zoomByScale(scale: number): void {
       // A pinch that reports a nonsense factor (a zero-length finger span, a cancelled pointer)
       // leaves the zoom alone rather than sending it to a clamp rail.
       if (!Number.isFinite(scale) || scale <= 0) return;
-      zoom = clamp(zoom * scale, ZOOM_MIN, ZOOM_MAX);
+      zoom = clamp(zoom * scale, zoomMin, zoomMax);
     },
     setZoom(next: number): void {
-      zoom = clamp(next, ZOOM_MIN, ZOOM_MAX);
+      zoom = clamp(next, zoomMin, zoomMax);
+    },
+    setZoomRange(min: number, max: number): void {
+      // A caller that hands in nonsense leaves the range alone rather than pinning zoom to a rail.
+      if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max < min) return;
+      zoomMin = min;
+      zoomMax = Math.min(max, ZOOM_MAX_LIMIT);
+      zoom = clamp(zoom, zoomMin, zoomMax);
     }
   };
 }

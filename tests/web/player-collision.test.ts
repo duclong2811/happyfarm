@@ -136,7 +136,10 @@ describe("player collision world", () => {
   it("keeps the character on the island", () => {
     const world = createPlayerCollisionWorld([]);
     expect(world.depth(fence.centerWorldX, fence.centerWorldZ)).toBeLessThanOrEqual(0);
-    const beyond = Math.max(ISLAND_HALF_WIDTH_WORLD, ISLAND_HALF_DEPTH_WORLD) + 5;
+    // Well past the outline in every direction. The island's coast is modulated, so a headland
+    // reaches further than the half-extent the outline is measured in - the point being tested is
+    // "in the sea", not "at the ellipse's edge".
+    const beyond = Math.max(ISLAND_HALF_WIDTH_WORLD, ISLAND_HALF_DEPTH_WORLD) * 1.4 + 10;
     expect(world.depth(fence.centerWorldX + beyond, fence.centerWorldZ)).toBeGreaterThan(0);
     expect(world.depth(fence.centerWorldX - beyond, fence.centerWorldZ)).toBeGreaterThan(0);
     expect(world.depth(fence.centerWorldX, fence.centerWorldZ + beyond)).toBeGreaterThan(0);

@@ -1,58 +1,52 @@
 import type { PlotDTO } from "@happy-farm/contracts";
 import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
+import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTile } from "./layout";
 import {
-  DEFAULT_TILE_GAP,
-  DEFAULT_TILE_SIZE,
-  tileToWorld,
-  worldFrame,
-  worldToTile
-} from "./layout";
-import {
+  DISTRICTS,
   FARMSTEAD,
-  FENCE,
-  FARM_HALF_EXTENT_WORLD,
-  ISLAND_SHORE_MARGIN_TILES,
+  ISLAND_LOBES,
   ISLAND_SHAPE_EXPONENT,
+  ISLAND_SHORE_MARGIN_TILES,
+  ISLAND_UPLANDS,
   LANDMARKS,
   LANDMARKS_WORLD,
   MEADOWS,
-  PATHS,
   POND,
-  RIM_TREE_BAND_TILES,
-  RIM_TREE_SPACING_TILES,
+  ROADS,
   TERRAIN_RELIEF_WORLD,
-  terrainLevelAreas,
-  TREE_BANDS,
   VISUAL_BOUNDS,
+  terrainFlatAreas,
+  type District,
+  type DistrictGround,
+  type DistrictKind,
   type PlacedLandmark
 } from "./world-config";
-import {
-  GROUND_SURFACE_Y,
-  islandRadiusAt,
-  islandRimPoint,
-  terrainHeightAt,
-  type TerrainShape
-} from "./terrain-height";
+import { GROUND_SURFACE_Y, terrainHeightAt, type TerrainShape } from "./terrain-height";
+import { buildRoadSpec, type RoadSpec } from "./roads";
+export type { RoadSpec } from "./roads";
 
 /**
- * Pure world geometry around the farm field.
+ * The world model the renderer draws.
  *
- * The renderer draws this; nothing here decides gameplay. Unlock state comes from the server's plot
- * catalogue (`PlotDTO.unlocked`), and the only thing mirrored from the server's layout rule is the
- * deterministic plot square, because the client has to draw locked land it does not own yet.
- * `tests/web/farm-world.test.ts` pins that mirror to `packages/domain/src/plot.ts`, so the two
- * cannot drift without a failing test.
+ * Pure geometry and pure rules: it is derived from the server's land and the static world config and
+ * decides no gameplay. Unlock state comes from the server's plot catalogue, and the only thing
+ * mirrored from the server's layout rule is the deterministic plot square, because the client has to
+ * draw locked land it does not own yet. `tests/web/farm-world.test.ts` pins that mirror to
+ * `packages/domain/src/plot.ts`, so the two cannot drift without a failing test.
  *
- * Scenery is placed from a fixed seed on a fixed lattice, so the same farm always grows the same
- * trees and rocks rather than reshuffling them on every refresh.
+ * Everything placed here is placed from a fixed seed, so the same island is the same island on every
+ * client and after every refresh - and buying land cannot reshuffle any of it, because nothing here
+ * reads the farm's tiles.
  */
 
 /** Side length of one plot cohort, mirroring `PLOT_TILE_SIZE` in `packages/domain/src/plot.ts`. */
 export const PLOT_TILE_SIZE = 12;
-/** Grass kept around the outermost land before the island edge. */
-export const WORLD_MARGIN_TILES = 5;
 /** Tiles of dirt the cultivated apron keeps around the land the farm owns. */
 export const APRON_MARGIN_TILES = 1.5;
+/** How wide the tree line inside the island's rim is, in tiles. */
+export const RIM_TREE_BAND_TILES = 2;
+/** Tile spacing between the rim trees that close off the island's edge. */
+export const RIM_TREE_SPACING_TILES = 2.2;
 /**
  * Height of the rough ground drawn over a locked plot.
  *
@@ -104,21 +98,6 @@ export interface BoundaryStake {
   readonly worldZ: number;
 }
 
-export interface PathSpec {
-  readonly worldX: number;
-  readonly worldZ: number;
-  readonly widthWorld: number;
-  readonly depthWorld: number;
-}
-
-/** A rectangle of ground in world metres: the apron and the bed under the tiles. */
-export interface GroundRect {
-  readonly worldX: number;
-  readonly worldZ: number;
-  readonly widthWorld: number;
-  readonly depthWorld: number;
-}
-
 /** A patch of ground with its own colour, in world metres. */
 export interface MeadowSpec {
   readonly id: string;
@@ -128,6 +107,26 @@ export interface MeadowSpec {
   readonly radiusWorldX: number;
   readonly radiusWorldZ: number;
   readonly rotationY: number;
+}
+
+/** A district's ground, in world metres: what the renderer tints beneath its vegetation. */
+export interface DistrictPatch {
+  readonly id: string;
+  readonly kind: DistrictKind;
+  readonly ground: DistrictGround;
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly radiusWorldX: number;
+  readonly radiusWorldZ: number;
+  readonly rotationY: number;
+}
+
+/** A rectangle of ground in world metres: the apron and the bed under the tiles. */
+export interface GroundRect {
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly widthWorld: number;
+  readonly depthWorld: number;
 }
 
 export interface FarmWorld {
@@ -147,6 +146,13 @@ export interface FarmWorld {
   readonly bed: GroundRect | null;
   readonly lockedPlots: readonly LockedPlotSquare[];
   /**
+   * Every plot the catalogue has not sold, as a patch of rough ground.
+   *
+   * Wider than `lockedPlots`, which is only the ring being offered: the whole unclaimed reserve has
+   * to read as land rather than as lawn, and this is the layer that does it.
+   */
+  readonly wildPatches: readonly LockedPlotSquare[];
+  /**
    * Wild vegetation inside the locked plots.
    *
    * Deliberately its own list rather than part of `scenery`: this is the only decoration that stands
@@ -158,11 +164,14 @@ export interface FarmWorld {
   readonly lockedBoundary: readonly BoundaryStake[];
   /** The landmarks the world config places, in world metres. */
   readonly landmarks: readonly PlacedLandmark[];
+  /** The island's districts, as blobs of ground for the renderer to tint. */
+  readonly districts: readonly DistrictPatch[];
+  /** Every road, already resampled into a terrain-following centreline. */
+  readonly roads: readonly RoadSpec[];
   readonly scenery: readonly SceneryInstance[];
   readonly pond: PondSpec | null;
   readonly barn: BarnSpec | null;
-  readonly path: PathSpec | null;
-  /** Terrain variation outside the field. Static: a fixed function of the world config. */
+  /** Terrain variation outside the districts. Static: a fixed function of the world config. */
   readonly meadows: readonly MeadowSpec[];
   readonly islandHalfWidthWorld: number;
   readonly islandHalfDepthWorld: number;
@@ -171,7 +180,7 @@ export interface FarmWorld {
   /** World centre of the static world, for camera framing only. Never a coordinate origin. */
   readonly centerWorldX: number;
   readonly centerWorldZ: number;
-  /** The island's outline and elevation. Static: a function of the world config alone. */
+  /** The island's outline, its elevation, and the rectangles it holds level. */
   readonly terrain: TerrainShape;
 }
 
@@ -187,13 +196,15 @@ const EMPTY_WORLD: FarmWorld = {
   apron: null,
   bed: null,
   lockedPlots: [],
+  wildPatches: [],
   lockedScenery: [],
   lockedBoundary: [],
   landmarks: [],
+  districts: [],
+  roads: [],
   scenery: [],
   pond: null,
   barn: null,
-  path: null,
   meadows: [],
   islandHalfWidthWorld: 0,
   islandHalfDepthWorld: 0,
@@ -206,9 +217,10 @@ const EMPTY_WORLD: FarmWorld = {
     halfWidthWorld: 0,
     halfDepthWorld: 0,
     exponent: ISLAND_SHAPE_EXPONENT,
-    plateauRadius: 0,
+    lobes: [],
     reliefWorld: 0,
-    levelAreas: []
+    flatAreas: [],
+    uplands: []
   }
 };
 
@@ -306,6 +318,30 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+const SCENERY_SEED = 0x51f3a7;
+/** Its own seed, so the scrub on locked land is not a copy of the countryside around it. */
+const LOCKED_SCENERY_SEED = 0x2c9e11;
+/**
+ * Cap on the props one world draws.
+ *
+ * The renderer instances them by kind, so the draw calls are flat and this number bounds vertex work
+ * and rebuild cost rather than batches. The island is an estate rather than a field, so the budget
+ * is larger than the alpha's - and still a number, so a future district cannot quietly spend it.
+ */
+const MAX_SCENERY = 900;
+/** How many vegetation clusters are attempted. Rejected candidates cost only a turn of the seed. */
+const SCENERY_CLUSTER_ATTEMPTS = 220;
+/** How far outside the fence a planted thing has to be to count as countryside rather than field. */
+const FIELD_CLEARANCE_TILES = 1.4;
+/** Tile spacing between the stakes that mark the edge of the land that is still locked. */
+const LOCKED_STAKE_SPACING_TILES = 3;
+/** How many wild props a locked plot grows, before the per-prop open-ground filter. */
+const LOCKED_PROPS_PER_PLOT = 70;
+/** Tree spacing inside an orchard's rows, in tiles. */
+const ORCHARD_ROW_SPACING_TILES = 4.2;
+/** How far a prop has to stay from a road's centreline, in tiles. */
+const ROAD_CLEARANCE_TILES = 1.6;
+
 /**
  * The four kinds of vegetation cluster.
  *
@@ -314,18 +350,6 @@ function mulberry32(seed: number): () => number {
  * member count, and the member kinds follow from the cluster's kind.
  */
 type ClusterKind = "FOREST" | "SHRUBS" | "ROCKS" | "FLOWERS";
-
-/** The order clusters are attempted in. Repeated so the mix is roughly a quarter of each. */
-const CLUSTER_KINDS: readonly ClusterKind[] = [
-  "FOREST",
-  "SHRUBS",
-  "ROCKS",
-  "FLOWERS",
-  "FOREST",
-  "SHRUBS",
-  "FLOWERS",
-  "ROCKS"
-];
 
 /** Which prop a roll inside a cluster produces: a table, so the mix is readable rather than nested. */
 function clusterMemberKind(cluster: ClusterKind, roll: number): SceneryKind {
@@ -341,40 +365,86 @@ function clusterMemberKind(cluster: ClusterKind, roll: number): SceneryKind {
   }
 }
 
-const SCENERY_SEED = 0x51f3a7;
-/** Its own seed, so the scrub on locked land is not a copy of the countryside around it. */
-const LOCKED_SCENERY_SEED = 0x2c9e11;
-/**
- * Cap on the props one world draws.
- *
- * The renderer instances them by kind, so the draw calls are flat and this number bounds vertex work
- * and rebuild cost rather than batches. It is high enough that the island reads as furnished at the
- * widest camera and low enough that a rebuild during a farm refresh stays a frame's work.
- */
-const MAX_SCENERY = 360;
-/** How many vegetation clusters are attempted. Rejected candidates cost only a turn of the seed. */
-const SCENERY_CLUSTER_ATTEMPTS = 34;
-/** How far outside the fence a planted thing has to be to count as scenery rather than as field. */
-const FIELD_CLEARANCE_TILES = 1.2;
-/** Tile spacing between the stakes that mark the edge of the land that is still locked. */
-const LOCKED_STAKE_SPACING_TILES = 3;
-/** How many wild props a locked plot grows, before the per-prop open-ground filter. */
-const LOCKED_PROPS_PER_PLOT = 22;
+/** Which cluster a district grows, read off its kind. */
+function clusterKindFor(kind: DistrictKind, roll: number): ClusterKind {
+  switch (kind) {
+    case "FOREST":
+      return "FOREST";
+    case "ORCHARD":
+      return roll < 0.7 ? "SHRUBS" : "FLOWERS";
+    case "PASTURE":
+      return roll < 0.5 ? "SHRUBS" : "FLOWERS";
+    case "COAST":
+      return roll < 0.55 ? "ROCKS" : "SHRUBS";
+    case "WATER":
+      return roll < 0.6 ? "SHRUBS" : "FLOWERS";
+    case "SETTLEMENT":
+      return roll < 0.6 ? "SHRUBS" : "FLOWERS";
+    case "CROPLAND":
+      return "FLOWERS";
+  }
+}
 
 /**
- * Deterministic decoration placement: the tree line that gives the island an edge, the planted bands
- * the reserved regions promise, and vegetation clusters between them.
+ * A deterministic, isotropic blob outline.
  *
- * The seed is a constant and the generator advances a fixed number of times per candidate, so the
- * same world always grows the same trees - and buying a plot cannot reshuffle them, because nothing
- * here reads the farm's tiles. Only land the player cannot farm is decorated: the field, the apron,
- * the paths, the pond, and every landmark's own clearing stay clear.
+ * Districts are blobs rather than rectangles, so a district's ground tint must not have a straight
+ * edge either. Three small lobes, phased from the district's own id, give every district a slightly
+ * different edge that is still the same edge on every client.
  */
-function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstance[] {
+export function districtOutlineScale(angle: number, phase: number): number {
+  return (
+    1 +
+    0.11 * Math.sin(3 * angle + phase) +
+    0.06 * Math.sin(5 * angle - phase * 1.7) +
+    0.035 * Math.sin(7 * angle + phase * 0.6)
+  );
+}
+
+/** A stable phase for a district's outline, from its id. */
+export function districtOutlinePhase(id: string): number {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) hash = (Math.imul(hash, 31) + id.charCodeAt(index)) >>> 0;
+  return (hash % 1000) / 1000 * Math.PI * 2;
+}
+
+/**
+ * Deterministic decoration placement.
+ *
+ * Three sources, in order: the tree line that closes the island's rim, the orchard's rows, and the
+ * vegetation clusters every other district grows. The seed is a constant and the generator advances a
+ * fixed number of times per candidate, so the same world always grows the same trees - and buying a
+ * plot cannot reshuffle them, because nothing here reads the farm's tiles.
+ */
+function buildScenery(
+  layout: FarmLayout,
+  terrain: TerrainShape,
+  roads: readonly RoadSpec[],
+  clearings: readonly TileBounds[]
+): SceneryInstance[] {
   const rand = mulberry32(SCENERY_SEED);
   const scenery: SceneryInstance[] = [];
   const frame = worldFrame(layout.pitch);
-  const field = FENCE.bounds;
+
+  /**
+   * The tiles a road runs through, as a set.
+   *
+   * A prop standing in the middle of the primary road is the most obvious way to make a designed map
+   * look generated, and checking every candidate against every road sample would cost more than the
+   * rest of the world build. One tile lookup keeps it cheap and exact enough.
+   */
+  const roadTiles = new Set<string>();
+  for (const road of roads) {
+    const clearance = Math.ceil(ROAD_CLEARANCE_TILES);
+    for (const sample of road.samples) {
+      const tile = worldToTile({ worldX: sample.worldX, worldZ: sample.worldZ }, frame);
+      for (let dy = -clearance; dy <= clearance; dy += 1) {
+        for (let dx = -clearance; dx <= clearance; dx += 1) {
+          roadTiles.add(`${String(tile.x + dx)},${String(tile.y + dy)}`);
+        }
+      }
+    }
+  }
 
   function place(kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number): void {
     if (scenery.length >= MAX_SCENERY) return;
@@ -391,35 +461,39 @@ function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstanc
   }
 
   /**
-   * Whether a candidate is standing room rather than field, water, path, or a landmark's clearing.
+   * Whether a candidate is standing room rather than field, water, road, or a landmark's clearing.
    *
    * Every exclusion is a constant of the world config, so this answer never depends on how much land
    * the farm owns.
    */
   function isOpenGround(tileX: number, tileY: number): boolean {
+    // Nothing grows past the map, whatever a district's blob or a cluster's radius reaches for.
     if (
-      tileX >= field.minX - FIELD_CLEARANCE_TILES &&
-      tileX <= field.maxX + FIELD_CLEARANCE_TILES &&
-      tileY >= field.minY - FIELD_CLEARANCE_TILES &&
-      tileY <= field.maxY + FIELD_CLEARANCE_TILES
+      tileX < VISUAL_BOUNDS.minX ||
+      tileX > VISUAL_BOUNDS.maxX ||
+      tileY < VISUAL_BOUNDS.minY ||
+      tileY > VISUAL_BOUNDS.maxY
     ) {
       return false;
     }
-    for (const path of PATHS) {
+    // The land the farm works, and the plots it is being offered, are the only places on the island
+    // that stay clear: everywhere else - including the reserve the catalogue has not reached yet - is
+    // countryside, because a field nobody has bought yet is still landscape.
+    for (const clearing of clearings) {
       if (
-        tileX >= path.bounds.minX - 0.6 &&
-        tileX <= path.bounds.maxX + 0.6 &&
-        tileY >= path.bounds.minY - 0.6 &&
-        tileY <= path.bounds.maxY + 0.6
+        tileX >= clearing.minX - FIELD_CLEARANCE_TILES &&
+        tileX <= clearing.maxX + FIELD_CLEARANCE_TILES &&
+        tileY >= clearing.minY - FIELD_CLEARANCE_TILES &&
+        tileY <= clearing.maxY + FIELD_CLEARANCE_TILES
       ) {
         return false;
       }
     }
+    if (roadTiles.has(`${String(Math.round(tileX))},${String(Math.round(tileY))}`)) return false;
     const pondDx = (tileX - POND.center.x) / (POND.radiusX + 1.6);
     const pondDy = (tileY - POND.center.y) / (POND.radiusY + 1.6);
     if (pondDx * pondDx + pondDy * pondDy < 1) return false;
-    if (Math.abs(tileX - FARMSTEAD.center.x) < 4.2 && Math.abs(tileY - FARMSTEAD.center.y) < 4.2) return false;
-    // A ring of clear ground around each landmark, so a tree never grows through the windmill.
+    if (Math.abs(tileX - FARMSTEAD.center.x) < 5 && Math.abs(tileY - FARMSTEAD.center.y) < 5) return false;
     const world = tileToWorld({ x: tileX, y: tileY }, frame);
     for (const landmark of LANDMARKS_WORLD) {
       if (Math.hypot(world.worldX - landmark.worldX, world.worldZ - landmark.worldZ) < landmark.blockingRadiusWorld + 2.2) {
@@ -429,9 +503,8 @@ function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstanc
     return true;
   }
 
-  // The tree line inside the island's rim. It is the reason the world reads as a place with an edge
-  // rather than as a disc that stops, and it is one row deep so it frames the view without walling
-  // the player in.
+  // 1. The tree line inside the island's rim. It is what makes the world read as a place with an edge
+  // rather than as a shape that stops, and it is one row deep so it frames the view.
   const inset = RIM_TREE_BAND_TILES / 2;
   const rimX: number[] = [];
   for (let x = VISUAL_BOUNDS.minX + inset; x <= VISUAL_BOUNDS.maxX - inset; x += RIM_TREE_SPACING_TILES) {
@@ -443,9 +516,10 @@ function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstanc
       const jitterY = (rand() - 0.5) * 0.6;
       const scaleRoll = rand();
       const rotationRoll = rand();
-      // Every other tree in the line is a pine, so the edge has a canopy rather than a cadence.
       const kind: SceneryKind = index % 2 === 0 ? "tree" : "pine";
-      place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
+      if (isOpenGround(x + jitterX, y + jitterY)) {
+        place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
+      }
     }
   }
   for (let y = VISUAL_BOUNDS.minY + inset + RIM_TREE_SPACING_TILES; y <= VISUAL_BOUNDS.maxY - inset - RIM_TREE_SPACING_TILES; y += RIM_TREE_SPACING_TILES) {
@@ -455,44 +529,62 @@ function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstanc
       const scaleRoll = rand();
       const rotationRoll = rand();
       const kind: SceneryKind = rand() < 0.5 ? "tree" : "pine";
-      place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
-    }
-  }
-
-  // The planted bands the reserved regions promise: the orchard's rows and the ranch's windbreak.
-  for (const band of TREE_BANDS) {
-    const spacing = band.spacing;
-    for (let y = band.bounds.minY + band.offset; y <= band.bounds.maxY; y += spacing) {
-      for (let x = band.bounds.minX + band.offset; x <= band.bounds.maxX; x += spacing) {
-        const jitterX = (rand() - 0.5) * 0.5;
-        const jitterY = (rand() - 0.5) * 0.5;
-        const scaleRoll = rand();
-        const rotationRoll = rand();
-        place(band.kind.toLowerCase() as SceneryKind, x + jitterX, y + jitterY, 0.95 + scaleRoll * 0.4, rotationRoll * Math.PI * 2);
+      if (isOpenGround(x + jitterX, y + jitterY)) {
+        place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
       }
     }
   }
 
-  // The clusters. Each one is a pocket of the same vegetation: a wood, a thicket, an outcrop, or a
-  // flower patch. Centres sit further out than the middle of the island, so the tended ground around
-  // the farm stays open and the landscape thickens toward the water - the visual hierarchy the
-  // alpha's even scatter could not produce.
+  // 2. The orchard: rows, not a scatter. Rows are what makes perennial agriculture legible from a
+  // distance, and they are laid on the district's own axis so a lane follows the ground it is on.
+  for (const district of DISTRICTS) {
+    if (district.kind !== "ORCHARD") continue;
+    const cos = Math.cos(district.rotationY);
+    const sin = Math.sin(district.rotationY);
+    for (let row = -Math.ceil(district.radiusY); row <= district.radiusY; row += ORCHARD_ROW_SPACING_TILES) {
+      for (let column = -Math.ceil(district.radiusX); column <= district.radiusX; column += ORCHARD_ROW_SPACING_TILES) {
+        const jitterX = (rand() - 0.5) * 0.7;
+        const jitterY = (rand() - 0.5) * 0.7;
+        const scaleRoll = rand();
+        const rotationRoll = rand();
+        const localX = column + jitterX;
+        const localZ = row + jitterY;
+        const tileX = district.center.x + localX * cos - localZ * sin;
+        const tileY = district.center.y + localX * sin + localZ * cos;
+        if (!isOpenGround(tileX, tileY)) continue;
+        place("tree", tileX, tileY, 0.95 + scaleRoll * 0.35, rotationRoll * Math.PI * 2);
+      }
+    }
+  }
+
+  // 3. The clusters. A cluster's centre is drawn from a district in proportion to that district's own
+  // density, so woodland is dense, pasture is nearly open, and the settlement has a few trees in it.
+  const weighted: District[] = [];
+  for (const district of DISTRICTS) {
+    // A district with no density grows nothing and does not spend a turn of the seed.
+    if (district.density <= 0) continue;
+    const shares = Math.max(1, Math.round(district.density * 12));
+    for (let index = 0; index < shares; index += 1) weighted.push(district);
+  }
   for (let attempt = 0; attempt < SCENERY_CLUSTER_ATTEMPTS; attempt += 1) {
-    const kind = CLUSTER_KINDS[attempt % CLUSTER_KINDS.length] ?? "SHRUBS";
+    const district = weighted[attempt % weighted.length];
+    if (district === undefined) continue;
+    const kindRoll = rand();
     const angle = rand() * Math.PI * 2;
-    // Biased outward without ever reaching the shore, where the beach has to stay clear.
-    const radius = 0.44 + 0.44 * Math.sqrt(rand());
+    const radius = Math.sqrt(rand()) * 0.92;
     const memberRoll = rand();
     const sizeRoll = rand();
 
-    const rim = islandRimPoint(angle, terrain);
-    const centerX = terrain.centerWorldX + (rim.worldX - terrain.centerWorldX) * radius;
-    const centerZ = terrain.centerWorldZ + (rim.worldZ - terrain.centerWorldZ) * radius;
-    const center = worldToTile({ worldX: centerX, worldZ: centerZ }, frame);
-    if (!isOpenGround(center.x, center.y)) continue;
+    const cos = Math.cos(district.rotationY);
+    const sin = Math.sin(district.rotationY);
+    const localX = Math.cos(angle) * radius * district.radiusX;
+    const localZ = Math.sin(angle) * radius * district.radiusY;
+    const centerX = district.center.x + localX * cos - localZ * sin;
+    const centerZ = district.center.y + localX * sin + localZ * cos;
 
-    const clusterRadius = 2.2 + sizeRoll * 3.4;
-    const members = Math.round(6 + memberRoll * 9);
+    const cluster = clusterKindFor(district.kind, kindRoll);
+    const clusterRadius = 2.2 + sizeRoll * 3.2;
+    const members = Math.round(5 + memberRoll * 10 * Math.max(0.35, district.density));
     for (let member = 0; member < members; member += 1) {
       const memberAngle = rand() * Math.PI * 2;
       const memberDistance = clusterRadius * Math.sqrt(rand());
@@ -500,17 +592,15 @@ function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstanc
       const scaleRoll = rand();
       const rotationRoll = rand();
       const at = {
-        x: center.x + Math.cos(memberAngle) * memberDistance,
-        y: center.y + Math.sin(memberAngle) * memberDistance
+        x: centerX + Math.cos(memberAngle) * memberDistance,
+        y: centerZ + Math.sin(memberAngle) * memberDistance
       };
       if (!isOpenGround(at.x, at.y)) continue;
-      place(
-        clusterMemberKind(kind, memberKindRoll),
-        at.x,
-        at.y,
-        0.78 + scaleRoll * 0.55,
-        rotationRoll * Math.PI * 2
-      );
+      // A district's tree share decides how woody its clusters are: a pasture's thicket is mostly
+      // scrub even where a wood's would be canopy.
+      const rolled = clusterMemberKind(cluster, memberKindRoll);
+      const kind: SceneryKind = memberKindRoll > district.treeShare && rolled === "tree" ? "bush" : rolled;
+      place(kind, at.x, at.y, 0.78 + scaleRoll * 0.55, rotationRoll * Math.PI * 2);
     }
   }
 
@@ -523,7 +613,7 @@ function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstanc
  * The alpha drew locked land as a grey slab under a fog rectangle with a padlock on it: legible as a
  * price tag, unreadable as a place. This is the replacement - the plot keeps its boundary and its
  * sign, but the ground between them grows brambles, weeds, and stones, so the ring around the field
- * reads as untended countryside the player has not claimed rather than as a developer placeholder.
+ * reads as land the player has not claimed rather than as a developer placeholder.
  *
  * It lives in its own list rather than in `scenery` because it is the one decoration allowed to stand
  * beside the field, and callers that assert "nothing grows in the farm" have to be able to tell the
@@ -531,16 +621,17 @@ function buildScenery(layout: FarmLayout, terrain: TerrainShape): SceneryInstanc
  */
 function buildLockedScenery(
   plots: readonly PlotSquare[],
-  terrain: TerrainShape,
   layout: FarmLayout
 ): SceneryInstance[] {
-  const rand = mulberry32(LOCKED_SCENERY_SEED);
   const frame = worldFrame(layout.pitch);
   const scenery: SceneryInstance[] = [];
   /** Keeps the plot's edge readable: a stake line with a thicket sitting on top of it is noise. */
   const edgeMargin = 1.4;
 
   for (const plot of plots) {
+    // One seed per plot rather than one for the list: buying a plot has to clear *that* plot's wild
+    // growth, not reshuffle every other plot's.
+    const rand = mulberry32(LOCKED_SCENERY_SEED + plot.plotIndex * 0x9e3779b1);
     for (let index = 0; index < LOCKED_PROPS_PER_PLOT; index += 1) {
       const x = plot.minX + edgeMargin + rand() * (plot.maxX - plot.minX + 1 - edgeMargin * 2);
       const y = plot.minY + edgeMargin + rand() * (plot.maxY - plot.minY + 1 - edgeMargin * 2);
@@ -575,11 +666,7 @@ function buildLockedScenery(
  * drawing. The result is a single line around the claimed field, which is the affordance the grey
  * slab used to carry, without the slab.
  */
-function buildLockedBoundary(
-  plots: readonly PlotSquare[],
-  terrain: TerrainShape,
-  layout: FarmLayout
-): BoundaryStake[] {
+function buildLockedBoundary(plots: readonly PlotSquare[], layout: FarmLayout): BoundaryStake[] {
   const frame = worldFrame(layout.pitch);
   const stakes: BoundaryStake[] = [];
   const isLocked = (x: number, y: number): boolean =>
@@ -637,9 +724,6 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
   }
   if (outer === null) return EMPTY_WORLD;
 
-  // Everything static is a function of the world config alone: the island, the yard, the pond, and
-  // the paths keep their world positions while plots are bought, so the static layer never rebuilds
-  // because the farm grew. Only `inner`/`outer`/`lockedPlots` below follow progression.
   const mapping = worldFrame(input.layout.pitch);
   // The island is the visual bounds plus its shore margin, so the beach has ground to stand on.
   const halfWidthTiles = (VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2 + ISLAND_SHORE_MARGIN_TILES;
@@ -651,29 +735,26 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
   // The config's world measures are authored at the standard pitch; a layout drawn at another tile
   // size scales them by the same factor every other measure here uses.
   const pitchScale = input.layout.pitch / (DEFAULT_TILE_SIZE + DEFAULT_TILE_GAP);
-  /** Half the reserved field - the fence rectangle - which is what has to stay level. */
-  const reserveHalfExtentWorld = FARM_HALF_EXTENT_WORLD * pitchScale;
   const islandShape = {
     centerWorldX: centerWorld.worldX,
     centerWorldZ: centerWorld.worldZ,
     halfWidthWorld: halfWidthTiles * input.layout.pitch,
     halfDepthWorld: halfDepthTiles * input.layout.pitch,
-    exponent: ISLAND_SHAPE_EXPONENT
+    exponent: ISLAND_SHAPE_EXPONENT,
+    lobes: ISLAND_LOBES
   };
   const terrain: TerrainShape = {
     ...islandShape,
-    // The plateau's corner is the farthest the apron reaches; past it the ground is allowed to rise.
-    plateauRadius: islandRadiusAt(
-      islandShape.centerWorldX + reserveHalfExtentWorld,
-      islandShape.centerWorldZ + reserveHalfExtentWorld,
-      islandShape
-    ),
     reliefWorld: TERRAIN_RELIEF_WORLD * pitchScale,
-    levelAreas: terrainLevelAreas(mapping)
+    flatAreas: terrainFlatAreas(mapping),
+    uplands: ISLAND_UPLANDS
   };
 
   const lockedPlots: LockedPlotSquare[] = previewLockedPlots(input.plots).map((plot) => {
-    const square = plotSquare(plot.plotIndex);
+    return placedPlot(plotSquare(plot.plotIndex));
+  });
+
+  function placedPlot(square: PlotSquare): LockedPlotSquare {
     const centre = tileToWorld(
       { x: (square.minX + square.maxX) / 2, y: (square.minY + square.maxY) / 2 },
       mapping
@@ -684,23 +765,11 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
       centerWorldZ: centre.worldZ,
       sizeWorld: PLOT_TILE_SIZE * input.layout.pitch
     };
-  });
+  }
 
-  // The pond, the yard, and the main path are reserved zones from the world config, not positions
-  // derived from how much land exists.
-  const pondCentre = tileToWorld(POND.center, mapping);
-  const yardCentre = tileToWorld(FARMSTEAD.center, mapping);
-  const mainPath = PATHS[0];
-  const pathCentre =
-    mainPath === undefined
-      ? null
-      : tileToWorld(
-          {
-            x: (mainPath.bounds.minX + mainPath.bounds.maxX) / 2,
-            y: (mainPath.bounds.minY + mainPath.bounds.maxY) / 2
-          },
-          mapping
-        );
+  const wildPatches: LockedPlotSquare[] = input.plots
+    .filter((plot) => !plot.unlocked)
+    .map((plot) => placedPlot(plotSquare(plot.plotIndex)));
 
   /**
    * A rectangle of ground with `marginTiles` of slack on every side, in world metres.
@@ -725,9 +794,31 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
   const owned = inner ?? outer;
   const apron = groundRect(owned, APRON_MARGIN_TILES);
   const bed = groundRect(owned, 0);
-  // What a default camera frames: the owned field and the apron around it, not the whole reserve.
+  // What a default camera frames: the owned field and the apron around it, not the whole estate.
   const ownedHalfTiles = Math.max(owned.maxX - owned.minX + 1, owned.maxY - owned.minY + 1) / 2;
   const farmHalfExtentWorld = ownedHalfTiles * input.layout.pitch + APRON_MARGIN_TILES * input.layout.pitch;
+
+  const roads = ROADS.map((road) => buildRoadSpec(road, input.layout, terrain));
+
+  /**
+   * What scenery may not grow on: the land the farm works, and the plots it is being offered.
+   *
+   * Everything else is countryside, including the rest of the reserve. That is the point of the
+   * master plan: an unbought field is still landscape, and only the ring the catalogue is selling
+   * right now is cleared for its own treatment.
+   */
+  const clearings: TileBounds[] = [
+    {
+      minX: owned.minX - APRON_MARGIN_TILES,
+      maxX: owned.maxX + APRON_MARGIN_TILES,
+      minY: owned.minY - APRON_MARGIN_TILES,
+      maxY: owned.maxY + APRON_MARGIN_TILES
+    },
+    ...previewLockedPlots(input.plots).map((plot) => plotSquare(plot.plotIndex))
+  ];
+
+  const pondCentre = tileToWorld(POND.center, mapping);
+  const yardCentre = tileToWorld(FARMSTEAD.center, mapping);
 
   return {
     inner,
@@ -735,10 +826,35 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     apron,
     bed,
     lockedPlots,
-    lockedScenery: buildLockedScenery(previewLockedPlots(input.plots).map((plot) => plotSquare(plot.plotIndex)), terrain, input.layout),
-    lockedBoundary: buildLockedBoundary(previewLockedPlots(input.plots).map((plot) => plotSquare(plot.plotIndex)), terrain, input.layout),
+    wildPatches,
+    // Every plot the catalogue has not sold, not just the ring it is offering: land the player has
+    // not bought is countryside, and it belongs to the overlay because buying a plot clears it.
+    lockedScenery: buildLockedScenery(
+      input.plots
+        .filter((plot) => !plot.unlocked)
+        .map((plot) => plotSquare(plot.plotIndex)),
+      input.layout
+    ),
+    lockedBoundary: buildLockedBoundary(
+      previewLockedPlots(input.plots).map((plot) => plotSquare(plot.plotIndex)),
+      input.layout
+    ),
     landmarks: LANDMARKS.map((landmark) => ({ ...landmark, ...tileToWorld(landmark.tile, mapping) })),
-    scenery: buildScenery(input.layout, terrain),
+    districts: DISTRICTS.map((district) => {
+      const centre = tileToWorld(district.center, mapping);
+      return {
+        id: district.id,
+        kind: district.kind,
+        ground: district.ground,
+        worldX: centre.worldX,
+        worldZ: centre.worldZ,
+        radiusWorldX: district.radiusX * input.layout.pitch,
+        radiusWorldZ: district.radiusY * input.layout.pitch,
+        rotationY: district.rotationY
+      };
+    }),
+    roads,
+    scenery: buildScenery(input.layout, terrain, roads, clearings),
     meadows: MEADOWS.map((patch) => {
       const centre = tileToWorld(patch.center, mapping);
       return {
@@ -762,15 +878,6 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
       worldZ: yardCentre.worldZ,
       rotationY: FARMSTEAD.rotationY
     },
-    path:
-      mainPath === undefined || pathCentre === null
-        ? null
-        : {
-            worldX: pathCentre.worldX,
-            worldZ: pathCentre.worldZ,
-            widthWorld: (mainPath.bounds.maxX - mainPath.bounds.minX) * input.layout.pitch + input.layout.tileSize,
-            depthWorld: (mainPath.bounds.maxY - mainPath.bounds.minY) * input.layout.pitch + input.layout.tileSize
-          },
     islandHalfWidthWorld: halfWidthTiles * input.layout.pitch,
     islandHalfDepthWorld: halfDepthTiles * input.layout.pitch,
     farmHalfExtentWorld,
@@ -779,3 +886,4 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     terrain
   };
 }
+

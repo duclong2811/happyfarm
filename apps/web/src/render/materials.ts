@@ -60,6 +60,14 @@ export interface SharedAssets {
   readonly dirtDark: MeshStandardMaterial;
   /** Dry, muted earth for meadow patches: bare ground that has not been worked. */
   readonly bareEarth: MeshStandardMaterial;
+  /** The road network: packed earth for the roads that matter, a lighter track for the paths. */
+  readonly road: MeshStandardMaterial;
+  readonly roadMinor: MeshStandardMaterial;
+  /** District grounds: the settlement's square, pasture, wetland edge, and forest floor. */
+  readonly plaza: MeshStandardMaterial;
+  readonly pasture: MeshStandardMaterial;
+  readonly wetland: MeshStandardMaterial;
+  readonly forestFloor: MeshStandardMaterial;
   readonly water: MeshStandardMaterial;
   readonly waterDeep: MeshStandardMaterial;
   readonly wood: MeshStandardMaterial;
@@ -165,6 +173,12 @@ export function createSharedAssets(): SharedAssets {
     dirt: material(standard(0xc9a26a)),
     dirtDark: material(standard(0xb0854f)),
     bareEarth: material(standard(0xc4a97b, { roughness: 0.94 })),
+    road: material(standard(0xc19a63, { roughness: 0.96 })),
+    roadMinor: material(standard(0xccab7c, { roughness: 0.96 })),
+    plaza: material(standard(0xcbb894, { roughness: 0.92 })),
+    pasture: material(standard(0x8ec663, { roughness: 0.95 })),
+    wetland: material(standard(0x6f9f5e, { roughness: 0.95 })),
+    forestFloor: material(standard(0x6d8a4a, { roughness: 0.96 })),
     water: material(standard(0x49a7dd, { transparent: true, opacity: 0.86 })),
     waterDeep: material(standard(0x2b7fbf)),
     wood: material(standard(0xa9763f)),

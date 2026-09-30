@@ -139,12 +139,48 @@ function buildStorageShed(assets: SharedAssets): Group {
   return group;
 }
 
+/**
+ * A harbour: a timber quay with a warehouse at its root and mooring posts along its edge.
+ *
+ * The future port district's anchor. It is built to be read from the estate camera - a long straight
+ * edge against the water, which is the one silhouette nothing else on the island has - and its
+ * placement is the only thing that claims the coast is for trade rather than for scenery.
+ */
+function buildHarbor(assets: SharedAssets): Group {
+  const group = new Group();
+  // The quay deck, running out over the water.
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.42, z: 2.6, scaleX: 4.4, scaleY: 0.22, scaleZ: 5.6 }));
+  // Its piles, so the deck stands on something.
+  for (const x of [-1.9, -0.6, 0.6, 1.9]) {
+    for (const z of [0.4, 2.6, 4.8]) {
+      group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.2, z, scaleX: 0.16, scaleY: 0.9, scaleZ: 0.16 }));
+    }
+  }
+  // Mooring posts at the end of the quay.
+  for (const x of [-2.1, 2.1]) {
+    group.add(piece({ material: assets.timber, geometry: assets.cylinder, x, y: 0.75, z: 5.2, scaleX: 0.22, scaleY: 1.1, scaleZ: 0.22 }));
+  }
+  // The warehouse at the root of the quay.
+  group.add(piece({ material: assets.timber, geometry: assets.box, x: 0, y: 0.85, z: -1.6, scaleX: 4.2, scaleY: 1.7, scaleZ: 2.4 }));
+  group.add(
+    piece({ material: assets.roofTile, geometry: assets.roof, x: 0, y: 2.2, z: -1.6, scaleX: 3.2, scaleY: 0.95, scaleZ: 1.9, rotationY: Math.PI / 4 })
+  );
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.55, z: -0.4, scaleX: 1.4, scaleY: 1.1, scaleZ: 0.12 }));
+  // Crates waiting to be loaded, and a mast so the port reads from the far side of the island.
+  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.6, y: 0.7, z: 1.4, scaleX: 0.8, scaleY: 0.56, scaleZ: 0.8 }));
+  group.add(piece({ material: assets.plaster, geometry: assets.box, x: -1.6, y: 1.1, z: 1.4, scaleX: 0.6, scaleY: 0.4, scaleZ: 0.6, rotationY: 0.5 }));
+  group.add(piece({ material: assets.timber, geometry: assets.cylinder, x: 2.6, y: 1.6, z: -1.2, scaleX: 0.14, scaleY: 3.2, scaleZ: 0.14 }));
+  group.add(piece({ material: assets.canvas, geometry: assets.box, x: 2.6, y: 2.9, z: -0.6, scaleX: 0.08, scaleY: 0.9, scaleZ: 1.2 }));
+  return group;
+}
+
 const BUILDERS: Readonly<Record<PlacedLandmark["kind"], (assets: SharedAssets) => Group>> = {
   FARMHOUSE: buildFarmhouse,
   WINDMILL: buildWindmill,
   WELL: buildWell,
   MARKET_STALL: buildMarketStall,
-  STORAGE_SHED: buildStorageShed
+  STORAGE_SHED: buildStorageShed,
+  HARBOR: buildHarbor
 };
 
 /**

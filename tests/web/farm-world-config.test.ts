@@ -12,6 +12,7 @@ import {
 import {
   FARM_HALF_EXTENT_WORLD,
   FARM_FIELD_BOUNDS,
+  DISTRICTS,
   FENCE,
   ISLAND_SHORE_MARGIN_TILES,
   ISLAND_HALF_DEPTH_WORLD,
@@ -19,13 +20,12 @@ import {
   isStaticWorldWalkable,
   isWaterTile,
   MEADOWS,
-  PATHS,
   POND,
+  ROADS,
+  ROAD_WIDTH_TILES,
   SPAWN_TILE,
-  TREE_BANDS,
   VISUAL_BOUNDS,
-  WORLD_CONFIG_VERSION,
-  WORLD_REGIONS
+  WORLD_CONFIG_VERSION
 } from "../../apps/web/src/render/world-config";
 import { APRON_MARGIN_TILES } from "../../apps/web/src/render/world";
 
@@ -92,26 +92,46 @@ describe("fixed world coordinates", () => {
 });
 
 describe("static world config", () => {
-  it("keeps every reserved region bounded and outside the farm field", () => {
-    for (const region of WORLD_REGIONS) {
-      expect(region.bounds.minX).toBeLessThanOrEqual(region.bounds.maxX);
-      expect(region.bounds.minY).toBeLessThanOrEqual(region.bounds.maxY);
-      const overlaps =
-        region.bounds.minX <= FARM_FIELD_BOUNDS.maxX &&
-        region.bounds.maxX >= FARM_FIELD_BOUNDS.minX &&
-        region.bounds.minY <= FARM_FIELD_BOUNDS.maxY &&
-        region.bounds.maxY >= FARM_FIELD_BOUNDS.minY;
-      expect(overlaps, region.id).toBe(false);
+  it("keeps every district a real area, and the farmland district on the reserve", () => {
+    const farmland = DISTRICTS.find((district) => district.kind === "CROPLAND");
+    expect(farmland, "the island needs a district for the land the catalogue sells").toBeDefined();
+    expect(farmland?.density).toBe(0);
+    expect(farmland?.ground).toBe("NONE");
+    for (const district of DISTRICTS) {
+      expect(district.radiusX, district.id).toBeGreaterThan(0);
+      expect(district.radiusY, district.id).toBeGreaterThan(0);
+      expect(district.labelKey.startsWith("world.district."), district.id).toBe(true);
+      if (district.kind === "CROPLAND") continue;
+      // Every other district sits *outside* the reserve: a district is landscape, and the reserve is
+      // the land the catalogue sells. A blob's own edge may reach the fence, but its centre may not.
+      const centreInsideReserve =
+        district.center.x >= FARM_FIELD_BOUNDS.minX &&
+        district.center.x <= FARM_FIELD_BOUNDS.maxX &&
+        district.center.y >= FARM_FIELD_BOUNDS.minY &&
+        district.center.y <= FARM_FIELD_BOUNDS.maxY;
+      expect(centreInsideReserve, district.id).toBe(false);
     }
   });
 
-  it("contains the farm field and every region inside the visual world", () => {
+  it("contains the farm field and every district inside the visual world", () => {
     const inside = (inner: typeof VISUAL_BOUNDS, outer: typeof VISUAL_BOUNDS): boolean =>
       inner.minX >= outer.minX && inner.maxX <= outer.maxX && inner.minY >= outer.minY && inner.maxY <= outer.maxY;
     expect(inside(FARM_FIELD_BOUNDS, VISUAL_BOUNDS)).toBe(true);
     expect(inside(FENCE.bounds, VISUAL_BOUNDS)).toBe(true);
-    for (const region of WORLD_REGIONS) expect(inside(region.bounds, VISUAL_BOUNDS), region.id).toBe(true);
-    for (const path of PATHS) expect(inside(path.bounds, VISUAL_BOUNDS), path.id).toBe(true);
+    for (const district of DISTRICTS) {
+      // The blob's bounding rectangle has to fit, so a district cannot reach past the island.
+      expect(district.center.x - district.radiusX, district.id).toBeGreaterThanOrEqual(VISUAL_BOUNDS.minX);
+      expect(district.center.x + district.radiusX, district.id).toBeLessThanOrEqual(VISUAL_BOUNDS.maxX);
+      expect(district.center.y - district.radiusY, district.id).toBeGreaterThanOrEqual(VISUAL_BOUNDS.minY);
+      expect(district.center.y + district.radiusY, district.id).toBeLessThanOrEqual(VISUAL_BOUNDS.maxY);
+    }
+    for (const road of ROADS) {
+      for (const point of road.points) {
+        expect(inside({ minX: point.x, maxX: point.x, minY: point.y, maxY: point.y }, VISUAL_BOUNDS), road.id).toBe(true);
+      }
+      expect(ROAD_WIDTH_TILES[road.kind], road.id).toBeGreaterThan(0);
+      expect(road.points.length, road.id).toBeGreaterThan(1);
+    }
   });
 
   it("spawns on walkable ground outside the farm, the water, and every obstacle", () => {
@@ -141,18 +161,26 @@ describe("static world config", () => {
     expect(FARM_HALF_EXTENT_WORLD).toBeGreaterThanOrEqual(fieldHalfTiles * PITCH);
   });
 
-  it("keeps every tree band inside the region it plants", () => {
-    expect(TREE_BANDS.length).toBeGreaterThan(0);
-    for (const band of TREE_BANDS) {
-      const host = WORLD_REGIONS.find((region) =>
-        band.bounds.minX >= region.bounds.minX &&
-        band.bounds.maxX <= region.bounds.maxX &&
-        band.bounds.minY >= region.bounds.minY &&
-        band.bounds.maxY <= region.bounds.maxY
-      );
-      expect(host, band.id).toBeDefined();
-      expect(band.spacing, band.id).toBeGreaterThan(1);
+  it("keeps every road off the reserved field", () => {
+    // A road is landscape. If one crossed the reserve it would be drawn across land the catalogue
+    // sells, and the first plot a player bought would have a road through it.
+    expect(ROADS.length).toBeGreaterThan(3);
+    const clearance = 1.2;
+    for (const road of ROADS) {
+      for (const point of road.points) {
+        const insideReserve =
+          point.x >= FARM_FIELD_BOUNDS.minX - clearance &&
+          point.x <= FARM_FIELD_BOUNDS.maxX + clearance &&
+          point.y >= FARM_FIELD_BOUNDS.minY - clearance &&
+          point.y <= FARM_FIELD_BOUNDS.maxY + clearance;
+        expect(insideReserve, `${road.id} at ${String(point.x)},${String(point.y)}`).toBe(false);
+      }
     }
+    // …and the network has a hierarchy rather than being one class of line.
+    const kinds = new Set(ROADS.map((road) => road.kind));
+    expect(kinds.has("PRIMARY")).toBe(true);
+    expect(kinds.has("SECONDARY")).toBe(true);
+    expect(kinds.has("PATH")).toBe(true);
   });
 
   it("keeps every terrain patch off the land the farm owns at the start", () => {
@@ -183,8 +211,8 @@ describe("static world config", () => {
     expect(isStaticWorldWalkable(SPAWN_TILE)).toBe(true);
     expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX + 1, y: VISUAL_BOUNDS.maxY + 1 })).toBe(false);
     expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.minX - 1, y: 0 })).toBe(false);
-    // The island is a rounded rectangle, not the bounding box: the box's own corners are sea, while
-    // the middle of its edge is land and so is the corner of the reserve the old ellipse cut off.
+    // The island is a modulated superellipse, not the bounding box: the box's own corners are sea,
+    // while the middle of its edge is land.
     expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX, y: VISUAL_BOUNDS.maxY })).toBe(false);
     expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX, y: 17 })).toBe(true);
     expect(isStaticWorldWalkable({ x: 36, y: -6 })).toBe(true);

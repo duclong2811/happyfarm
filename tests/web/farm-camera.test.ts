@@ -3,6 +3,7 @@ import {
   cameraFrameExtent,
   createCameraRig,
   PAN_LIMIT_FACTOR,
+  zoomRangeFor,
   ZOOM_MAX,
   ZOOM_MIN
 } from "../../apps/web/src/render/camera";
@@ -101,6 +102,31 @@ describe("farming camera", () => {
     expect(rig.panOffsetX).toBe(offset.x);
     expect(rig.panOffsetZ).toBe(offset.z);
     expect(rig.target(view(6.48, 10))).toEqual(target);
+  });
+
+  it("reaches the island from a frame that opens on the field", () => {
+    // The range is a property of the world: a bigger island asks for a wider pull-back, and the
+    // default is only the floor so a tiny world never zooms out further than it has to.
+    const shipped = zoomRangeFor({ islandExtent: 50.22, farmExtent: 8.1 });
+    expect(shipped.min).toBe(ZOOM_MIN);
+    expect(shipped.max).toBeGreaterThan(50.22 / 8.1);
+    expect(shipped.max).toBeGreaterThan(ZOOM_MAX);
+    expect(zoomRangeFor({ islandExtent: 8, farmExtent: 8 }).max).toBe(ZOOM_MAX);
+
+    const rig = createCameraRig();
+    rig.setZoomRange(shipped.min, shipped.max);
+    for (let spin = 0; spin < 20; spin += 1) rig.zoomByWheel(500);
+    expect(rig.zoom).toBeCloseTo(shipped.max, 9);
+    for (let spin = 0; spin < 40; spin += 1) rig.zoomByWheel(-500);
+    expect(rig.zoom).toBeCloseTo(shipped.min, 9);
+  });
+
+  it("ignores a zoom range that could not be one", () => {
+    const rig = createCameraRig();
+    rig.setZoomRange(0, -1);
+    rig.setZoomRange(Number.NaN, 3);
+    for (let spin = 0; spin < 20; spin += 1) rig.zoomByWheel(500);
+    expect(rig.zoom).toBe(ZOOM_MAX);
   });
 
   it("does not rebuild the pan when the farm refreshes", () => {

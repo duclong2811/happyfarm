@@ -28,7 +28,7 @@
 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
-import { cameraFrameExtent, createCameraRig } from "./camera";
+import { cameraFrameExtent, createCameraRig, zoomRangeFor, ZOOM_MIN } from "./camera";
 import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials";
@@ -801,6 +801,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     // Outside the signature: the framing extent follows the land the farm owns, and that changes when
     // a plot is bought without the island itself changing.
     farmExtent = Math.max(next.world.farmHalfExtentWorld, MIN_FRAMED_EXTENT);
+    // …and so does how far the camera is allowed to pull back, because the estate view has to reach
+    // the island from a frame that starts on the field.
+    const range = zoomRangeFor({ islandExtent: worldExtent, farmExtent });
+    cameraRig.setZoomRange(ZOOM_MIN, range.max);
 
     tileGroup.clear();
     cropGroup.clear();

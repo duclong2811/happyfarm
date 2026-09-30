@@ -27,6 +27,9 @@ Committed and verified through `46915e0`:
   an island with a real outline and gentle elevation, ground that hugs the land the farm owns, land
   for sale that looks like land, clustered scenery, five landmarks, a gradient sky, tone mapping,
   shadows, and instanced tiles and props.
+- The island master plan (ADR 0023): one persistent island per player, an asymmetric coastline with
+  bays and headlands, eight districts, a three-class road network, a lowland/upland terrain, wild
+  land on everything the catalogue has not sold, and a harbour where the primary road ends.
 - Client work: fullscreen HUD, Three.js island world, camera pan/zoom, locked-land frontier,
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the
@@ -42,7 +45,7 @@ Committed and verified through `46915e0`:
   a reflowing action dock, and safe-area aware placement (ADR 0017). Verified in emulation only.
 
 Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (65 files /
-619 tests), `npm run build --workspace @happy-farm/web`,
+626 tests), `npm run build --workspace @happy-farm/web`,
 `npm run build --workspace @happy-farm/api`, and a local playable dev host (ADR 0011) where the
 browser never sees the development token.
 

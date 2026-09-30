@@ -131,6 +131,25 @@ landmark set, or the renderer's lighting, sky, shadows, and instancing.
 - Scenery is clustered and deterministically seeded in `world.ts`, and drawn instanced by kind in
   `apps/web/src/render/scenery.ts`. Tile slabs are one `InstancedMesh` built in `scene.ts`.
 
+Read `docs/decisions/0023-island-master-plan.md` before changing what the island *is*: its outline,
+its districts, its roads, its landmarks, or the assumption that one player owns one persistent
+island rather than one map.
+
+- The single semantic world definition is `apps/web/src/render/world-config.ts`: `VISUAL_BOUNDS`,
+  `ISLAND_LOBES`, `DISTRICTS`, `ROADS`/`ROAD_WIDTH_TILES`, `POND`, `FARMSTEAD`, `LANDMARKS`,
+  `FENCE`, `SPAWN_TILE`, `terrainFlatAreas`, `ISLAND_UPLANDS`, and `TERRAIN_SHAPE`. No other module
+  may hold a world coordinate of its own.
+- Island outline and elevation: `terrain-height.ts` (`islandRadiusAt`, `islandRimPoint`,
+  `islandOutlineScale`, `terrainHeightAt`, `flatMask`, `uplandOffset`). The playable tile grid never
+  samples it.
+- Roads: `apps/web/src/render/roads.ts` (waypoints to a terrain-following centreline) and
+  `roadGeometry` in `terrain.ts` (the ribbon).
+- Districts are landscape, not ownership: `FarmWorld.districts` tints ground, `FarmWorld.roads`
+  carries the network, and the *only* thing that decides where farming is allowed is still
+  `farm_tiles` plus the plot catalogue.
+- The camera's maximum zoom is derived, not constant: `zoomRangeFor` in `camera.ts`, applied by
+  `scene.ts` from the island and field extents.
+
 Regions are client/static and visual only: they are not domain concepts, not D1 rows, and never gate
 gameplay. Land authority stays `farm_tiles` plus the plot catalogue.
 

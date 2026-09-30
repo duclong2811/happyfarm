@@ -10,8 +10,18 @@ import {
 } from "three";
 import { tileToWorld, worldFrame, type FarmLayout } from "./layout";
 import type { SharedAssets } from "./materials";
-import { LOCKED_GROUND_SURFACE_Y, type FarmWorld, type LockedPlotSquare, type MeadowSpec, type PondSpec } from "./world";
+import {
+  districtOutlinePhase,
+  districtOutlineScale,
+  LOCKED_GROUND_SURFACE_Y,
+  type FarmWorld,
+  type LockedPlotSquare,
+  type MeadowSpec,
+  type PondSpec,
+  type RoadSpec
+} from "./world";
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
+import type { DistrictGround } from "./world-config";
 import {
   FENCE_THICKNESS_WORLD,
   fenceGeometry,
@@ -329,31 +339,131 @@ function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld): v
 }
 
 /**
- * The yard track: a dirt road that runs just inside the fence.
+ * The road network, as ribbons on the ground.
  *
- * The fence encloses the whole reserve, and the plots the catalogue can sell only fill part of it, so
- * without something on the ground the boundary reads as a fence around nothing. The track gives the
- * enclosure a purpose, leads to every gate, and is the reason the reserve reads as a farm's yard
- * rather than as leftover space. It is static: it is a function of the fence alone.
+ * Each road arrives already resampled into a terrain-following centreline, so all this has to do is
+ * offset every sample by half the road's width and stitch the offsets into a strip. Roads are the
+ * map's explanation - the primary road is the way to the harbour, the secondary roads are the ways to
+ * work - which is why they are drawn as one continuous surface rather than as a set of decals.
  */
-function addYardTrack(group: Group, assets: SharedAssets, fence: FenceGeometry, pitch: number): void {
-  const inset = pitch * 1.6;
-  const width = pitch * 1.3;
-  const halfWidth = fence.halfWidthWorld - inset;
-  const halfDepth = fence.halfDepthWorld - inset;
-  const top = APRON_TOP_Y - 0.02;
-  for (const side of [1, -1]) {
-    group.add(box(assets, assets.dirtDark, halfWidth * 2, 0.1, width, fence.centerWorldX, top, fence.centerWorldZ + side * halfDepth));
-    group.add(box(assets, assets.dirtDark, width, 0.1, halfDepth * 2, fence.centerWorldX + side * halfWidth, top, fence.centerWorldZ));
+function roadGeometry(roads: readonly RoadSpec[]): { readonly major: BufferGeometry; readonly minor: BufferGeometry } {
+  const majorPositions: number[] = [];
+  const majorIndices: number[] = [];
+  const minorPositions: number[] = [];
+  const minorIndices: number[] = [];
+
+  for (const road of roads) {
+    const positions = road.kind === "PATH" ? minorPositions : majorPositions;
+    const indices = road.kind === "PATH" ? minorIndices : majorIndices;
+    const half = road.widthWorld / 2;
+    const base = positions.length / 3;
+    const count = road.samples.length;
+    for (let index = 0; index < count; index += 1) {
+      const sample = road.samples[index];
+      const previous = road.samples[index - 1] ?? sample;
+      const next = road.samples[index + 1] ?? sample;
+      if (sample === undefined || previous === undefined || next === undefined) continue;
+      const tangentX = next.worldX - previous.worldX;
+      const tangentZ = next.worldZ - previous.worldZ;
+      const length = Math.hypot(tangentX, tangentZ);
+      // A zero-length step would put both edges on the centreline and collapse the strip.
+      const normalX = length === 0 ? 0 : -tangentZ / length;
+      const normalZ = length === 0 ? 1 : tangentX / length;
+      positions.push(sample.worldX + normalX * half, sample.worldY, sample.worldZ + normalZ * half);
+      positions.push(sample.worldX - normalX * half, sample.worldY, sample.worldZ - normalZ * half);
+    }
+    for (let index = 0; index < count - 1; index += 1) {
+      const left = base + index * 2;
+      const right = left + 1;
+      const nextLeft = left + 2;
+      const nextRight = left + 3;
+      // Wound so the strip's normal is up: left, next right, right / left, next left, next right.
+      indices.push(left, nextRight, right);
+      indices.push(left, nextLeft, nextRight);
+    }
+  }
+
+  return {
+    major: ribbonGeometry(majorPositions, majorIndices),
+    minor: ribbonGeometry(minorPositions, minorIndices)
+  };
+}
+
+function ribbonGeometry(positions: readonly number[], indices: readonly number[]): BufferGeometry {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex([...indices]);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function addRoads(group: Group, assets: SharedAssets, world: FarmWorld): void {
+  if (world.roads.length === 0) return;
+  const { major, minor } = roadGeometry(world.roads);
+  const majorMesh = new Mesh(major, assets.road);
+  majorMesh.receiveShadow = true;
+  group.add(majorMesh);
+  if (world.roads.some((road) => road.kind === "PATH")) {
+    const minorMesh = new Mesh(minor, assets.roadMinor);
+    minorMesh.receiveShadow = true;
+    group.add(minorMesh);
+  } else {
+    minor.dispose();
   }
 }
 
-/** The main path: a dirt route from the south gate to the island's edge. */
-function addPaths(group: Group, assets: SharedAssets, world: FarmWorld): void {
-  if (world.path !== null) {
-    group.add(
-      box(assets, assets.dirtDark, world.path.widthWorld, 0.1, world.path.depthWorld, world.path.worldX, APRON_TOP_Y - 0.05, world.path.worldZ)
-    );
+/** The material a district's ground is tinted with. Colour only; nothing reads it back. */
+function districtGroundMaterial(assets: SharedAssets, ground: DistrictGround): MeshStandardMaterial | null {
+  switch (ground) {
+    case "NONE":
+      return null;
+    case "PLAZA":
+      return assets.plaza;
+    case "ORCHARD":
+      return assets.bareEarth;
+    case "PASTURE":
+      return assets.pasture;
+    case "WETLAND":
+      return assets.wetland;
+    case "FOREST_FLOOR":
+      return assets.forestFloor;
+    case "SAND":
+      return assets.sand;
+  }
+}
+
+/**
+ * Each district's ground, as an irregular blob that follows the terrain.
+ *
+ * The outline is modulated per district, so no district's ground has a straight edge and two
+ * districts do not share an identical silhouette. It is a tint under the vegetation, not a boundary:
+ * nothing about it blocks, unlocks, or costs anything.
+ */
+function addDistrictGround(group: Group, assets: SharedAssets, world: FarmWorld): void {
+  const terrain = world.terrain;
+  for (const district of world.districts) {
+    const material = districtGroundMaterial(assets, district.ground);
+    if (material === null) continue;
+    const phase = districtOutlinePhase(district.id);
+    const geometry = radialSurface({
+      rings: 4,
+      sectors: 34,
+      rimAt: (angle) => {
+        const scale = districtOutlineScale(angle, phase);
+        const local = {
+          x: Math.cos(angle) * district.radiusWorldX * scale,
+          z: Math.sin(angle) * district.radiusWorldZ * scale
+        };
+        const cos = Math.cos(district.rotationY);
+        const sin = Math.sin(district.rotationY);
+        return { x: local.x * cos - local.z * sin, z: local.x * sin + local.z * cos };
+      },
+      translate: (x, z) => ({ worldX: district.worldX + x, worldZ: district.worldZ + z }),
+      heightAt: (worldX, worldZ) => ISLAND_TOP_Y + terrainHeightAt(worldX, worldZ, terrain) + PATCH_LIFT_WORLD
+    });
+    const mesh = new Mesh(geometry, material);
+    mesh.receiveShadow = true;
+    group.add(mesh);
   }
 }
 
@@ -574,7 +684,9 @@ function addSignpost(group: Group, assets: SharedAssets, plot: LockedPlotSquare,
  * Nothing here is a rule; the price, the level, and the purchase still come from the server.
  */
 function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
-  for (const plot of world.lockedPlots) {
+  // Every unclaimed plot gets the rough ground; only the ring the catalogue is offering gets the
+  // stakes and the sign, because those are what say "this one, next".
+  for (const plot of world.wildPatches) {
     // A rounded patch of rough ground rather than a slab: the plot still reads as a plot, but its
     // edge is a soft boundary between two kinds of ground instead of the outline of a missing asset.
     // Slightly inset, so a margin of the ground between two plots separates them without a drawn line.
@@ -584,7 +696,10 @@ function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, lay
       centerWorldZ: plot.centerWorldZ,
       halfWidthWorld: half,
       halfDepthWorld: half,
-      exponent: ISLAND_SHAPE_EXPONENT
+      exponent: ISLAND_SHAPE_EXPONENT,
+      // Locked plots are rounded squares on purpose: the plot *is* a square, and the stake line and
+      // the scrub are what stop it reading as one.
+      lobes: []
     };
     const patch = new Mesh(
       radialSurface({
@@ -607,6 +722,9 @@ function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, lay
     );
     patch.receiveShadow = true;
     group.add(patch);
+  }
+
+  for (const plot of world.lockedPlots) {
     addSignpost(group, assets, plot, layout);
   }
 
@@ -627,8 +745,8 @@ export function buildTerrain(
   const fence = fenceGeometry(layout.pitch);
   addIsland(group, assets, world);
   addMeadows(group, assets, world);
-  addYardTrack(group, assets, fence, layout.pitch);
-  addPaths(group, assets, world);
+  addDistrictGround(group, assets, world);
+  addRoads(group, assets, world);
   addFence(group, assets, fence, layout.pitch);
   if (world.pond !== null) addPond(group, assets, world.pond);
   addBarn(group, assets, world, barnModel);

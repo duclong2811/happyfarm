@@ -32,14 +32,15 @@ complexity the renderer does not use.
 | Barn footprint (gameplay) | circle radius 2.2 at the canonical yard position | `world-config.ts` (`STATIC_OBSTACLES`) |
 | Scenery tree scale | 0.78 on the shared model | `scene.ts` |
 | Camera | perspective, FOV 45, direction (0.62, 0.95, 0.62), near 0.5, far 1400 | `scene.ts` |
-| Camera distance | `framedExtent * 2.35 * zoom`; opens on the owned field, follow framing 9, zoom 0.62..4.4 | `scene.ts`, `camera.ts` |
+| Camera distance | `framedExtent * 2.35 * zoom`; opens on the owned field, follow framing 9, zoom 0.62..`zoomRangeFor` | `scene.ts`, `camera.ts` |
 | Farm field reservation | tiles [0, 35]^2 (36 x 36) | `world-config.ts` (`FARM_FIELD_BOUNDS`) |
-| Playable island | tiles [-13, 48]^2 (62 x 62) | `world-config.ts` (`VISUAL_BOUNDS`) |
-| Island outline | a superellipse, exponent 4, plus 1.5 tiles of shore margin | `world-config.ts`, `terrain-height.ts` |
+| Playable island | tiles [-26, 62]^2 (89 x 89) | `world-config.ts` (`VISUAL_BOUNDS`) |
+| Island outline | a superellipse, exponent 3.4, scaled by three radial lobes, plus 2 tiles of shore margin | `world-config.ts`, `terrain-height.ts` |
 | Ground surface where level | `y = -0.04` | `terrain-height.ts` (`GROUND_SURFACE_Y`) |
-| Hill relief | up to 5.5 world units, in the ring outside the reserved field | `world-config.ts` (`TERRAIN_RELIEF_WORLD`) |
+| Hill relief | up to 6.5 world units, on the upland side of the island | `world-config.ts` (`TERRAIN_RELIEF_WORLD`) |
 | Cultivated apron | 1.5 tiles of dirt around the land the farm owns | `world.ts` (`APRON_MARGIN_TILES`) |
-| Scenery instances | capped at 360, placed as clusters, instanced by kind | `world.ts`, `scenery.ts` |
+| Road widths | 1.9 / 1.3 / 0.8 tiles for primary / secondary / path | `world-config.ts` (`ROAD_WIDTH_TILES`) |
+| Scenery instances | capped at 900, placed by district as rows and clusters, instanced by kind | `world.ts`, `scenery.ts` |
 | One plot cohort | 12 x 12 tiles | `packages/domain/src/plot.ts` |
 
 Assets are authored in **world metres**, and the base of every model sits on `y = 0` so it can be
