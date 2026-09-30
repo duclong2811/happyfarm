@@ -241,8 +241,7 @@ function createSkyDome(): Mesh {
  * How tall a fully grown gameplay tree is drawn, in world metres.
  *
  * The player is 1.6 and the world's scenery is authored in metres, so a tree the player plants has to
- * stand above them the way the ones around it do. The Kenney model is 1.708 units tall as authored,
- * which is why the factor is a little over one and a half.
+ * stand above them the way the ones around it do. The curated model is normalized to one world unit\n * across its largest dimension, so the factor is the tree's height in metres.
  */
 const TREE_MODEL_SCALE = 2.6 / 1.708;
 
@@ -847,7 +846,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
         // A tree keeps its tile, so it is drawn in its own group and never as a crop. Selection maps
         // to the tile coordinate the authoritative tree row is looked up by, never to a mesh, a
         // display name, or an array index.
-        const treePlantNode = treePlant(tile, assets, sceneryModels.get("kenney_tree"), tree);
+        // A tree the player planted is looked at from arm's length, so it draws the curated
+        // broadleaf rather than anything cheap: one model for every planted tree, cached like the
+        // rest, and the per-instance cost is a clone of a scene the world already loaded.
+        const treePlantNode = treePlant(tile, assets, sceneryModel("tree_broad_3"), tree);
         treeGroup.add(treePlantNode);
         pickTargets.set(treePlantNode, coordinate);
       }

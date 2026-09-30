@@ -138,9 +138,28 @@ touching the import pipeline.
   category, which tier, and the scale that turns "one world unit" into metres - is
   `apps/web/src/render/environment-model-urls.ts`, and the model files are
   `apps/web/src/assets/models/{environment,props}/`. Nothing else may name a `.glb`.
-- The world model names a *kind*, a *tier* (`HERO` for the curated set near the player, `FILLER` for
-  the light Kenney set at the island's rim) and a variant roll; `scenery.ts` resolves those to a
-  model. `HERO_SCENERY_BUDGET` in `world.ts` is what bounds the triangle cost of the whole island.
+- The world model names a *kind*, a *tier* and a variant roll; `scenery.ts` resolves those to a
+  model. Every placement today is `HERO` (the curated set); `FILLER` is the empty hook a real
+  distance-based level of detail will use. `HERO_SCENERY_BUDGET` in `world.ts` bounds the triangle
+  cost of the island, and a placement past the budget is *skipped* rather than downgraded.
+
+Read `apps/web/src/render/placement.ts` before adding, moving, or re-shaping any placement system.
+
+- Every decorative placement - open-country scenery, the wild growth on locked land, the shoreline
+  band, the hedgerow - is validated by `placementRejection` against one `PlacementWorld`: the
+  authoritative coastline (`islandRadiusAt`, the same curve the terrain mesh and collision use), the
+  map bounds, the road tile set, standing water, and building clearings. A placement names its
+  `ShorelineClass`, which is how a tree stays 10% inland while grass may reach the water.
+- Buildings are data: `apps/web/src/render/buildings.ts` (`BuildingDefinition`, `BuildingVariant`,
+  `ReservedBuilding`). A building declares its district, footprint, collision circle, visual tier,
+  and the model each tier will use. Tier 1 is the primitive geometry drawn today; nothing here reads
+  the player's level, and nothing may until a contract explicitly says so.
+- District functions and their vegetation profile live in `DISTRICTS` in `world-config.ts`: one row
+  per function (crops, civic, orchard, pasture, water, woodland, managed woodland, coast), with the
+  density and tree share that make the districts read differently from the estate camera.
+- `tests/web/farm-placement.test.ts` holds the invariants: nothing outside the island, no large tree
+  near the water, buildings inside their own district, no scenery in the crop reserve, and one
+  primary road reaching the settlement, the fields' gate, and the harbour.
 - Importing a new model is `tools/asset-pipeline/node/import-cc0.mjs` (glTF → self-contained GLB,
   base-colour textures downscaled, normalized to one world unit across its largest dimension with its
   base on `y = 0`). Its output is recorded in `tools/asset-pipeline/node/import-report.json`.

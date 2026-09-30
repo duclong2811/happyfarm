@@ -1,4 +1,4 @@
-import type { PlotDTO } from "@happy-farm/contracts";
+﻿import type { PlotDTO } from "@happy-farm/contracts";
 import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTile } from "./layout";
 import {
@@ -22,9 +22,10 @@ import {
   type DistrictKind,
   type PlacedLandmark
 } from "./world-config";
-import { GROUND_SURFACE_Y, terrainHeightAt, type TerrainShape } from "./terrain-height";
+import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
 import { buildRoadSpec, type RoadSpec } from "./roads";
 export type { RoadSpec } from "./roads";
+import { placementRejection, type PlacementWorld, type ShorelineClass } from "./placement";
 
 /**
  * The world model the renderer draws.
@@ -347,8 +348,7 @@ const MAX_SCENERY = 700;
 /**
  * How many placements may draw a curated model before the rest fall back to the light set.
  *
- * The curated trees are ten times the triangles of the Kenney ones, so this is the number that keeps
- * "make the districts look good" from becoming "make the island unrenderable". It is deliberately
+ * A curated tree is a few thousand triangles, so this is the number that keeps\n * "make the districts look good" from becoming "make the island unrenderable". It is deliberately
  * generous for the districts a player walks and tight enough that the far side of the island is
  * filler, which is what the estate camera wants anyway.
  */
@@ -394,6 +394,8 @@ function clusterKindFor(kind: DistrictKind, roll: number): ClusterKind {
   switch (kind) {
     case "FOREST":
       return "FOREST";
+    case "FORESTRY":
+      return roll < 0.75 ? "FOREST" : "SHRUBS";
     case "ORCHARD":
       return roll < 0.7 ? "SHRUBS" : "FLOWERS";
     case "PASTURE":
@@ -458,13 +460,6 @@ function buildScenery(
    */
   let heroBudget = HERO_SCENERY_BUDGET;
 
-  /** The tier a placement gets: the curated set while there is budget, the light set after that. */
-  function claimTier(): SceneryTier {
-    if (heroBudget <= 0) return "FILLER";
-    heroBudget -= 1;
-    return "HERO";
-  }
-
   /**
    * The tiles a road runs through, as a set.
    *
@@ -485,16 +480,70 @@ function buildScenery(
     }
   }
 
-  function place(
-    kind: SceneryKind,
-    tileX: number,
-    tileY: number,
-    scale: number,
-    rotationY: number,
-    tier: SceneryTier
-  ): void {
-    if (scenery.length >= MAX_SCENERY) return;
+  /**
+   * The world facts every placement is judged against.
+   *
+   * The coastline is the same `IslandShape` the terrain mesh, the beach, and the player's collision
+   * world use, which is the whole point: there is no second opinion about where the sea is.
+   */
+  const placementWorld: PlacementWorld = {
+    island: terrain,
+    frame,
+    bounds: {
+      minX: tileToWorld({ x: VISUAL_BOUNDS.minX, y: 0 }, frame).worldX,
+      maxX: tileToWorld({ x: VISUAL_BOUNDS.maxX, y: 0 }, frame).worldX,
+      minY: tileToWorld({ x: 0, y: VISUAL_BOUNDS.minY }, frame).worldZ,
+      maxY: tileToWorld({ x: 0, y: VISUAL_BOUNDS.maxY }, frame).worldZ
+    },
+    roadTiles,
+    waterBodies: [
+      {
+        ...tileToWorld(POND.center, frame),
+        radiusWorldX: (POND.radiusX + 1.6) * layout.pitch,
+        radiusWorldZ: (POND.radiusY + 1.6) * layout.pitch
+      }
+    ],
+    clearings: [
+      { ...tileToWorld(FARMSTEAD.center, frame), radiusWorld: 5 * layout.pitch },
+      ...LANDMARKS_WORLD.map((landmark) => ({
+        worldX: landmark.worldX,
+        worldZ: landmark.worldZ,
+        radiusWorld: landmark.blockingRadiusWorld + 1.6
+      }))
+    ]
+  };
+
+  /** The shoreline class a kind belongs to: what may stand how close to the water. */
+  function shorelineFor(kind: SceneryKind): ShorelineClass {
+    switch (kind) {
+      case "tree":
+      case "pine":
+      case "prop":
+        return "LARGE";
+      case "bush":
+      case "rock":
+        return "MEDIUM";
+      case "flower":
+      case "plant":
+        return "SMALL";
+    }
+  }
+
+  function place(kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number): void {
+    // The budget bounds how much detail the island carries. Past it a placement is *skipped*, not
+    // downgraded to a primitive: filling the rest with placeholder shapes is what made the earlier
+    // passes noisy, and negative space is worth more than a full map.
+    if (heroBudget <= 0 || scenery.length >= MAX_SCENERY) return;
     const position = tileToWorld({ x: tileX, y: tileY }, frame);
+    if (
+      placementRejection(
+        { worldX: position.worldX, worldZ: position.worldZ, shoreline: shorelineFor(kind) },
+        placementWorld
+      ) !== null
+    ) {
+      return;
+    }
+    heroBudget -= 1;
     scenery.push({
       kind,
       worldX: position.worldX,
@@ -503,7 +552,7 @@ function buildScenery(
       worldZ: position.worldZ,
       scale,
       rotationY,
-      tier,
+      tier: "HERO",
       variantRoll: rand()
     });
   }
@@ -518,15 +567,8 @@ function buildScenery(
    * reshuffle every time a plot was bought.
    */
   function isOpenGround(tileX: number, tileY: number): boolean {
-    // Nothing grows past the map, whatever a district's blob or a cluster's radius reaches for.
-    if (
-      tileX < VISUAL_BOUNDS.minX ||
-      tileX > VISUAL_BOUNDS.maxX ||
-      tileY < VISUAL_BOUNDS.minY ||
-      tileY > VISUAL_BOUNDS.maxY
-    ) {
-      return false;
-    }
+    // The reserved field is excluded whole: this layer is static, and the land inside the reserve is
+    // the land the player changes. The reserve's own vegetation is the overlay's job.
     if (
       tileX >= FENCE.bounds.minX - FIELD_CLEARANCE_TILES &&
       tileX <= FENCE.bounds.maxX + FIELD_CLEARANCE_TILES &&
@@ -535,53 +577,7 @@ function buildScenery(
     ) {
       return false;
     }
-    if (roadTiles.has(`${String(Math.round(tileX))},${String(Math.round(tileY))}`)) return false;
-    const pondDx = (tileX - POND.center.x) / (POND.radiusX + 1.6);
-    const pondDy = (tileY - POND.center.y) / (POND.radiusY + 1.6);
-    if (pondDx * pondDx + pondDy * pondDy < 1) return false;
-    if (Math.abs(tileX - FARMSTEAD.center.x) < 5 && Math.abs(tileY - FARMSTEAD.center.y) < 5) return false;
-    const world = tileToWorld({ x: tileX, y: tileY }, frame);
-    for (const landmark of LANDMARKS_WORLD) {
-      if (Math.hypot(world.worldX - landmark.worldX, world.worldZ - landmark.worldZ) < landmark.blockingRadiusWorld + 2.2) {
-        return false;
-      }
-    }
     return true;
-  }
-
-  // 1. The tree line inside the island's rim. It is what makes the world read as a place with an edge
-  // rather than as a shape that stops, and it is one row deep so it frames the view.
-  const inset = RIM_TREE_BAND_TILES / 2;
-  const rimX: number[] = [];
-  for (let x = VISUAL_BOUNDS.minX + inset; x <= VISUAL_BOUNDS.maxX - inset; x += RIM_TREE_SPACING_TILES) {
-    rimX.push(x);
-  }
-  for (const [index, x] of rimX.entries()) {
-    for (const y of [VISUAL_BOUNDS.minY + inset, VISUAL_BOUNDS.maxY - inset]) {
-      const jitterX = (rand() - 0.5) * 0.6;
-      const jitterY = (rand() - 0.5) * 0.6;
-      const scaleRoll = rand();
-      const rotationRoll = rand();
-      const kind: SceneryKind = index % 2 === 0 ? "tree" : "pine";
-      if (isOpenGround(x + jitterX, y + jitterY)) {
-        // The rim is a screen around the island, so it is the one place the light set is right: it is
-        // seen from far away, in silhouette, and its job is to close the view rather than to be looked
-        // at. Height is in metres now, and the player is 1.6.
-        place(kind, x + jitterX, y + jitterY, 2.4 + scaleRoll * 1.2, rotationRoll * Math.PI * 2, "FILLER");
-      }
-    }
-  }
-  for (let y = VISUAL_BOUNDS.minY + inset + RIM_TREE_SPACING_TILES; y <= VISUAL_BOUNDS.maxY - inset - RIM_TREE_SPACING_TILES; y += RIM_TREE_SPACING_TILES) {
-    for (const x of [VISUAL_BOUNDS.minX + inset, VISUAL_BOUNDS.maxX - inset]) {
-      const jitterX = (rand() - 0.5) * 0.6;
-      const jitterY = (rand() - 0.5) * 0.6;
-      const scaleRoll = rand();
-      const rotationRoll = rand();
-      const kind: SceneryKind = rand() < 0.5 ? "tree" : "pine";
-      if (isOpenGround(x + jitterX, y + jitterY)) {
-        place(kind, x + jitterX, y + jitterY, 2.4 + scaleRoll * 1.2, rotationRoll * Math.PI * 2, "FILLER");
-      }
-    }
   }
 
   // 2. The orchard: rows, not a scatter. Rows are what makes perennial agriculture legible from a
@@ -603,7 +599,7 @@ function buildScenery(
         if (!isOpenGround(tileX, tileY)) continue;
         // A fruit tree is smaller than a woodland one and planted on a uniform grid, so an orchard
         // reads as rows of the same tree at the same size.
-        place("tree", tileX, tileY, 2.1 + scaleRoll * 0.5, rotationRoll * Math.PI * 2, claimTier());
+        place("tree", tileX, tileY, 2.1 + scaleRoll * 0.5, rotationRoll * Math.PI * 2);
       }
     }
   }
@@ -651,11 +647,56 @@ function buildScenery(
       // scrub even where a wood's would be canopy.
       const rolled = clusterMemberKind(cluster, memberKindRoll);
       const kind: SceneryKind = memberKindRoll > district.treeShare && rolled === "tree" ? "bush" : rolled;
-      place(kind, at.x, at.y, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2, claimTier());
+      place(kind, at.x, at.y, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2);
     }
   }
 
-  // 4. The hedgerow along the estate side of the fence.
+  // 4. Managed woodland: rows, like an orchard, because that is the whole visual difference between
+  // woodland somebody cuts and woodland nobody has touched. The rows are wider apart than an
+  // orchard's and mixed so the stand reads as planted rather than as a plantation of one clone.
+  for (const district of DISTRICTS) {
+    if (district.kind !== "FORESTRY") continue;
+    const cos = Math.cos(district.rotationY);
+    const sin = Math.sin(district.rotationY);
+    for (let row = -Math.ceil(district.radiusY); row <= district.radiusY; row += 3.4) {
+      for (let column = -Math.ceil(district.radiusX); column <= district.radiusX; column += 3.4) {
+        const jitterX = (rand() - 0.5) * 0.6;
+        const jitterZ = (rand() - 0.5) * 0.6;
+        const kindRoll = rand();
+        const scaleRoll = rand();
+        const rotationRoll = rand();
+        const localX = column + jitterX;
+        const localZ = row + jitterZ;
+        const tileX = district.center.x + localX * cos - localZ * sin;
+        const tileY = district.center.y + localX * sin + localZ * cos;
+        const kind: SceneryKind = kindRoll < 0.62 ? "pine" : "tree";
+        place(kind, tileX, tileY, 2.8 + scaleRoll * 1.1, rotationRoll * Math.PI * 2);
+      }
+    }
+  }
+
+  // 5. The shoreline: a sparse, controlled band of what a coast is actually made of.
+  //
+  // The island no longer gets a continuous ring of trees - that hid the coastline and read as a wall
+  // - so the edge is decorated by walking the shore and stepping a short way inland, placing small
+  // things only: pebbles, grass, the occasional bush. Their shoreline class is what keeps the trees
+  // away from the water and lets the grass reach it.
+  const SHORE_SAMPLES = 48;
+  for (let index = 0; index < SHORE_SAMPLES; index += 1) {
+    const angle = (index / SHORE_SAMPLES) * Math.PI * 2 + rand() * 0.08;
+    const rim = islandRimPoint(angle, terrain);
+    const inward = 0.9 + rand() * 0.07;
+    const worldX = terrain.centerWorldX + (rim.worldX - terrain.centerWorldX) * inward;
+    const worldZ = terrain.centerWorldZ + (rim.worldZ - terrain.centerWorldZ) * inward;
+    const tile = worldToTile({ worldX, worldZ }, frame);
+    const kindRoll = rand();
+    const scaleRoll = rand();
+    const rotationRoll = rand();
+    const kind: SceneryKind = kindRoll < 0.45 ? "rock" : kindRoll < 0.85 ? "plant" : "bush";
+    place(kind, tile.x, tile.y, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2);
+  }
+
+  // 6. The hedgerow along the estate side of the fence.
   //
   // The fence draws the reserve as a hard square, and the plots inside it cannot hide that. A hedge
   // on the outside of the boundary breaks the line into a planted edge - which is what a farm does
@@ -668,7 +709,7 @@ function buildScenery(
     const rotationRoll = rand();
     const kind: SceneryKind = rand() < 0.78 ? "bush" : "tree";
     if (isOpenGround(along + jitter, 38.6)) {
-      place(kind, along + jitter, 38.6, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2, claimTier());
+      place(kind, along + jitter, 38.6, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2);
     }
   }
   for (let along = 1; along <= 38; along += 2.5) {
@@ -677,7 +718,7 @@ function buildScenery(
     const rotationRoll = rand();
     const kind: SceneryKind = rand() < 0.78 ? "bush" : "tree";
     if (isOpenGround(-3.4, along + jitter)) {
-      place(kind, -3.4, along + jitter, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2, claimTier());
+      place(kind, -3.4, along + jitter, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2);
     }
   }
 

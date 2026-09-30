@@ -34,6 +34,12 @@ Committed and verified through `46915e0`:
   Kenney kit demoted to the island's rim, a small set of Medieval Village farm props, an asset import
   pipeline that normalizes every model to one world unit and one self-contained GLB, and
   `docs/ASSET_LICENSES.md` recording the provenance of everything third-party.
+- World cleanup and district planning (V5): one placement-validation layer driven by the
+  authoritative coastline - which is what had let scenery stand in the sea - the Kenney family and
+  the tree ring that hid the coast removed, explicit per-district vegetation profiles, a managed
+  forestry district beside the natural woodland, a settlement plan with reserved plots, a shoreline
+  band instead of a wall of trees, and `BuildingDefinition` with visual tiers ready for a structure
+  pass.
 - Client work: fullscreen HUD, Three.js island world, camera pan/zoom, locked-land frontier,
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the
@@ -49,7 +55,7 @@ Committed and verified through `46915e0`:
   a reflowing action dock, and safe-area aware placement (ADR 0017). Verified in emulation only.
 
 Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (65 files /
-623 tests), `npm run build --workspace @happy-farm/web`,
+634 tests), `npm run build --workspace @happy-farm/web`,
 `npm run build --workspace @happy-farm/api`, and a local playable dev host (ADR 0011) where the
 browser never sees the development token.
 

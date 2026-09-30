@@ -1,0 +1,161 @@
+import type { TileCoordinate } from "./layout";
+import { DISTRICTS, LANDMARKS, type DistrictKind, type LandmarkKind } from "./world-config";
+
+/**
+ * Buildings as data, with the shape a progression pass will need.
+ *
+ * Today every one of these draws its first tier: the stylized primitives the settlement has always
+ * been built from. What this module adds is the *structure* to replace them one tier at a time -
+ * a building knows which district it belongs to, how much ground it stands on, what it blocks, and
+ * which model each visual tier uses - so a future "the town hall grows when the island reaches level
+ * four" pass is a table edit and a model import rather than a renderer rewrite.
+ *
+ * Nothing here is connected to server progression, and nothing here may be: a tier is a *visual*
+ * statement chosen by the client, and the server owns anything that is a rule.
+ */
+
+/** One step of a building's visual life. Tier 1 is always the first thing that is drawn. */
+export interface BuildingVariant {
+  readonly tier: number;
+  /** The manifest id of the model this tier draws, or null while it is still primitive geometry. */
+  readonly modelId: string | null;
+  readonly labelKey: string;
+}
+
+export interface BuildingDefinition {
+  readonly id: string;
+  readonly kind: LandmarkKind;
+  readonly district: DistrictKind;
+  readonly tile: TileCoordinate;
+  readonly rotationY: number;
+  /** The ground the building stands on, in world metres. Used to keep scenery and roads clear. */
+  readonly footprint: { readonly halfWidthWorld: number; readonly halfDepthWorld: number };
+  /** What a walker goes around. A simplified circle, never the render mesh. */
+  readonly collisionRadiusWorld: number;
+  /** Which tier this world draws. Client-side only; it does not read the player's level. */
+  readonly visualTier: number;
+  readonly variants: readonly BuildingVariant[];
+}
+
+/** A place reserved for a building that does not exist yet: the settlement's plan, written down. */
+export interface ReservedBuilding {
+  readonly id: string;
+  readonly kind: LandmarkKind | "TOWN_HALL" | "WAREHOUSE";
+  readonly district: DistrictKind;
+  readonly tile: TileCoordinate;
+  readonly rotationY: number;
+  readonly footprint: { readonly halfWidthWorld: number; readonly halfDepthWorld: number };
+}
+
+/**
+ * The tier ladder for each kind of building.
+ *
+ * Written out rather than generated, because the ladder *is* the design decision: a market becomes a
+ * covered market before it becomes a trade hall, and a harbour is a pier before it is a port. Only
+ * tier 1 exists today.
+ */
+const LADDERS: Readonly<Record<LandmarkKind, readonly BuildingVariant[]>> = {
+  FARMHOUSE: [
+    { tier: 1, modelId: null, labelKey: "building.farmhouse.t1" },
+    { tier: 2, modelId: null, labelKey: "building.farmhouse.t2" },
+    { tier: 3, modelId: null, labelKey: "building.farmhouse.t3" }
+  ],
+  WINDMILL: [
+    { tier: 1, modelId: null, labelKey: "building.windmill.t1" },
+    { tier: 2, modelId: null, labelKey: "building.windmill.t2" }
+  ],
+  WELL: [
+    { tier: 1, modelId: null, labelKey: "building.well.t1" },
+    { tier: 2, modelId: null, labelKey: "building.well.t2" }
+  ],
+  MARKET_STALL: [
+    { tier: 1, modelId: null, labelKey: "building.market.t1" },
+    { tier: 2, modelId: null, labelKey: "building.market.t2" },
+    { tier: 3, modelId: null, labelKey: "building.market.t3" }
+  ],
+  STORAGE_SHED: [
+    { tier: 1, modelId: null, labelKey: "building.storage.t1" },
+    { tier: 2, modelId: null, labelKey: "building.storage.t2" },
+    { tier: 3, modelId: null, labelKey: "building.warehouse.t3" }
+  ],
+  HARBOR: [
+    { tier: 1, modelId: null, labelKey: "building.harbor.t1" },
+    { tier: 2, modelId: null, labelKey: "building.harbor.t2" },
+    { tier: 3, modelId: null, labelKey: "building.harbor.t3" }
+  ]
+};
+
+/** Which district a kind belongs to. A building placed anywhere else is a plan error, not a style. */
+const DISTRICT_BY_KIND: Readonly<Record<LandmarkKind, DistrictKind>> = {
+  FARMHOUSE: "SETTLEMENT",
+  WELL: "SETTLEMENT",
+  MARKET_STALL: "SETTLEMENT",
+  WINDMILL: "ORCHARD",
+  STORAGE_SHED: "PASTURE",
+  HARBOR: "COAST"
+};
+
+/** The buildings the island draws today, one per placed landmark. */
+export const BUILDINGS: readonly BuildingDefinition[] = LANDMARKS.map((landmark) => ({
+  id: landmark.id,
+  kind: landmark.kind,
+  district: DISTRICT_BY_KIND[landmark.kind],
+  tile: landmark.tile,
+  rotationY: landmark.rotationY,
+  footprint: {
+    halfWidthWorld: Math.max(1.4, landmark.blockingRadiusWorld),
+    halfDepthWorld: Math.max(1.4, landmark.blockingRadiusWorld)
+  },
+  collisionRadiusWorld: landmark.blockingRadiusWorld,
+  visualTier: 1,
+  variants: LADDERS[landmark.kind]
+}));
+
+/**
+ * The settlement's reserved plots.
+ *
+ * A civic centre is a *plan*, not whatever ground happened to be free: a town hall on the square,
+ * a warehouse on the road out of it, and room between them for the market the island already has.
+ * Nothing is built here yet; these are the coordinates the future buildings will take, so the
+ * square does not slowly fill with whatever came next.
+ */
+export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
+  {
+    id: "town_hall",
+    kind: "TOWN_HALL",
+    district: "SETTLEMENT",
+    tile: { x: 52, y: -4 },
+    rotationY: Math.PI,
+    footprint: { halfWidthWorld: 3.2, halfDepthWorld: 2.6 }
+  },
+  {
+    id: "warehouse",
+    kind: "WAREHOUSE",
+    district: "SETTLEMENT",
+    tile: { x: 52, y: 4 },
+    rotationY: -Math.PI / 2,
+    footprint: { halfWidthWorld: 3.6, halfDepthWorld: 2.4 }
+  },
+  {
+    id: "fishery_store",
+    kind: "WAREHOUSE",
+    district: "COAST",
+    tile: { x: 44, y: 47 },
+    rotationY: Math.PI / 4,
+    footprint: { halfWidthWorld: 2.4, halfDepthWorld: 2 }
+  }
+];
+
+/** The variant a world at this tier draws. Total, so a renderer never has to guess. */
+export function variantFor(building: BuildingDefinition): BuildingVariant {
+  const exact = building.variants.find((variant) => variant.tier === building.visualTier);
+  const first = building.variants[0];
+  if (exact !== undefined) return exact;
+  if (first === undefined) throw new Error(`building ${building.id} has no variants`);
+  return first;
+}
+
+/** The district definition a building claims to belong to. */
+export function districtOf(kind: DistrictKind): (typeof DISTRICTS)[number] | null {
+  return DISTRICTS.find((district) => district.kind === kind) ?? null;
+}

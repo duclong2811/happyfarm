@@ -16,7 +16,15 @@ alternative is not "assume CC0"; it is to stop and ask.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Stylized Nature MegaKit | Quaternius | https://quaternius.com/packs/stylizednaturemegakit.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | glTF → GLB | environment: trees, bushes, rocks, flowers, plants | Yes - see "Normalization" |
 | Medieval Village MegaKit | Quaternius | https://quaternius.com/packs/medievalvillagemegakit.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | glTF → GLB | props: crate, wagon, fence rails | Yes - see "Normalization" |
-| Kenney Nature Kit | Kenney | https://kenney.nl/assets/nature-kit | CC0 1.0 | shipped before this pass (2026-09-2x) | GLB | environment filler: rim trees, distant scrub | No |
+| ~~Kenney Nature Kit~~ | Kenney | https://kenney.nl/assets/nature-kit | CC0 1.0 | shipped 2026-09-2x, **removed in V5** | - | - | - |
+
+**Removed in V5.** The Kenney Nature Kit was the project's first scenery family and its licence was
+and is CC0, so removing it is a design decision rather than a licensing one: two visibly different
+low-poly dialects in one scene dated the world, and the way it was used - a continuous tree line
+around the island's rim - hid the coastline that V3 and V4 worked to make readable. Its five models
+were deleted from `apps/web/src/assets/models/kenney-nature/` after confirming nothing referenced
+them. The one place a second, cheaper family is still useful - distance - is now an empty `FILLER`
+tier in the manifest, waiting for a real LOD pass rather than for a placeholder.
 
 Both Quaternius packs were downloaded from their itch.io download pages, which the creator's own site
 links to as the official source:
@@ -73,9 +81,8 @@ one self-contained `.glb`:
 The per-model result - triangles, bytes, and which textures were kept - is committed as
 `tools/asset-pipeline/node/import-report.json`, so a change in the source packs is visible in review.
 
-The Kenney models shipped earlier are *not* re-imported; their normalizing factor lives beside the
-manifest entry (`unitScale` in `apps/web/src/render/environment-model-urls.ts`), measured from the
-shipped files.
+Every model in the manifest is normalized by the pipeline, so its `unitScale` is 1. The Kenney models
+that needed a hand-measured factor were removed in V5.
 
 ## Not used, and why
 

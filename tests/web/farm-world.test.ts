@@ -258,8 +258,12 @@ describe("buildFarmWorld", () => {
     };
     // Woodland is dense, an orchard is planted in rows, and a pasture is nearly open ground. The gap
     // between them is the composition: districts have to *look* different, not just be labelled.
-    expect(inDistrict("forest_north")).toBeGreaterThan(20);
-    expect(inDistrict("orchard")).toBeGreaterThan(8);
+    //
+    // The counts are lower than they were before V5 on purpose: the placement rules now refuse
+    // anything past the coastline, and these blobs reach past it, so what stands is what the island
+    // actually has room for.
+    expect(inDistrict("forest_north")).toBeGreaterThan(12);
+    expect(inDistrict("orchard")).toBeGreaterThan(6);
     expect(inDistrict("pasture")).toBeLessThan(inDistrict("forest_north"));
   });
 

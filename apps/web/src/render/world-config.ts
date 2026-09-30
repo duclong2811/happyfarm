@@ -59,7 +59,24 @@ export const ISLAND_LOBES: readonly IslandLobe[] = [
   { harmonic: 5, amplitude: 0.03, phase: 0.6 }
 ];
 
-export type DistrictKind = "SETTLEMENT" | "CROPLAND" | "ORCHARD" | "PASTURE" | "WATER" | "FOREST" | "COAST";
+/**
+ * The functions the island's land is divided between.
+ *
+ * The set is deliberately small and non-overlapping: a crop district, a civic centre, a perennial
+ * orchard, grazing, a water district, woodland, *managed* woodland, and the coast that will one day
+ * carry the fishery and the harbour. Nothing here is gameplay - a district neither unlocks nor
+ * produces anything - but the ground, the roads, and the vegetation all follow it, so the territory
+ * reads the same way from the estate camera as it does on foot.
+ */
+export type DistrictKind =
+  | "SETTLEMENT"
+  | "CROPLAND"
+  | "ORCHARD"
+  | "PASTURE"
+  | "WATER"
+  | "FOREST"
+  | "FORESTRY"
+  | "COAST";
 
 /** How a district's ground is drawn. Colour only; nothing reads it back. */
 export type DistrictGround = "NONE" | "PLAZA" | "ORCHARD" | "PASTURE" | "WETLAND" | "FOREST_FLOOR" | "SAND";
@@ -94,6 +111,13 @@ export interface District {
  * orchard and the pasture that feed it, the water it draws from, the woodland it cuts, and the coast
  * it will one day trade from. Their order in this list is their draw order for ground tints, so the
  * reserve's own treatment stays on top of the landscape it sits in.
+ *
+ * `density` and `treeShare` are the island's explicit vegetation profile, one row per function -
+ * they are not a global scatter. A crop district is *empty* of scenery (its land belongs to the
+ * catalogue), a settlement is nearly empty and deliberately planted, an orchard is structured,
+ * pasture is open grazing with shade trees, natural woodland is the densest thing on the island,
+ * managed woodland is one step behind it, and the coast is sparse so the shoreline silhouette stays
+ * readable.
  */
 export const DISTRICTS: readonly District[] = [
   {
@@ -117,8 +141,8 @@ export const DISTRICTS: readonly District[] = [
     radiusY: 12,
     rotationY: -0.18,
     ground: "ORCHARD",
-    density: 0.42,
-    treeShare: 0.92
+    density: 0.5,
+    treeShare: 0.95
   },
   {
     id: "forest_north",
@@ -129,7 +153,7 @@ export const DISTRICTS: readonly District[] = [
     radiusY: 10,
     rotationY: 0.15,
     ground: "FOREST_FLOOR",
-    density: 0.78,
+    density: 0.85,
     treeShare: 0.95
   },
   {
@@ -141,44 +165,49 @@ export const DISTRICTS: readonly District[] = [
     radiusY: 15,
     rotationY: 0.25,
     ground: "PASTURE",
-    density: 0.16,
-    treeShare: 0.3
+    density: 0.1,
+    treeShare: 0.35
   },
   {
     id: "settlement",
     kind: "SETTLEMENT",
     labelKey: "world.district.settlement",
-    center: { x: 46, y: 4 },
-    radiusX: 13,
-    radiusY: 15,
+    // The civic centre sits on the island's east flank, between the fields and the coast: the market
+    // and the well are on its square, the barn is on its western edge where the fields begin, and the
+    // warehouse and the town hall have reserved ground on it rather than wherever there was space.
+    center: { x: 50, y: -2 },
+    radiusX: 12,
+    radiusY: 14,
     rotationY: 0,
     ground: "PLAZA",
-    density: 0.12,
-    treeShare: 0.45
+    density: 0.06,
+    treeShare: 0.5
   },
   {
     id: "water",
     kind: "WATER",
     labelKey: "world.district.water",
-    center: { x: 44, y: 12 },
-    radiusX: 13,
-    radiusY: 11,
+    // The pond district, south of the settlement and outside the fields: the water the island draws
+    // on, with the wetland around it. Deliberately does not reach the square.
+    center: { x: 43, y: 14 },
+    radiusX: 9,
+    radiusY: 7,
     rotationY: 0.1,
     ground: "WETLAND",
-    density: 0.2,
-    treeShare: 0.5
+    density: 0.18,
+    treeShare: 0.4
   },
   {
-    id: "forest_south",
-    kind: "FOREST",
-    labelKey: "world.district.forest",
+    id: "forestry",
+    kind: "FORESTRY",
+    labelKey: "world.district.forestry",
     center: { x: -12, y: 48 },
     radiusX: 12,
     radiusY: 11,
     rotationY: -0.2,
     ground: "FOREST_FLOOR",
-    density: 0.72,
-    treeShare: 0.9
+    density: 0.6,
+    treeShare: 1
   },
   {
     id: "coast",
@@ -189,8 +218,8 @@ export const DISTRICTS: readonly District[] = [
     radiusY: 8,
     rotationY: 0.6,
     ground: "SAND",
-    density: 0.18,
-    treeShare: 0.3
+    density: 0.06,
+    treeShare: 0.2
   }
 ];
 
@@ -242,6 +271,8 @@ export const ROADS: readonly Road[] = [
     id: "primary",
     kind: "PRIMARY",
     points: [
+      // Starts on the settlement's square, which is the road's reason for existing.
+      { x: 50, y: 6 },
       { x: 49, y: 14 },
       { x: 44, y: 26 },
       { x: 40, y: 38 },
