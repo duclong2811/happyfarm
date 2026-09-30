@@ -167,6 +167,26 @@ Read `apps/web/src/render/placement.ts` before adding, moving, or re-shaping any
 - `tests/web/farm-placement.test.ts` holds the invariants: nothing outside the island, no large tree
   near the water, buildings inside their own district, no scenery in the crop reserve, and one
   primary road reaching the settlement, the fields' gate, and the harbour.
+
+Buildings and production land:
+
+- `apps/web/src/render/buildings.ts` is the building model: `BuildingDefinition` (district, footprint,
+  collision circle, visual tier, variants), `BuildingVariant` (tier, asset id, label), and
+  `ReservedBuilding` for ground held for a building that does not exist yet. Tier 1 is what the world
+  draws; nothing here reads the player's level.
+- `apps/web/src/render/building-model-urls.ts` resolves a deterministic asset id (`farm.barn.t2`) to a
+  file and a size in metres. The world definition never names a `.glb`; the models are in
+  `apps/web/src/assets/models/farm-buildings/`, and `docs/ASSET_LICENSES.md` records where they came
+  from. Importing more is `tools/asset-pipeline/node/import-fbx.mjs`.
+- `apps/web/src/render/production.ts` is the production-land vocabulary: `ProductionCellType`
+  (CROP / ORCHARD / AQUACULTURE, with LIVESTOCK / FORESTRY / PROCESSING named for later),
+  `ProductionZone`, and `buildProductionZones`. Crop cells *are* authoritative farm tiles, orchard
+  cells sit on the orchard's row lattice, and aquaculture basins sit in the fishery's district - three
+  shapes, three rules, one vocabulary, and no gameplay attached to any of them yet.
+- `tests/web/farm-production.test.ts` holds the invariants: crop cells are owned tiles, orchard and
+  basin cells live in their own district, basins keep off the quay, building ids are unique, every
+  building stands in its district, a reserved plot has room for the building that will replace it, and
+  every shipped model is named by something.
 - Importing a new model is `tools/asset-pipeline/node/import-cc0.mjs` (glTF → self-contained GLB,
   base-colour textures downscaled, normalized to one world unit across its largest dimension with its
   base on `y = 0`). Its output is recorded in `tools/asset-pipeline/node/import-report.json`.

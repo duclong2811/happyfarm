@@ -17,7 +17,12 @@ import { DISTRICTS, LANDMARKS, type DistrictKind, type LandmarkKind } from "./wo
 /** One step of a building's visual life. Tier 1 is always the first thing that is drawn. */
 export interface BuildingVariant {
   readonly tier: number;
-  /** The manifest id of the model this tier draws, or null while it is still primitive geometry. */
+  /**
+   * The deterministic asset id this tier draws, or null while the tier has no model yet.
+   *
+   * An id - `farm.barn.t2` - rather than a file: the world definition never names a `.glb`, and
+   * `building-model-urls.ts` is the only place one is resolved.
+   */
   readonly modelId: string | null;
   readonly labelKey: string;
 }
@@ -57,16 +62,16 @@ export interface ReservedBuilding {
 const LADDERS: Readonly<Record<LandmarkKind, readonly BuildingVariant[]>> = {
   FARMHOUSE: [
     { tier: 1, modelId: null, labelKey: "building.farmhouse.t1" },
-    { tier: 2, modelId: null, labelKey: "building.farmhouse.t2" },
+    { tier: 2, modelId: "farm.silo_house.t2", labelKey: "building.farmhouse.t2" },
     { tier: 3, modelId: null, labelKey: "building.farmhouse.t3" }
   ],
   WINDMILL: [
-    { tier: 1, modelId: null, labelKey: "building.windmill.t1" },
-    { tier: 2, modelId: null, labelKey: "building.windmill.t2" }
+    { tier: 1, modelId: "farm.windmill.t2", labelKey: "building.windmill.t1" },
+    { tier: 2, modelId: "farm.windmill.t2", labelKey: "building.windmill.t2" }
   ],
   WELL: [
-    { tier: 1, modelId: null, labelKey: "building.well.t1" },
-    { tier: 2, modelId: null, labelKey: "building.well.t2" }
+    { tier: 1, modelId: "civic.well.t1", labelKey: "building.well.t1" },
+    { tier: 2, modelId: "civic.well.t1", labelKey: "building.well.t2" }
   ],
   MARKET_STALL: [
     { tier: 1, modelId: null, labelKey: "building.market.t1" },
@@ -74,14 +79,22 @@ const LADDERS: Readonly<Record<LandmarkKind, readonly BuildingVariant[]>> = {
     { tier: 3, modelId: null, labelKey: "building.market.t3" }
   ],
   STORAGE_SHED: [
-    { tier: 1, modelId: null, labelKey: "building.storage.t1" },
-    { tier: 2, modelId: null, labelKey: "building.storage.t2" },
-    { tier: 3, modelId: null, labelKey: "building.warehouse.t3" }
+    { tier: 1, modelId: "farm.barn.t1", labelKey: "building.storage.t1" },
+    { tier: 2, modelId: "farm.barn.t2", labelKey: "building.storage.t2" },
+    { tier: 3, modelId: "farm.barn.t3", labelKey: "building.warehouse.t3" }
   ],
   HARBOR: [
     { tier: 1, modelId: null, labelKey: "building.harbor.t1" },
     { tier: 2, modelId: null, labelKey: "building.harbor.t2" },
     { tier: 3, modelId: null, labelKey: "building.harbor.t3" }
+  ],
+  SILO: [
+    { tier: 1, modelId: "farm.silo.t1", labelKey: "building.silo.t1" },
+    { tier: 2, modelId: "farm.silo_house.t2", labelKey: "building.silo.t2" }
+  ],
+  COOP: [
+    { tier: 1, modelId: "farm.coop.t1", labelKey: "building.coop.t1" },
+    { tier: 2, modelId: "farm.openbarn.t1", labelKey: "building.coop.t2" }
   ]
 };
 
@@ -92,7 +105,11 @@ const DISTRICT_BY_KIND: Readonly<Record<LandmarkKind, DistrictKind>> = {
   MARKET_STALL: "SETTLEMENT",
   WINDMILL: "ORCHARD",
   STORAGE_SHED: "PASTURE",
-  HARBOR: "COAST"
+  HARBOR: "COAST",
+  // The silo stands with the settlement's working buildings, and the coop is out on the pasture where
+  // the animals will be - which is also the only place on the island a coop belongs.
+  SILO: "SETTLEMENT",
+  COOP: "PASTURE"
 };
 
 /** The buildings the island draws today, one per placed landmark. */

@@ -1,0 +1,65 @@
+[
+  {
+    "id": "farm.barn.t2",
+    "source": "Barn.fbx",
+    "triangles": 2910,
+    "bytes": 213384,
+    "metres": 822.245
+  },
+  {
+    "id": "farm.barn.t3",
+    "source": "BigBarn.fbx",
+    "triangles": 4220,
+    "bytes": 307708,
+    "metres": 822.245
+  },
+  {
+    "id": "farm.barn.t1",
+    "source": "SmallBarn.fbx",
+    "triangles": 2176,
+    "bytes": 159832,
+    "metres": 627.389
+  },
+  {
+    "id": "farm.openbarn.t1",
+    "source": "OpenBarn.fbx",
+    "triangles": 1612,
+    "bytes": 116980,
+    "metres": 618.204
+  },
+  {
+    "id": "farm.silo.t1",
+    "source": "Silo.fbx",
+    "triangles": 1592,
+    "bytes": 115556,
+    "metres": 906.863
+  },
+  {
+    "id": "farm.silo_house.t2",
+    "source": "Silo_House.fbx",
+    "triangles": 2880,
+    "bytes": 208296,
+    "metres": 906.685
+  },
+  {
+    "id": "farm.windmill.t2",
+    "source": "TowerWindmill.fbx",
+    "triangles": 7827,
+    "bytes": 565256,
+    "metres": 1141.327
+  },
+  {
+    "id": "civic.well.t1",
+    "source": "Well.fbx",
+    "triangles": 2878,
+    "bytes": 208152,
+    "metres": 214.555
+  },
+  {
+    "id": "farm.coop.t1",
+    "source": "ChickenCoop.fbx",
+    "triangles": 948,
+    "bytes": 69168,
+    "metres": 240.721
+  }
+]

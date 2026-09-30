@@ -16,6 +16,7 @@ alternative is not "assume CC0"; it is to stop and ask.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Stylized Nature MegaKit | Quaternius | https://quaternius.com/packs/stylizednaturemegakit.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | glTF → GLB | environment: trees, bushes, rocks, flowers, plants | Yes - see "Normalization" |
 | Medieval Village MegaKit | Quaternius | https://quaternius.com/packs/medievalvillagemegakit.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | glTF → GLB | props: crate, wagon, fence rails | Yes - see "Normalization" |
+| Lowpoly Farm Buildings | Quaternius | https://quaternius.com/packs/farmbuildings.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | FBX → GLB | buildings: barn (three tiers), open barn, silo, silo house, tower windmill, well, coop | Yes - see "Normalization" |
 | ~~Kenney Nature Kit~~ | Kenney | https://kenney.nl/assets/nature-kit | CC0 1.0 | shipped 2026-09-2x, **removed in V5** | - | - | - |
 
 **Removed in V5.** The Kenney Nature Kit was the project's first scenery family and its licence was
@@ -31,6 +32,8 @@ links to as the official source:
 
 - https://quaternius.itch.io/stylized-nature-megakit
 - https://quaternius.itch.io/medieval-village-megakit
+- https://quaternius.itch.io/lowpoly-farm-buildings (the Farm Buildings pack; the creator's site links
+  to it as the official download)
 
 ## What was selected, and what was left out
 
@@ -60,6 +63,17 @@ structure pass can build and review them properly. The pack's decorative masonry
 
 **Not used this pass:** Styloo COZY FARM and KayKit Medieval Builder/Hexagon. They are approved
 sources but were not retrieved: see "Not used, and why" below.
+
+**Selected from Lowpoly Farm Buildings** (nine of the pack's thirteen models): `Barn`, `BigBarn`,
+`SmallBarn`, `OpenBarn`, `Silo`, `Silo_House`, `TowerWindmill`, `Well`, `ChickenCoop` - the settlement,
+the agricultural yard and the pasture's coop are drawn from these now, with `BuildingVariant` naming
+each one by a deterministic id (`farm.barn.t2`, `civic.well.t1`) rather than by a filename.
+
+**Rejected from Lowpoly Farm Buildings:** `Fence` and `Fence2` (a fence needs a line-drawing pass to
+place it, and the field-boundary work that would give it a job is not in this pass), `WaterTower` and
+the small `Windmill` (nothing draws a second windmill or a water tower, and an asset with no scene is a
+bundle cost and a licence entry with no purpose). All four are named in the import tool's comment so
+the next pass imports them deliberately rather than rediscovering them.
 
 ## Normalization
 

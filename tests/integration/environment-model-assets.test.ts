@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+﻿import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -47,12 +47,28 @@ const EXPECTED = {
   props: ["prop_crate", "prop_fence_rail", "prop_fence_rail_long", "prop_wagon"]
 } as const;
 
+/**
+ * The imported farm buildings, which are the same contract in a different family: self-contained GLBs
+ * normalized to one world unit, drawn at the size their manifest entry names.
+ */
+const BUILDINGS: readonly string[] = [
+  "civic.well.t1",
+  "farm.barn.t1",
+  "farm.barn.t2",
+  "farm.barn.t3",
+  "farm.coop.t1",
+  "farm.openbarn.t1",
+  "farm.silo.t1",
+  "farm.silo_house.t2",
+  "farm.windmill.t2"
+];
+
 interface GltfJson {
   readonly accessors?: { min?: number[]; max?: number[]; count?: number }[];
   readonly buffers?: { uri?: string; byteLength: number }[];
   readonly bufferViews?: { byteOffset: number; byteLength: number }[];
   readonly images?: { uri?: string; bufferView?: number }[];
-  readonly meshes?: { primitives: { indices?: number }[] }[];
+  readonly meshes?: { primitives: { indices?: number; attributes: { POSITION: number } }[] }[];
   readonly nodes?: { scale?: number[]; translation?: number[] }[];
   readonly scenes?: unknown[];
 }
@@ -77,17 +93,29 @@ function readGlb(path: string): Glb {
 }
 
 /** The model's own extents, before the root node's normalizing scale. */
+/**
+ * The model's own extents, before the root node's normalizing scale.
+ *
+ * Only the POSITION accessors count. Reading every accessor that happens to carry a `min`/`max` also
+ * reads the normals, which are unit vectors - so they always measure a two-unit cube and would hide a
+ * model that was never normalized at all.
+ */
 function extentsOf(json: GltfJson): {
   readonly size: number;
   readonly baseY: number;
 } {
   const accessors = json.accessors ?? [];
-  const positions = accessors.filter((accessor) => accessor.min !== undefined && accessor.max !== undefined);
-  const minY = Math.min(...positions.map((accessor) => accessor.min?.[1] ?? 0));
+  const positions = (json.meshes ?? [])
+    .flatMap((mesh) => mesh.primitives.map((primitive) => accessors[primitive.attributes.POSITION]))
+    .filter(
+      (accessor): accessor is { min: number[]; max: number[] } =>
+        accessor !== undefined && accessor.min !== undefined && accessor.max !== undefined
+    );
+  const minY = Math.min(...positions.map((accessor) => accessor.min[1] ?? 0));
   const spans = [0, 1, 2].map(
     (axis) =>
-      Math.max(...positions.map((accessor) => accessor.max?.[axis] ?? 0)) -
-      Math.min(...positions.map((accessor) => accessor.min?.[axis] ?? 0))
+      Math.max(...positions.map((accessor) => accessor.max[axis] ?? 0)) -
+      Math.min(...positions.map((accessor) => accessor.min[axis] ?? 0))
   );
   return { size: Math.max(...spans), baseY: minY };
 }
@@ -159,5 +187,26 @@ describe("imported environment models", () => {
     const assets = walk(MODEL_ROOT);
     const strays = assets.filter((path) => /\.(zip|rar|7z|fbx|obj|mtl|blend|gltf)$/i.test(path));
     expect(strays, "only .glb files belong in the model folders").toEqual([]);
+  });
+
+  it("ships the imported farm buildings under the same contract", () => {
+    const folder = `${MODEL_ROOT}/farm-buildings`;
+    const files = readdirSync(folder)
+      .filter((name) => name.endsWith(".glb"))
+      .map((name) => name.replace(/\.glb$/, ""))
+      .sort();
+    expect(files).toEqual([...BUILDINGS].sort());
+
+    for (const id of BUILDINGS) {
+      const glb = readGlb(`${folder}/${id}.glb`);
+      const root = (glb.json.nodes ?? [])[0];
+      const scale = root?.scale?.[0] ?? 1;
+      const { size, baseY } = extentsOf(glb.json);
+      // One world unit across the largest dimension and grounded, exactly like the scenery: the
+      // manifest decides how many metres a barn is, not the file.
+      expect(size * scale, `${id} drawn size`).toBeCloseTo(1, 2);
+      expect(baseY * scale + (root?.translation?.[1] ?? 0), `${id} base on the ground`).toBeCloseTo(0, 2);
+      expect(glb.bytes, `${id} bytes`).toBeLessThan(900 * 1024);
+    }
   });
 });

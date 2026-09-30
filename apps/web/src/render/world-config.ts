@@ -614,7 +614,15 @@ export const FARMSTEAD = {
  * of them unlocks, produces, stores, or prices anything. They exist so the island has things to
  * navigate by, and so the districts have a centre of gravity.
  */
-export type LandmarkKind = "FARMHOUSE" | "WINDMILL" | "WELL" | "MARKET_STALL" | "STORAGE_SHED" | "HARBOR";
+export type LandmarkKind =
+  | "FARMHOUSE"
+  | "WINDMILL"
+  | "WELL"
+  | "MARKET_STALL"
+  | "STORAGE_SHED"
+  | "HARBOR"
+  | "SILO"
+  | "COOP";
 
 /**
  * A placed landmark.
@@ -647,6 +655,9 @@ export const LANDMARKS: readonly LandmarkSpec[] = [
   { id: "market_stall", kind: "MARKET_STALL", tile: { x: 39, y: 3 }, rotationY: 0, blockingRadiusWorld: 1.2 },
   { id: "windmill", kind: "WINDMILL", tile: { x: -8, y: -10 }, rotationY: 0.35, blockingRadiusWorld: 1.8 },
   { id: "storage_shed", kind: "STORAGE_SHED", tile: { x: -14, y: 18 }, rotationY: 0.2, blockingRadiusWorld: 1.6 },
+  // The agricultural pair: a silo on the settlement's working edge and a coop out on the pasture.
+  { id: "silo", kind: "SILO", tile: { x: 48, y: -2 }, rotationY: 0, blockingRadiusWorld: 1.6 },
+  { id: "coop", kind: "COOP", tile: { x: -18, y: 12 }, rotationY: 0.5, blockingRadiusWorld: 1.1 },
   // The bay runs out to the south-east, so the quay faces that way and its pier reaches the water
   // rather than the grass behind it.
   { id: "harbor", kind: "HARBOR", tile: { x: 48.5, y: 48.5 }, rotationY: Math.PI / 4, blockingRadiusWorld: 1.4 }

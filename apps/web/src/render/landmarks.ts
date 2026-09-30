@@ -1,7 +1,9 @@
-import { Group, Mesh, type BufferGeometry, type Material } from "three";
+import { Group, Mesh, type BufferGeometry, type Material, type Object3D } from "three";
 import type { SharedAssets } from "./materials";
 import { GROUND_SURFACE_Y } from "./terrain-height";
 import type { PlacedLandmark } from "./world-config";
+import { BUILDING_MODELS } from "./building-model-urls";
+import { BUILDINGS, variantFor } from "./buildings";
 
 /**
  * The structures that give the island somewhere to look.
@@ -174,13 +176,35 @@ function buildHarbor(assets: SharedAssets): Group {
   return group;
 }
 
+/** The coop: a small hut on legs with a run, the one building the pasture needs to read as a farm. */
+function buildCoop(assets: SharedAssets): Group {
+  const group = new Group();
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0, y: 0.5, z: 0, scaleX: 1.5, scaleY: 1.0, scaleZ: 1.2 }));
+  group.add(
+    piece({ material: assets.roofTile, geometry: assets.roof, x: 0, y: 1.25, z: 0, scaleX: 1.1, scaleY: 0.5, scaleZ: 0.9, rotationY: Math.PI / 4 })
+  );
+  group.add(piece({ material: assets.stakeWood, geometry: assets.box, x: 0.5, y: 0.45, z: 0.65, scaleX: 0.4, scaleY: 0.5, scaleZ: 0.08 }));
+  return group;
+}
+
+/** The silo: a tall cylinder with a domed cap, standing beside the barn. */
+function buildSilo(assets: SharedAssets): Group {
+  const group = new Group();
+  group.add(piece({ material: assets.plaster, geometry: assets.cylinder, x: 0, y: 1.3, z: 0, scaleX: 0.85, scaleY: 2.6, scaleZ: 0.85 }));
+  group.add(piece({ material: assets.roofTile, geometry: assets.cone, x: 0, y: 2.75, z: 0, scaleX: 0.95, scaleY: 0.7, scaleZ: 0.95 }));
+  group.add(piece({ material: assets.stone, geometry: assets.cylinder, x: 0, y: 0.15, z: 0, scaleX: 1.0, scaleY: 0.3, scaleZ: 1.0 }));
+  return group;
+}
+
 const BUILDERS: Readonly<Record<PlacedLandmark["kind"], (assets: SharedAssets) => Group>> = {
   FARMHOUSE: buildFarmhouse,
   WINDMILL: buildWindmill,
   WELL: buildWell,
   MARKET_STALL: buildMarketStall,
   STORAGE_SHED: buildStorageShed,
-  HARBOR: buildHarbor
+  HARBOR: buildHarbor,
+  SILO: buildSilo,
+  COOP: buildCoop
 };
 
 /**
@@ -189,20 +213,38 @@ const BUILDERS: Readonly<Record<PlacedLandmark["kind"], (assets: SharedAssets) =
  * The group is positioned on the ground (`worldY` is 0 on the plateau the landmarks all stand on)
  * and rotated by the config, so a landmark's own geometry never has to know where it is.
  */
-export function buildLandmarks(group: Group, assets: SharedAssets, landmarks: readonly PlacedLandmark[]): void {
+export function buildLandmarks(
+  group: Group,
+  assets: SharedAssets,
+  landmarks: readonly PlacedLandmark[],
+  getModel: (id: string) => Object3D | undefined = () => undefined
+): void {
   for (const landmark of landmarks) {
-    const node = BUILDERS[landmark.kind](assets);
+    // A real model when the tier has one and it has loaded, the primitive otherwise. The fallback is
+    // kept on purpose: a building that has not arrived yet shows its primitive rather than a hole, and
+    // the swap happens by itself when the model lands.
+    const definition = BUILDINGS.find((building) => building.id === landmark.id);
+    const variant = definition === undefined ? null : variantFor(definition);
+    const entry = variant?.modelId == null ? undefined : BUILDING_MODELS.get(variant.modelId);
+    const model = entry === undefined ? undefined : getModel(entry.id);
+
+    let node: Group;
+    if (model !== undefined && entry !== undefined) {
+      node = new Group();
+      const clone = model.clone(true);
+      // The model is normalized to one world unit across its largest dimension, so this is the
+      // building's real size in metres.
+      clone.scale.setScalar(entry.sizeWorld);
+      node.add(clone);
+    } else {
+      node = BUILDERS[landmark.kind](assets);
+      // A primitive has to hold its own at estate zoom too, where the whole island is on screen. The
+      // harbour is the exception: its geometry already spans the quay, the pier and the yard.
+      node.scale.setScalar(landmark.kind === "HARBOR" ? 1 : 1.7);
+    }
     // Stands on the ground rather than at the tile slabs' own base level.
     node.position.set(landmark.worldX, GROUND_SURFACE_Y, landmark.worldZ);
     node.rotation.y = landmark.rotationY;
-    // A landmark has to hold its own at estate zoom, where the whole island is on screen: at their
-    // authored sizes the buildings were a few pixels and the island read as empty land with specks on
-    // it. They are drawn larger than their collision circles on purpose - collision is the simplified
-    // footprint a walker goes around, not the roof line.
-    //
-    // The harbour is the exception. Its geometry already spans the quay, the pier and the yard, so
-    // scaling it with the cottages turned the pier into a slab lying across the water.
-    node.scale.setScalar(landmark.kind === "HARBOR" ? 1 : 1.7);
     node.traverse((child) => {
       child.castShadow = true;
     });

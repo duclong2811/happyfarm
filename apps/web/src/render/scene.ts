@@ -35,6 +35,7 @@ import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials
 import { CROP_MODEL_URLS } from "./model-urls";
 import { createPointerGesture } from "./pointer-gesture";
 import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
+import { BUILDING_MODELS } from "./building-model-urls";
 import { buildScenery } from "./scenery";
 import { buildLockedPlotOverlay, buildTerrain, TILE_THICKNESS } from "./terrain";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
@@ -515,6 +516,15 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const sceneryModels = new Map<string, Object3D>();
   const loadingScenery = new Set<string>();
   const unavailableScenery = new Set<string>();
+  /**
+   * Building models, loaded the same lazy way as scenery and keyed by the same kind of asset id.
+   *
+   * A building that has not arrived draws its primitive, and the static layer rebuilds once when the
+   * model lands - so the fallback is a frame of scaffolding rather than a second look.
+   */
+  const buildingModels = new Map<string, Object3D>();
+  const loadingBuildings = new Set<string>();
+  const unavailableBuildings = new Set<string>();
   let disposed = false;
 
   /** The loaded model for an id, starting its download the first time something asks for it. */
@@ -553,6 +563,38 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
         if (!disposed) options.onAssetProblem?.(id, error);
       }
     );
+  }
+
+  /** The loaded building model for an id, starting its download the first time one is asked for. */
+  function buildingModel(id: string): Object3D | undefined {
+    const model = buildingModels.get(id);
+    if (model !== undefined) return model;
+    if (loadingBuildings.has(id) || unavailableBuildings.has(id)) return undefined;
+    const entry = BUILDING_MODELS.get(id);
+    if (entry === undefined) return undefined;
+    loadingBuildings.add(id);
+    loader.load(
+      entry.url,
+      (gltf) => {
+        loadingBuildings.delete(id);
+        if (disposed) {
+          disposeModelResources(gltf.scene);
+          return;
+        }
+        buildingModels.set(id, gltf.scene);
+        keepZoomOnRebuild = true;
+        worldSignature = "";
+        applyState(state);
+        draw();
+      },
+      undefined,
+      (error: unknown) => {
+        loadingBuildings.delete(id);
+        unavailableBuildings.add(id);
+        if (!disposed) options.onAssetProblem?.(id, error);
+      }
+    );
+    return undefined;
   }
 
   /**
@@ -830,7 +872,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     if (signature !== worldSignature) {
       worldSignature = signature;
       worldGroup.clear();
-      buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn);
+      buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn, buildingModel);
       // Two passes, one destination each: mass scenery into the world group and small detail into the
       // group the camera switches off when it pulls back.
       buildScenery(worldGroup, assets, next.world.scenery.filter((entry) => !entry.detail), sceneryModel);

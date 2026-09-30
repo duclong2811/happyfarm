@@ -589,10 +589,17 @@ function addPond(group: Group, assets: SharedAssets, pond: PondSpec): void {
  * The model is cloned, never re-fetched, and its footprint is presentation only: the yard's collision
  * is the canonical `STATIC_OBSTACLES` circle in `world-config.ts`.
  */
-function addBarn(group: Group, assets: SharedAssets, world: FarmWorld, model: Object3D | undefined): void {
+function addBarn(
+  group: Group,
+  assets: SharedAssets,
+  world: FarmWorld,
+  model: Object3D | undefined,
+  modelScale: number
+): void {
   if (world.barn === null) return;
   if (model !== undefined) {
     const barn = model.clone(true);
+    barn.scale.setScalar(modelScale);
     barn.position.set(world.barn.worldX, BARN_FEET_Y, world.barn.worldZ);
     barn.rotation.y = world.barn.rotationY;
     barn.traverse((child) => {
@@ -782,7 +789,8 @@ export function buildTerrain(
   assets: SharedAssets,
   world: FarmWorld,
   layout: FarmLayout,
-  barnModel?: Object3D
+  barnModel?: Object3D,
+  getBuildingModel: (id: string) => Object3D | undefined = () => undefined
 ): void {
   // The fence is derived from the world config and the tile pitch, exactly as the player's collision
   // is: one description, drawn here, walked around there.
@@ -793,8 +801,11 @@ export function buildTerrain(
   addRoads(group, assets, world);
   addFence(group, assets, fence, layout.pitch);
   if (world.pond !== null) addPond(group, assets, world.pond);
-  addBarn(group, assets, world, barnModel);
-  buildLandmarks(group, assets, world.landmarks);
+  // The curated barn is normalized to one world unit, so it is drawn at its own size; the generated
+  // placeholder is already authored at the right scale.
+  const curatedBarn = getBuildingModel("farm.barn.t2");
+  addBarn(group, assets, world, curatedBarn ?? barnModel, curatedBarn === undefined ? 1 : 6.4);
+  buildLandmarks(group, assets, world.landmarks, getBuildingModel);
 }
 
 /**
