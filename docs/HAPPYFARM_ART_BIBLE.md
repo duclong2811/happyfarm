@@ -21,7 +21,7 @@ complexity the renderer does not use.
 | Quantity | Value | Source |
 | --- | --- | --- |
 | Tile size / gap / pitch | 1.0 / 0.08 / **1.08** world units | `apps/web/src/render/layout.ts` |
-| World origin | centre of the 6x6 starter land, tile (2.5, 2.5) — fixed for the farm's life | `layout.ts` |
+| World origin | centre of the 12x12 starter land, tile (5.5, 5.5) — fixed for the farm's life | `layout.ts` |
 | Tile slab thickness | 0.09 | `apps/web/src/render/terrain.ts` |
 | Crop model envelope | **1 unit tall**, base on `y = 0`, footprint inside 1 x 1 centred on the origin | `apps/web/tools/generate-placeholder-models.mjs`, `tests/integration/crop-model-assets.test.ts` |
 | Crop drawn height | scaled to `max(growthProgress * 0.95, 0.14)` | `apps/web/src/render/scene.ts` |
@@ -32,8 +32,10 @@ complexity the renderer does not use.
 | Barn footprint (gameplay) | circle radius 2.2 at the canonical yard position | `world-config.ts` (`STATIC_OBSTACLES`) |
 | Scenery tree scale | 0.78 on the shared model | `scene.ts` |
 | Camera | perspective, FOV 45, direction (0.66, 0.82, 0.74), near 0.1, far 800 | `scene.ts` |
-| Camera distance | `framedExtent * 2.35 * zoom`, follow framing 7.5, zoom 0.62..2.4 | `scene.ts`, `camera.ts` |
-| Farm field reservation | tiles [0, 17]^2 | `world-config.ts` (`FARM_FIELD_BOUNDS`) |
+| Camera distance | `framedExtent * 2.35 * zoom`; opens on the farm, follow framing 9, zoom 0.62..2.4 | `scene.ts`, `camera.ts` |
+| Farm field reservation | tiles [0, 35]^2 (36 x 36) | `world-config.ts` (`FARM_FIELD_BOUNDS`) |
+| Playable island | tiles [-13, 48]^2 (62 x 62) | `world-config.ts` (`VISUAL_BOUNDS`) |
+| One plot cohort | 12 x 12 tiles | `packages/domain/src/plot.ts` |
 
 Assets are authored in **world metres**, and the base of every model sits on `y = 0` so it can be
 placed by a tile coordinate without a per-model offset.

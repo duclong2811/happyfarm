@@ -1,6 +1,12 @@
 import { CloudflareAccessAuthenticator, type AccessAuthBindings, type AccessTokenVerifier } from "./access-auth";
+import { EconomyService, GrantStarterPackage, InventoryService } from "@happy-farm/application";
 import { createHandler } from "./handler";
-import { AccessPlayerDirectory, OnboardingAuthenticator } from "./player-onboarding";
+import {
+  AccessPlayerDirectory,
+  OnboardingAuthenticator,
+  readStarterGrantPolicy
+} from "./player-onboarding";
+import { D1StarterGrantRepository, D1WalletRepository } from "./d1-repositories";
 import {
   CryptoIdGenerator,
   GameDataCurrencyDefinitions,
@@ -11,7 +17,8 @@ import {
   GameDataTreeDefinitions,
   Sha256Fingerprint,
   SystemClock,
-  gameDataProgressionDefinition
+  gameDataProgressionDefinition,
+  gameDataStarterPackage
 } from "./runtime";
 import { isApiRequest, rewriteToApiRequest } from "./staging-routing";
 import type { D1DatabaseLike } from "./d1-types";
@@ -42,6 +49,11 @@ interface StaticAssets {
 export interface DeploymentEnv extends AccessAuthBindings {
   readonly DB: D1DatabaseLike;
   readonly ASSETS?: StaticAssets;
+  /**
+   * Which players may receive the one-time starter package. Absent means `NEW_PLAYERS`, which
+   * grants it only to a visitor whose Player row this request creates.
+   */
+  readonly STARTER_GRANT_POLICY?: string;
 }
 
 export interface DeploymentWorkerOptions {
@@ -51,14 +63,30 @@ export interface DeploymentWorkerOptions {
 
 export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWorkerOptions = {}) {
   const clock = new SystemClock();
+  const ids = new CryptoIdGenerator();
   const access = new CloudflareAccessAuthenticator({
     ...env,
     ...(options.verifier === undefined ? {} : { verifier: options.verifier })
   });
+  // Onboarding is not a route and never a command: the same shared use case the development host
+  // calls is handed to the authenticator, which only ever invokes it for a player the world has not
+  // granted the package to. No request body can reach any part of it.
+  const grantStarterPackage = new GrantStarterPackage(
+    new D1StarterGrantRepository(env.DB),
+    new InventoryService(new GameDataItemDefinitions(), clock),
+    new EconomyService(ids, clock),
+    new GameDataCurrencyDefinitions(),
+    new D1WalletRepository(env.DB),
+    clock,
+    gameDataStarterPackage
+  );
   const handler = createHandler({
     db: env.DB,
-    authenticator: new OnboardingAuthenticator(access, new AccessPlayerDirectory(env.DB), clock),
-    ids: new CryptoIdGenerator(),
+    authenticator: new OnboardingAuthenticator(access, new AccessPlayerDirectory(env.DB), clock, {
+      grantStarterPackage: (actor) => grantStarterPackage.execute(actor),
+      starterGrantPolicy: readStarterGrantPolicy(env.STARTER_GRANT_POLICY)
+    }),
+    ids,
     fingerprints: new Sha256Fingerprint(),
     cropDefinitions: new GameDataCropDefinitions(),
     itemDefinitions: new GameDataItemDefinitions(),

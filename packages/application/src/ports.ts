@@ -204,23 +204,36 @@ export interface CropInstanceRepository {
   ): Promise<void>;
 }
 
-/** A starter seed grant: the player it belongs to, the item, the quantity, and server time. */
-export interface StarterSeedGrant {
+/**
+ * A starter package grant: the player it belongs to, the receipt key it is filed under, the seed
+ * credit, the currency credit, and the ledger identity that credit settles under.
+ *
+ * `transactionId` and `requestId` are prepared by the use case through the centralized economy
+ * boundary, exactly as a shop purchase's are, and `itemDefinitionId`/`itemQuantity` are prepared
+ * through the centralized inventory boundary. Nothing here is a client input.
+ */
+export interface StarterGrant {
   readonly playerId: PlayerId;
+  readonly grantKey: string;
   readonly itemDefinitionId: ItemDefinitionId;
-  readonly quantity: number;
+  readonly itemQuantity: number;
+  readonly currencyDefinitionId: CurrencyDefinitionId;
+  readonly goldAmount: number;
+  readonly transactionId: EconomyTransactionId;
+  readonly requestId: string;
   readonly timestamp: string;
 }
 
 /**
- * The one-time starter seed receipt.
+ * The one-time starter package receipt.
  *
- * The receipt and the inventory credit are written together, and the player ID is the key, so a
- * repeated call -- a second farm, a replayed bootstrap, a repeated sign-in -- finds the receipt and
- * credits nothing. Returns whether this call is the one that created the receipt.
+ * The receipt, the seed credit, the wallet, and the ledger row are written together in one
+ * statement, and `(player, grant key)` is the primary key, so a repeated call -- a second farm, a
+ * replayed sign-in, a retried request, a concurrent pair -- finds the receipt and credits nothing.
+ * Returns whether this call is the one that created the receipt.
  */
-export interface StarterSeedGrantRepository {
-  grantStarterSeedAtomically(grant: StarterSeedGrant): Promise<boolean>;
+export interface StarterGrantRepository {
+  grantStarterPackageAtomically(grant: StarterGrant): Promise<boolean>;
 }
 
 export interface HarvestSettlementRepository {

@@ -53,6 +53,29 @@ export interface CameraRig {
   setZoom(zoom: number): void;
 }
 
+/**
+ * How much world the camera frames, in metres.
+ *
+ * Three extents compete, and the smallest wins, so no view can be wider than the world it is inside:
+ *
+ *   * the island, which is how far a player may zoom out and look around;
+ *   * the farm, which is what the camera opens on before there is a character - framing the island
+ *     instead is how the alpha opened on a small field inside a large empty circle;
+ *   * the follow distance, which only applies once a character exists, and is what keeps crops and
+ *     the avatar legible while walking.
+ *
+ * Pure arithmetic, so the framing is a tested rule rather than a number buried in the renderer.
+ */
+export function cameraFrameExtent(options: {
+  readonly islandExtent: number;
+  readonly farmExtent: number;
+  readonly followExtent: number;
+  readonly hasCharacter: boolean;
+}): number {
+  const base = Math.min(options.islandExtent, options.farmExtent);
+  return options.hasCharacter ? Math.min(base, options.followExtent) : base;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }

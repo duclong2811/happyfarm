@@ -15,14 +15,14 @@ export const MAX_TILE_GAP = 100;
 /**
  * The fixed world origin: the centre of the starter land.
  *
- * Land grows outward from the 6x6 starter square at tiles (0..5, 0..5), so the centre of that square
- * is the one point the farm never moves. Anchoring the world here - rather than on the centre of
- * whatever land happens to be unlocked - is what makes a tile's world position a property of the tile
- * instead of a property of how much land the player owns. Unlocking a plot must never move a crop, a
- * tree, the scenery, the spawn, or (in Phase 8) the player.
+ * Land grows outward from the 12x12 starter square at tiles (0..11, 0..11), so the centre of that
+ * square is the one point the farm never moves. Anchoring the world here - rather than on the centre
+ * of whatever land happens to be unlocked - is what makes a tile's world position a property of the
+ * tile instead of a property of how much land the player owns. Unlocking a plot must never move a
+ * crop, a tree, the scenery, the spawn, or the player.
  */
-export const WORLD_ORIGIN_TILE_X = 2.5;
-export const WORLD_ORIGIN_TILE_Y = 2.5;
+export const WORLD_ORIGIN_TILE_X = 5.5;
+export const WORLD_ORIGIN_TILE_Y = 5.5;
 
 /** An authoritative tile coordinate, as returned by `GET /farms/:farmId/tiles`. */
 export interface TileCoordinate {

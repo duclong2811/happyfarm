@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Connect, Plugin, ViteDevServer } from "vite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import viteConfig from "../../apps/web/vite.config";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -247,13 +248,19 @@ describe("Vite development API bridge", () => {
   });
 
   it("attaches the server-held dev credential and ignores a browser-supplied bearer", async () => {
+    // The host onboards the trusted identity on its first request, which includes the one-time
+    // starter package: the wallet exists and says what game data said it should.
+    const expected = {
+      ok: true,
+      data: { wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 100 }] }
+    };
     const automatic = await call("GET", "/api/wallet");
     expect(automatic.status).toBe(200);
-    expect(automatic.body).toEqual({ ok: true, data: { wallets: [] } });
+    expect(automatic.body).toEqual(expected);
 
     const wrong = await call("GET", "/api/wallet", { token: "not-the-dev-token" });
     expect(wrong.status).toBe(200);
-    expect(wrong.body).toEqual({ ok: true, data: { wallets: [] } });
+    expect(wrong.body).toEqual(expected);
   });
 
   it("does not auto-authenticate a non-loopback Host header", async () => {
@@ -278,7 +285,9 @@ describe("Vite development API bridge", () => {
     const created = (farm.body as { data?: { farm?: { id?: string } } }).data?.farm?.id ?? "";
     const tiles = await call("GET", `/api/farms/${created}/tiles`, { token: TOKEN });
     expect(tiles.status).toBe(200);
-    expect((tiles.body as { data?: { tiles?: unknown[] } }).data?.tiles).toHaveLength(36);
+    expect((tiles.body as { data?: { tiles?: unknown[] } }).data?.tiles).toHaveLength(
+      INITIAL_LAND_SIZE * INITIAL_LAND_SIZE
+    );
     expect(warnings).toEqual([]);
   });
 

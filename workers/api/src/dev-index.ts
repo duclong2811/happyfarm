@@ -1,5 +1,5 @@
 import type { ApiFailure, ApiSuccess, ErrorCode } from "@happy-farm/contracts";
-import { GrantStarterSeed, InventoryService } from "@happy-farm/application";
+import { EconomyService, GrantStarterPackage, InventoryService } from "@happy-farm/application";
 import { createHandler } from "./handler";
 import {
   DEV_AUTH_BOOTSTRAP_PATH,
@@ -20,9 +20,9 @@ import {
   Sha256Fingerprint,
   SystemClock,
   gameDataProgressionDefinition,
-  gameDataStarterSeedGrant
+  gameDataStarterPackage
 } from "./runtime";
-import { D1StarterSeedGrantRepository } from "./d1-repositories";
+import { D1StarterGrantRepository, D1WalletRepository } from "./d1-repositories";
 import type { D1DatabaseLike } from "./d1-types";
 
 /**
@@ -90,12 +90,16 @@ export function createDevWorker(env: DevEnv) {
     clock
   });
   const bootstrap = new DevPlayerBootstrap(env.DB);
-  // The starter grant runs through the shared application use case, not through dev-only code, so a
-  // production onboarding step can call the very same service when it replaces this bootstrap.
-  const grantStarterSeed = new GrantStarterSeed(
-    new D1StarterSeedGrantRepository(env.DB),
+  // The starter package runs through the shared application use case, not through development-only
+  // code, so the deployed onboarding path calls the very same service.
+  const grantStarterPackage = new GrantStarterPackage(
+    new D1StarterGrantRepository(env.DB),
     new InventoryService(new GameDataItemDefinitions(), clock),
-    gameDataStarterSeedGrant
+    new EconomyService(new CryptoIdGenerator(), clock),
+    new GameDataCurrencyDefinitions(),
+    new D1WalletRepository(env.DB),
+    clock,
+    gameDataStarterPackage
   );
 
   async function handleBootstrap(request: Request): Promise<Response> {
@@ -118,10 +122,9 @@ export function createDevWorker(env: DevEnv) {
     try {
       result = await bootstrap.ensure(identity, clock.now());
       if (result !== null) {
-        // Onboarding, not a command: a player who signed in before the seed economy existed still
-        // receives the one-time grant here, and every later bootstrap finds the receipt and does
-        // nothing.
-        await grantStarterSeed.execute(actor);
+        // Onboarding, not a command: a player who signed in before the starter package existed
+        // still receives it here, and every later pass finds the receipt and does nothing.
+        await grantStarterPackage.execute(actor);
       }
     } catch {
       // Unexpected persistence failures must not leak SQL/D1 detail to the client.

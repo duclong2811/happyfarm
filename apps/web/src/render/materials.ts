@@ -43,6 +43,8 @@ export interface SharedAssets {
   readonly octa: OctahedronGeometry;
   readonly terrain: TerrainMaterials;
   readonly grass: MeshStandardMaterial;
+  /** Lighter, cooler green for the meadow patches that break up the island's single plane. */
+  readonly meadow: MeshStandardMaterial;
   readonly sand: MeshStandardMaterial;
   readonly dirt: MeshStandardMaterial;
   readonly dirtDark: MeshStandardMaterial;
@@ -121,6 +123,7 @@ export function createSharedAssets(): SharedAssets {
     octa: geometry(new OctahedronGeometry(1, 0)),
     terrain,
     grass: material(standard(0x7dc35a)),
+    meadow: material(standard(0x8fd06a)),
     sand: material(standard(0xe7d59a)),
     dirt: material(standard(0xc9a26a)),
     dirtDark: material(standard(0xb0854f)),

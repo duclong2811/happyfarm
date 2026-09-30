@@ -13,7 +13,7 @@ import {
   type PlayerState
 } from "../../apps/web/src/player/controller";
 import type { InputVector } from "../../apps/web/src/player/input";
-import { worldFrame, worldToTile } from "../../apps/web/src/render/layout";
+import { worldFrame, worldToTile, WORLD_ORIGIN_TILE_X, WORLD_ORIGIN_TILE_Y } from "../../apps/web/src/render/layout";
 
 /** Nothing blocks anything: the world the movement maths is checked against. */
 const OPEN_WORLD: CollisionWorld = { depth: () => 0 };
@@ -97,11 +97,16 @@ describe("player movement", () => {
   it("reports the tile a world position falls on", () => {
     const frame = worldFrame();
     const state = { ...spawn(), x: 0, z: 0 };
-    expect(playerTile(state, (world) => worldToTile(world, frame))).toEqual({ x: 3, y: 3 });
-    // 2.5, 24 is the configured spawn tile, and the fixed frame must keep reporting it.
+    const origin = playerTile(state, (world) => worldToTile(world, frame));
+    // The world origin is the middle of the starter square, and the fixed frame must keep reporting
+    // it however much land the farm owns.
+    expect(origin).toEqual({ x: WORLD_ORIGIN_TILE_X + 0.5, y: WORLD_ORIGIN_TILE_Y + 0.5 });
+    // One second of walking south is about two and a half tiles, and never sideways.
     const away = walk(NORTH, 1, 60);
-    expect(playerTile(away, (world) => worldToTile(world, frame)).x).toBe(3);
-    expect(playerTile(away, (world) => worldToTile(world, frame)).y).toBe(5);
+    const awayTile = playerTile(away, (world) => worldToTile(world, frame));
+    expect(awayTile.x).toBe(origin.x);
+    expect(awayTile.y).toBeGreaterThan(origin.y + 1);
+    expect(awayTile.y).toBeLessThan(origin.y + 4);
   });
 });
 

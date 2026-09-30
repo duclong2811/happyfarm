@@ -3,6 +3,12 @@
 Status: implemented (client only); manual browser pass pending.
 Phase: 7 (`7B.1`-`7B.6`).
 
+Updated by ADR 0021: the starter land, the plot cohort, the island bounds, the reserved regions, and
+the camera framing all changed size. The rules below are unchanged - the origin is still the centre
+of the starter land, and it is now tile `(5.5, 5.5)` for a 12 x 12 starter square - and the scenery
+lattice is now anchored to the island's centre rather than to the origin, because the two are no
+longer the same point.
+
 ## Context
 
 The renderer used to derive its world origin from the land the player currently owns: `worldX =
@@ -22,7 +28,7 @@ phase needs zones, a spawn, and walkability, which a bare grid does not express.
 **B, with the authoritative grid untouched: a static, client-side world config over the existing plot
 system.**
 
-* The world origin is **fixed at the centre of the starter land**, tile `(2.5, 2.5)`, for the life of
+* The world origin is **fixed at the centre of the starter land** for the life of
   the farm. `layout.ts` owns the only mapping (`tileToWorld` / `worldToTile` / `worldFrame`) and every
   module uses it: tiles, crops, trees, locked plots, selection, and, later, the character.
 * Camera framing is a **separate** concern. `FarmLayout.frameCenterWorldX/Z` and
@@ -30,8 +36,7 @@ system.**
   framing cannot change a tile's world position.
 * The static world - island, sand, water, fence and gates, paths, the pond, the farmhouse yard, and the
   decorative scenery - is a function of `apps/web/src/render/world-config.ts` alone. Buying land does
-  not rebuild it, and scenery is placed on a lattice anchored to the fixed origin, so it never
-  reshuffles under the player.
+  not rebuild it, and scenery is placed on a fixed lattice, so it never reshuffles under the player.
 * Regions (`ORCHARD`, `RANCH`, `POND`, `FARMHOUSE`) are **reserved visual space**, declared in tile
   coordinates in that same client config. They are not domain concepts, not `farm_regions` rows, and
   not ownership. `ORCHARD` in particular does **not** make trees tree-only: a tree is still planted on

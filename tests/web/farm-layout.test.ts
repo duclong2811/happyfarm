@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import {
   DEFAULT_TILE_GAP,
   DEFAULT_TILE_SIZE,
   layoutFarmTiles,
+  WORLD_ORIGIN_TILE_X,
+  WORLD_ORIGIN_TILE_Y,
   type TileCoordinate
 } from "../../apps/web/src/render/layout";
 
-/** Mirrors INITIAL_LAND_SIZE, so the first real farm is laid out as a 6 x 6 square. */
-const STARTING_LAND_SIZE = 6;
+/** The size of the first real farm, read from the domain so the two cannot drift apart. */
+const STARTING_LAND_SIZE = INITIAL_LAND_SIZE;
 const PITCH = DEFAULT_TILE_SIZE + DEFAULT_TILE_GAP;
+const ORIGIN_X = WORLD_ORIGIN_TILE_X;
+const ORIGIN_Y = WORLD_ORIGIN_TILE_Y;
 
 function squareLand(size: number): TileCoordinate[] {
   const tiles: TileCoordinate[] = [];
@@ -36,7 +41,12 @@ describe("layoutFarmTiles", () => {
 
     const edge = ((STARTING_LAND_SIZE - 1) / 2) * PITCH;
     expect(layout.placements[0]).toEqual({ tileX: 0, tileY: 0, worldX: -edge, worldZ: -edge });
-    expect(layout.placements.at(-1)).toEqual({ tileX: 5, tileY: 5, worldX: edge, worldZ: edge });
+    expect(layout.placements.at(-1)).toEqual({
+      tileX: STARTING_LAND_SIZE - 1,
+      tileY: STARTING_LAND_SIZE - 1,
+      worldX: edge,
+      worldZ: edge
+    });
 
     const centreX = layout.placements.reduce((total, placement) => total + placement.worldX, 0);
     const centreZ = layout.placements.reduce((total, placement) => total + placement.worldZ, 0);
@@ -67,7 +77,7 @@ describe("layoutFarmTiles", () => {
     expect(layout.rows).toBe(1);
     // The fixed origin sits at the starter land's centre, so a tile's world position is its own.
     expect(layout.placements).toEqual([
-      { tileX: 2, tileY: 3, worldX: (2 - 2.5) * PITCH, worldZ: (3 - 2.5) * PITCH }
+      { tileX: 2, tileY: 3, worldX: (2 - ORIGIN_X) * PITCH, worldZ: (3 - ORIGIN_Y) * PITCH }
     ]);
   });
 
@@ -85,8 +95,8 @@ describe("layoutFarmTiles", () => {
     expect(layout.tileGap).toBe(0);
     expect(layout.tileAreaWidth).toBe(4);
     expect(layout.placements.map((placement) => placement.worldX)).toEqual([
-      (0 - 2.5) * 2,
-      (1 - 2.5) * 2
+      (0 - ORIGIN_X) * 2,
+      (1 - ORIGIN_X) * 2
     ]);
   });
 
@@ -94,8 +104,8 @@ describe("layoutFarmTiles", () => {
     const layout = layoutFarmTiles([{ x: -2, y: -3 }, { x: 2, y: 1 }]);
     expect(layout).toMatchObject({ columns: 5, rows: 5, centerTileX: 0, centerTileY: -1 });
     expect(layout.placements).toEqual([
-      { tileX: -2, tileY: -3, worldX: (-2 - 2.5) * PITCH, worldZ: (-3 - 2.5) * PITCH },
-      { tileX: 2, tileY: 1, worldX: (2 - 2.5) * PITCH, worldZ: (1 - 2.5) * PITCH }
+      { tileX: -2, tileY: -3, worldX: (-2 - ORIGIN_X) * PITCH, worldZ: (-3 - ORIGIN_Y) * PITCH },
+      { tileX: 2, tileY: 1, worldX: (2 - ORIGIN_X) * PITCH, worldZ: (1 - ORIGIN_Y) * PITCH }
     ]);
   });
 
@@ -106,8 +116,14 @@ describe("layoutFarmTiles", () => {
     );
     expect(layout.centerTileX).toBe(2.5);
     expect(layout.centerTileY).toBe(2.5);
-    expect(layout.placements[0]).toMatchObject({ worldX: -8.5 * PITCH, worldZ: -2.5 * PITCH });
-    expect(layout.placements[1]).toMatchObject({ worldX: 2.5 * PITCH, worldZ: 8.5 * PITCH });
+    expect(layout.placements[0]).toMatchObject({
+      worldX: (-6 - ORIGIN_X) * PITCH,
+      worldZ: (0 - ORIGIN_Y) * PITCH
+    });
+    expect(layout.placements[1]).toMatchObject({
+      worldX: (5 - ORIGIN_X) * PITCH,
+      worldZ: (11 - ORIGIN_Y) * PITCH
+    });
   });
 
   it("rejects coordinates that are not safe integers", () => {

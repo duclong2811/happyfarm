@@ -38,8 +38,37 @@ challenged before they can load the SPA or call the API.
 | What is verified? | RS256 signature against the team's JWKS, `iss` = team domain, `aud` = the Access application, `exp`/`nbf` (60 s skew) |
 | What is never trusted? | email headers, custom headers, cookies, query strings, request bodies, or any client-supplied id |
 | How does an Access user become a player? | `player_<uuid>` derived by SHA-256 over `(issuer, subject)`; the same person always maps to the same id and the id contains no PII |
-| What happens on a first visit? | the verified visitor's Player row is created once (`player-onboarding.ts`); no wallet, farm, item, or reward is created |
+| What happens on a first visit? | the verified visitor's Player row is created once, and the one-time starter package is applied (`player-onboarding.ts` + `GrantStarterPackage`): 10 carrot seeds and 100 gold, ledgered as one `STARTER_GRANT` currency mutation. No farm is created |
 | What if configuration is missing? | every authenticated route answers `NOT_AUTHENTICATED` (fail-closed, no fallback) |
+
+## The starter package on staging
+
+Every new visitor receives the package exactly once, because the receipt
+(`starter_grants(player_id, grant_key)`) is the primary key of the grant. The alpha testers were
+created before the package existed, so staging also sets:
+
+```toml
+STARTER_GRANT_POLICY = "ALL_UNRECEIPTED"
+```
+
+That offers the package to an existing player who has no receipt - still once, still by the same
+primary key. **Production leaves this unset**, so a production deployment only ever grants it to a
+player whose row that request creates and never touches an existing balance. The policy is read by
+`readStarterGrantPolicy`; anything unrecognised, including absence, is the safe default.
+
+For a tester who never signs in again, apply the package from the operator's machine:
+
+```bash
+# Dry run: prints how many players have no receipt. Writes nothing.
+node scripts/repair/starter-package-backfill.mjs
+
+# Apply it.
+node scripts/repair/starter-package-backfill.mjs --apply
+```
+
+The script reads the package out of game data rather than restating it, refuses any database or
+config other than `happy-farm-staging` with `workers/api/wrangler.staging.toml`, and inserts the same
+receipt the game writes - so it cannot credit a player by a path the game would not take.
 
 The development bridge (`dev-auth.ts`, `dev-index.ts`, `workers/api/dev/**`, `/__dev/bootstrap`) is
 not in the deployed entrypoint's import graph and cannot exist in a deployment built from it.
@@ -93,7 +122,10 @@ Do these in order. Nothing here has been done for you, and no value should be co
    npx wrangler d1 migrations apply happy-farm-staging --config workers/api/wrangler.staging.toml
    ```
 
-   Expected: `0001` … `0008`, all pending on a fresh database. Never rewrite an applied migration.
+   Expected: `0001` … `0009`, all pending on a fresh database. Never rewrite an applied migration.
+   `0009_starter_package.sql` rebuilds `economy_ledger` to admit the `STARTER_GRANT` reason and
+   generalizes the starter receipt; it moves schema and carries old seed-only receipts forward, and
+   it grants nothing by itself.
 
 5. **Check the configuration is no longer a template**, then build and deploy:
 
@@ -108,8 +140,9 @@ Do these in order. Nothing here has been done for you, and no value should be co
    put the same hostname in the Access application so Access protects the SPA and the API together.
 
 7. **Verify as a tester**: open the staging URL in a private window, complete the Access challenge,
-   confirm the farm loads, and confirm a second tester gets a *different* player (their own farm and
-   their own gold).
+   and confirm the HUD shows **100 gold and 10 carrot seeds** before anything is planted. Reload
+   twice and confirm neither number moves. Confirm a second tester gets a *different* player with
+   their own farm and their own 100 gold.
 
 ## What the repository already guarantees
 

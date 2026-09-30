@@ -19,7 +19,7 @@ import {
 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
-import { createCameraRig } from "./camera";
+import { cameraFrameExtent, createCameraRig } from "./camera";
 import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileMaterial, type SharedAssets } from "./materials";
@@ -74,11 +74,12 @@ const PLAYER_STEP_FREQUENCY = 9;
 /**
  * Framing used while a character is drawn.
  *
- * The island view is framed to the whole world; a follow camera at that distance would show the
- * avatar as a few pixels, so a character pulls the camera in to a fixed, much smaller extent while
- * zoom and the camera direction stay exactly as they were.
+ * The default view frames the farm - the field and its apron - and a follow camera at that distance
+ * would show the avatar as a few pixels, so a character pulls the camera in to a fixed, much smaller
+ * extent while zoom and the camera direction stay exactly as they were. Nine metres is about eight
+ * tiles: enough to see the row being planted and the path behind it without losing the crop detail.
  */
-const FOLLOW_FRAME_EXTENT = 7.5;
+const FOLLOW_FRAME_EXTENT = 9;
 
 /** Thrown when the browser cannot give the page a WebGL context. */
 export class FarmRendererUnavailableError extends Error {
@@ -351,7 +352,20 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     tiles: []
   };
   let worldSignature = "";
+  /**
+   * How far the camera may drift from the world's centre, and how far the fog starts.
+   *
+   * The whole island, so a player who zooms out can look at the orchard, the pond, and the yard -
+   * not just the field.
+   */
   let worldExtent = MIN_FRAMED_EXTENT;
+  /**
+   * What the camera frames when there is no character yet.
+   *
+   * The farm, not the island: opening on a small field inside a large empty circle is exactly the
+   * view the alpha shipped. Zooming out from here still reaches the whole world.
+   */
+  let farmExtent = MIN_FRAMED_EXTENT;
   // Zoom and the player's manual pan live in the rig, so a farm refresh cannot quietly reset either
   // one: `applyState` never touches them.
   const cameraRig = createCameraRig();
@@ -499,7 +513,12 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   }
 
   function framedExtent(): number {
-    return playerPose === null ? worldExtent : Math.min(worldExtent, FOLLOW_FRAME_EXTENT);
+    return cameraFrameExtent({
+      islandExtent: worldExtent,
+      farmExtent,
+      followExtent: FOLLOW_FRAME_EXTENT,
+      hasCharacter: playerPose !== null
+    });
   }
 
   function updateCamera(): void {
@@ -601,6 +620,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
       buildTerrain(worldGroup, assets, next.world, next.layout, generatedModels.building_barn);
       buildScenery(worldGroup, assets, next.world.scenery, sceneryModels);
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
+      farmExtent = Math.max(next.world.farmHalfExtentWorld, MIN_FRAMED_EXTENT);
       // A world rebuild re-frames the zoom but keeps the player's own drag: buying land is not a
       // reason to move the camera the player positioned.
       cameraRig.setZoom(1);

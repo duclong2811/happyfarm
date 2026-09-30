@@ -21,9 +21,9 @@ Committed and verified through `0857e93`:
 
 Implemented and locally verified in the current working tree, but **not shipped or committed**:
 
-- Phase 4C farm expansion: server-selected purchasable 6 x 6 land plots.
+- Phase 4C farm expansion: server-selected purchasable 12 x 12 land plots.
 - Phase 5 seed economy: seed items and a `SEED` category, planting that spends exactly one seed, a
-  one-time 36-carrot-seed starter grant, uprooting, and a bilingual (vi/en) HUD.
+  one-time starter package (10 carrot seeds and 100 gold), uprooting, and a bilingual (vi/en) HUD.
 - Client work: fullscreen HUD, Three.js island world, camera pan/zoom, locked-land frontier,
   deterministic scenery, and an action dock that follows server state (plant while empty, countdown
   while growing, Harvest when the server reports the crop mature, and Uproot while a crop is in the
@@ -38,8 +38,8 @@ Implemented and locally verified in the current working tree, but **not shipped 
   the character to the selected tile, collapsible market and bag panels with a 900 px breakpoint,
   a reflowing action dock, and safe-area aware placement (ADR 0017). Verified in emulation only.
 
-Gateways available today: `npm run typecheck`, `npm run lint`, `npx vitest run` (42 files /
-385 tests), `npm run build --workspace @happy-farm/web`,
+Gateways available today: `npm run typecheck`, `npm run lint`, `npm run test` (64 files /
+609 tests), `npm run build --workspace @happy-farm/web`,
 `npm run build --workspace @happy-farm/api`, and a local playable dev host (ADR 0011) where the
 browser never sees the development token.
 
@@ -83,7 +83,7 @@ before 11 and 11 before 12.
 
 Status: **implemented and locally verified; pending commit**. See
 `docs/decisions/0013-phase-5-seed-economy.md` for the decisions that
-actually landed, `docs/DATA_MODEL.md` for `starter_seed_grants` and the planting settlement, and
+actually landed, `docs/DATA_MODEL.md` for `starter_grants` and the planting settlement, and
 `docs/protocols.md` for the seed, uproot, and bilingual-HUD contracts.
 
 Goal: give the loop an input cost so gold matters.

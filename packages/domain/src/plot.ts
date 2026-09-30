@@ -2,8 +2,15 @@ import { DomainError } from "./errors";
 import { plotIdForIndex, type CurrencyDefinitionId, type FarmId, type PlotId } from "./ids";
 import { createFarmTile, MAX_TILE_X, MAX_TILE_Y, type FarmTile, type TileCoordinate } from "./tile";
 
-/** Side length of the square of SOIL tiles one plot adds, matching the starter square. */
-export const PLOT_TILE_SIZE = 6;
+/**
+ * Side length of the square of SOIL tiles one plot adds, matching the starter square.
+ *
+ * Twelve: a plot is one cohort of land, and a cohort has to be worth the gold the catalogue charges
+ * for it. Scaling the cohort with the starter square rather than changing how the ring is counted is
+ * what keeps this file's geometry, the renderer's mirror of it, and `farm_tiles` agreeing about
+ * which coordinate a plot index occupies.
+ */
+export const PLOT_TILE_SIZE = 12;
 
 /** Tiles one plot contributes. A plot is a cohort, not an individual tile. */
 export const PLOT_TILE_COUNT = PLOT_TILE_SIZE * PLOT_TILE_SIZE;

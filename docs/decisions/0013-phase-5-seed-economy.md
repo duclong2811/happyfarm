@@ -2,6 +2,11 @@
 
 Status: Accepted (independent audit completed 2026-09-29; pending commit)
 
+Superseded in part by ADR 0020: the one-time grant now carries gold as well as seeds, it is filed
+under a package key, and the deployed onboarding step applies it. The seed economy described below -
+the seed mapping, the shop's one-way directions, the planting settlement, and uprooting - is
+unchanged.
+
 ## Context
 
 Planting was free and every item was `category: "CROP"`, so the economy had an output (harvest,

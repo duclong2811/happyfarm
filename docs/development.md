@@ -67,11 +67,12 @@ Authorization: Bearer <dev-token>
 - Requires a valid dev token; otherwise `NOT_AUTHENTICATED` and no row is written.
 - Creates only the one server-configured Player (`ACTIVE`) using the Phase 1 schema, and is
   idempotent — repeated calls return the same player with `created: false`.
-- Since Phase 5 it then performs onboarding: `GrantStarterSeed` gives that player their one-time 36
-  `item_carrot_seed`. The receipt is keyed by player, so a repeated bootstrap, a second farm, or a
-  replayed call grants nothing more. There is no HTTP route for granting items, and the browser never
-  names the item or the quantity.
-- Never creates wallet balance (gold), farms, crops, progression, or XP.
+- It then performs onboarding: `GrantStarterPackage` gives that player their one-time starter
+  package - 10 `item_carrot_seed` and 100 `currency_gold`. The receipt is keyed by player and by
+  package version, so a repeated bootstrap, a second farm, a reconnect, a retry, or two racing
+  requests grant nothing more. There is no HTTP route for granting items, and the browser never names
+  the item, the currency, or either quantity.
+- Never creates farms, crops, trees, progression, or XP.
 - Returns `CONFLICT_STALE_STATE` if the configured player id already belongs to a different
   issuer/subject pair (change `DEV_PLAYER_ID` or reset the local database).
 
@@ -119,12 +120,13 @@ last local Starter Farm (or creates one when none exists).
    Vietnamese. The choice is saved and applied without a reload; it changes only wording, never a
    price, a level, or a count.
 
-The 36 starter tiles are the field, not the whole map. They sit on a larger island with a dirt
-apron, fence, path, pond, barn, and deterministic scenery. The next ring of land for sale is drawn
-as fogged, padlocked `6 x 6` plots around the field; buying a plot through **Land** turns that ring
-into field and previews the next one. Drag the 3D view to pan and use the wheel to zoom; both are
-clamped to the island, and clicking a tile selects it. The surrounding world is presentation only:
-unlocked land, prices, and levels still come from the server.
+The 144 starter tiles are the field, not the whole map. They sit on a much larger island with a dirt
+apron, fence, paths, an orchard, a ranch, a pond, a barnyard, a rim tree line, and meadow patches.
+The next ring of land for sale is drawn as fogged, padlocked `12 x 12` plots around the field; buying
+a plot through **Land** turns that ring into field and previews the next one. The camera opens on the
+farm and follows the character at about eight tiles; drag the 3D view to pan, use the wheel to zoom
+out to the whole island, and click a tile to select it. The surrounding world is presentation only:
+unlocked land, prices, and levels still come from the server, and none of the scenery is stored.
 
 Automatic authentication is intentionally limited to loopback Host headers (`localhost`,
 `127.0.0.1`, and `[::1]`). Running Vite with a LAN-facing host does not auto-authenticate remote
@@ -145,11 +147,11 @@ The UI computes nothing authoritative: prices, rewards, maturity, and balances a
 API, and every response is validated against the `@happy-farm/contracts` schemas before it is used.
 
 Because planting costs a seed and only harvested produce is tradeable, the first useful order is
-plant → harvest → sell → buy. A brand-new player has no wallet row and therefore no gold, so
-`Buy` returns `INSUFFICIENT_FUNDS` until something has been sold. The dev bootstrap grants 36
-carrot seeds -- three full plantings of the starting crop -- so a new player can plant immediately,
-and a player who has spent them all with nothing to sell sees `INSUFFICIENT_ITEMS` from `Plant crop`
-until the market is used.
+plant → harvest → sell → buy. The one-time starter package funds both halves of the loop: 10
+`item_carrot_seed` to plant with and 100 `currency_gold` to buy more, so a new player can plant
+immediately and can restock in **Farm Market** after the first harvest without selling first. A
+player who has spent every seed and every coin with nothing to sell sees `INSUFFICIENT_FUNDS` from
+`Buy` and `INSUFFICIENT_ITEMS` from `Plant crop` until the market is used.
 
 ## 3D view (Phase 3.6A, 3.6B, and 3.6C)
 

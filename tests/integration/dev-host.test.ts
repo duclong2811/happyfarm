@@ -17,7 +17,9 @@ const MIGRATION_NAMES = [
   "0004_economy_and_shop.sql",
   "0005_player_progression.sql",
   "0006_farm_expansion.sql",
-  "0007_seed_economy.sql"
+  "0007_seed_economy.sql",
+  "0008_tree_instances.sql",
+  "0009_starter_package.sql"
 ];
 
 const REAL_MIGRATIONS = fileURLToPath(new URL("../../database/migrations/", import.meta.url));
@@ -290,21 +292,25 @@ describe("development API host", () => {
       data: { player: { playerId: DEV_PLAYER_ID, status: "ACTIVE", created: true } }
     });
 
-    // Onboarding, not a command: the bootstrap hands a new player their one-time starter seeds, and
-    // a later bootstrap finds the receipt and grants nothing more.
+    // Onboarding, not a command: the first pass hands a new player their one-time starter package,
+    // and a later pass finds the receipt and grants nothing more.
     const inventory = await host.handle(authedRequest("/inventory"));
     expect(await inventory.json()).toEqual({
       ok: true,
       data: {
         items: [
-          { itemDefinitionId: "item_carrot_seed", displayNameKey: "item.carrot_seed.name", category: "SEED", quantity: 36 }
+          { itemDefinitionId: "item_carrot_seed", displayNameKey: "item.carrot_seed.name", category: "SEED", quantity: 10 }
         ]
       }
+    });
+    expect(await (await host.handle(authedRequest("/wallet"))).json()).toEqual({
+      ok: true,
+      data: { wallets: [{ currencyId: "currency_gold", displayNameKey: "currency.gold.name", balance: 100 }] }
     });
     await host.handle(authedRequest(DEV_AUTH_BOOTSTRAP_PATH, { method: "POST" }));
     expect(await (await host.handle(authedRequest("/inventory"))).json()).toMatchObject({
       ok: true,
-      data: { items: [{ itemDefinitionId: "item_carrot_seed", quantity: 36 }] }
+      data: { items: [{ itemDefinitionId: "item_carrot_seed", quantity: 10 }] }
     });
 
     const created = await host.handle(
@@ -386,7 +392,7 @@ describe("development API host", () => {
       "idempotency_keys",
       "inventory_items",
       "players",
-      "starter_seed_grants",
+      "starter_grants",
       "wallets"
     ]) {
       expect(names, expected).toContain(expected);

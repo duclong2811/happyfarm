@@ -1,7 +1,7 @@
-import { Group, Mesh, type Material, type Object3D } from "three";
+import { Group, Mesh, type Material, type MeshStandardMaterial, type Object3D } from "three";
 import type { FarmLayout } from "./layout";
 import type { SharedAssets } from "./materials";
-import type { FarmWorld, LockedPlotSquare, PondSpec } from "./world";
+import type { FarmWorld, LockedPlotSquare, MeadowSpec, PondSpec } from "./world";
 import { FENCE_THICKNESS_WORLD, fenceGeometry, type FenceGeometry } from "./world-config";
 
 /**
@@ -20,6 +20,15 @@ const APRON_TOP_Y = -0.01;
 const FENCE_HEIGHT = 0.62;
 /** The generated barn is authored with its base on y = 0; the ground under the yard is a hair lower. */
 const BARN_FEET_Y = -0.02;
+/**
+ * Height of a terrain patch, and where it sits.
+ *
+ * The grass island's top is at -0.04 and the dirt apron's is at -0.01, so a patch is a flat disc
+ * that pokes a hair above the grass and stays under everything the player can stand on. It is
+ * decoration: no tile, no rule, and no collision reads it.
+ */
+const MEADOW_THICKNESS = 0.02;
+const MEADOW_TOP_Y = -0.03;
 
 function box(assets: SharedAssets, material: Material, width: number, height: number, depth: number, x: number, y: number, z: number): Mesh {
   const mesh = new Mesh(assets.box, material);
@@ -70,6 +79,38 @@ function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld, fe
     group.add(
       box(assets, assets.dirtDark, world.path.widthWorld, 0.1, world.path.depthWorld, world.path.worldX, APRON_TOP_Y - 0.05, world.path.worldZ)
     );
+  }
+}
+
+/** The material a terrain patch is drawn in. Colour only; nothing reads it back. */
+function meadowMaterial(assets: SharedAssets, kind: MeadowSpec["kind"]): MeshStandardMaterial {
+  switch (kind) {
+    case "MEADOW":
+      return assets.meadow;
+    case "DIRT":
+      return assets.dirtDark;
+    case "SAND":
+      return assets.sand;
+  }
+}
+
+/**
+ * Terrain variation outside the field: meadow, bare earth, and shore.
+ *
+ * Each patch is an ellipse flush with the island's grass, rotated in the ground plane by a holder
+ * group so the ellipse's own axes stay readable. This is the layer a stylized terrain pass replaces;
+ * today it is what stops the island from being one flat green plane.
+ */
+function addMeadows(group: Group, assets: SharedAssets, world: FarmWorld): void {
+  for (const patch of world.meadows) {
+    const holder = new Group();
+    holder.position.set(patch.worldX, MEADOW_TOP_Y, patch.worldZ);
+    holder.rotation.y = patch.rotationY;
+    const disc = new Mesh(assets.circle, meadowMaterial(assets, patch.kind));
+    disc.rotation.x = -Math.PI / 2;
+    disc.scale.set(patch.radiusWorldX, patch.radiusWorldZ, MEADOW_THICKNESS);
+    holder.add(disc);
+    group.add(holder);
   }
 }
 
@@ -210,6 +251,7 @@ export function buildTerrain(
   // is: one description, drawn here, walked around there.
   const fence = fenceGeometry(layout.pitch);
   addIsland(group, assets, world);
+  addMeadows(group, assets, world);
   addFieldGround(group, assets, world, fence);
   addFence(group, assets, fence, layout.pitch);
   if (world.pond !== null) addPond(group, assets, world.pond);

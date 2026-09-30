@@ -73,11 +73,11 @@ function lastIndexOfRing(ring: number): number {
 }
 
 describe("plot geometry", () => {
-  it("walks a clockwise spiral of six-tile squares outward from the starter land", () => {
+  it("walks a clockwise spiral of plot squares outward from the starter land", () => {
     const expected: readonly (readonly [number, number, number])[] = [
-      [1, 6, 0], [2, 6, 6], [3, 0, 6],
-      [4, 12, 0], [5, 12, 6], [6, 12, 12], [7, 0, 12], [8, 6, 12],
-      [9, 18, 0], [10, 18, 6], [11, 18, 12], [12, 18, 18], [13, 0, 18], [14, 6, 18], [15, 12, 18]
+      [1, 12, 0], [2, 12, 12], [3, 0, 12],
+      [4, 24, 0], [5, 24, 12], [6, 24, 24], [7, 0, 24], [8, 12, 24],
+      [9, 36, 0], [10, 36, 12], [11, 36, 24], [12, 36, 36], [13, 0, 36], [14, 12, 36], [15, 24, 36]
     ];
     for (const [plotIndex, x, y] of expected) {
       expect(plotOrigin(plotIndex)).toEqual({ x, y });

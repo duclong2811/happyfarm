@@ -97,13 +97,16 @@ plant today, and no route accepts a level, an experience total, or a crop requir
 ## Farm world and map foundation (Phase 7)
 
 Read `docs/decisions/0015-fixed-world-coordinates-and-static-farm-regions.md` before editing world
-layout, world coordinates, regions, paths, the spawn, or walkability.
+layout, world coordinates, regions, paths, the spawn, or walkability, and
+`docs/decisions/0021-larger-farm-and-world-composition.md` before changing the starter square, the
+plot cohort size, the island bounds, or the composition of the scenery.
 
 - The canonical mapping: `apps/web/src/render/layout.ts` (`worldFrame`, `tileToWorld`, `worldToTile`,
-  fixed origin at the starter land's centre). Every module must use it; do not reintroduce a formula
-  that depends on the currently unlocked land.
+  fixed origin at the starter land's centre, currently tile `5.5,5.5` for a 12 x 12 starter square).
+  Every module must use it; do not reintroduce a formula that depends on the currently unlocked land.
 - Static world definitions: `apps/web/src/render/world-config.ts` (visual bounds, reserved regions,
-  fence and gates, paths, pond, farmhouse yard, spawn, static obstacles, walkability queries).
+  tree bands, the rim tree line, terrain patches, fence and gates, paths, pond, farmhouse yard,
+  spawn, static obstacles, the framed farm extent, walkability queries).
 - Static geometry: `apps/web/src/render/world.ts` and `apps/web/src/render/terrain.ts`. Static layers
   are a function of the config alone; locked land is a progression overlay and is rebuilt with the
   dynamic layer.
@@ -190,7 +193,8 @@ atomic D1 write is `D1FarmExpansionRepository`. A client command may carry only 
 ## Seed economy, uproot, and i18n (Phase 5)
 
 Read `docs/decisions/0013-phase-5-seed-economy.md` before editing seed definitions, shop pricing,
-the planting settlement, the starter grant, uprooting, or the client's translation layer.
+the planting settlement, the starter grant, uprooting, or the client's translation layer, and
+`docs/decisions/0020-starter-package-and-alpha-repair.md` before editing the starter package itself.
 
 - Seed mapping and item categories: `packages/game-data/src/items/index.ts` and
   `packages/game-data/src/crops/index.ts`; shop directions and prices:
@@ -200,10 +204,15 @@ the planting settlement, the starter grant, uprooting, or the client's translati
 - The planting settlement: `PlantCrop` in `packages/application/src/crops.ts` and
   `D1CropRepository.plantAtomically` in `workers/api/src/d1-repositories.ts`. Uprooting is
   `UprootCrop` in the same file with `D1CropRepository.removeAtomically`.
-- The one-time starter grant: `packages/game-data/src/starter/index.ts`,
-  `GrantStarterSeed` in `packages/application/src/starter.ts`, `D1StarterSeedGrantRepository`, and
-  `database/migrations/0007_seed_economy.sql`. It is called from the development bootstrap in
-  `workers/api/src/dev-index.ts`; there is no grant route and none may be added.
+- The one-time starter package: `packages/game-data/src/starter/index.ts`,
+  `GrantStarterPackage` in `packages/application/src/starter.ts`, `D1StarterGrantRepository`, and
+  `database/migrations/0009_starter_package.sql`. The deployed onboarding step
+  (`workers/api/src/player-onboarding.ts`, wired in `workers/api/src/index.ts`) calls it, and so does
+  the development host (`workers/api/src/dev-index.ts`); there is no grant route and none may be
+  added. `STARTER_GRANT_POLICY` decides whether it is offered to new players only (the default) or to
+  any player without a receipt (staging).
+- Repairing players who predate the package: `scripts/repair/starter-package-backfill.mjs`
+  (dry run by default, staging-only, `--apply` to write).
 - Contracts and routes: `packages/contracts/src/index.ts`, `workers/api/src/handler.ts` (including
   the uproot route), `apps/web/src/api.ts`.
 - The client's language layer is `apps/web/src/i18n.ts`; the dock's planting rules are
@@ -299,7 +308,8 @@ Read `docs/deployment.md` before touching the deployed entrypoint, the Access au
 
 - Entrypoint: `workers/api/src/index.ts` (`/api/*` ? handler, everything else ? `ASSETS`).
 - Access auth: `workers/api/src/access-auth.ts` (JWKS-verified JWT, deterministic `player_<uuid>` from `(issuer, subject)`, fail-closed without config).
-- Onboarding: `workers/api/src/player-onboarding.ts` (one Player row per verified visitor; nothing else).
+- Onboarding: `workers/api/src/player-onboarding.ts` (one Player row per verified visitor, plus the
+  one-time starter package; the policy is `STARTER_GRANT_POLICY`, default `NEW_PLAYERS`).
 - Boundary: `workers/api/src/staging-routing.ts`; config: `workers/api/wrangler.staging.toml` (staging D1 + `[assets]`).
 - Tests: `tests/api/access-auth.test.ts`, `tests/api/staging-routing.test.ts` (includes an import-graph proof that the deployed entrypoint cannot reach the dev bridge).
 

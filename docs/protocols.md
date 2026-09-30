@@ -246,12 +246,17 @@ Phase 3D exposes `POST /shop/buy` and `POST /shop/sell`. Both authenticate the a
 - Authorization and membership are re-read before a stored result is returned, exactly as harvest
   does, so a replay cannot outlive the access that allowed the original command.
 
-### Starter seeds and the client
+### Starter package and the client
 
-- The development bootstrap grants the configured player exactly 36 `item_carrot_seed`, once, through
-  `GrantStarterSeed`. There is no HTTP route for granting items: the grant is an onboarding step the
-  server performs for the identity it just authenticated, and a repeated bootstrap, a second farm, or
-  a replay finds the receipt and credits nothing.
+- Onboarding grants the authenticated player the one-time starter package through
+  `GrantStarterPackage`: 10 `item_carrot_seed` and 100 `currency_gold`, filed under the receipt key
+  `starter_package_v1`. There is no HTTP route for granting items or currency: the grant is an
+  onboarding step the server performs for the identity it just authenticated, and a repeated
+  onboarding pass, a second farm, a reconnect, a retry, or two racing requests find the receipt and
+  credit nothing. The deployed Worker offers it to a new player by default; staging also offers it to
+  an existing player who has no receipt (`STARTER_GRANT_POLICY`).
+- The gold half is an ordinary ledgered currency mutation (`STARTER_GRANT` referencing the player),
+  so it appears in wallet history beside shop and expansion entries.
 - The client's planting control lists each crop with its name and the player's seed count, disables
   planting when the tile is not empty soil, the crop is not unlocked, or no seed is held, and says
   which of those is missing. Nothing is subtracted optimistically: the dock re-renders from

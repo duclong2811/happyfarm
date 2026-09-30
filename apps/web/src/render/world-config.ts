@@ -15,19 +15,25 @@ import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, WORLD_ORIGIN_TILE_X, 
  * fixed frame in `layout.ts` is the only place that turns them into world metres.
  */
 
-export const WORLD_CONFIG_VERSION = 1;
+export const WORLD_CONFIG_VERSION = 2;
 
 /**
- * The land the shipped plot catalogue can hand out: 8 plots of 6x6 make an 18x18 field at [0,17]^2.
+ * The land the shipped plot catalogue can hand out: 8 plots of 12x12 make a 36x36 field at [0,35]^2.
  *
  * This is a *reservation* used to keep static zones out of the way, not a gameplay bound. A test
  * mirrors it against `packages/domain/src/plot.ts` plus the game-data catalogue, so a catalogue that
  * grew past it would fail loudly instead of silently clipping future land or overlapping a zone.
  */
-export const FARM_FIELD_BOUNDS: TileBounds = { minX: 0, maxX: 17, minY: 0, maxY: 17 };
+export const FARM_FIELD_BOUNDS: TileBounds = { minX: 0, maxX: 35, minY: 0, maxY: 35 };
 
-/** The island, including every reserved zone and its margin. Fixed: it does not grow with the farm. */
-export const VISUAL_BOUNDS: TileBounds = { minX: -13, maxX: 30, minY: -13, maxY: 30 };
+/**
+ * The island, including every reserved zone and its margin. Fixed: it does not grow with the farm.
+ *
+ * The margin is roughly a third of the island rather than half: the field is about forty per cent of
+ * the land a player can see, and the rest is a ring of orchard, ranch, pond, farmhouse yard, tree
+ * lines, and meadow that reads as one continuous place instead of a plot on an empty plane.
+ */
+export const VISUAL_BOUNDS: TileBounds = { minX: -13, maxX: 48, minY: -13, maxY: 48 };
 
 export type RegionKind = "ORCHARD" | "RANCH" | "POND" | "FARMHOUSE";
 
@@ -46,10 +52,88 @@ export interface WorldRegion {
 }
 
 export const WORLD_REGIONS: readonly WorldRegion[] = [
-  { id: "orchard", kind: "ORCHARD", bounds: { minX: -6, maxX: 18, minY: -12, maxY: -2 }, labelKey: "world.region.orchard" },
-  { id: "ranch", kind: "RANCH", bounds: { minX: -12, maxX: -2, minY: -2, maxY: 18 }, labelKey: "world.region.ranch" },
-  { id: "pond", kind: "POND", bounds: { minX: 19, maxX: 29, minY: 2, maxY: 12 }, labelKey: "world.region.pond" },
-  { id: "farmhouse", kind: "FARMHOUSE", bounds: { minX: 19, maxX: 29, minY: -10, maxY: 0 }, labelKey: "world.region.farmhouse" }
+  { id: "orchard", kind: "ORCHARD", bounds: { minX: -8, maxX: 38, minY: -12, maxY: -2 }, labelKey: "world.region.orchard" },
+  { id: "ranch", kind: "RANCH", bounds: { minX: -12, maxX: -2, minY: -2, maxY: 38 }, labelKey: "world.region.ranch" },
+  { id: "pond", kind: "POND", bounds: { minX: 38, maxX: 47, minY: 4, maxY: 14 }, labelKey: "world.region.pond" },
+  { id: "farmhouse", kind: "FARMHOUSE", bounds: { minX: 38, maxX: 47, minY: -12, maxY: -2 }, labelKey: "world.region.farmhouse" }
+];
+
+/** One reserved region's bounds, by id. Regions are reservations, so a band may only be inside one. */
+function regionBounds(id: WorldRegion["id"]): TileBounds {
+  const region = WORLD_REGIONS.find((candidate) => candidate.id === id);
+  if (region === undefined) throw new Error(`Unknown world region: ${id}`);
+  return region.bounds;
+}
+
+/** A region's bounds, pulled in by `margin` tiles on every side. */
+function inset(bounds: TileBounds, margin: number): TileBounds {
+  return {
+    minX: bounds.minX + margin,
+    maxX: bounds.maxX - margin,
+    minY: bounds.minY + margin,
+    maxY: bounds.maxY - margin
+  };
+}
+
+/**
+ * A band of planted things: the tree lines that make the island read as land rather than as a
+ * painted circle.
+ *
+ * A band is a rectangle plus a spacing, and positions are laid on that lattice with a small phase
+ * offset so two bands sharing an axis do not line up into a corridor. Bands are placed from the
+ * region reservations above, so the orchard always fills the orchard and the belt beside the ranch
+ * always sits between the ranch and the field. Nothing here is gameplay: no band owns a tile, plants
+ * a tree, or blocks a step.
+ */
+export interface TreeBand {
+  readonly id: string;
+  readonly kind: "TREE" | "PINE";
+  readonly bounds: TileBounds;
+  /** Tile spacing between two planted positions, along both axes. */
+  readonly spacing: number;
+  /** Tile phase offset, so the lattice does not start exactly on the band's corner. */
+  readonly offset: number;
+}
+
+export const TREE_BANDS: readonly TreeBand[] = [
+  // The orchard: rows of fruit trees, the shape the future orchard gameplay will occupy.
+  { id: "orchard_rows", kind: "TREE", bounds: inset(regionBounds("orchard"), 2), spacing: 5, offset: 1 },
+  // The ranch: a windbreak of pines along the pasture, deliberately sparse so the livestock area
+  // this reserves stays open ground.
+  { id: "ranch_windbreak", kind: "PINE", bounds: inset(regionBounds("ranch"), 3), spacing: 7, offset: 2 }
+];
+
+/** How wide the tree line inside the island's rim is, in tiles. */
+export const RIM_TREE_BAND_TILES = 2;
+/** Tile spacing between the rim trees that close off the island's edge. */
+export const RIM_TREE_SPACING_TILES = 2.2;
+
+/** A patch of ground with its own colour: meadow, bare earth, or shore. */
+export interface MeadowPatch {
+  readonly id: string;
+  readonly kind: "MEADOW" | "DIRT" | "SAND";
+  readonly center: TileCoordinate;
+  readonly radiusX: number;
+  readonly radiusY: number;
+  readonly rotationY: number;
+}
+
+/**
+ * Terrain variation, in tile coordinates, outside the field and outside every path.
+ *
+ * A flat island of one green reads as a background rather than as ground. These patches are drawn
+ * flush with the grass and carry no gameplay: they are where a later stylized terrain pass will put
+ * its own material work, and they are the reason the world does not look like a single plane today.
+ */
+export const MEADOWS: readonly MeadowPatch[] = [
+  { id: "north_meadow", kind: "MEADOW", center: { x: 8, y: -7 }, radiusX: 9.5, radiusY: 4.2, rotationY: 0.12 },
+  { id: "west_meadow", kind: "MEADOW", center: { x: -7.5, y: 24 }, radiusX: 3.6, radiusY: 11, rotationY: -0.08 },
+  { id: "east_meadow", kind: "MEADOW", center: { x: 42, y: 24 }, radiusX: 4.2, radiusY: 8.5, rotationY: 0.2 },
+  { id: "south_meadow", kind: "MEADOW", center: { x: 12, y: 42 }, radiusX: 10, radiusY: 3.4, rotationY: -0.15 },
+  { id: "ranch_dirt", kind: "DIRT", center: { x: -7, y: 14 }, radiusX: 3.4, radiusY: 7, rotationY: 0 },
+  { id: "orchard_dirt", kind: "DIRT", center: { x: 20, y: -7 }, radiusX: 12, radiusY: 3.2, rotationY: 0 },
+  { id: "south_shore", kind: "SAND", center: { x: 5.5, y: 44 }, radiusX: 12, radiusY: 3, rotationY: 0 },
+  { id: "pond_shore", kind: "SAND", center: { x: 43, y: 9 }, radiusX: 4.6, radiusY: 4.4, rotationY: 0 }
 ];
 
 export type FenceSide = "SOUTH" | "NORTH" | "WEST" | "EAST";
@@ -69,11 +153,11 @@ export interface FenceSpec {
 }
 
 export const FENCE: FenceSpec = {
-  bounds: { minX: -1.5, maxX: 18.5, minY: -1.5, maxY: 18.5 },
+  bounds: { minX: -1.5, maxX: 36.5, minY: -1.5, maxY: 36.5 },
   gates: [
-    { side: "SOUTH", from: 1.3, to: 3.7 },
-    { side: "WEST", from: 6.5, to: 9 },
-    { side: "EAST", from: 6.5, to: 9 }
+    { side: "SOUTH", from: 4.3, to: 6.7 },
+    { side: "WEST", from: 13, to: 16 },
+    { side: "EAST", from: 13, to: 16 }
   ]
 };
 
@@ -205,26 +289,26 @@ export interface PathStrip {
 
 export const PATHS: readonly PathStrip[] = [
   // The main path: south gate → spawn → island edge.
-  { id: "south", bounds: { minX: 1.3, maxX: 3.7, minY: 18.5, maxY: 26.5 } },
+  { id: "south", bounds: { minX: 4.3, maxX: 6.7, minY: 36.5, maxY: 45 } },
   // Branch to the orchard reserve.
-  { id: "orchard", bounds: { minX: 1.3, maxX: 18, minY: -2, maxY: -0.4 } },
+  { id: "orchard", bounds: { minX: 6.5, maxX: 38, minY: -11.5, maxY: -3 } },
   // Branch through the west gate to the ranch reserve.
-  { id: "ranch", bounds: { minX: -4.5, maxX: -1.5, minY: 7, maxY: 9 } },
+  { id: "ranch", bounds: { minX: -9, maxX: -1.5, minY: 13, maxY: 16 } },
   // Branch through the east gate to the pond and the farmhouse yard.
-  { id: "pond", bounds: { minX: 18.5, maxX: 24.5, minY: 7, maxY: 9 } },
-  { id: "farmhouse", bounds: { minX: 18.5, maxX: 22, minY: -4.5, maxY: -2.5 } }
+  { id: "pond", bounds: { minX: 36.5, maxX: 45, minY: 13, maxY: 16 } },
+  { id: "farmhouse", bounds: { minX: 39, maxX: 42, minY: -7, maxY: 13 } }
 ];
 
 /** The pond, in tile coordinates. Water is visual and non-walkable; there is no fishing yet. */
 export const POND = {
-  center: { x: 24, y: 7 },
+  center: { x: 42.5, y: 9 },
   radiusX: 3.6,
   radiusY: 3
 } as const;
 
 /** The farmhouse/barn yard, a static building placeholder. */
 export const FARMHOUSE = {
-  center: { x: 23, y: -5.5 },
+  center: { x: 42.5, y: -6.5 },
   rotationY: Math.PI * 0.75
 } as const;
 
@@ -233,7 +317,7 @@ export const FARMHOUSE = {
  * can own, so it never starts inside a crop, a tree, a marker, or water. The south gate opens onto
  * the same line, so walking north from here enters the field.
  */
-export const SPAWN_TILE: TileCoordinate = { x: WORLD_ORIGIN_TILE_X, y: 24 };
+export const SPAWN_TILE: TileCoordinate = { x: WORLD_ORIGIN_TILE_X, y: 41 };
 
 export interface WorldObstacle {
   readonly id: string;
@@ -268,6 +352,23 @@ export const STATIC_OBSTACLES: readonly WorldObstacle[] = [
 /** The island in world metres, from the fixed visual bounds. */
 export const ISLAND_HALF_WIDTH_WORLD = ((VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2) * frame.pitch;
 export const ISLAND_HALF_DEPTH_WORLD = ((VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2) * frame.pitch;
+
+/**
+ * Half the framed farm, in world metres: the fence rectangle, which is the land the plot catalogue
+ * can hand out plus its apron.
+ *
+ * The camera's default view frames the farm, not the island. Zooming out from here still reaches the
+ * whole world and following the character is closer again, so the starting view is neither the empty
+ * overview the alpha opened on nor a close-up with no context around it. The island and the fence
+ * share a centre, so swapping between the two frames does not slide the world sideways.
+ */
+export const FARM_HALF_EXTENT_WORLD =
+  Math.max(
+    (FENCE.bounds.maxX - FENCE.bounds.minX + 1) / 2,
+    (FENCE.bounds.maxY - FENCE.bounds.minY + 1) / 2
+  ) *
+    frame.pitch +
+  FENCE_CLEARANCE_WORLD;
 
 /** World position of the visual bounds' centre: what a camera frames, never a coordinate origin. */
 export const WORLD_CENTER_WORLD = toWorld({
@@ -320,11 +421,18 @@ export const WORLD_CONFIG = {
   visualBounds: VISUAL_BOUNDS,
   farmFieldBounds: FARM_FIELD_BOUNDS,
   regions: WORLD_REGIONS,
+  treeBands: TREE_BANDS,
+  rimTreeBandTiles: RIM_TREE_BAND_TILES,
+  rimTreeSpacingTiles: RIM_TREE_SPACING_TILES,
+  meadows: MEADOWS,
   fence: FENCE,
   paths: PATHS,
   pond: POND,
   farmhouse: FARMHOUSE,
   spawnTile: SPAWN_TILE,
   spawnWorld: SPAWN_WORLD,
-  staticObstacles: STATIC_OBSTACLES
+  staticObstacles: STATIC_OBSTACLES,
+  farmHalfExtentWorld: FARM_HALF_EXTENT_WORLD,
+  islandHalfWidthWorld: ISLAND_HALF_WIDTH_WORLD,
+  islandHalfDepthWorld: ISLAND_HALF_DEPTH_WORLD
 } as const;

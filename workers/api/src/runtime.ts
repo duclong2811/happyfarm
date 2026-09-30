@@ -39,6 +39,7 @@ import type {
   PlotDefinitionRepository,
   PayloadFingerprint,
   ShopEntryRepository,
+  StarterPackageDefinition,
   TreeDefinitionRepository,
   TreeIdGenerator
 } from "@happy-farm/application";
@@ -49,7 +50,7 @@ import {
   playerProgression,
   plotRegistry,
   shopRegistry,
-  starterSeedGrant,
+  starterPackage,
   treeRegistry,
   type CropDefinitionData,
   type TreeDefinitionData
@@ -67,16 +68,19 @@ export const gameDataProgressionDefinition: ProgressionDefinition = {
 };
 
 /**
- * The one-time starter grant, read from game data and handed to the application as plain values.
+ * The one-time starter package, read from game data and handed to the application as plain values.
  *
- * It is exported from here so the same `GrantStarterSeed` use case can be called by the development
- * bootstrap today and by a production onboarding step later, without either of them knowing an item
- * ID or a quantity.
+ * It is exported from here so the same `GrantStarterPackage` use case can be called by the
+ * development host today and by the deployed onboarding step later, without either of them knowing
+ * an item ID, a currency ID, or a quantity.
  */
-export const gameDataStarterSeedGrant = {
-  itemDefinitionId: starterSeedGrant.itemDefinitionId,
-  quantity: starterSeedGrant.quantity
-} as const;
+export const gameDataStarterPackage: StarterPackageDefinition = {
+  grantKey: starterPackage.grantKey,
+  seedItemDefinitionId: starterPackage.seedItemDefinitionId,
+  seedQuantity: starterPackage.seedQuantity,
+  currencyDefinitionId: starterPackage.currencyDefinitionId,
+  goldAmount: starterPackage.goldAmount
+};
 
 export class SystemClock implements Clock {
   now(): string {

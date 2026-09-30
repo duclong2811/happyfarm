@@ -73,18 +73,23 @@ Coordinates must be validated against implementation configuration constants `MI
 #### Starter land
 
 An existing tile row *is* unlocked land (`UnlockedLandPolicy`), so a farm with no tile rows has no
-plantable land. `CreateFarm` therefore inserts a `6 x 6` square of `SOIL` tiles anchored at the
-origin (`(0,0)` through `(5,5)`), all at `tile_state = IDLE` and `version = 1`, in the same
+plantable land. `CreateFarm` therefore inserts a `12 x 12` square of `SOIL` tiles anchored at the
+origin (`(0,0)` through `(11,11)`), all at `tile_state = IDLE` and `version = 1`, in the same
 transaction as the farm row and its `OWNER` membership. `INITIAL_LAND_SIZE` in `packages/domain`
-is the single source of the side length; `createInitialFarmTiles` is the only producer. A farm is
-never observable with a partial starter square. Reading that land back requires the authenticated
-`GET /farms/:farmId/tiles` route, which returns each tile's authoritative `version`.
+is the single source of the side length (and, since ADR 0021, the size of one plot cohort);
+`createInitialFarmTiles` is the only producer. A farm is never observable with a partial starter
+square. Reading that land back requires the authenticated `GET /farms/:farmId/tiles` route, which
+returns each tile's authoritative `version`.
+
+The rendered world is deliberately much larger than the farm and is never stored: the reserved
+catalogue field is `36 x 36` tiles and the island is `62 x 62`, but only a tile the farm actually
+owns has a row. See ADR 0021.
 
 `terrain_type` uses the initial stable enum-like values `GRASS`, `SOIL`, `WATER`, and `BLOCKED`. Terrain and mutable tile state are separate concepts. Phase 1 uses the minimal `tile_state` value `IDLE`; later states require an explicit schema/game-data change. Runtime validation and database constraints where practical must reject arbitrary client-provided terrain or state strings.
 
 #### Farm expansion
 
-Each purchased plot adds a deterministic `6 x 6` cohort of fresh `SOIL` tiles. Plot order, price,
+Each purchased plot adds a deterministic `12 x 12` cohort of fresh `SOIL` tiles. Plot order, price,
 currency, and required player level come from validated game data. Only the farm owner may buy the
 server-selected next contiguous plot. Wallet debit, ledger row, all tile inserts, and idempotency
 record commit atomically; a tile row remains the single representation of unlocked land.
@@ -208,19 +213,31 @@ Constraint: quantity is an integer from 0 through 2,147,483,647. Each player/ite
 
 Item definition IDs are validated against static game data and intentionally have no fake D1 foreign key. Crop harvest item references are validated against that registry at game-data load time.
 
-### starter_seed_grants
-- player_id PK
+### starter_grants
+- player_id
+- grant_key
 - item_definition_id
-- quantity
+- item_quantity
+- currency_id
+- gold_amount
+- transaction_id (nullable: a gold-free receipt never moved currency)
+- request_id (nullable, same rule)
 - created_at
+PRIMARY KEY: (player_id, grant_key)
 FK: player_id -> players(id)
 
-The one-time starter grant receipt (Phase 5). The primary key on `player_id` is what makes the grant
-happen once per player: a repeated bootstrap, a second farm, or a replayed onboarding call matches
-the existing row and credits nothing. The receipt *is* the command -- an `AFTER INSERT` trigger
-appends the quantity to `inventory_items` in the same statement -- so there is no window in which a
-player holds the seeds without the record of having received them, or the reverse. The item and the
-quantity come from validated game data, and no route accepts either.
+The one-time starter package receipt (Phase 5, widened in ADR 0020). The primary key is what makes
+the grant happen once per player and per package version: a repeated onboarding pass, a second farm,
+a reconnect, a retried request, or two racing requests all match the existing row and credit nothing.
+The receipt *is* the command -- an `AFTER INSERT` trigger credits the seed stack, creates the wallet
+when it is missing, and appends one `economy_ledger` row in the same statement -- so there is no
+window in which a player holds the package without the record of having received it, or the reverse.
+The item, the quantity, the currency, and the amount come from validated game data, and no route
+accepts any of them.
+
+`grant_key` is the package version (`starter_package_v1`). Rows carried over from the pre-package
+seed economy keep their own key (`starter_seed_v1`) and a `gold_amount` of 0, so a player who
+received seeds before the package existed is not treated as having received the package.
 
 ### harvest_settlements
 - actor_player_id
@@ -261,6 +278,11 @@ Indexes: player_id+created_at; request_id
 Never delete or rewrite normal ledger history as part of routine gameplay.
 
 The ledger records transaction ID, exact integer delta, stable reason/reference, request ID, balance before/after, expected wallet version, and timestamp. A database check enforces `balance_after = balance_before + delta`; update/delete triggers make normal history append-only. Corrections use compensating entries rather than editing history.
+
+`reason` is one of `SHOP_BUY`, `SHOP_SELL`, `FARM_EXPANSION` (land, referencing a plot), or
+`STARTER_GRANT` (the one-time starter package, referencing the player). Each reason has exactly one
+reference kind, enforced by a database check and mirrored by `referenceTypeForReason`, so a row
+cannot claim to be a purchase while citing a player or the reverse.
 
 ### player_progression
 - player_id PK/FK

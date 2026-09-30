@@ -21,9 +21,13 @@ compatibility_date = "2026-09-27"
 
 [vars]
 # Cloudflare Access team domain, e.g. https://<team-name>.cloudflareaccess.com
-ACCESS_TEAM_DOMAIN = "REPLACE_WITH_ACCESS_TEAM_DOMAIN"
+ACCESS_TEAM_DOMAIN = "https://dawn-field-0231.cloudflareaccess.com"
 # Cloudflare Access application audience (AUD) tag for the staging application.
-ACCESS_AUD = "REPLACE_WITH_ACCESS_AUD"
+ACCESS_AUD = "ff946e884e717fbe9e1eb792784389252a5e966006016d4ac19d4e222c35e1ad"
+# The alpha testers were created before the starter package existed, so staging also hands the
+# package to a player who has no receipt for it. Production leaves this unset - and therefore only
+# ever grants a brand-new player - which is what keeps an existing balance out of a page refresh.
+STARTER_GRANT_POLICY = "ALL_UNRECEIPTED"
 
 [assets]
 # The built web app: SPA shell, hashed JS/CSS, and the generated GLB models. The path is relative to
@@ -39,5 +43,5 @@ binding = "DB"
 database_name = "happy-farm-staging"
 # USER ACTION REQUIRED: replace with the id printed by `wrangler d1 create happy-farm-staging`.
 # The sentinel is deliberately not a UUID, so a deploy fails loudly instead of binding elsewhere.
-database_id = "REPLACE_WITH_STAGING_D1_ID"
+database_id = "acc598c9-e726-46c8-b1a3-23e5b6a42d52"
 migrations_dir = "../../database/migrations"

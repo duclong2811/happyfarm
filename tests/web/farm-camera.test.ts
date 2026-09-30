@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cameraFrameExtent,
   createCameraRig,
   PAN_LIMIT_FACTOR,
   ZOOM_MAX,
@@ -20,6 +21,24 @@ function view(playerWorldX: number | null, playerWorldZ: number | null) {
 }
 
 describe("farming camera", () => {
+  it("opens on the farm, not on the whole island", () => {
+    expect(
+      cameraFrameExtent({ islandExtent: 33.48, farmExtent: 20.7, followExtent: 9, hasCharacter: false })
+    ).toBe(20.7);
+    // …and the island is still what a zoom-out can reach, because the clamp radius is its own extent.
+    expect(cameraFrameExtent({ islandExtent: 8, farmExtent: 20.7, followExtent: 9, hasCharacter: false })).toBe(8);
+  });
+
+  it("pulls in to the follow distance once a character exists", () => {
+    expect(
+      cameraFrameExtent({ islandExtent: 33.48, farmExtent: 20.7, followExtent: 9, hasCharacter: true })
+    ).toBe(9);
+    // A tiny world is never framed larger than it is, character or not.
+    expect(
+      cameraFrameExtent({ islandExtent: 4, farmExtent: 4, followExtent: 9, hasCharacter: true })
+    ).toBe(4);
+  });
+
   it("follows the character while the player has not dragged anything", () => {
     const rig = createCameraRig();
     expect(rig.panOffsetX).toBe(0);

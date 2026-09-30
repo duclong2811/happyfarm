@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { plotTileCoordinates } from "@happy-farm/domain";
+import { INITIAL_LAND_SIZE, PLOT_TILE_SIZE, plotTileCoordinates } from "@happy-farm/domain";
 import {
   DEFAULT_TILE_GAP,
   DEFAULT_TILE_SIZE,
@@ -10,13 +10,18 @@ import {
   WORLD_ORIGIN_TILE_Y
 } from "../../apps/web/src/render/layout";
 import {
+  FARM_HALF_EXTENT_WORLD,
   FARM_FIELD_BOUNDS,
   FENCE,
+  ISLAND_HALF_DEPTH_WORLD,
+  ISLAND_HALF_WIDTH_WORLD,
   isStaticWorldWalkable,
   isWaterTile,
+  MEADOWS,
   PATHS,
   POND,
   SPAWN_TILE,
+  TREE_BANDS,
   VISUAL_BOUNDS,
   WORLD_CONFIG_VERSION,
   WORLD_REGIONS
@@ -27,27 +32,25 @@ const frame = worldFrame();
 
 describe("fixed world coordinates", () => {
   it("puts the world origin at the centre of the starter land", () => {
-    expect(WORLD_ORIGIN_TILE_X).toBe(2.5);
-    expect(WORLD_ORIGIN_TILE_Y).toBe(2.5);
-    expect(tileToWorld({ x: 2.5, y: 2.5 }, frame)).toEqual({ worldX: 0, worldZ: 0 });
-    expect(tileToWorld({ x: 0, y: 0 }, frame)).toEqual({
-      worldX: -2.5 * PITCH,
-      worldZ: -2.5 * PITCH
-    });
-    expect(tileToWorld({ x: 5, y: 5 }, frame)).toEqual({
-      worldX: 2.5 * PITCH,
-      worldZ: 2.5 * PITCH
+    const half = (INITIAL_LAND_SIZE - 1) / 2;
+    expect(WORLD_ORIGIN_TILE_X).toBe(half);
+    expect(WORLD_ORIGIN_TILE_Y).toBe(half);
+    expect(tileToWorld({ x: half, y: half }, frame)).toEqual({ worldX: 0, worldZ: 0 });
+    expect(tileToWorld({ x: 0, y: 0 }, frame)).toEqual({ worldX: -half * PITCH, worldZ: -half * PITCH });
+    expect(tileToWorld({ x: INITIAL_LAND_SIZE - 1, y: INITIAL_LAND_SIZE - 1 }, frame)).toEqual({
+      worldX: half * PITCH,
+      worldZ: half * PITCH
     });
   });
 
   it("round-trips tile to world to tile, including negative and expanded coordinates", () => {
     const tiles = [
       { x: 0, y: 0 },
-      { x: 5, y: 5 },
+      { x: INITIAL_LAND_SIZE - 1, y: INITIAL_LAND_SIZE - 1 },
       { x: -8, y: 3 },
-      { x: 17, y: 17 },
+      { x: FARM_FIELD_BOUNDS.maxX, y: FARM_FIELD_BOUNDS.maxY },
       { x: -13, y: -13 },
-      { x: 30, y: 30 }
+      { x: VISUAL_BOUNDS.maxX, y: VISUAL_BOUNDS.maxY }
     ];
     for (const tile of tiles) {
       expect(worldToTile(tileToWorld(tile, frame), frame), `${String(tile.x)},${String(tile.y)}`).toEqual(tile);
@@ -71,7 +74,14 @@ describe("fixed world coordinates", () => {
     const maxY = Math.max(...allTiles.map((tile) => tile.y));
     const minX = Math.min(...allTiles.map((tile) => tile.x));
     const minY = Math.min(...allTiles.map((tile) => tile.y));
-    expect(FARM_FIELD_BOUNDS).toEqual({ minX: 0, maxX: 17, minY: 0, maxY: 17 });
+    expect(PLOT_TILE_SIZE).toBe(INITIAL_LAND_SIZE);
+    expect(FARM_FIELD_BOUNDS).toEqual({
+      minX: 0,
+      maxX: PLOT_TILE_SIZE * 3 - 1,
+      minY: 0,
+      maxY: PLOT_TILE_SIZE * 3 - 1
+    });
+    expect(FARM_FIELD_BOUNDS).toEqual({ minX: 0, maxX: 35, minY: 0, maxY: 35 });
     expect(maxX).toBe(FARM_FIELD_BOUNDS.maxX);
     expect(maxY).toBe(FARM_FIELD_BOUNDS.maxY);
     expect(minX).toBe(FARM_FIELD_BOUNDS.minX);
@@ -109,11 +119,67 @@ describe("static world config", () => {
     expect(isStaticWorldWalkable(POND.center)).toBe(false);
   });
 
+  it("starts the player on a field worth walking around", () => {
+    // The alpha's starter square was one 6 x 6 plot of a reserved 18 x 18 field, which read as a tiny
+    // patch. These are the numbers that changed: one cohort of 12 x 12 tiles, and a reserved field of
+    // nine cohorts, so the first thing a player sees is a farm rather than a lattice of dots.
+    expect(INITIAL_LAND_SIZE).toBe(12);
+    expect(FARM_FIELD_BOUNDS.maxX - FARM_FIELD_BOUNDS.minX + 1).toBe(PLOT_TILE_SIZE * 3);
+    expect(FARM_FIELD_BOUNDS.maxY - FARM_FIELD_BOUNDS.minY + 1).toBe(PLOT_TILE_SIZE * 3);
+    // Every tile of the starter square is inside the reserved field and inside the fence.
+    expect(FARM_FIELD_BOUNDS.minX).toBeLessThanOrEqual(0);
+    expect(FARM_FIELD_BOUNDS.minY).toBeLessThanOrEqual(0);
+    expect(INITIAL_LAND_SIZE - 1).toBeLessThanOrEqual(FARM_FIELD_BOUNDS.maxX);
+  });
+
+  it("frames the farm inside the island without cropping the field", () => {
+    expect(FARM_HALF_EXTENT_WORLD).toBeGreaterThan(0);
+    expect(FARM_HALF_EXTENT_WORLD).toBeLessThan(Math.min(ISLAND_HALF_WIDTH_WORLD, ISLAND_HALF_DEPTH_WORLD));
+    const fieldHalfTiles = (FARM_FIELD_BOUNDS.maxX - FARM_FIELD_BOUNDS.minX + 1) / 2;
+    expect(FARM_HALF_EXTENT_WORLD).toBeGreaterThanOrEqual(fieldHalfTiles * PITCH);
+  });
+
+  it("keeps every tree band inside the region it plants", () => {
+    expect(TREE_BANDS.length).toBeGreaterThan(0);
+    for (const band of TREE_BANDS) {
+      const host = WORLD_REGIONS.find((region) =>
+        band.bounds.minX >= region.bounds.minX &&
+        band.bounds.maxX <= region.bounds.maxX &&
+        band.bounds.minY >= region.bounds.minY &&
+        band.bounds.maxY <= region.bounds.maxY
+      );
+      expect(host, band.id).toBeDefined();
+      expect(band.spacing, band.id).toBeGreaterThan(1);
+    }
+  });
+
+  it("keeps every terrain patch off the field, the fence, and the water", () => {
+    expect(MEADOWS.length).toBeGreaterThan(0);
+    for (const patch of MEADOWS) {
+      expect(patch.radiusX, patch.id).toBeGreaterThan(0);
+      expect(patch.radiusY, patch.id).toBeGreaterThan(0);
+      // The patch's own extent has to stay clear of the fence line, or it would paint over the apron.
+      const overlapsFence =
+        patch.center.x - patch.radiusX <= FENCE.bounds.maxX &&
+        patch.center.x + patch.radiusX >= FENCE.bounds.minX &&
+        patch.center.y - patch.radiusY <= FENCE.bounds.maxY &&
+        patch.center.y + patch.radiusY >= FENCE.bounds.minY;
+      expect(overlapsFence, patch.id).toBe(false);
+      const insideIsland =
+        patch.center.x - patch.radiusX >= VISUAL_BOUNDS.minX &&
+        patch.center.x + patch.radiusX <= VISUAL_BOUNDS.maxX &&
+        patch.center.y - patch.radiusY >= VISUAL_BOUNDS.minY &&
+        patch.center.y + patch.radiusY <= VISUAL_BOUNDS.maxY;
+      expect(insideIsland, patch.id).toBe(true);
+    }
+  });
+
   it("treats water, the world's outside, and static obstacles as non-walkable", () => {
     expect(isStaticWorldWalkable({ x: 0, y: 0 })).toBe(true);
-    expect(isStaticWorldWalkable({ x: 2, y: 24 })).toBe(true);
-    expect(isStaticWorldWalkable({ x: 40, y: 40 })).toBe(false);
-    expect(isStaticWorldWalkable({ x: -20, y: 0 })).toBe(false);
+    expect(isStaticWorldWalkable(SPAWN_TILE)).toBe(true);
+    expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX + 1, y: VISUAL_BOUNDS.maxY + 1 })).toBe(false);
+    expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.minX - 1, y: 0 })).toBe(false);
+    expect(isStaticWorldWalkable({ x: VISUAL_BOUNDS.maxX, y: VISUAL_BOUNDS.maxY })).toBe(true);
     expect(WORLD_CONFIG_VERSION).toBeGreaterThanOrEqual(1);
   });
 });

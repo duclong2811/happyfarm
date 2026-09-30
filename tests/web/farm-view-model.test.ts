@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CropStateDTO, FarmTileDTO } from "@happy-farm/contracts";
-import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE } from "../../apps/web/src/render/layout";
+import {
+  DEFAULT_TILE_GAP,
+  DEFAULT_TILE_SIZE,
+  WORLD_ORIGIN_TILE_X,
+  WORLD_ORIGIN_TILE_Y
+} from "../../apps/web/src/render/layout";
 import {
   buildFarmSceneInput,
   type FarmSceneInput,
@@ -188,7 +193,13 @@ describe("buildFarmSceneInput", () => {
     expect(input.layout.rows).toBe(4);
     // The origin is the starter land's centre, not the centre of whatever land is unlocked, so these
     // positions do not depend on how much of the farm exists yet.
-    expect(tileAt(input, 0)).toMatchObject({ worldX: -2.5 * PITCH, worldZ: -2.5 * PITCH });
-    expect(tileAt(input, 1)).toMatchObject({ worldX: -1.5 * PITCH, worldZ: -2.5 * PITCH });
+    expect(tileAt(input, 0)).toMatchObject({
+      worldX: (0 - WORLD_ORIGIN_TILE_X) * PITCH,
+      worldZ: (0 - WORLD_ORIGIN_TILE_Y) * PITCH
+    });
+    expect(tileAt(input, 1)).toMatchObject({
+      worldX: (1 - WORLD_ORIGIN_TILE_X) * PITCH,
+      worldZ: (0 - WORLD_ORIGIN_TILE_Y) * PITCH
+    });
   });
 });

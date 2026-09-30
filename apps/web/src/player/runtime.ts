@@ -129,6 +129,13 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
       }
       if (vector === null || (!moved && deltaSeconds > 0) || destinationStalledMs >= DESTINATION_STALL_MS) {
         clearDestination();
+        // A walk that gave up could have ended on a frame that did move - sliding along a crop for
+        // the whole stall window, say. The renderer draws the pose it was last handed, so the
+        // character has to be left standing rather than mid-stride for ever.
+        if (pose.movementState !== "IDLE") {
+          pose = stepPlayer(pose, NEUTRAL_INPUT, 0, collision);
+          deps.onPose(pose);
+        }
       }
     }
 

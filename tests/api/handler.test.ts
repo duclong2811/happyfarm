@@ -12,7 +12,7 @@ import {
   GetShopResponseSchema,
   GetWalletResponseSchema
 } from "@happy-farm/contracts";
-import { INITIAL_LAND_SIZE, parseCropInstanceId, parseEconomyTransactionId, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
+import { INITIAL_LAND_SIZE, PLOT_TILE_COUNT, parseCropInstanceId, parseEconomyTransactionId, plotTiles, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
 import { parseTreeInstanceId, type TreeInstanceId } from "@happy-farm/domain";
 import { itemRegistry, shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
@@ -888,15 +888,53 @@ describe("Worker API foundation", () => {
     const first = await request();
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({
-      data: { expansion: { plotId: "plot_1", plotIndex: 1, amountSpent: 100, newBalance: 400, tilesAdded: 36 } }
+      data: { expansion: { plotId: "plot_1", plotIndex: 1, amountSpent: 100, newBalance: 400, tilesAdded: PLOT_TILE_COUNT } }
     });
     const replay = await request();
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ data: { expansion: { plotId: "plot_1", newBalance: 400 } } });
 
-    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ?").get(FARM_ONE_ID)).toEqual({ count: 72 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ?").get(FARM_ONE_ID)).toEqual({
+      count: INITIAL_LAND_SIZE * INITIAL_LAND_SIZE + PLOT_TILE_COUNT
+    });
     expect(db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 400, version: 2 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger WHERE reason = 'FARM_EXPANSION'").get()).toEqual({ count: 1 });
+  });
+
+  it("gates the next plot by the player's level, not by the client", async () => {
+    await handle(new Request("https://api.test/farms", {
+      method: "POST",
+      body: JSON.stringify({ name: "Gated Farm" }),
+      headers: { "content-type": "application/json" }
+    }));
+    db.sqlite.prepare("INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', 5000, 1, ?, ?)").run(PLAYER_ONE_ID, NOW, NOW);
+    // The farm owns plot 1, so the frontier is plot 2, which the catalogue gates at level 2.
+    const insertTile = db.sqlite.prepare(
+      "INSERT INTO farm_tiles (farm_id, x, y, terrain_type, tile_state, version, updated_at) VALUES (?, ?, ?, 'SOIL', 'IDLE', 1, ?)"
+    );
+    for (const tile of plotTiles(FARM_ONE_ID, 1, NOW)) insertTile.run(tile.farmId, tile.x, tile.y, tile.updatedAt);
+
+    const expand = (requestId: string) => handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/plots`, {
+      method: "POST",
+      body: JSON.stringify({ requestId }),
+      headers: { "content-type": "application/json" }
+    }));
+
+    // A level 1 player: the server refuses, and nothing is charged or bought.
+    const refused = await expand("expand_gated_001");
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ ok: false, error: { code: "PLOT_LEVEL_REQUIRED" } });
+    expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 5000 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger").get()).toEqual({ count: 0 });
+
+    db.sqlite
+      .prepare("INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 2, 120, 1, ?, ?)")
+      .run(PLAYER_ONE_ID, NOW, NOW);
+    const allowed = await expand("expand_gated_002");
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toMatchObject({
+      data: { expansion: { plotId: "plot_2", plotIndex: 2, tilesAdded: PLOT_TILE_COUNT } }
+    });
   });
 
   it("allows only the owner to expand and lets only one concurrent purchase win", async () => {
@@ -913,7 +951,9 @@ describe("Worker API foundation", () => {
     const statuses = responses.map((response) => response.status);
     expect(statuses.filter((status) => status === 200)).toHaveLength(1);
     expect(statuses.filter((status) => status === 403 || status === 409)).toHaveLength(1);
-    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ?").get(FARM_ONE_ID)).toEqual({ count: 72 });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ?").get(FARM_ONE_ID)).toEqual({
+      count: INITIAL_LAND_SIZE * INITIAL_LAND_SIZE + PLOT_TILE_COUNT
+    });
     expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({ balance: 400 });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM economy_ledger WHERE reason = 'FARM_EXPANSION'").get()).toEqual({ count: 1 });
 

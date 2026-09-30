@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import type { FarmTileDTO } from "@happy-farm/contracts";
 import { createPlayerCollisionWorld } from "../../apps/web/src/player/collision";
 import { createPlayerState, stepPlayer, type PlayerState } from "../../apps/web/src/player/controller";
@@ -9,6 +10,8 @@ import {
   FARMHOUSE_WORLD,
   FENCE,
   fenceGeometry,
+  ISLAND_HALF_DEPTH_WORLD,
+  ISLAND_HALF_WIDTH_WORLD,
   isStaticObstacleTile,
   isWaterTile,
   POND_WORLD,
@@ -112,8 +115,8 @@ describe("player collision world", () => {
   it("leaves the spawn free on an empty farm and on the starter farm", () => {
     expect(createPlayerCollisionWorld([]).depth(SPAWN_WORLD.worldX, SPAWN_WORLD.worldZ)).toBeLessThanOrEqual(0);
     const starter: SceneTile[] = [];
-    for (let y = 0; y < 6; y += 1) {
-      for (let x = 0; x < 6; x += 1) starter.push(sceneTile(x, y));
+    for (let y = 0; y < INITIAL_LAND_SIZE; y += 1) {
+      for (let x = 0; x < INITIAL_LAND_SIZE; x += 1) starter.push(sceneTile(x, y));
     }
     expect(createPlayerCollisionWorld(starter).depth(SPAWN_WORLD.worldX, SPAWN_WORLD.worldZ)).toBeLessThanOrEqual(0);
   });
@@ -133,9 +136,13 @@ describe("player collision world", () => {
   it("keeps the character on the island", () => {
     const world = createPlayerCollisionWorld([]);
     expect(world.depth(fence.centerWorldX, fence.centerWorldZ)).toBeLessThanOrEqual(0);
-    expect(world.depth(fence.centerWorldX + 60, fence.centerWorldZ)).toBeGreaterThan(0);
-    expect(world.depth(fence.centerWorldX - 60, fence.centerWorldZ)).toBeGreaterThan(0);
-    expect(world.depth(fence.centerWorldX, fence.centerWorldZ + 60)).toBeGreaterThan(0);
+    const beyond = Math.max(ISLAND_HALF_WIDTH_WORLD, ISLAND_HALF_DEPTH_WORLD) + 5;
+    expect(world.depth(fence.centerWorldX + beyond, fence.centerWorldZ)).toBeGreaterThan(0);
+    expect(world.depth(fence.centerWorldX - beyond, fence.centerWorldZ)).toBeGreaterThan(0);
+    expect(world.depth(fence.centerWorldX, fence.centerWorldZ + beyond)).toBeGreaterThan(0);
+    // The shore is centred on the island, not on the starter square: the farm grows south-east of
+    // where it started, and the land it grows into has to be walkable.
+    expect(ISLAND_HALF_WIDTH_WORLD).toBeGreaterThan(0);
   });
 
   it("blocks every static obstacle the world config declares", () => {

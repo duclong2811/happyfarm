@@ -7,7 +7,7 @@ import type {
   PlotId,
   ShopEntryId
 } from "./ids";
-import { parsePlotId, parseShopEntryId } from "./ids";
+import { parsePlayerId, parsePlotId, parseShopEntryId } from "./ids";
 
 export const MAX_WALLET_BALANCE = Number.MAX_SAFE_INTEGER;
 export const MAX_SHOP_QUANTITY = 1_000_000;
@@ -42,23 +42,26 @@ export interface Wallet {
   readonly updatedAt: string;
 }
 
-export type EconomyReason = "SHOP_BUY" | "SHOP_SELL" | "FARM_EXPANSION";
-export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT";
+export type EconomyReason = "SHOP_BUY" | "SHOP_SELL" | "FARM_EXPANSION" | "STARTER_GRANT";
+export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER";
 
 /**
- * What a ledger row points at: the shop entry that was traded, or the land that was bought.
+ * What a ledger row points at: the shop entry that was traded, the land that was bought, or the
+ * player a one-time starter grant was issued to.
  *
  * Every reason has exactly one reference kind (`referenceTypeForReason`), so a row cannot claim to
- * be a shop purchase while citing a plot, or the reverse. That pairing is what keeps the append-only
- * history readable by a later audit: `reason`, `reference_type`, and `reference_id` agree by
- * construction rather than by convention.
+ * be a shop purchase while citing a plot, or the reverse, and a starter grant cannot hide behind a
+ * shop or a plot reference. That pairing is what keeps the append-only history readable by a later
+ * audit: `reason`, `reference_type`, and `reference_id` agree by construction rather than by
+ * convention.
  */
-export type EconomyReferenceId = ShopEntryId | PlotId;
+export type EconomyReferenceId = ShopEntryId | PlotId | PlayerId;
 
 const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   SHOP_BUY: "SHOP_ENTRY",
   SHOP_SELL: "SHOP_ENTRY",
-  FARM_EXPANSION: "PLOT"
+  FARM_EXPANSION: "PLOT",
+  STARTER_GRANT: "PLAYER"
 };
 
 /** The one reference kind a reason may carry. The mapping is total, or the reason is not one. */
@@ -73,7 +76,8 @@ export function referenceTypeForReason(reason: EconomyReason): EconomyReferenceT
 /** Reads back a persisted reference, accepting exactly the shapes `createEconomyMutation` writes. */
 export function parseEconomyReferenceId(value: string): EconomyReferenceId {
   const shopEntry = parseOrNull(parseShopEntryId, value);
-  const reference = shopEntry ?? parseOrNull(parsePlotId, value);
+  const plot = parseOrNull(parsePlotId, value);
+  const reference = shopEntry ?? plot ?? parseOrNull(parsePlayerId, value);
   if (reference === null) {
     throw new DomainError("INVALID_ID", "Invalid economy reference ID");
   }
@@ -95,9 +99,10 @@ function parseOrNull<T>(parse: (value: string) => T, value: string): T | null {
  * that keeps a mis-paired mutation from ever reaching a settlement.
  */
 function assertReferenceMatchesType(referenceType: EconomyReferenceType, referenceId: EconomyReferenceId): void {
-  const parse = referenceType === "SHOP_ENTRY" ? parseShopEntryId : parsePlotId;
   try {
-    parse(referenceId);
+    if (referenceType === "SHOP_ENTRY") parseShopEntryId(referenceId);
+    else if (referenceType === "PLOT") parsePlotId(referenceId);
+    else parsePlayerId(referenceId);
   } catch {
     throw new DomainError("INVALID_ECONOMY_MUTATION", "Economy reference does not match its reason");
   }

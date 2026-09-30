@@ -4,6 +4,7 @@ import {
   ISLAND_HALF_DEPTH_WORLD,
   ISLAND_HALF_WIDTH_WORLD,
   STATIC_OBSTACLES,
+  WORLD_CENTER_WORLD,
   type FenceSegment
 } from "../render/world-config";
 import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
@@ -52,13 +53,18 @@ const TREE_BLOCK_RADIUS_WORLD = 0.34;
  * Depth at the island shore: negative well inland, zero on the shore, positive once the player
  * circle hangs over the water.
  *
+ * The ellipse is centred on the island's own centre - the middle of the visual bounds - rather than
+ * on the world origin, which is the middle of the starter square. Those are two different points: a
+ * farm grows to the south-east of the square it started on, so a shore centred on the square would
+ * cut the southern and eastern land the player is supposed to walk on.
+ *
  * Because the gradient points outward, a character already at the edge may step inland but never
  * further out: the controller's "overlapping may escape, never sink" rule keeps the avatar on the
  * island without a separate clamp.
  */
 function islandDepth(x: number, z: number): number {
-  const normalisedX = x / ISLAND_HALF_WIDTH_WORLD;
-  const normalisedZ = z / ISLAND_HALF_DEPTH_WORLD;
+  const normalisedX = (x - WORLD_CENTER_WORLD.worldX) / ISLAND_HALF_WIDTH_WORLD;
+  const normalisedZ = (z - WORLD_CENTER_WORLD.worldZ) / ISLAND_HALF_DEPTH_WORLD;
   const radius = Math.hypot(normalisedX, normalisedZ);
   const gradient = Math.hypot(normalisedX / ISLAND_HALF_WIDTH_WORLD, normalisedZ / ISLAND_HALF_DEPTH_WORLD);
   if (gradient === 0) return PLAYER_RADIUS - Math.min(ISLAND_HALF_WIDTH_WORLD, ISLAND_HALF_DEPTH_WORLD);

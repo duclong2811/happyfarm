@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { plotRing as domainPlotRing, plotTileCoordinates } from "@happy-farm/domain";
+import {
+  INITIAL_LAND_SIZE,
+  PLOT_TILE_SIZE,
+  plotRing as domainPlotRing,
+  plotTileCoordinates
+} from "@happy-farm/domain";
 import type { PlotDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type TileCoordinate } from "../../apps/web/src/render/layout";
+import { worldFrame, worldToTile } from "../../apps/web/src/render/layout";
 import {
   buildFarmWorld,
   landFrame,
@@ -9,7 +15,7 @@ import {
   plotSquare,
   previewLockedPlots,
 } from "../../apps/web/src/render/world";
-import { VISUAL_BOUNDS } from "../../apps/web/src/render/world-config";
+import { FENCE, TREE_BANDS, VISUAL_BOUNDS } from "../../apps/web/src/render/world-config";
 
 function plot(plotIndex: number, unlocked: boolean): PlotDTO {
   return {
@@ -25,8 +31,8 @@ function plot(plotIndex: number, unlocked: boolean): PlotDTO {
 
 function starterTiles(): TileCoordinate[] {
   const tiles: TileCoordinate[] = [];
-  for (let y = 0; y < 6; y += 1) {
-    for (let x = 0; x < 6; x += 1) tiles.push({ x, y });
+  for (let y = 0; y < INITIAL_LAND_SIZE; y += 1) {
+    for (let x = 0; x < INITIAL_LAND_SIZE; x += 1) tiles.push({ x, y });
   }
   return tiles;
 }
@@ -81,18 +87,18 @@ describe("landFrame", () => {
   it("frames the starter field together with the next locked ring", () => {
     expect(landFrame(starterTiles(), CATALOGUE)).toEqual({
       minX: 0,
-      maxX: 11,
+      maxX: PLOT_TILE_SIZE * 2 - 1,
       minY: 0,
-      maxY: 11
+      maxY: PLOT_TILE_SIZE * 2 - 1
     });
   });
 
   it("frames only the unlocked land when there is nothing left to buy", () => {
     expect(landFrame(starterTiles(), [plot(1, true)])).toEqual({
       minX: 0,
-      maxX: 5,
+      maxX: INITIAL_LAND_SIZE - 1,
       minY: 0,
-      maxY: 5
+      maxY: INITIAL_LAND_SIZE - 1
     });
   });
 });
@@ -109,8 +115,18 @@ describe("buildFarmWorld", () => {
 
   it("sizes the island from the fixed world config, not from how much land is owned", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
-    expect(world.inner).toEqual({ minX: 0, maxX: 5, minY: 0, maxY: 5 });
-    expect(world.outer).toEqual({ minX: 0, maxX: 11, minY: 0, maxY: 11 });
+    expect(world.inner).toEqual({
+      minX: 0,
+      maxX: INITIAL_LAND_SIZE - 1,
+      minY: 0,
+      maxY: INITIAL_LAND_SIZE - 1
+    });
+    expect(world.outer).toEqual({
+      minX: 0,
+      maxX: PLOT_TILE_SIZE * 2 - 1,
+      minY: 0,
+      maxY: PLOT_TILE_SIZE * 2 - 1
+    });
     expect(world.lockedPlots.map((entry) => entry.plotIndex)).toEqual([1, 2, 3]);
     // The static world is a function of the config, in tile pitches, and the island is one tile wider
     // on each side than the reserved field is with the locked ring previewed.
@@ -125,6 +141,11 @@ describe("buildFarmWorld", () => {
     expect(world.path).not.toBeNull();
     expect(world.pond).not.toBeNull();
     expect(world.barn).not.toBeNull();
+    expect(world.meadows.length).toBeGreaterThan(0);
+    // The default view frames the farm, and the island - which the camera can still zoom out to - is
+    // visibly larger than it. That ratio is what stops the field from looking like a patch on nothing.
+    expect(world.farmHalfExtentWorld).toBeGreaterThan(0);
+    expect(world.farmHalfExtentWorld).toBeLessThan(world.islandHalfWidthWorld);
   });
 
   it("keeps the whole static world fixed when the farm grows", () => {
@@ -143,13 +164,18 @@ describe("buildFarmWorld", () => {
     expect(grown.barn).toEqual(small.barn);
     expect(grown.path).toEqual(small.path);
     expect(grown.scenery).toEqual(small.scenery);
+    expect(grown.meadows).toEqual(small.meadows);
   });
 
   it("lays locked plot squares outside the unlocked field", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
     expect(world.lockedPlots).toHaveLength(3);
     for (const locked of world.lockedPlots) {
-      const overlapsField = locked.minX <= 5 && locked.maxX >= 0 && locked.minY <= 5 && locked.maxY >= 0;
+      const overlapsField =
+        locked.minX <= INITIAL_LAND_SIZE - 1 &&
+        locked.maxX >= 0 &&
+        locked.minY <= INITIAL_LAND_SIZE - 1 &&
+        locked.maxY >= 0;
       expect(overlapsField).toBe(false);
     }
   });
@@ -158,16 +184,40 @@ describe("buildFarmWorld", () => {
     const first = worldFor(starterTiles(), CATALOGUE);
     const second = worldFor(starterTiles(), CATALOGUE);
     expect(first.scenery).toEqual(second.scenery);
-    expect(first.scenery.length).toBeGreaterThan(10);
+    // Denser than the alpha's twelve-odd props: an edge tree line, the orchard rows, and the ranch
+    // windbreak are all in here.
+    expect(first.scenery.length).toBeGreaterThan(80);
 
-    const halfWidth = first.islandHalfWidthWorld;
-    const halfDepth = first.islandHalfDepthWorld;
-    const fieldHalf = 6 * 1.08;
     for (const entry of first.scenery) {
-      expect(Math.abs(entry.worldX)).toBeLessThan(halfWidth);
-      expect(Math.abs(entry.worldZ)).toBeLessThan(halfDepth);
-      const overField = Math.abs(entry.worldX) < fieldHalf && Math.abs(entry.worldZ) < fieldHalf;
-      expect(overField).toBe(false);
+      const tile = worldToTile({ worldX: entry.worldX, worldZ: entry.worldZ }, worldFrame());
+      const insideIsland =
+        tile.x >= VISUAL_BOUNDS.minX &&
+        tile.x <= VISUAL_BOUNDS.maxX &&
+        tile.y >= VISUAL_BOUNDS.minY &&
+        tile.y <= VISUAL_BOUNDS.maxY;
+      expect(insideIsland, `${entry.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(true);
+      const overField =
+        tile.x >= FENCE.bounds.minX - 1.2 &&
+        tile.x <= FENCE.bounds.maxX + 1.2 &&
+        tile.y >= FENCE.bounds.minY - 1.2 &&
+        tile.y <= FENCE.bounds.maxY + 1.2;
+      expect(overField, `${entry.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(false);
+    }
+  });
+
+  it("plants the reserved regions instead of leaving them empty", () => {
+    const world = worldFor(starterTiles(), CATALOGUE);
+    for (const band of TREE_BANDS) {
+      const inside = world.scenery.filter((entry) => {
+        const tile = worldToTile({ worldX: entry.worldX, worldZ: entry.worldZ }, worldFrame());
+        return (
+          tile.x >= band.bounds.minX - 1 &&
+          tile.x <= band.bounds.maxX + 1 &&
+          tile.y >= band.bounds.minY - 1 &&
+          tile.y <= band.bounds.maxY + 1
+        );
+      });
+      expect(inside.length, band.id).toBeGreaterThan(0);
     }
   });
 });

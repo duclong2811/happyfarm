@@ -1,11 +1,21 @@
 import type { PlotDTO } from "@happy-farm/contracts";
 import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
-import { tileToWorld, worldFrame, WORLD_ORIGIN_TILE_X, WORLD_ORIGIN_TILE_Y } from "./layout";
+import {
+  DEFAULT_TILE_GAP,
+  DEFAULT_TILE_SIZE,
+  tileToWorld,
+  worldFrame
+} from "./layout";
 import {
   FARMHOUSE,
   FENCE,
+  FARM_HALF_EXTENT_WORLD,
+  MEADOWS,
   PATHS,
   POND,
+  RIM_TREE_BAND_TILES,
+  RIM_TREE_SPACING_TILES,
+  TREE_BANDS,
   VISUAL_BOUNDS
 } from "./world-config";
 
@@ -23,7 +33,7 @@ import {
  */
 
 /** Side length of one plot cohort, mirroring `PLOT_TILE_SIZE` in `packages/domain/src/plot.ts`. */
-export const PLOT_TILE_SIZE = 6;
+export const PLOT_TILE_SIZE = 12;
 /** Grass kept around the outermost land before the island edge. */
 export const WORLD_MARGIN_TILES = 5;
 
@@ -67,6 +77,17 @@ export interface PathSpec {
   readonly depthWorld: number;
 }
 
+/** A patch of ground with its own colour, in world metres. */
+export interface MeadowSpec {
+  readonly id: string;
+  readonly kind: "MEADOW" | "DIRT" | "SAND";
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly radiusWorldX: number;
+  readonly radiusWorldZ: number;
+  readonly rotationY: number;
+}
+
 export interface FarmWorld {
   /** Unlocked land only. */
   readonly inner: TileBounds | null;
@@ -80,8 +101,12 @@ export interface FarmWorld {
   readonly pond: PondSpec | null;
   readonly barn: BarnSpec | null;
   readonly path: PathSpec | null;
+  /** Terrain variation outside the field. Static: a fixed function of the world config. */
+  readonly meadows: readonly MeadowSpec[];
   readonly islandHalfWidthWorld: number;
   readonly islandHalfDepthWorld: number;
+  /** Half the framed farm: the land the fence encloses, which is what a default view frames. */
+  readonly farmHalfExtentWorld: number;
   /** World centre of the static world, for camera framing only. Never a coordinate origin. */
   readonly centerWorldX: number;
   readonly centerWorldZ: number;
@@ -103,8 +128,10 @@ const EMPTY_WORLD: FarmWorld = {
   pond: null,
   barn: null,
   path: null,
+  meadows: [],
   islandHalfWidthWorld: 0,
   islandHalfDepthWorld: 0,
+  farmHalfExtentWorld: 0,
   centerWorldX: 0,
   centerWorldZ: 0
 };
@@ -204,82 +231,141 @@ function mulberry32(seed: number): () => number {
 }
 
 const SCENERY_SEED = 0x51f3a7;
-const SCENERY_LATTICE = 30;
-const MAX_SCENERY = 120;
+const MAX_SCENERY = 240;
+/** One candidate position per this many tiles, before the filters decide what survives. */
+const SCENERY_LATTICE_STEP_TILES = 1.15;
+/** How far outside the fence a planted thing has to be to count as scenery rather than as field. */
+const FIELD_CLEARANCE_TILES = 1.2;
 
 /**
- * Deterministic decoration placement.
+ * Deterministic decoration placement: the tree lines that give the island an edge, the planted
+ * bands the reserved regions promise, and a scatter of bushes, rocks, and flowers between them.
  *
- * The lattice and seed are constants, so a given farm always produces the same rocks and trees.
- * Only land the player does not own is decorated: the apron, paths, pond, and barn exclusion zones
- * keep scenery out of the playable field.
+ * The seed and the lattice are constants and the generator advances once per candidate in a fixed
+ * order, so the same world always grows the same trees - and buying a plot cannot reshuffle them,
+ * because nothing here reads the farm's tiles. Only land the player cannot farm is decorated: the
+ * field, the apron, the paths, the pond, and the yard stay clear.
  */
-function buildScenery(
-  layout: FarmLayout,
-  excludedField: TileBounds,
-  pondTileX: number,
-  pondTileY: number,
-  pondRadiusTileX: number,
-  pondRadiusTileY: number,
-  barnTileX: number,
-  barnTileY: number
-): SceneryInstance[] {
+function buildScenery(layout: FarmLayout): SceneryInstance[] {
   const rand = mulberry32(SCENERY_SEED);
-  // The island is fixed, so the ellipse scenery inhabits is fixed too: buying land cannot move it.
-  const halfWidth = (VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2;
-  const halfDepth = (VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2;
   const scenery: SceneryInstance[] = [];
+  const frame = worldFrame(layout.pitch);
+  const field = FENCE.bounds;
+  const halfWidthTiles = (VISUAL_BOUNDS.maxX - VISUAL_BOUNDS.minX + 1) / 2;
+  const halfDepthTiles = (VISUAL_BOUNDS.maxY - VISUAL_BOUNDS.minY + 1) / 2;
+  // The island's own centre, not the starter land's: the edge tree line and the scatter both live on
+  // the island, and only the tile mapping is anchored to the starter square.
+  const centerTileX = (VISUAL_BOUNDS.minX + VISUAL_BOUNDS.maxX) / 2;
+  const centerTileY = (VISUAL_BOUNDS.minY + VISUAL_BOUNDS.maxY) / 2;
 
-  for (let gy = -SCENERY_LATTICE; gy <= SCENERY_LATTICE; gy += 1) {
-    for (let gx = -SCENERY_LATTICE; gx <= SCENERY_LATTICE; gx += 1) {
-      // Advance the generator for every candidate, in a fixed order, so positions never depend on
-      // how much of the world survived the filters.
+  function place(kind: SceneryKind, tileX: number, tileY: number, scale: number, rotationY: number): void {
+    const position = tileToWorld({ x: tileX, y: tileY }, frame);
+    scenery.push({ kind, worldX: position.worldX, worldZ: position.worldZ, scale, rotationY });
+  }
+
+  /**
+   * Whether a candidate is standing room rather than field, water, path, or yard.
+   *
+   * Every exclusion is a constant of the world config, so this answer never depends on how much land
+   * the farm owns.
+   */
+  function isOpenGround(tileX: number, tileY: number): boolean {
+    if (
+      tileX >= field.minX - FIELD_CLEARANCE_TILES &&
+      tileX <= field.maxX + FIELD_CLEARANCE_TILES &&
+      tileY >= field.minY - FIELD_CLEARANCE_TILES &&
+      tileY <= field.maxY + FIELD_CLEARANCE_TILES
+    ) {
+      return false;
+    }
+    for (const path of PATHS) {
+      if (
+        tileX >= path.bounds.minX - 0.6 &&
+        tileX <= path.bounds.maxX + 0.6 &&
+        tileY >= path.bounds.minY - 0.6 &&
+        tileY <= path.bounds.maxY + 0.6
+      ) {
+        return false;
+      }
+    }
+    const pondDx = (tileX - POND.center.x) / (POND.radiusX + 1.6);
+    const pondDy = (tileY - POND.center.y) / (POND.radiusY + 1.6);
+    if (pondDx * pondDx + pondDy * pondDy < 1) return false;
+    if (Math.abs(tileX - FARMHOUSE.center.x) < 4.2 && Math.abs(tileY - FARMHOUSE.center.y) < 4.2) return false;
+    return true;
+  }
+
+  // The tree line inside the island's rim. It is the reason the world reads as a place with an edge
+  // rather than as a disc that stops, and it is one row deep so it frames the view without walling
+  // the player in.
+  const inset = RIM_TREE_BAND_TILES / 2;
+  const rimX: number[] = [];
+  for (let x = VISUAL_BOUNDS.minX + inset; x <= VISUAL_BOUNDS.maxX - inset; x += RIM_TREE_SPACING_TILES) {
+    rimX.push(x);
+  }
+  for (const [index, x] of rimX.entries()) {
+    for (const y of [VISUAL_BOUNDS.minY + inset, VISUAL_BOUNDS.maxY - inset]) {
+      const jitterX = (rand() - 0.5) * 0.6;
+      const jitterY = (rand() - 0.5) * 0.6;
+      const scaleRoll = rand();
+      const rotationRoll = rand();
+      // Every other tree in the line is a pine, so the edge has a canopy rather than a cadence.
+      const kind: SceneryKind = index % 2 === 0 ? "tree" : "pine";
+      place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
+    }
+  }
+  for (let y = VISUAL_BOUNDS.minY + inset + RIM_TREE_SPACING_TILES; y <= VISUAL_BOUNDS.maxY - inset - RIM_TREE_SPACING_TILES; y += RIM_TREE_SPACING_TILES) {
+    for (const x of [VISUAL_BOUNDS.minX + inset, VISUAL_BOUNDS.maxX - inset]) {
+      const jitterX = (rand() - 0.5) * 0.6;
+      const jitterY = (rand() - 0.5) * 0.6;
+      const scaleRoll = rand();
+      const rotationRoll = rand();
+      const kind: SceneryKind = rand() < 0.5 ? "tree" : "pine";
+      place(kind, x + jitterX, y + jitterY, 1 + scaleRoll * 0.45, rotationRoll * Math.PI * 2);
+    }
+  }
+
+  // The planted bands the reserved regions promise: the orchard's rows and the ranch's windbreak.
+  for (const band of TREE_BANDS) {
+    const spacing = band.spacing;
+    for (let y = band.bounds.minY + band.offset; y <= band.bounds.maxY; y += spacing) {
+      for (let x = band.bounds.minX + band.offset; x <= band.bounds.maxX; x += spacing) {
+        const jitterX = (rand() - 0.5) * 0.5;
+        const jitterY = (rand() - 0.5) * 0.5;
+        const scaleRoll = rand();
+        const rotationRoll = rand();
+        place(band.kind.toLowerCase() as SceneryKind, x + jitterX, y + jitterY, 0.95 + scaleRoll * 0.4, rotationRoll * Math.PI * 2);
+      }
+    }
+  }
+
+  // The scatter. Density rises toward the rim and falls toward the field, so the middle of the island
+  // reads as tended ground and the outside as wilderness - the visual hierarchy the alpha lacked.
+  for (let tileY = VISUAL_BOUNDS.minY; tileY <= VISUAL_BOUNDS.maxY; tileY += SCENERY_LATTICE_STEP_TILES) {
+    for (let tileX = VISUAL_BOUNDS.minX; tileX <= VISUAL_BOUNDS.maxX; tileX += SCENERY_LATTICE_STEP_TILES) {
       const jitterX = rand();
       const jitterY = rand();
+      const densityRoll = rand();
       const kindRoll = rand();
       const scaleRoll = rand();
       const rotationRoll = rand();
-
       if (scenery.length >= MAX_SCENERY) continue;
 
-      // The lattice is anchored to the fixed world origin, never to the framed land, so buying a plot
-      // cannot shuffle the scenery the player already saw.
-      const tileX = WORLD_ORIGIN_TILE_X + gx + jitterX * 0.7;
-      const tileY = WORLD_ORIGIN_TILE_Y + gy + jitterY * 0.7;
-      const relativeX = tileX - WORLD_ORIGIN_TILE_X;
-      const relativeY = tileY - WORLD_ORIGIN_TILE_Y;
-
-      const normalX = relativeX / (halfWidth - 0.8);
-      const normalY = relativeY / (halfDepth - 0.8);
-      if (normalX * normalX + normalY * normalY > 0.92) continue;
-
-      if (
-        tileX >= excludedField.minX - 1.2 &&
-        tileX <= excludedField.maxX + 1.2 &&
-        tileY >= excludedField.minY - 1.2 &&
-        tileY <= excludedField.maxY + 1.2
-      ) {
-        continue;
-      }
-      // Keep the south path clear.
-      if (Math.abs(relativeX) < 1.8 && relativeY > 0) continue;
-      const pondDx = (tileX - pondTileX) / (pondRadiusTileX + 1.4);
-      const pondDy = (tileY - pondTileY) / (pondRadiusTileY + 1.4);
-      if (pondDx * pondDx + pondDy * pondDy < 1) continue;
-      if (Math.abs(tileX - barnTileX) < 3.6 && Math.abs(tileY - barnTileY) < 3.6) continue;
+      const at = { x: tileX + jitterX * 0.9, y: tileY + jitterY * 0.9 };
+      const normalX = (at.x - centerTileX) / (halfWidthTiles - 1.4);
+      const normalY = (at.y - centerTileY) / (halfDepthTiles - 1.4);
+      const radius = Math.hypot(normalX, normalY);
+      if (radius > 0.94) continue;
+      if (!isOpenGround(at.x, at.y)) continue;
+      const density = 0.16 + 0.55 * Math.min(1, Math.max(0, (radius - 0.3) / 0.62));
+      if (densityRoll > density) continue;
 
       const kind: SceneryKind =
-        kindRoll < 0.26 ? "tree" : kindRoll < 0.48 ? "pine" : kindRoll < 0.7 ? "bush" : kindRoll < 0.87 ? "rock" : "flower";
-      const position = tileToWorld({ x: tileX, y: tileY }, worldFrame(layout.pitch));
-      scenery.push({
-        kind,
-        worldX: position.worldX,
-        worldZ: position.worldZ,
-        scale: 0.85 + scaleRoll * 0.5,
-        rotationY: rotationRoll * Math.PI * 2
-      });
+        kindRoll < 0.18 ? "tree" : kindRoll < 0.34 ? "pine" : kindRoll < 0.66 ? "bush" : kindRoll < 0.85 ? "rock" : "flower";
+      place(kind, at.x, at.y, 0.8 + scaleRoll * 0.5, rotationRoll * Math.PI * 2);
     }
   }
+
   return scenery;
 }
 
@@ -340,16 +426,19 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     apronWidth,
     apronDepth,
     lockedPlots,
-    scenery: buildScenery(
-      input.layout,
-      FENCE.bounds,
-      POND.center.x,
-      POND.center.y,
-      POND.radiusX,
-      POND.radiusY,
-      FARMHOUSE.center.x,
-      FARMHOUSE.center.y
-    ),
+    scenery: buildScenery(input.layout),
+    meadows: MEADOWS.map((patch) => {
+      const centre = tileToWorld(patch.center, mapping);
+      return {
+        id: patch.id,
+        kind: patch.kind,
+        worldX: centre.worldX,
+        worldZ: centre.worldZ,
+        radiusWorldX: patch.radiusX * input.layout.pitch,
+        radiusWorldZ: patch.radiusY * input.layout.pitch,
+        rotationY: patch.rotationY
+      };
+    }),
     pond: {
       worldX: pondCentre.worldX,
       worldZ: pondCentre.worldZ,
@@ -372,6 +461,10 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
           },
     islandHalfWidthWorld: halfWidthTiles * input.layout.pitch,
     islandHalfDepthWorld: halfDepthTiles * input.layout.pitch,
+    // The config's farm frame is in world metres at the standard pitch; a layout drawn at another
+    // tile size scales it by the same factor every other measure here uses.
+    farmHalfExtentWorld:
+      FARM_HALF_EXTENT_WORLD * (input.layout.pitch / (DEFAULT_TILE_SIZE + DEFAULT_TILE_GAP)),
     centerWorldX: centerWorld.worldX,
     centerWorldZ: centerWorld.worldZ
   };

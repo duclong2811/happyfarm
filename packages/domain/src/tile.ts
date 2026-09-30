@@ -65,8 +65,16 @@ export function applyTileMutation(tile: FarmTile, expectedVersion: number, times
   return { ...tile, version: tile.version + 1, updatedAt: timestamp };
 }
 
-/** Side length of the square of SOIL tiles a farm owns immediately after creation. */
-export const INITIAL_LAND_SIZE = 6;
+/**
+ * Side length of the square of SOIL tiles a farm owns immediately after creation.
+ *
+ * Twelve, not six: the alpha build's starter square was too small to plant, walk, and learn in, and
+ * a player who cannot see a farm cannot tell whether the game works. The starter square is still
+ * exactly one plot cohort wide, so the expansion geometry below, the renderer, and the collision
+ * world all keep one definition of what a plot is. Twelve by twelve is 144 tiles - a real field, and
+ * still only four rows of rows away from the initial planting the starter package funds.
+ */
+export const INITIAL_LAND_SIZE = 12;
 
 /**
  * Starter land (PROJECT_SPEC MVP step 2, "Unlock starter land").

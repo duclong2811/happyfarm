@@ -55,8 +55,8 @@ import type {
   EconomyMutationRepository,
   EconomySettlementRepository,
   ProgressionRepository,
-  StarterSeedGrant,
-  StarterSeedGrantRepository,
+  StarterGrant,
+  StarterGrantRepository,
   TreeHarvestSettlementRepository,
   TreeInstanceRepository,
   WalletRepository
@@ -479,27 +479,41 @@ export class D1CropRepository implements CropInstanceRepository, IdempotencyRepo
 }
 
 /**
- * The one-time starter seed receipt.
+ * The one-time starter package receipt.
  *
- * The insert is the whole command: `starter_seed_grant_apply` credits the inventory in the same
- * statement, and the receipt's primary key on the player is what makes the grant happen once. A
- * second call -- a repeated bootstrap, a second farm, a replayed sign-in -- matches the existing row
- * and reports `changes = 0`, so nothing is credited and no error is raised.
+ * The insert is the whole command: `starter_grant_apply` credits the seed stack, creates the wallet,
+ * and appends the ledger row in the same statement, and the receipt's primary key on
+ * `(player, grant key)` is what makes the package happen once. A second call -- a repeated
+ * onboarding pass, a second farm, a replayed sign-in, a retried request, a racing pair -- matches the
+ * existing row and reports `changes = 0`, so nothing is credited and no error is raised.
+ *
+ * There is deliberately no read-then-write here: the conflict is resolved by the primary key inside
+ * one statement, so concurrent callers cannot both observe an empty receipt.
  */
-export class D1StarterSeedGrantRepository implements StarterSeedGrantRepository {
+export class D1StarterGrantRepository implements StarterGrantRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
-  async grantStarterSeedAtomically(grant: StarterSeedGrant): Promise<boolean> {
+  async grantStarterPackageAtomically(grant: StarterGrant): Promise<boolean> {
     const results = await this.db.batch([
       this.db
         .prepare(
-          "INSERT INTO starter_seed_grants (player_id, item_definition_id, quantity, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING"
+          "INSERT INTO starter_grants (player_id, grant_key, item_definition_id, item_quantity, currency_id, gold_amount, transaction_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING"
         )
-        .bind(grant.playerId, grant.itemDefinitionId, grant.quantity, grant.timestamp)
+        .bind(
+          grant.playerId,
+          grant.grantKey,
+          grant.itemDefinitionId,
+          grant.itemQuantity,
+          grant.currencyDefinitionId,
+          grant.goldAmount,
+          grant.transactionId,
+          grant.requestId,
+          grant.timestamp
+        )
     ]);
     const result = results[0];
     if (result === undefined || !result.success) {
-      throw new Error("Atomic starter seed grant failed");
+      throw new Error("Atomic starter package grant failed");
     }
     return (result.meta.changes ?? 0) === 1;
   }

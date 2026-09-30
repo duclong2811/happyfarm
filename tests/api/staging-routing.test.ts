@@ -148,16 +148,31 @@ describe("staging configuration", () => {
     expect(effective).toMatch(/^database_name = "happy-farm-staging"$/m);
     expect(effective).not.toContain("happy-farm-local");
     expect(effective).not.toMatch(/database_id = "00000000/);
-    // The id is a sentinel: a deploy fails loudly until the operator pastes the real one.
-    expect(effective).toMatch(/^database_id = "REPLACE_WITH_STAGING_D1_ID"$/m);
+    expect(effective).not.toMatch(/database_name = "happy-farm"$/m);
+    // The id is either the sentinel - a template that fails closed until the operator pastes the
+    // real one - or the real id the operator pasted. Anything else is a typo that would bind the
+    // Worker to a database nobody chose.
+    expect(effective).toMatch(
+      /^database_id = "(REPLACE_WITH_STAGING_D1_ID|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"$/m
+    );
   });
 
   it("requires Access configuration instead of shipping a real team or audience", () => {
-    expect(effective).toMatch(/^ACCESS_TEAM_DOMAIN = "REPLACE_WITH_ACCESS_TEAM_DOMAIN"$/m);
-    expect(effective).toMatch(/^ACCESS_AUD = "REPLACE_WITH_ACCESS_AUD"$/m);
-    // No real team domain or audience may be committed: only sentinels are values here.
-    expect(effective).not.toMatch(/=\s*"https:\/\//);
-    expect(effective).not.toMatch(/^\s*ACCESS_AUD\s*=\s*"(?!REPLACE_)/m);
+    // Access configuration is not a secret and is not optional: the values are either the template
+    // sentinels (a deployment that fails closed) or the team's real domain and audience tag. What
+    // must never happen is a half-configured pair - one real, one sentinel - which would look
+    // deployed and reject every tester.
+    const teamDomain = /^ACCESS_TEAM_DOMAIN = "(.+)"$/m.exec(effective)?.[1];
+    const audience = /^ACCESS_AUD = "(.+)"$/m.exec(effective)?.[1];
+    expect(teamDomain).toBeDefined();
+    expect(audience).toBeDefined();
+    const templated = teamDomain === "REPLACE_WITH_ACCESS_TEAM_DOMAIN" && audience === "REPLACE_WITH_ACCESS_AUD";
+    const configured =
+      teamDomain !== undefined &&
+      audience !== undefined &&
+      /^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(teamDomain) &&
+      /^[0-9a-f]{64}$/.test(audience);
+    expect(templated || configured).toBe(true);
   });
 });
 
