@@ -195,6 +195,14 @@ export function buildLandmarks(group: Group, assets: SharedAssets, landmarks: re
     // Stands on the ground rather than at the tile slabs' own base level.
     node.position.set(landmark.worldX, GROUND_SURFACE_Y, landmark.worldZ);
     node.rotation.y = landmark.rotationY;
+    // A landmark has to hold its own at estate zoom, where the whole island is on screen: at their
+    // authored sizes the buildings were a few pixels and the island read as empty land with specks on
+    // it. They are drawn larger than their collision circles on purpose - collision is the simplified
+    // footprint a walker goes around, not the roof line.
+    //
+    // The harbour is the exception. Its geometry already spans the quay, the pier and the yard, so
+    // scaling it with the cottages turned the pier into a slab lying across the water.
+    node.scale.setScalar(landmark.kind === "HARBOR" ? 1 : 1.7);
     node.traverse((child) => {
       child.castShadow = true;
     });

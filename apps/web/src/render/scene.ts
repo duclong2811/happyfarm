@@ -693,11 +693,17 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     // what a first view has to land on. The pan clamp is centred on the same point, which is what
     // keeps a dragged view from wandering off the farm while a zoomed-out one can still reach the sea.
     const frameCentre = state.world.apron;
+    // Zoomed out, the camera frames the *island*, not the field: the estate view is where the plan is
+    // supposed to be legible, and framing the farm put the island off to one side of the screen with
+    // the settlement half out of shot.
+    const islandFraming = cameraRig.zoom > 3;
+    const targetX = islandFraming ? state.world.centerWorldX : frameCentre?.worldX ?? state.world.centerWorldX;
+    const targetZ = islandFraming ? state.world.centerWorldZ : frameCentre?.worldZ ?? state.world.centerWorldZ;
     const target = cameraRig.target({
       playerWorldX: playerPose?.worldX ?? null,
       playerWorldZ: playerPose?.worldZ ?? null,
-      centerWorldX: frameCentre?.worldX ?? state.world.centerWorldX,
-      centerWorldZ: frameCentre?.worldZ ?? state.world.centerWorldZ,
+      centerWorldX: targetX,
+      centerWorldZ: targetZ,
       worldExtent
     });
     const distance = cameraDistance();

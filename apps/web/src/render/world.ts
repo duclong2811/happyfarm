@@ -650,8 +650,12 @@ function buildScenery(
     const centerZ = district.center.y + localX * sin + localZ * cos;
 
     const cluster = clusterKindFor(district.kind, kindRoll);
-    const clusterRadius = 2.2 + sizeRoll * 3.2;
-    const members = Math.round(5 + memberRoll * 10 * Math.max(0.35, district.density));
+    // A wood is a mass, not a scatter of clumps: the natural forest grows in clusters several times
+    // the size of a thicket, which is what makes it read as one dark shape from the estate camera
+    // instead of as a handful of dots.
+    const sprawl = district.kind === "FOREST" ? 2.2 : 1;
+    const clusterRadius = (2.2 + sizeRoll * 3.2) * sprawl;
+    const members = Math.round((5 + memberRoll * 10 * Math.max(0.35, district.density)) * sprawl);
     for (let member = 0; member < members; member += 1) {
       const memberAngle = rand() * Math.PI * 2;
       const memberDistance = clusterRadius * Math.sqrt(rand());

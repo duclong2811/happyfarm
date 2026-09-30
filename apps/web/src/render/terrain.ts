@@ -518,30 +518,54 @@ function addMeadows(group: Group, assets: SharedAssets, world: FarmWorld): void 
  * sand. The terrain holds this ground level, so none of these heights depend on the hills around it.
  */
 function addPond(group: Group, assets: SharedAssets, pond: PondSpec): void {
-  const bank = new Mesh(assets.cylinder, assets.sand);
-  bank.scale.set(pond.radiusWorldX + 0.7, 0.3, pond.radiusWorldZ + 0.7);
-  // Half the slab's own height below the ground, so its top face *is* the bank the water sits in.
-  bank.position.set(pond.worldX, ISLAND_TOP_Y - 0.15, pond.worldZ);
+  // A pond with an outline of its own rather than a scaled circle: the lobed rim is the same trick the
+  // district patches use, and it is the difference between a pond and a blue sticker on the grass.
+  const lobe = (angle: number, scale: number): { readonly x: number; readonly z: number } => {
+    const shape = districtOutlineScale(angle, 1.7);
+    return {
+      x: Math.cos(angle) * pond.radiusWorldX * scale * shape,
+      z: Math.sin(angle) * pond.radiusWorldZ * scale * shape
+    };
+  };
+  const around = (scale: number, lift: number, rings: number): BufferGeometry =>
+    radialSurface({
+      rings,
+      sectors: 34,
+      rimAt: (angle) => lobe(angle, scale),
+      translate: (x, z) => ({ worldX: pond.worldX + x, worldZ: pond.worldZ + z }),
+      heightAt: () => ISLAND_TOP_Y + lift
+    });
+
+  const bank = new Mesh(around(1.3, -0.02, 2), assets.sand);
   bank.receiveShadow = true;
   group.add(bank);
 
-  const shallow = new Mesh(assets.circle, assets.wetSand);
-  shallow.rotation.x = -Math.PI / 2;
-  shallow.scale.set(pond.radiusWorldX + 0.18, pond.radiusWorldZ + 0.18, 1);
-  shallow.position.set(pond.worldX, ISLAND_TOP_Y + 0.016, pond.worldZ);
+  const shallow = new Mesh(around(1.06, 0.016, 2), assets.wetSand);
   group.add(shallow);
 
-  const water = new Mesh(assets.circle, assets.water);
-  water.rotation.x = -Math.PI / 2;
-  water.scale.set(pond.radiusWorldX, pond.radiusWorldZ, 1);
-  water.position.set(pond.worldX, ISLAND_TOP_Y + 0.022, pond.worldZ);
+  const water = new Mesh(around(1, 0.022, 2), assets.water);
   group.add(water);
 
-  const deep = new Mesh(assets.circle, assets.waterDeep);
-  deep.rotation.x = -Math.PI / 2;
-  deep.scale.set(pond.radiusWorldX * 0.6, pond.radiusWorldZ * 0.6, 1);
-  deep.position.set(pond.worldX, ISLAND_TOP_Y + 0.026, pond.worldZ);
+  const deep = new Mesh(around(0.6, 0.026, 2), assets.waterDeep);
   group.add(deep);
+
+  // Reeds at the water's edge and one small wooden platform, so the pond reads as a place the island
+  // uses rather than as water that happens to be there.
+  for (let index = 0; index < 14; index += 1) {
+    const angle = (index / 14) * Math.PI * 2 + 0.3;
+    const reed = new Mesh(assets.cone, assets.foliage);
+    const edge = lobe(angle, 1.14);
+    reed.position.set(pond.worldX + edge.x, ISLAND_TOP_Y + 0.16, pond.worldZ + edge.z);
+    reed.scale.set(0.12, 0.34, 0.12);
+    reed.rotation.z = (index % 3 - 1) * 0.12;
+    group.add(reed);
+  }
+  const platform = new Mesh(assets.box, assets.stakeWood);
+  const mooring = lobe(Math.PI * 0.25, 1.02);
+  platform.position.set(pond.worldX + mooring.x, ISLAND_TOP_Y + 0.05, pond.worldZ + mooring.z);
+  platform.scale.set(0.9, 0.1, 0.9);
+  platform.rotation.y = Math.PI * 0.2;
+  group.add(platform);
 
   for (let index = 0; index < 3; index += 1) {
     const pad = new Mesh(assets.circle, assets.foliage);
@@ -614,6 +638,11 @@ function addBarn(group: Group, assets: SharedAssets, world: FarmWorld, model: Ob
  * drawing cannot disagree with what the player can walk through.
  */
 function addFence(group: Group, assets: SharedAssets, fence: FenceGeometry, postSpacing: number): void {
+  // A continuous fence around the whole reserve draws the gameplay square as a hard outline, which at
+  // estate zoom is the single clearest sign that the world is a grid underneath. The fence is drawn
+  // as *sections* with gaps between them instead: a farm boundary that a hedge, a gate, or a field
+  // entrance interrupts - which is what a farm boundary actually looks like.
+  let sectionIndex = 0;
   for (const segment of fence.segments) {
     const horizontal = segment.side === "SOUTH" || segment.side === "NORTH";
     const from = horizontal ? segment.minWorldX : segment.minWorldZ;
@@ -623,20 +652,26 @@ function addFence(group: Group, assets: SharedAssets, fence: FenceGeometry, post
       : (segment.minWorldX + segment.maxWorldX) / 2;
     const length = to - from;
     if (length <= 0) continue;
-    const middle = (from + to) / 2;
+    sectionIndex += 1;
+    // Deterministic, and different on every side: the gaps must not line up into a rhythm either.
+    const covered = 0.5 + 0.22 * Math.sin(sectionIndex * 2.3);
+    const start = from + (to - from) * (sectionIndex % 2 === 0 ? 0.06 : 0.3);
+    const sectionTo = Math.min(to, start + (to - from) * covered);
+    const middle = (start + sectionTo) / 2;
+    const sectionLength = sectionTo - start;
 
     for (const height of [0.28, 0.46]) {
       const rail = horizontal
-        ? box(assets, assets.wood, length, 0.07, FENCE_THICKNESS_WORLD, middle, height, line)
-        : box(assets, assets.wood, FENCE_THICKNESS_WORLD, 0.07, length, line, height, middle);
+        ? box(assets, assets.wood, sectionLength, 0.07, FENCE_THICKNESS_WORLD, middle, height, line)
+        : box(assets, assets.wood, FENCE_THICKNESS_WORLD, 0.07, sectionLength, line, height, middle);
       rail.castShadow = true;
       group.add(rail);
     }
 
     // Posts every pitch, plus one at each end, so a gate is framed by two posts.
-    const spacings = Math.max(1, Math.round(length / postSpacing));
+    const spacings = Math.max(1, Math.round(sectionLength / postSpacing));
     for (let index = 0; index <= spacings; index += 1) {
-      const at = from + (length * index) / spacings;
+      const at = start + (sectionLength * index) / spacings;
       const post = box(assets, assets.wood, 0.1, FENCE_HEIGHT, 0.1, horizontal ? at : line, FENCE_HEIGHT / 2, horizontal ? line : at);
       post.castShadow = true;
       group.add(post);
@@ -686,16 +721,20 @@ function addSignpost(group: Group, assets: SharedAssets, plot: LockedPlotSquare,
 function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
   // Every unclaimed plot gets the rough ground; only the ring the catalogue is offering gets the
   // stakes and the sign, because those are what say "this one, next".
-  for (const plot of world.wildPatches) {
-    // A rounded patch of rough ground rather than a slab: the plot still reads as a plot, but its
-    // edge is a soft boundary between two kinds of ground instead of the outline of a missing asset.
-    // Slightly inset, so a margin of the ground between two plots separates them without a drawn line.
-    const half = (plot.sizeWorld / 2) * 0.95;
+  for (const [index, plot] of world.wildPatches.entries()) {
+    // A patch of fallow ground rather than a slab, and deliberately *not* the same patch twice: the
+    // plot's own index shifts and sizes it, so the ring around the field reads as fields of different
+    // ages and sizes rather than as four identical rounded squares in a row - which is what the
+    // estate camera made of the even version.
+    const jitter = Math.sin(index * 12.9898) * 0.5;
+    const scaleX = 0.86 + 0.12 * Math.sin(index * 4.1);
+    const scaleZ = 0.86 + 0.12 * Math.cos(index * 3.3);
+    const half = (plot.sizeWorld / 2) * 0.92;
     const outline = {
       centerWorldX: plot.centerWorldX,
       centerWorldZ: plot.centerWorldZ,
-      halfWidthWorld: half,
-      halfDepthWorld: half,
+      halfWidthWorld: half * scaleX,
+      halfDepthWorld: half * scaleZ,
       exponent: ISLAND_SHAPE_EXPONENT,
       // Locked plots are rounded squares on purpose: the plot *is* a square, and the stake line and
       // the scrub are what stop it reading as one.
@@ -707,7 +746,10 @@ function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, lay
         sectors: 32,
         rimAt: (angle) => {
           const rim = islandRimPoint(angle, outline);
-          return { x: rim.worldX - plot.centerWorldX, z: rim.worldZ - plot.centerWorldZ };
+          return {
+            x: rim.worldX - plot.centerWorldX + jitter,
+            z: rim.worldZ - plot.centerWorldZ - jitter
+          };
         },
         translate: (x, z) => ({ worldX: plot.centerWorldX + x, worldZ: plot.centerWorldZ + z }),
         heightAt: () => LOCKED_GROUND_SURFACE_Y,
@@ -718,7 +760,9 @@ function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, lay
           return WILD_GROUND_DARK.clone().lerp(WILD_GROUND_LIGHT, mix);
         }
       }),
-      assets.terrainGrass
+      // Fallow earth rather than grass: the land beside a working field looks like ground that has
+      // been turned over and left, which is also what stops it reading as decoration.
+      assets.bareEarth
     );
     patch.receiveShadow = true;
     group.add(patch);

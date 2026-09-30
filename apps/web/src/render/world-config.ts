@@ -785,8 +785,15 @@ export function terrainFlatAreas(frame: WorldFrame = worldFrame()): readonly Fla
  */
 export const ISLAND_UPLANDS: readonly UplandBias[] = [{ normalX: 0.66, normalZ: -0.75, weight: 0.75 }];
 
-/** Height of the tallest hill above the flat ground, in world units. */
-export const TERRAIN_RELIEF_WORLD = 6.5;
+/**
+ * Height of the tallest hill above the flat ground, in world units.
+ *
+ * Raised in V7. At 6.5 the island read as a plate with a pattern painted on it from the estate
+ * camera: relief is what gives a landscape a near side and a far side, and without it every district
+ * sits on the same plane and the composition flattens out. The farm, the settlement, the pond, and
+ * the quay are still held dead flat by `terrainFlatAreas`, so the gameplay surfaces stay usable.
+ */
+export const TERRAIN_RELIEF_WORLD = 9.5;
 
 /** The island's outline, its elevation, and the areas that stay level. Pure data. */
 export const TERRAIN_SHAPE: TerrainShape = {
