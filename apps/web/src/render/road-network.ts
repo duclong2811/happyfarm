@@ -85,8 +85,9 @@ export function reachableFrom(origin: RoadNodeId, network: RoadNetwork = buildRo
  *
  * Kept as an explicit list rather than derived from the districts: the districts are *landscape* (a
  * blob's identity), and this is *access* (can a person get there). Under the V12 direction the list
- * is the *community*: the quay, the yard behind it, the civic square, the barn's yard, the farmland's
- * gate, and the high-ground trail that leaves from it. The production districts that used to be on
+ * is the *community*: the quay, the yard behind it, the civic square, the barn's yard, and the
+ * high-ground trail that leaves the village for the volcano's foothill. The production districts
+ * that used to be on
  * this list are reached by roads a player builds; requiring one would re-author a decision the
  * direction gives back to the player.
  */
@@ -96,6 +97,5 @@ export const REQUIRED_ROAD_DESTINATIONS: readonly RoadNodeId[] = [
   "civic",
   "plaza",
   "farm_hub",
-  "agriculture",
-  "mining"
+  "highland"
 ];

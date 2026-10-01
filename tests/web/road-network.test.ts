@@ -227,7 +227,15 @@ describe("the road surfaces are drawn once, cheaply", () => {
   });
 
   it("puts a paved disc at the stops the roads share", () => {
-    expect(world.junctions.length).toBeGreaterThan(4);
+    // Only a stop two or more roads run into is a junction: a lane that simply ends is a dead end,
+    // not a meeting place, and paving it made the north road's terminus read as a blob.
+    expect(world.junctions.length).toBeGreaterThan(1);
+    const stopsWithTwoRoads = new Set(
+      ROADS.flatMap((road) => road.connects).filter((node, _index, all) => all.indexOf(node) !== all.lastIndexOf(node))
+    );
+    expect(world.junctions.map((junction) => junction.id.slice("junction_".length)).sort()).toEqual(
+      [...stopsWithTwoRoads].sort()
+    );
     for (const junction of world.junctions) {
       expect(junction.radiusWorld).toBeGreaterThan(0);
       // The widest road through the junction sets its surface, so a stone spine paves the whole disc.

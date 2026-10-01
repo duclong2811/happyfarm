@@ -134,8 +134,11 @@ describe("static world config", () => {
     }
   });
 
-  it("spawns on walkable ground outside the farm, the water, and every obstacle", () => {
-    expect(SPAWN_TILE.y).toBeGreaterThan(FARM_FIELD_BOUNDS.maxY);
+  it("spawns on walkable ground beside the player's own land, off the water and every obstacle", () => {
+    // V12.1 moved the spawn from an authored lane in the far south to the edge of the square the
+    // player owns, because the lane it used to stand on no longer exists.
+    expect(SPAWN_TILE.y).toBeGreaterThan(INITIAL_LAND_SIZE - 1);
+    expect(SPAWN_TILE.y).toBeLessThan(FARM_FIELD_BOUNDS.maxY);
     expect(isStaticWorldWalkable(SPAWN_TILE)).toBe(true);
     expect(isWaterTile(SPAWN_TILE)).toBe(false);
     expect(isStaticWorldWalkable(POND.center)).toBe(false);

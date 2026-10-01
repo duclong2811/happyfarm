@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { FENCE, ISLAND_SHAPE, TERRAIN_SHAPE, WORLD_CENTER_WORLD } from "../../apps/web/src/render/world-config";
+import {
+  FENCE,
+  ISLAND_SHAPE,
+  TERRAIN_SHAPE,
+  VOLCANO_SHAPE,
+  WORLD_CENTER_WORLD
+} from "../../apps/web/src/render/world-config";
 import {
   flatMask,
   islandRadiusAt,
   islandRimPoint,
   terrainHeightAt,
-  uplandOffset
+  uplandOffset,
+  volcanoRadiusFraction
 } from "../../apps/web/src/render/terrain-height";
 import { tileToWorld, worldFrame } from "../../apps/web/src/render/layout";
 
@@ -89,18 +96,23 @@ describe("terrain elevation", () => {
     }
   });
 
-  it("rises to a real hill between the field and the shore", () => {
+  it("rolls gently between the field and the shore, and saves its height for the volcano", () => {
     let highest = 0;
     for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 24) {
       for (const factor of [0.6, 0.7, 0.8, 0.88]) {
         const world = atRadius(angle, factor);
         const height = terrainHeightAt(world.worldX, world.worldZ, TERRAIN_SHAPE);
         expect(height, `angle ${String(angle)} at ${String(factor)}`).toBeGreaterThanOrEqual(0);
-        expect(height).toBeLessThanOrEqual(TERRAIN_SHAPE.reliefWorld * 1.3);
+        // The island's ordinary ground is a couple of metres of swell. The volcano is the one place
+        // V12.1 allows to be tall, and it is excluded from this sample by asking whether the point is
+        // on the mountain at all.
+        if (volcanoRadiusFraction(world.worldX, world.worldZ, VOLCANO_SHAPE) < 1) continue;
+        expect(height).toBeLessThanOrEqual(TERRAIN_SHAPE.reliefWorld * 1.4);
         highest = Math.max(highest, height);
       }
     }
     expect(highest).toBeGreaterThan(TERRAIN_SHAPE.reliefWorld * 0.25);
+    expect(TERRAIN_SHAPE.reliefWorld).toBeLessThanOrEqual(3);
   });
 
   it("is higher on the upland than on the coast", () => {

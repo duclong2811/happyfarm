@@ -42,9 +42,11 @@ Everything else is the player's.
   foothill - not by effects. No lava simulation and no particle-heavy eruption in V12.
 * The remaining land is developable. It is not "the fields" or "the wood" in advance.
 
-**Current state: not yet done.** The relief is still `ISLAND_UPLANDS` in
-`apps/web/src/render/world-config.ts`, which raises a northern highland and a north-western shoulder,
-and there is no volcano. This is the largest remaining piece of the V12 direction.
+**Current state: built in V12.1.** `TERRAIN_RELIEF_WORLD` is 2.6 and `ISLAND_UPLANDS` is one faint
+northward lean, so the ordinary ground is a couple of metres of swell; the volcano is
+`VOLCANO`/`VOLCANO_SHAPE` in `world-config.ts`, read by `volcanoHeightAt` in `terrain-height.ts`, and
+its ground is classified `VOLCANO` by the cell map. The general relief is still *generated* rather
+than authored, so a future pass may still want to flatten specific regions.
 
 ## Land use
 
@@ -56,7 +58,11 @@ cellCapabilitiesFor(terrain, zone) -> CellCapability[]
 
 * `LAND` → `WALK`, `BUILD`, `FARM`, `FORESTRY`, `LIVESTOCK`, `ROAD`, `DECORATION`
 * `SHORE` → `WALK`, `DOCK`
-* `WATER` → `AQUACULTURE` in planned water, nothing elsewhere
+* `WATER` → `AQUACULTURE` in the shelf just outside the waterline (`SHALLOW_WATER_BAND`), nothing in
+  the open sea and nothing in the lake
+* `VOLCANO` + `VOLCANO_CORE` (the crater) → nothing at all: not walkable, not buildable, not a route
+* `VOLCANO` + `VOLCANO_SLOPE` → `WALK`, `MINING` (a hook; no mining gameplay exists)
+* `VOLCANO` + `VOLCANO_FOOTHILL` → `WALK`, `FORESTRY`, `DECORATION`
 * `BLOCKED` → nothing
 
 The answer never mentions a district. Two cells of the same ground answer the same way wherever they
@@ -73,7 +79,9 @@ LAND + owned + decoration       -> landscaping
 ```
 
 `productionCapability` is still the *narrower* "what the server could grant today" answer (it knows
-about the plot catalogue's reservation). The two are deliberately not the same question.
+about the plot catalogue's reservation). The two are deliberately not the same question, and as of
+V12.1 it no longer reads a district at all: dry land answers `CROP` for itself and the reservation
+decides whether any particular cell may be planted.
 
 ## Roads
 
@@ -82,18 +90,21 @@ at junctions), the junction graph, and the tier data.
 
 Authored roads are now only:
 
-1. `harbour_spine` (PRIMARY, paved) - harbour → village;
-2. `farm_road` (SECONDARY, dirt) - village → the barn's yard;
-3. `village_street` (PATH) - circulation inside the village;
-4. `east_field_lane`, `spawn_lane` (PATH) - the lanes the community works;
+1. `harbour_spine` (PRIMARY, paved) - harbour → the village square. It stops at the square: past the
+   village the road is the player's;
+2. `farm_road` (SECONDARY, dirt) - the square → the barn's yard;
+3. `north_road` (SECONDARY, dirt) - the square → the volcano's **foothill**, terminating outside the
+   steep band (`volcanoRadiusFraction` at the last waypoint is checked by a test). Nothing authored
+   climbs the landmark;
+4. `village_street` (PATH) - circulation inside the village;
 5. `harbour_boardwalk` (PATH) - the quay.
 
-Removed in the recovery pass, because they were roads built across land the player is supposed to
-build on: `orchard_road`, `west_country_road`, `freshwater_road`, `forestry_track`, `orchard_lane`,
-`pond_path`, `west_field_lane`, `mining_road`, `mining_track`, and the long `farm_track`. The old
-ring-shaped primary is gone as well; a highway across the working land is exactly what the direction
-removes. `north_trail` remains as the one track to the high ground, and it is where the volcano trail
-will grow from.
+Removed across the recovery and V12.1 passes, because they were roads built across land the player is
+supposed to build on: `orchard_road`, `west_country_road`, `freshwater_road`, `forestry_track`,
+`orchard_lane`, `pond_path`, `west_field_lane`, `east_field_lane`, `spawn_lane`, `mining_road`,
+`mining_track`, `north_trail` and the long `farm_track`, plus the old ring-shaped primary and the
+quarry-approach spur. A junction disc is now drawn only where two or more roads actually meet, so a
+dead end reads as a dead end.
 
 ### Road tiers
 
@@ -145,8 +156,19 @@ shoreline).
   decorations, nature, utility, monuments, and the reserved workers/vehicles/livestock/processing),
   and ships only the four road tiers today.
 
-**Current state:** the capability vocabulary and the shop foundation exist. Starter ownership as a
-share of developable land, block expansion, and volcano-core exclusion do not.
+**Current state (V12.1):** the capability vocabulary, the shop foundation, and the ownership
+foundation all exist. `apps/web/src/render/land-ownership.ts` cuts the island into sixteen-cell
+parcels with stable ids, reads the owned parcels from the authoritative tiles, computes adjacency,
+and reports the parcels that are eligible to be bought next; protected ground (the crater, the
+village, the harbour, the sea, and barren cells) is never eligible. A purchase is still the plot
+catalogue's business: nothing here can grant land or take a payment.
+
+**Known gap, stated plainly.** The brief asks the starter land to be 8-12% of the island's
+developable land. The shipped starter square is what the *server* grants on farm creation
+(`INITIAL_LAND_SIZE` = 12, so 144 cells), which measures at roughly 1.5% of the island and about 11%
+of the land the current plot catalogue can sell. Raising it moves plot geometry, the plot catalogue,
+and every existing farm's `farm_tiles`, and would need a migration - which this pass is forbidden from
+running. `tests/web/land-ownership.test.ts` measures and reports the number rather than hiding it.
 
 ## Assets
 
@@ -165,17 +187,28 @@ removed.
 
 ## What is removed, and what is still to remove
 
-Removed in the recovery pass:
+Removed in the recovery pass: the authored road network across the production districts.
 
-* the authored road network across the production districts (listed above).
+Removed in V12.1:
 
-Still to remove or replace, in the island pass this document introduces:
+* the authored crop parcels and their furrows (`FIELD_BLOCKS`, `addFieldBlocks`);
+* the pre-built orchard and managed-wood rows (`plantRows`, `addProductionRowBeds`);
+* the aquaculture cages moored in the bay (`FISH_FARM`, `addAquaculture`);
+* the timber yard and its haul road (`LOGGING_YARD`, `addLoggingYard`);
+* the hedgerows and field edges that framed those parcels;
+* the locked-plot board: the raised squares, the stake line and the signposts
+  (`addLockedLand`, `addSignpost`), and the production districts' *zones with meaning*
+  (`AQUACULTURE_ZONE`, `MINING_RESERVE`, and the cropland/orchard/pasture/forestry zone mappings);
+* the uplands that made the island a bowl with a mountain ring, and the nine-centimetre tile step.
 
-* the authored orchard rows and the managed-wood rows
-  (`addProductionRowBeds` in `apps/web/src/render/terrain.ts`, the `ORCHARD` and `FORESTRY` districts);
-* the fixed aquaculture basin and the mining reserve as *zones with meaning*;
-* the prebuilt farm scenery that makes the starting island read as a finished farm;
-* the ring of relief around the island, replaced by the flatter landscape above.
+Still to remove or replace:
+
+* the district *entries* themselves (`DISTRICTS` in `world-config.ts`). They no longer decide what a
+  cell may be used for - a test proves it - and they are now only a scatter hint and a label, but the
+  cropland, orchard, pasture and managed-wood rows are still the names of places that no longer mean
+  anything. Removing them is a small, contained follow-up;
+* the player's own cultivated plot still reads as a slightly raised patch of ground; the apron that
+  surrounds the owned tiles could be blended further into the terrain.
 
 The district vocabulary itself may stay, because districts still describe *landscape* - what grows
 where, how a place reads from the estate camera. What may not come back is a district deciding what
@@ -194,3 +227,9 @@ BETWEEN        large player-developable landscape
 
 It must not say: finished farm, fixed orchard, fixed forestry plantation, fixed fishery, giant grid,
 or mountain ring.
+
+**Measured in V12.1.** The eighteen views in `apps/web/qa/views.ts` were rendered with headless Edge
+and inspected. From the estate camera the island reads as: volcano north, village east, harbour
+south-east, and open ground between them, with one small cultivated plot belonging to the player. The
+crater is legible from elevated angles and subtle from a low one; the harbour's pier reads better from
+above than from the waterline. Both are recorded as remaining weaknesses rather than fixed.

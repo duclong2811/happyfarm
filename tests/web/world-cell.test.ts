@@ -4,10 +4,8 @@ import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import { buildFarmSceneInput } from "../../apps/web/src/render/view-model";
 import { cellKey, cellToWorld, productionCapabilityFor, worldCellAt, worldToCell } from "../../apps/web/src/render/world-cell";
 import {
-  AQUACULTURE_ZONE,
   FARM_FIELD_BOUNDS,
   ISLAND_SHAPE,
-  MINING_RESERVE,
   isWaterTile
 } from "../../apps/web/src/render/world-config";
 import { islandRadiusAt } from "../../apps/web/src/render/terrain-height";
@@ -159,57 +157,60 @@ describe("land use decides what a cell can produce", () => {
       expect(isFarmlandTile(cell), `${String(cell.x)},${String(cell.y)}`).toBe(true);
       const world = worldCellAt(input.cells, cell.x, cell.y);
       expect(world?.terrain).toBe("LAND");
-      expect(world?.zone).toBe("AGRICULTURE");
+      // The zone no longer names a production area - the island stopped deciding that - so the
+      // capability is the *reservation's* answer plus the ground's own, which is what makes a crop
+      // cell a cell the catalogue can actually sell.
+      expect(world?.legacyFarmTile).not.toBeNull();
     }
   });
 
-  it("gives the managed wood timber capability, and never the natural forest", () => {
+  it("grows no timber plantation, because forestry is the player's to plant", () => {
+    // V12.1 removed the authored managed wood, so no cell anywhere is handed a TIMBER production
+    // capability by the island. The *ability* to plant trees is a capability of the ground, which is a
+    // different question and is answered per cell.
     const input = starterInput();
-    const timber = input.cells.productionCells.TIMBER;
-    expect(timber.length).toBeGreaterThan(50);
-    for (const cell of timber) {
-      const world = worldCellAt(input.cells, cell.x, cell.y);
-      expect(world?.terrain).toBe("LAND");
-      expect(world?.zone).toBe("FORESTRY");
-    }
-    // The natural forest keeps its own cells: it is a wood, not a plantation.
-    for (const cell of input.cells.cells.values()) {
-      if (cell.zone !== "FORESTRY") continue;
-      expect(cell.productionCapability).toBe("TIMBER");
-    }
+    expect(input.cells.productionCells.TIMBER).toEqual([]);
+    const plantable = [...input.cells.cells.values()].filter((cell) => cell.capabilities.includes("FORESTRY"));
+    expect(plantable.length).toBeGreaterThan(100);
   });
 
-  it("puts aquaculture only in planned water, and mining only on highland", () => {
+  it("offers aquaculture only in the shallows, and mining only on the volcano", () => {
     const input = starterInput();
     const water = input.cells.productionCells.AQUACULTURE;
     expect(water.length).toBeGreaterThan(20);
     for (const cell of water) {
       const world = worldCellAt(input.cells, cell.x, cell.y);
+      const worldPosition = cellToWorld({ x: cell.x, y: cell.y }, input.cells.frame);
       expect(world?.terrain).toBe("WATER");
-      const dx = (cell.x - AQUACULTURE_ZONE.center.x) / AQUACULTURE_ZONE.radiusX;
-      const dy = (cell.y - AQUACULTURE_ZONE.center.y) / AQUACULTURE_ZONE.radiusY;
-      expect(dx * dx + dy * dy).toBeLessThanOrEqual(1);
+      // Shallow: just past the waterline. A cage needs a shelf to be moored in, and the open sea does
+      // not offer one.
+      const radius = islandRadiusAt(worldPosition.worldX, worldPosition.worldZ, ISLAND_SHAPE);
+      expect(radius).toBeGreaterThan(1);
+      expect(radius).toBeLessThanOrEqual(1.07);
     }
-    const mining = input.cells.productionCells.MINING;
-    expect(mining.length).toBeGreaterThan(50);
-    for (const cell of mining) {
-      const world = worldCellAt(input.cells, cell.x, cell.y);
-      expect(world?.terrain).toBe("LAND");
-      const dx = (cell.x - MINING_RESERVE.center.x) / MINING_RESERVE.radiusX;
-      const dy = (cell.y - MINING_RESERVE.center.y) / MINING_RESERVE.radiusY;
-      expect(dx * dx + dy * dy).toBeLessThanOrEqual(1);
+    // Mining is a capability of the volcano's steep flanks and of nothing else. No cell is *granted*
+    // a mining production capability: mining is a hook for a later pass, not a system today.
+    expect(input.cells.productionCells.MINING).toEqual([]);
+    const miningCapable = [...input.cells.cells.values()].filter((cell) => cell.capabilities.includes("MINING"));
+    expect(miningCapable.length).toBeGreaterThan(0);
+    for (const cell of miningCapable) {
+      expect(cell.terrain).toBe("VOLCANO");
+      expect(cell.zone).toBe("VOLCANO_SLOPE");
     }
   });
 
   it("refuses impossible combinations rather than inventing them", () => {
     expect(productionCapabilityFor("WATER", "AGRICULTURE")).toBe("NONE");
     expect(productionCapabilityFor("WATER", "CIVIC")).toBe("NONE");
+    // A zone only water carries is not a place a crop grows, on any ground.
     expect(productionCapabilityFor("LAND", "AQUACULTURE")).toBe("NONE");
     expect(productionCapabilityFor("SHORE", "AGRICULTURE")).toBe("NONE");
     expect(productionCapabilityFor("BLOCKED", "FORESTRY")).toBe("NONE");
-    expect(productionCapabilityFor("LAND", "AGRICULTURE")).toBe("CROP");
-    expect(productionCapabilityFor("LAND", "FORESTRY")).toBe("TIMBER");
-    expect(productionCapabilityFor("LAND", "MINING")).toBe("MINING");
+    expect(productionCapabilityFor("LAND", "NONE")).toBe("CROP");
+    expect(productionCapabilityFor("LAND", "FORESTRY")).toBe("CROP");
+    expect(productionCapabilityFor("LAND", "MINING")).toBe("CROP");
+    expect(productionCapabilityFor("VOLCANO", "VOLCANO_SLOPE")).toBe("NONE");
+    expect(productionCapabilityFor("VOLCANO", "VOLCANO_CORE")).toBe("NONE");
     expect(productionCapabilityFor("WATER", "AQUACULTURE")).toBe("AQUACULTURE");
   });
 
@@ -312,14 +313,16 @@ describe("selection is local, quiet, and never acts on its own", () => {
     expect(actions.map((action) => action.id)).toEqual(["MOVE", "PLANT"]);
     expect(actions.every((action) => action.enabled)).toBe(true);
 
-    // A civic cell moves and does nothing else; a mine is not implemented and says so.
+    // A civic cell moves and does nothing else. The volcano's steep ground is walkable - a foothill
+    // path crosses it - and mining is expressed as a *capability of the ground* rather than as an
+    // action, because the brief for this pass is explicit that mining is a hook, not a system.
     const civic = worldCellAt(starterInput().cells, 45, 3);
     expect(getAvailableCellActions(civic, { canPlant: true, crop: null, tree: null }).map((a) => a.id)).toEqual(["MOVE"]);
-    const mining = worldCellAt(starterInput().cells, 34, -22);
-    if (mining === null) throw new Error("the mining reserve must be on the map");
-    expect(mining.productionCapability).toBe("MINING");
-    const mineActions = getAvailableCellActions(mining, { canPlant: true, crop: null, tree: null });
-    expect(mineActions.map((a) => a.id)).toEqual(["MOVE", "MINE"]);
-    expect(mineActions.find((a) => a.id === "MINE")?.enabled).toBe(false);
+    const slope = [...starterInput().cells.cells.values()].find((cell) => cell.zone === "VOLCANO_SLOPE");
+    if (slope === undefined) throw new Error("the volcano must have steep ground");
+    expect(slope.capabilities).toContain("MINING");
+    const mineActions = getAvailableCellActions(slope, { canPlant: true, crop: null, tree: null });
+    expect(mineActions.map((a) => a.id)).toEqual(["MOVE"]);
+    expect(mineActions[0]?.enabled).toBe(true);
   });
 });

@@ -25,8 +25,14 @@ import type { TerrainShape } from "./terrain-height";
  *    an irregular coast. The grid is how the game *thinks*, not how it looks.
  */
 
-/** What the ground is made of. `BLOCKED` is a cell a walker cannot enter at all. */
-export type CellTerrain = "LAND" | "SHORE" | "WATER" | "BLOCKED";
+/**
+ * What the ground is made of.
+ *
+ * `BLOCKED` is a cell a walker cannot enter at all. `VOLCANO` is the island's one landmark: its
+ * flanks and its crater, which the ground itself classifies so that no caller has to know where the
+ * mountain is to know that nothing may be farmed on it.
+ */
+export type CellTerrain = "LAND" | "SHORE" | "WATER" | "VOLCANO" | "BLOCKED";
 
 /** What the land is *for*. */
 export type CellZone =
@@ -36,7 +42,11 @@ export type CellZone =
   | "FORESTRY"
   | "MINING"
   | "CIVIC"
-  | "WILDERNESS";
+  | "WILDERNESS"
+  /** The volcano's bands, in order: the crater floor, the steep flanks, the forested foothill. */
+  | "VOLCANO_CORE"
+  | "VOLCANO_SLOPE"
+  | "VOLCANO_FOOTHILL";
 
 /** What is standing on the cell right now. */
 export type CellOccupancy = "EMPTY" | "BUILDING" | "SCENERY" | "RESOURCE" | "PRODUCTION";
@@ -65,7 +75,15 @@ export type CellCapability =
   | "ROAD"
   | "DECORATION"
   | "AQUACULTURE"
-  | "DOCK";
+  | "DOCK"
+  /**
+   * Ground that could be worked for stone one day.
+   *
+   * Only the volcano's steep flanks carry it, and nothing acts on it yet: the brief for this pass is
+   * explicit that mining is a hook, not a system. It exists so that "the mountain is not wasted land"
+   * is a fact about the map rather than a note somebody has to remember.
+   */
+  | "MINING";
 
 /**
  * One cell of the island.
@@ -178,23 +196,18 @@ export function worldCellAtPosition(
  * farm a fish; a civic square produces nothing at all.
  */
 export function productionCapabilityFor(terrain: CellTerrain, zone: CellZone): CellProductionCapability {
-  if (terrain === "BLOCKED") return "NONE";
+  if (terrain === "BLOCKED" || terrain === "VOLCANO") return "NONE";
   if (terrain === "WATER") return zone === "AQUACULTURE" ? "AQUACULTURE" : "NONE";
   // Everything below is dry land: a shore cell is beach, and a beach is not a field.
   if (terrain === "SHORE") return "NONE";
-  switch (zone) {
-    case "AGRICULTURE":
-      return "CROP";
-    case "FORESTRY":
-      return "TIMBER";
-    case "MINING":
-      return "MINING";
-    case "CIVIC":
-    case "WILDERNESS":
-    case "AQUACULTURE":
-    case "NONE":
-      return "NONE";
-  }
+  // Dry land's own answer, and deliberately *not* the zone's: every district in the config used to be
+  // able to hand a cell a production capability, and that is exactly the "the island already decided
+  // what this land is for" rule this pass removes. Whether any particular cell may actually be
+  // planted is the plot catalogue's reservation, which the caller applies; this only says the ground
+  // would take a crop.
+  // A zone that only water carries, or civic ground, is not a place a crop grows.
+  if (zone === "CIVIC" || zone === "AQUACULTURE") return "NONE";
+  return "CROP";
 }
 
 /**
@@ -217,6 +230,21 @@ export function cellCapabilitiesFor(terrain: CellTerrain, zone: CellZone): reado
     case "BLOCKED":
       // A building already stands here. Nothing else may be placed, and nothing may be walked into.
       return [];
+    case "VOLCANO":
+      switch (zone) {
+        case "VOLCANO_CORE":
+          // The crater: bare stone, no way in, and no way across. It is the one piece of the island
+          // that is nobody's land and nobody's route.
+          return [];
+        case "VOLCANO_SLOPE":
+          // The steep ground a walker may cross and a quarry could one day be cut into. No building,
+          // no farm, no road.
+          return ["WALK", "MINING"];
+        default:
+          // The foothill the volcano rises out of: ordinary land with a wood on it, minus the ground
+          // a farm or a building would want. It is the ring a later expansion pass may reach into.
+          return ["WALK", "FORESTRY", "DECORATION"];
+      }
     case "WATER":
       // Open water is not a place to build: only planned water carries fish cages, and only a shore
       // cell may meet it with a dock.

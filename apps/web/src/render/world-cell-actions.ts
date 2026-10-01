@@ -141,6 +141,12 @@ export function cellLandKey(cell: WorldCell): CellLandKey {
       return "cell.land.wild";
     case "AQUACULTURE":
       return "cell.land.aquaculture";
+    // The volcano reads as the wild ground it is: the crater is not a place, and the flanks are the
+    // rough country a player walks across rather than works.
+    case "VOLCANO_CORE":
+    case "VOLCANO_SLOPE":
+    case "VOLCANO_FOOTHILL":
+      return "cell.land.wild";
     case "NONE":
       return "cell.land.open";
   }

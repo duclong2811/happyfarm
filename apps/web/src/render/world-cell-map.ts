@@ -1,16 +1,14 @@
 import { worldFrame, type FarmLayout, type TileBounds, type TileCoordinate, type WorldFrame } from "./layout";
-import { islandRadiusAt } from "./terrain-height";
+import { islandRadiusAt, volcanoZoneAt } from "./terrain-height";
 import type { TerrainShape } from "./terrain-height";
 import {
-  AQUACULTURE_ZONE,
   COMPOSITION_PRESETS,
   DISTRICTS,
   FARM_FIELD_BOUNDS,
   FARMSTEAD,
-  ISLAND_SHAPE,
   LANDMARKS_WORLD,
-  MINING_RESERVE,
   isWaterTile,
+  TERRAIN_SHAPE,
   type DistrictKind
 } from "./world-config";
 import { RESERVED_BUILDINGS } from "./buildings";
@@ -50,16 +48,33 @@ import {
 export const WATER_MARGIN_CELLS = 0.16;
 /** How far inland from the waterline the beach band reaches, in shore units. */
 const SHORE_BAND = 0.955;
+/**
+ * How far offshore a cell still counts as shallow water, in shore units.
+ *
+ * A fish cage needs shallows it can be moored in and worked from, so "the sea may carry aquaculture"
+ * is a fact about depth rather than a rectangle somebody drew around one bay. The band is about three
+ * tiles wide on this island: enough to be a real shelf, narrow enough that the open sea stays open.
+ */
+const SHALLOW_WATER_BAND = 0.06;
 /** How close a scenery instance must be to a cell's centre to count as standing on it, in cells. */
 const SCENERY_OCCUPANCY_RADIUS_CELLS = 0.5;
 
-/** The zone a district's land use maps to. The vocabulary is the island's, not the district's. */
+/**
+ * The zone a district's land use maps to.
+ *
+ * Landscape only, and shrinking on purpose. The production districts (cropland, orchard, pasture,
+ * managed wood) no longer name a land use at all: the ground says what it *can* carry through
+ * `CellCapability`, and the player's placement says what it *is*. What is left here is the two
+ * places the *island* has an opinion about - the village square, which is civic ground, and the
+ * natural landscape, which is wilderness - because those describe what the place is, not what may be
+ * built on it.
+ */
 const ZONE_BY_DISTRICT: Readonly<Record<DistrictKind, CellZone>> = {
-  CROPLAND: "AGRICULTURE",
-  ORCHARD: "AGRICULTURE",
+  CROPLAND: "NONE",
+  ORCHARD: "NONE",
   FOREST: "WILDERNESS",
-  FORESTRY: "FORESTRY",
-  PASTURE: "WILDERNESS",
+  FORESTRY: "NONE",
+  PASTURE: "NONE",
   SETTLEMENT: "CIVIC",
   WATER: "NONE",
   COAST: "NONE",
@@ -112,33 +127,31 @@ function zoneAt(tile: TileCoordinate): CellZone {
   return best ?? "NONE";
 }
 
-function insideEllipse(
-  tile: TileCoordinate,
-  center: TileCoordinate,
-  radiusX: number,
-  radiusY: number
-): boolean {
-  const dx = (tile.x - center.x) / radiusX;
-  const dy = (tile.y - center.y) / radiusY;
-  return dx * dx + dy * dy <= 1;
-}
-
 /**
  * The terrain of one cell, from the island's own outline.
  *
  * `islandRadiusAt` is the authority: below the shore band is land, the band itself is beach, and past
  * the waterline is water. The lake is water too, and a building's footprint is blocked ground.
+ *
+ * Water is decided *before* the volcano, and the order matters: the volcano's northern flank runs
+ * into the sea, and a rule that asked "is this inside the mountain?" first would call open water
+ * mountain and make it walkable. The mountain stops at the shoreline like everything else.
  */
 export function classifyTerrain(
   tile: TileCoordinate,
   frame: WorldFrame,
   position: { readonly worldX: number; readonly worldZ: number },
-  buildingCells: ReadonlySet<string>
+  buildingCells: ReadonlySet<string>,
+  island: TerrainShape = TERRAIN_SHAPE
 ): CellTerrain {
   if (buildingCells.has(cellKey(tile.x, tile.y))) return "BLOCKED";
   if (isWaterTile(tile)) return "WATER";
-  const radius = islandRadiusAt(position.worldX, position.worldZ, ISLAND_SHAPE);
+  const radius = islandRadiusAt(position.worldX, position.worldZ, island);
   if (radius > 1) return "WATER";
+  const volcano = island.volcano;
+  if (volcano !== undefined && volcanoZoneAt(position.worldX, position.worldZ, volcano) !== null) {
+    return "VOLCANO";
+  }
   if (radius > SHORE_BAND) return "SHORE";
   return "LAND";
 }
@@ -265,22 +278,33 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
       if (radius > 1 + WATER_MARGIN_CELLS) continue;
 
       const tile = { x, y: z };
-      const terrain = classifyTerrain(tile, frame, position, buildings.occupied);
+      const terrain = classifyTerrain(tile, frame, position, buildings.occupied, island);
       const baseZone = zoneAt(tile);
       const key = cellKey(x, z);
       const inReserve =
         x >= FARM_FIELD_BOUNDS.minX && x <= FARM_FIELD_BOUNDS.maxX && z >= FARM_FIELD_BOUNDS.minY && z <= FARM_FIELD_BOUNDS.maxY;
 
-      // Land use, most specific first: the mining reserve is a zone of its own inside the highland,
-      // and aquaculture is only the planned water beside the fishery - never the whole sea.
+      // Land use, most specific first. Three things the *island* decides, and nothing else: which band
+      // of the volcano a cell is in, whether a water cell is shallow enough to be worked, and the
+      // village square. There is no authored production area left - no crop blob, no orchard, no
+      // pasture, no planned fishery - because those were the island deciding what the player would
+      // build.
       let zone: CellZone = baseZone;
-      if (terrain === "WATER" && insideEllipse(tile, AQUACULTURE_ZONE.center, AQUACULTURE_ZONE.radiusX, AQUACULTURE_ZONE.radiusY)) {
+      const volcanoZone =
+        island.volcano === undefined || terrain !== "VOLCANO"
+          ? null
+          : volcanoZoneAt(position.worldX, position.worldZ, island.volcano);
+      if (volcanoZone !== null) {
+        zone =
+          volcanoZone === "CORE"
+            ? "VOLCANO_CORE"
+            : volcanoZone === "SLOPE"
+              ? "VOLCANO_SLOPE"
+              : "VOLCANO_FOOTHILL";
+      } else if (terrain === "WATER" && radius > 1 && radius <= 1 + SHALLOW_WATER_BAND) {
+        // The shelf just outside the waterline: the water a cage can actually be moored in. Deeper
+        // water keeps its own answer, which is that nothing may be built there.
         zone = "AQUACULTURE";
-      } else if (terrain === "LAND" && insideEllipse(tile, MINING_RESERVE.center, MINING_RESERVE.radiusX, MINING_RESERVE.radiusY)) {
-        zone = "MINING";
-      } else if (terrain === "WATER" && zone === "AGRICULTURE") {
-        // Water inside the cropland's blob is the lake at its edge: it is water, not a field.
-        zone = "NONE";
       }
 
       const road = roadByCell.get(key) ?? null;
@@ -290,26 +314,25 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
       const occupancy: CellOccupancy =
         terrain === "BLOCKED" ? "BUILDING" : plantedHere ? "PRODUCTION" : sceneryKind === undefined ? "EMPTY" : "SCENERY";
 
-      // A cell is walkable when the ground is dry and nothing built stands on it. Buildings and the
-      // lake block; scenery does not, because a flower or a bush must never make walking annoying -
-      // and a tree's trunk is already a collision circle the controller walks around.
-      const walkable = terrain === "LAND" || terrain === "SHORE";
+      // What the ground may be used for, which is a question about the ground and not about the
+      // district drawn over it, the reservation, or what happens to stand there now. A cell blocked by
+      // a building answers for itself inside `cellCapabilitiesFor`.
+      const capabilities: readonly CellCapability[] = cellCapabilitiesFor(terrain, zone);
+      // A cell is walkable when the ground itself says so. Buildings and the lake do not, nor does a
+      // crater; a beach and the volcano's flanks do. Scenery never blocks, because a flower or a bush
+      // must not make walking annoying - and a tree's trunk is already a collision circle.
+      const walkable = capabilities.includes("WALK");
       // The capability the land-use rule allows, narrowed to the land the server can actually grant:
       // advertising a crop on ground the plot catalogue cannot sell would be a lie the client tells
       // the player and the server then refuses.
       const allowed = productionCapabilityFor(terrain, zone);
       const capability: WorldCell["productionCapability"] =
         allowed === "CROP" && !inReserve ? "NONE" : allowed;
-      // What the ground may be used for, which is a question about the ground and not about the
-      // district drawn over it, the reservation, or what happens to stand there now. A cell blocked by
-      // a building answers for itself inside `cellCapabilitiesFor`.
-      const capabilities: readonly CellCapability[] = cellCapabilitiesFor(terrain, zone);
       const buildable =
-        terrain === "LAND" &&
+        capabilities.includes("BUILD") &&
         !reserved &&
         occupancy === "EMPTY" &&
         road === null &&
-        zone !== "AQUACULTURE" &&
         !compositionClearings.some((clearing) => Math.hypot(x - clearing.x, z - clearing.y) < clearing.r);
 
       const cell: WorldCell = {

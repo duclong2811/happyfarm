@@ -100,6 +100,9 @@ export function debugColourFor(cell: WorldCell): number {
           return 0xd9c795;
         case "BLOCKED":
           return 0x8a6f6f;
+        // The volcano's own colour, so a debug pass can see the landmark's footprint at a glance.
+        case "VOLCANO":
+          return 0x7a5a4a;
         case "LAND":
           return 0x6f8f6f;
       }

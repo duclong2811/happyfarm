@@ -17,7 +17,6 @@ import type { SharedAssets } from "./materials";
 import {
   districtOutlineScale,
   type FarmWorld,
-  type LockedPlotSquare,
   type MeadowSpec,
   type PondSpec
 } from "./world";
@@ -28,13 +27,17 @@ import {
   stonePlateSurface,
   type SurfaceData
 } from "./road-surface";
-import { GROUND_SURFACE_Y, islandRadiusAt, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
-import { ROAD_LIFT_WORLD } from "./roads";
 import {
-  DISTRICTS,
-  TERRAIN_SHAPE,
-  type RoadKind
-} from "./world-config";
+  GROUND_SURFACE_Y,
+  islandRadiusAt,
+  islandRimPoint,
+  terrainHeightAt,
+  volcanoHeightAt,
+  volcanoRadiusFraction,
+  type TerrainShape
+} from "./terrain-height";
+import { ROAD_LIFT_WORLD } from "./roads";
+import { type RoadKind } from "./world-config";
 import { buildLandmarks } from "./landmarks";
 import { buildScenery } from "./scenery";
 import { buildCompositionProps } from "./dressing";
@@ -50,7 +53,15 @@ import { buildCompositionProps } from "./dressing";
  */
 
 /** Placeholder slab thickness. Real tile art replaces this rather than describing it. */
-export const TILE_THICKNESS = 0.09;
+/**
+ * How thick a tile slab is.
+ *
+ * Lowered in V12.1 from 0.09. The player's land is a patch of ground, not a board laid on it, and a
+ * nine-centimetre step around twelve tiles of field read as exactly the raised platform the brief
+ * removes. Slabs still stand clear of the soil bed - which is what makes a field a field rather than
+ * a decal - but the step is now the thickness of a thick tile, not a kerb.
+ */
+export const TILE_THICKNESS = 0.045;
 
 const APRON_TOP_Y = -0.01;
 /**
@@ -70,8 +81,18 @@ const BEACH_MARGIN_WORLD = 0.6;
 /** How much of a patch's own height it is lifted by, so it does not fight the ground it lies on. */
 const PATCH_LIFT_WORLD = 0.02;
 /** Rings and sectors of the island's ground mesh. Enough for a smooth shoreline, one draw call. */
-const ISLAND_RINGS = 14;
-const ISLAND_SECTORS = 96;
+/**
+ * How finely the island's ground is sampled.
+ *
+ * Raised in V12.1 from 14 x 96. The island's own relief is low and wide, which 14 rings described
+ * perfectly well - but the volcano is a *local* shape, and a crater is the smallest feature on the
+ * island. At 14 rings the ring spacing was four metres, so the crater, its rim, and the summit were
+ * each sampled by one or two rings and the whole landmark came out as the smooth dome the QA pass
+ * caught. These two numbers are the resolution of a *static* mesh built once per world, so the extra
+ * few thousand vertices cost nothing per frame; what they buy is a mountain that keeps its shape.
+ */
+const ISLAND_RINGS = 56;
+const ISLAND_SECTORS = 128;
 
 function box(assets: SharedAssets, material: Material, width: number, height: number, depth: number, x: number, y: number, z: number): Mesh {
   const mesh = new Mesh(assets.box, material);
@@ -258,8 +279,13 @@ function islandRim(terrain: TerrainShape): (angle: number) => { readonly x: numb
 const GROUND_GREEN = new Color(0x74bd58);
 const HILL_GREEN = new Color(0x86c15f);
 const SHORE_SAND = new Color(0xd9c795);
+/** The island's landmark is stone, not grass: the colour the ground takes as it climbs the volcano. */
+const VOLCANIC_ROCK = new Color(0x6d5a50);
+/** The crater floor: the same stone, scorched and ash-grey, so the bowl reads as a bowl. */
+const CRATER_FLOOR = new Color(0x453a33);
 function islandGroundGeometry(terrain: TerrainShape): BufferGeometry {
   const relief = Math.max(terrain.reliefWorld, 0.001);
+  const volcano = terrain.volcano;
   return radialSurface({
     rings: ISLAND_RINGS,
     sectors: ISLAND_SECTORS,
@@ -271,6 +297,24 @@ function islandGroundGeometry(terrain: TerrainShape): BufferGeometry {
       // Hills read as drier grass, not as sand: a third of the way toward the hill green at the very
       // top of the relief, and never further.
       const colour = GROUND_GREEN.clone().lerp(HILL_GREEN, Math.min(1, Math.max(0, rise)) * 0.35);
+      // The volcano is the one place the ground stops being grass. Its flanks are rock, its crater
+      // floor is more so, and the change is a *tint* on the same mesh rather than a second material -
+      // which is what keeps the landmark readable from the estate camera without a single extra draw.
+      //
+      // The tint is gated by *height* as well as by footprint. The first version asked only "is this
+      // inside the mountain's outline?", and the answer painted rock on the flat beach where the
+      // flank runs into the northern sea - a dark slab along the shore that read as a cliff that was
+      // not there. A footprint is not a mountain; ground that has not risen is not its rock.
+      if (volcano !== undefined) {
+        const fraction = volcanoRadiusFraction(worldX, worldZ, volcano);
+        const volcanic = volcanoHeightAt(worldX, worldZ, volcano) / volcano.heightWorld;
+        if (fraction < 1 && volcanic > 0.02) {
+          const band = fraction < volcano.rimRadiusFraction ? 1 : fraction < volcano.steepRadiusFraction ? 0.75 : 0.3;
+          const rocky = band * Math.min(1, volcanic / 0.3);
+          colour.lerp(VOLCANIC_ROCK, rocky);
+          if (fraction < volcano.rimRadiusFraction * 0.7) colour.lerp(CRATER_FLOOR, 0.7);
+        }
+      }
       // Sand in the last of the island, measured along the same outline the beach is built from.
       const shore = Math.min(1, Math.max(0, (islandRadiusAt(worldX, worldZ, terrain) - 0.9) / 0.1));
       return colour.lerp(SHORE_SAND, shore * 0.6);
@@ -400,15 +444,6 @@ const ROAD_SHOULDER_WIDTHS: Readonly<Record<RoadKind, number>> = {
   SECONDARY: 0.7,
   PATH: 0.28
 };
-
-/** A flat strip from loose positions and indices, wound so its normal is up. */
-function ribbonGeometry(positions: readonly number[], indices: readonly number[]): BufferGeometry {
-  const geometry = new BufferGeometry();
-  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
-  geometry.setIndex([...indices]);
-  geometry.computeVertexNormals();
-  return geometry;
-}
 
 /** One mesh from one surface, or nothing when the surface is empty. */
 function surfaceMesh(data: SurfaceData, material: Material, lift: number, name: string): Mesh | null {
@@ -693,57 +728,6 @@ function addPond(group: Group, assets: SharedAssets, pond: PondSpec): void {
     group.add(pad);
   }
 }
-
-/**
- * The fishery's cages: floating frames with a net, in the bay outside the harbour.
- *
- * They are placed from the island's outline, so "in water" is true by construction rather than by
- * hand-picked coordinates that the next coastline change would invalidate. The water's own level is
- * what they float on, so nothing hovers and nothing sinks.
- */
-function addAquaculture(
-  group: Group,
-  assets: SharedAssets,
-  cages: FarmWorld["aquaculture"]
-): void {
-  const waterline = -0.56;
-  for (const [index, cage] of cages.entries()) {
-    const holder = new Group();
-    holder.position.set(cage.worldX, waterline, cage.worldZ);
-    holder.rotation.y = index % 2 === 0 ? 0 : Math.PI / 2;
-    const size = cage.radiusWorld;
-
-    // The net: a translucent square just under the surface, so the cage reads as a cage.
-    const net = new Mesh(assets.box, assets.water);
-    net.scale.set(size * 1.7, 0.06, size * 1.7);
-    net.position.y = -0.06;
-    holder.add(net);
-
-    // Four floats and four railings, which is the whole structure a cage needs to be legible.
-    for (const x of [-size / 2, size / 2]) {
-      for (const z of [-size / 2, size / 2]) {
-        const float = new Mesh(assets.sphere, assets.millBlade);
-        float.position.set(x, 0.12, z);
-        float.scale.setScalar(0.22);
-        holder.add(float);
-      }
-    }
-    for (const offset of [-size / 2, size / 2]) {
-      holder.add(rail(assets, 0, offset, size, true));
-      holder.add(rail(assets, offset, 0, size, false));
-    }
-    group.add(holder);
-  }
-}
-
-/** One side of a cage's railing: a single floating beam. */
-function rail(assets: SharedAssets, x: number, z: number, size: number, alongX: boolean): Mesh {
-  const beam = new Mesh(assets.box, assets.stakeWood);
-  beam.position.set(x, 0.16, z);
-  beam.scale.set(alongX ? size : 0.1, 0.1, alongX ? 0.1 : size);
-  return beam;
-}
-
 /**
  * The settlement's square.
  *
@@ -839,12 +823,19 @@ function addHarbour(group: Group, assets: SharedAssets, harbour: FarmWorld["harb
   pier.rotation.y = harbour.rotationY;
 
   const deckWidth = harbour.deckWidthWorld;
-  const plankCount = Math.max(4, Math.round((harbour.lengthWorld / layout.pitch) * 1.6));
+  /**
+   * The deck, laid as planks that *meet*.
+   *
+   * They used to be spaced at half a pitch, which left a gap between every plank: from a low camera
+   * the gaps read as the treads of a staircase climbing out to sea, and the QA pass caught exactly
+   * that. A continuous deck with a hairline seam keeps the plank rhythm and removes the stairs.
+   */
+  const plankCount = Math.max(4, Math.round((harbour.lengthWorld / layout.pitch) * 1.02));
   const waterlineY = -0.62;
   const deckY = 0.34;
   for (let index = 0; index < plankCount; index += 1) {
     const along = ((index + 0.5) / plankCount) * harbour.lengthWorld;
-    const plank = box(assets, assets.stakeWood, deckWidth, 0.1, layout.pitch * 0.52, 0, deckY, along);
+    const plank = box(assets, assets.stakeWood, deckWidth, 0.1, layout.pitch * 0.98, 0, deckY, along);
     plank.castShadow = true;
     pier.add(plank);
   }
@@ -946,68 +937,6 @@ function addHarbour(group: Group, assets: SharedAssets, harbour: FarmWorld["harb
 }
 
 /**
- * The timber yard at the end of the haul road.
- *
- * A clearing of churned ground with cut timber stacked on it: logs laid in a pyramid, a stack of
- * sawn planks, and stumps. It is what turns a stand of straight rows into *managed* woodland - the
- * rows say somebody planted it, and the yard says somebody is working it.
- */
-function addLoggingYard(group: Group, assets: SharedAssets, yard: NonNullable<FarmWorld["loggingYard"]>, layout: FarmLayout): void {
-  const clearing = new Mesh(assets.circle, assets.bareEarth);
-  clearing.rotation.x = -Math.PI / 2;
-  clearing.position.set(yard.worldX, GROUND_SURFACE_Y + 0.02, yard.worldZ);
-  clearing.scale.set(yard.radiusWorld, yard.radiusWorld * 0.8, 1);
-  clearing.rotation.z = yard.rotationY;
-  clearing.receiveShadow = true;
-  group.add(clearing);
-
-  const cos = Math.cos(yard.rotationY);
-  const sin = Math.sin(yard.rotationY);
-  const logLength = layout.pitch * 2.6;
-  // Three courses of logs, each course one log narrower: a pile, not a row.
-  for (let course = 0; course < 3; course += 1) {
-    const count = 4 - course;
-    for (let index = 0; index < count; index += 1) {
-      const across = (index - (count - 1) / 2) * 0.36;
-      const log = new Mesh(assets.cylinder, assets.timber);
-      log.position.set(
-        yard.worldX - sin * across,
-        GROUND_SURFACE_Y + 0.18 + course * 0.3,
-        yard.worldZ + cos * across
-      );
-      log.rotation.z = Math.PI / 2;
-      log.rotation.y = -yard.rotationY;
-      log.scale.set(0.16, logLength, 0.16);
-      log.castShadow = true;
-      group.add(log);
-    }
-  }
-  // A stack of sawn planks beside the pile, and two stumps left where the stand was felled.
-  for (let index = 0; index < 4; index += 1) {
-    const plank = box(
-      assets,
-      assets.stakeWood,
-      logLength * 0.9,
-      0.09,
-      0.5,
-      yard.worldX + cos * 1.9 - sin * 0.4,
-      GROUND_SURFACE_Y + 0.06 + index * 0.1,
-      yard.worldZ + sin * 1.9 + cos * 0.4,
-      );
-    plank.rotation.y = -yard.rotationY + 0.06 * index;
-    plank.castShadow = true;
-    group.add(plank);
-  }
-  for (const offset of [-1.6, -0.9]) {
-    const stump = new Mesh(assets.cylinder, assets.timber);
-    stump.position.set(yard.worldX + cos * offset + sin * 1.2, GROUND_SURFACE_Y + 0.14, yard.worldZ + sin * offset - cos * 1.2);
-    stump.scale.set(0.24, 0.3, 0.24);
-    stump.castShadow = true;
-    group.add(stump);
-  }
-}
-
-/**
  * The barn.
  *
  * The generated model is the barn; the primitives below are the fallback while it loads or if it
@@ -1064,219 +993,6 @@ function addBarn(
   group.add(barn);
 }
 
-/** A signboard: a post and a plank, the readable "this land is not yours yet" marker. */
-function addSignpost(group: Group, assets: SharedAssets, plot: LockedPlotSquare, layout: FarmLayout): void {
-  const position = tileToWorld({ x: plot.minX - 0.5, y: plot.minY - 0.5 }, worldFrame(layout.pitch));
-  const worldX = position.worldX;
-  const worldZ = position.worldZ;
-  const post = box(assets, assets.stakeWood, 0.12, 1.25, 0.12, worldX, 0.62, worldZ);
-  post.castShadow = true;
-  group.add(post);
-  const board = box(assets, assets.stakeWood, 0.95, 0.4, 0.08, worldX, 1.12, worldZ);
-  board.rotation.y = -0.22;
-  board.castShadow = true;
-  group.add(board);
-  const band = box(assets, assets.millBlade, 0.78, 0.08, 0.1, worldX, 1.0, worldZ);
-  band.rotation.y = -0.22;
-  band.castShadow = true;
-  group.add(band);
-}
-
-/** How far apart a field's furrow ridges stand, in tiles. */
-const FURROW_SPACING_TILES = 0.68;
-/**
- * One ridge of turned earth, as drawn: low and wide.
- *
- * The first version was narrow and tall, and the sun caught it like a plank: a field of them read as
- * boards laid on the grass rather than as ground that had been ploughed. Flatter ridges hold the
- * same rhythm without the highlight.
- */
-const FURROW_RIDGE_WIDTH_WORLD = 0.34;
-/**
- * A furrow is a *line in the soil*, not a plank on it.
- *
- * At close range the first version caught the sun along its top edge and read as timber: too tall,
- * too narrow, too pale. A ridge this flat is a change of shade rather than an object, which is what
- * ploughing looks like from a metre away and what survives being seen from a hundred.
- */
-const FURROW_RIDGE_HEIGHT_WORLD = 0.016;
-/** How wide the grass verge around a field parcel is, in world metres. */
-const FIELD_VERGE_WORLD = 0.9;
-
-/**
- * The agricultural reserve, drawn as a working farm rather than as a row of test squares.
- *
- * This is the district the island is *for*, so it gets the most care and the least noise: a handful
- * of parcels of different sizes worked in two directions, each with a grass headland around it, a
- * fallow parcel beside the working ones, and a hard standing where the machines will stand. The
- * furrows are the part that has to work at a distance *and* up close - a ridge every two thirds of a
- * metre reads as ploughing when the camera is on the field, and the rhythm of them is what makes a
- * brown rectangle read as a field when the camera is on the whole island - so they are drawn as one
- * instanced mesh for the entire reserve rather than as a mesh per furrow.
- */
-function addFieldBlocks(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
-  const ridges: { readonly x: number; readonly y: number; readonly z: number; readonly rotationY: number; readonly length: number }[] = [];
-
-  for (const block of world.fieldBlocks) {
-    const cultivated = block.kind === "CULTIVATED";
-    const surface = block.kind === "YARD" ? assets.plaza : cultivated ? assets.dirt : assets.bareEarth;
-
-    // The headland first, a touch wider and lower than the parcel it surrounds, so two fields are
-    // separated by ground rather than by a seam and the field has the grass margin a field has.
-    const verge = box(
-      assets,
-      assets.grass,
-      block.widthWorld + FIELD_VERGE_WORLD * 2,
-      0.16,
-      block.depthWorld + FIELD_VERGE_WORLD * 2,
-      block.worldX,
-      APRON_TOP_Y - 0.16,
-      block.worldZ
-    );
-    verge.receiveShadow = true;
-    group.add(verge);
-
-    const soil = box(
-      assets,
-      surface,
-      block.widthWorld,
-      block.kind === "YARD" ? 0.12 : 0.22,
-      block.depthWorld,
-      block.worldX,
-      block.kind === "YARD" ? APRON_TOP_Y - 0.06 : APRON_TOP_Y - 0.11,
-      block.worldZ
-    );
-    soil.receiveShadow = true;
-    group.add(soil);
-
-    // Fallow ground and a hard standing have no ploughing on them, which is what makes them read as
-    // *not being worked this season* rather than as another field.
-    if (!cultivated) continue;
-
-    const cos = Math.cos(block.rotationY);
-    const sin = Math.sin(block.rotationY);
-    const halfAlong = (Math.abs(cos) * block.widthWorld + Math.abs(sin) * block.depthWorld) / 2;
-    const halfAcross = (Math.abs(sin) * block.widthWorld + Math.abs(cos) * block.depthWorld) / 2;
-    const spacing = FURROW_SPACING_TILES * layout.pitch;
-    const count = Math.max(3, Math.floor((halfAcross * 2) / spacing));
-    for (let index = 0; index < count; index += 1) {
-      const across = -halfAcross + ((index + 0.5) * halfAcross * 2) / count;
-      ridges.push({
-        x: block.worldX - sin * across,
-        y: APRON_TOP_Y + FURROW_RIDGE_HEIGHT_WORLD / 2,
-        z: block.worldZ + cos * across,
-        rotationY: -block.rotationY,
-        length: halfAlong * 2 - FIELD_VERGE_WORLD * 0.3
-      });
-    }
-  }
-
-  if (ridges.length === 0) return;
-  const mesh = new InstancedMesh(assets.box, assets.dirtDark, ridges.length);
-  const matrix = new Matrix4();
-  const position = new Vector3();
-  const scale = new Vector3();
-  const rotation = new Quaternion();
-  const up = new Vector3(0, 1, 0);
-  ridges.forEach((ridge, index) => {
-    position.set(ridge.x, ridge.y, ridge.z);
-    scale.set(ridge.length, FURROW_RIDGE_HEIGHT_WORLD, FURROW_RIDGE_WIDTH_WORLD);
-    rotation.setFromAxisAngle(up, ridge.rotationY);
-    matrix.compose(position, rotation, scale);
-    mesh.setMatrixAt(index, matrix);
-  });
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.receiveShadow = true;
-  mesh.computeBoundingSphere();
-  group.add(mesh);
-}
-
-/**
- * The land the farm has not bought yet.
- *
- * The alpha drew it as a grey slab under a translucent fog rectangle with a gold padlock floating over
- * it, which read as a missing asset rather than as land. The replacement keeps what the slab was for -
- * "this ring is next, and it is not yours" - and drops what it was: rough grass instead of grey, wild
- * growth standing on it, a stake line along the edge the farm owns, and one wooden sign per plot.
- * Nothing here is a rule; the price, the level, and the purchase still come from the server.
- */
-function addLockedLand(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
-  // The agricultural reserve's own fields first: they are the ground the place is made of, and the
-  // apron paints over the parcel the moment its land is bought.
-  addFieldBlocks(group, assets, world, layout);
-
-  for (const plot of world.lockedPlots) {
-    addSignpost(group, assets, plot, layout);
-  }
-}
-
-/**
- * The row beds under the orchard and the managed woodland.
- *
- * A row of trees is not legible as a row unless the ground says so: at estate zoom a handful of trees
- * on grass is a thicket, however regular the lattice they stand on. A shallow bed of bare earth under
- * each row is what turns the same trees into an orchard or a stand of planted timber — and it is also
- * the difference between them: the orchard gets wide beds on generous spacing, the managed woodland
- * narrower beds on tighter rows, which is exactly the distinction the plan asks a viewer to make.
- *
- * Static, because neither district is land the catalogue can sell.
- */
-function addProductionRowBeds(group: Group, assets: SharedAssets, layout: FarmLayout): void {
-  const frame = worldFrame(layout.pitch);
-  const terrain = TERRAIN_SHAPE;
-  for (const district of DISTRICTS) {
-    if (district.kind !== "ORCHARD" && district.kind !== "FORESTRY") continue;
-    const spacingTiles = district.rowSpacingTiles ?? 4.2;
-    const bedWidthTiles = district.rowBedWidthTiles ?? 1.5;
-    const rows = Math.max(2, Math.floor((district.radiusY * 1.6) / spacingTiles));
-    const cos = Math.cos(district.rotationY);
-    const sin = Math.sin(district.rotationY);
-    for (let index = 0; index < rows; index += 1) {
-      const offsetTiles = (index - (rows - 1) / 2) * spacingTiles;
-      // The bed runs the length of the *ellipse* at its own row, not the length of the district: a
-      // bed that overran the row it belongs to would put a strip of bare earth in the grass beside
-      // the orchard, which is exactly the sort of thing that makes a planted district look printed.
-      const fraction = Math.min(1, Math.abs(offsetTiles) / district.radiusY);
-      const halfLengthTiles = district.radiusX * Math.sqrt(Math.max(0, 1 - fraction * fraction)) * 0.94;
-      if (halfLengthTiles < 1) continue;
-      const position = tileToWorld(
-        { x: district.center.x - sin * offsetTiles, y: district.center.y + cos * offsetTiles },
-        frame
-      );
-      // The bed follows the ground it is on. A flat slab under a row that climbs a shoulder is a slab
-      // buried in the hillside at one end and floating above it at the other - and the whole point of
-      // the bed is that the row *reads* as a row from the estate camera.
-      const samples = Math.max(4, Math.round(halfLengthTiles * 2));
-      const positions: number[] = [];
-      const indices: number[] = [];
-      for (let sample = 0; sample <= samples; sample += 1) {
-        const along = (sample / samples) * halfLengthTiles * 2 - halfLengthTiles;
-        const worldX = position.worldX + cos * along * layout.pitch;
-        const worldZ = position.worldZ + sin * along * layout.pitch;
-        const y = GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, terrain) + 0.02;
-        positions.push(worldX - sin * (bedWidthTiles * layout.pitch) / 2, y, worldZ + cos * (bedWidthTiles * layout.pitch) / 2);
-        positions.push(worldX + sin * (bedWidthTiles * layout.pitch) / 2, y, worldZ - cos * (bedWidthTiles * layout.pitch) / 2);
-      }
-      for (let sample = 0; sample < samples; sample += 1) {
-        const left = sample * 2;
-        const right = left + 1;
-        indices.push(left, right + 2, right);
-        indices.push(left, left + 2, right + 2);
-      }
-      // A fruit orchard's rows are *mown lanes* between the trees, not strips of bare earth: an
-      // orchard reads as an orchard by its rows, and painting the rows the colour of a road is what
-      // made the first version of this pass look like a hillside with tracks dragged across it. The
-      // managed wood keeps the bare earth, because a working stand is worked.
-      const bed = new Mesh(
-        ribbonGeometry(positions, indices),
-        district.kind === "ORCHARD" ? assets.mownLane : assets.bareEarth
-      );
-      bed.receiveShadow = true;
-      group.add(bed);
-    }
-  }
-}
-
 export function buildTerrain(
   group: Group,
   assets: SharedAssets,
@@ -1288,13 +1004,10 @@ export function buildTerrain(
 ): Object3D {
   const ground = addIsland(group, assets, world);
   addMeadows(group, assets, world);
-  addProductionRowBeds(group, assets, layout);
   addPlaza(group, assets, world.plaza);
-  if (world.loggingYard !== null) addLoggingYard(group, assets, world.loggingYard, layout);
   addRoads(group, assets, world);
   if (world.pond !== null) addPond(group, assets, world.pond);
   addHarbour(group, assets, world.harbour, layout);
-  addAquaculture(group, assets, world.aquaculture);
   // The set dressing is part of the static world: it is a function of the presets alone, and buying
   // a plot must not move a barrel.
   buildCompositionProps(group, world.compositions.props, getPropModel);
@@ -1320,6 +1033,5 @@ export function buildLockedPlotOverlay(
   getModel: (id: string) => Object3D | undefined = () => undefined
 ): void {
   addFieldGround(group, assets, world, layout);
-  addLockedLand(group, assets, world, layout);
   buildScenery(group, assets, world.lockedScenery, getModel);
 }

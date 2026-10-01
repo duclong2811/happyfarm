@@ -268,6 +268,18 @@ plus ownership plus placed objects.
 - Capabilities and the land-use rule: `apps/web/src/render/world-cell.ts` (`CellCapability`,
   `cellCapabilitiesFor`, `cellHasCapability`), filled by `world-cell-map.ts`, with
   `tests/web/world-cell-capabilities.test.ts`. A district never appears in that rule.
+- The volcano: `VOLCANO`/`VOLCANO_SHAPE` in `apps/web/src/render/world-config.ts` and
+  `volcanoHeightAt`/`volcanoZoneAt`/`volcanoRadiusFraction` in `terrain-height.ts`. The cell map turns
+  the same fractions into `VOLCANO_CORE` / `VOLCANO_SLOPE` / `VOLCANO_FOOTHILL`, which is what makes
+  "nothing may be built in the crater" a property of the ground. `ISLAND_RINGS` and
+  `ISLAND_SECTORS` in `terrain.ts` are the resolution of the static ground mesh, and a crater needs
+  them: 14 rings flattened the landmark into a dome.
+- The ground mesh's colour is part of the height function, not a separate material. The volcanic tint
+  is gated by *height* as well as by footprint - a footprint alone painted rock on the flat north
+  shore and read as a cliff.
+- Starter land and expansion: `apps/web/src/render/land-ownership.ts`
+  (`EXPANSION_PARCEL_CELLS`, `buildLandOwnership`, `ownedShare`) with `tests/web/land-ownership.test.ts`.
+  It projects the *server's* land; nothing here may grant, price, or sell anything.
 - Road tier data (the one price table): `packages/game-data/src/roads/index.ts`. The build catalogue
   foundation, which is *not* the market: `packages/game-data/src/placement/index.ts`.
 - Road network and its required destinations: `apps/web/src/render/road-network.ts`. The V12 recovery

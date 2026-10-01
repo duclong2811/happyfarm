@@ -1,6 +1,14 @@
 import type { TileBounds, TileCoordinate, WorldFrame } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, WORLD_ORIGIN_TILE_X, worldFrame } from "./layout";
-import { islandRadiusAt, type FlatArea, type IslandLobe, type IslandShape, type TerrainShape, type UplandBias } from "./terrain-height";
+import {
+  islandRadiusAt,
+  type FlatArea,
+  type IslandLobe,
+  type IslandShape,
+  type TerrainShape,
+  type UplandBias,
+  type VolcanoShape
+} from "./terrain-height";
 import type { EnvironmentCompositionPreset } from "./composition";
 
 /**
@@ -367,10 +375,7 @@ export type RoadNodeId =
   | "plaza"
   | "farm_hub"
   | "agriculture"
-  | "orchard"
-  | "forestry"
-  | "freshwater"
-  | "mining";
+  | "highland";
 
 /**
  * A road: a polyline through the landscape, the class that decides how wide it is drawn, and the
@@ -444,24 +449,6 @@ export const ROADS: readonly Road[] = [
     ]
   },
   {
-    id: "east_field_lane",
-    kind: "PATH",
-    connects: ["farm_hub", "agriculture"],
-    points: [
-      // Down the eastern lane, between the middle and the eastern parcels, to the machine yard:
-      // the storage and work area the track into the fields ends at.
-      { x: 41, y: -4 },
-      { x: 39, y: -3 },
-      { x: 37, y: 2 },
-      { x: 35, y: 7 },
-      { x: 34.5, y: 12 },
-      { x: 34, y: 18 },
-      { x: 34, y: 24 },
-      { x: 34, y: 28 },
-      { x: 30, y: 28 }
-    ]
-  },
-  {
     id: "village_street",
     kind: "PATH",
     connects: ["plaza"],
@@ -478,19 +465,6 @@ export const ROADS: readonly Road[] = [
     ]
   },
   {
-    id: "spawn_lane",
-    kind: "PATH",
-    connects: ["agriculture"],
-    points: [
-      // The south gate's own lane: the field track reaches the gate the player spawns at, so the
-      // first thing a walker sees is the way into the fields.
-      { x: 17, y: 38 },
-      { x: 12, y: 39.5 },
-      { x: 7, y: 40.5 },
-      { x: 4, y: 41 }
-    ]
-  },
-  {
     id: "harbour_boardwalk",
     kind: "PATH",
     connects: ["harbour"],
@@ -501,19 +475,21 @@ export const ROADS: readonly Road[] = [
     ]
   },
   {
-    id: "north_trail",
-    kind: "PATH",
-    connects: ["agriculture", "mining"],
+    id: "north_road",
+    kind: "SECONDARY",
+    connects: ["plaza", "highland"],
     points: [
-      // The one track that leaves the farmland for the high ground: north along the lane between the
-      // two woods, to the rough northern reserve. It is a footpath rather than a road because that is
-      // what it is - and in the V12 direction it is the hook the volcano trail grows from.
-      { x: 17, y: 17 },
-      { x: 22, y: 12 },
-      { x: 28, y: 4 },
-      { x: 33, y: -4 },
-      { x: 36, y: -12 },
-      { x: 38.5, y: -21 }
+      // The island's second road, and the only other one it authors: out of the village's own gate,
+      // north-west up the gentle ground, and stopping on the volcano's lower flank. It is dirt rather
+      // than stone because it is a rural access route rather than civic infrastructure - and it stops
+      // *before* the steep ground, because nothing should be climbing the landmark.
+      { x: 45, y: 3 },
+      { x: 44, y: -2 },
+      { x: 41, y: -7 },
+      { x: 37, y: -10 },
+      { x: 32, y: -12 },
+      { x: 27, y: -14 },
+      { x: 26.5, y: -13 }
     ]
   }
 ];
@@ -561,116 +537,6 @@ export const HARBOUR = {
   deckWidthTiles: 1.7,
   yard: { x: 50, y: 50 }
 } as const;
-
-/**
- * The forest's loading yard: where a haul road ends and cut timber is stacked.
- *
- * A clearing with a log pile, a stack of planks and the ground churned bare by dragging, at the far
- * end of the haul road. It is the thing that makes managed woodland read as *managed* rather than as
- * a wood that happens to have straight rows.
- */
-export const LOGGING_YARD = {
-  center: { x: -21, y: 34 },
-  radiusTiles: 3.4,
-  rotationY: -0.15
-} as const;
-
-/**
- * The fish farm: the raft of cages in the bay, moored in rows.
- *
- * Placed from the island's own outline rather than from hand-picked coordinates, so "in water" is
- * true as long as the coastline is: `parameter` walks along the bay and `distance` steps out past
- * the waterline. Three cages to a row and two rows, which is what turns a scatter of frames into a
- * farm.
- */
-export const FISH_FARM = {
-  /** Shore parameter of the first cage, in radians around the island. */
-  firstParameter: 0.30,
-  /** How far along the shore each cage in a row sits. */
-  parameterStep: 0.085,
-  /** How far past the waterline each row floats, in shore units. */
-  rowDistances: [1.06, 1.14],
-  /** Cages per row. */
-  perRow: 3
-} as const;
-
-/**
- * The planned aquaculture water: the bay the fish farm is moored in, and nothing else.
- *
- * An `AQUACULTURE` cell is a cell of *planned production water*. The open sea is not one: a player
- * who clicks mid-ocean must be told the cell has no use, which is only possible if the plan drew a
- * line around the part of the bay that does. The area is centred on the cages the renderer already
- * places, so the logical cells and the floating frames are the same place.
- */
-export const AQUACULTURE_ZONE = {
-  center: { x: 64, y: 47 },
-  radiusX: 7,
-  radiusY: 5.5
-} as const;
-
-/**
- * The mining reserve: highland the island is keeping for quarrying it has not designed yet.
- *
- * On the northern ridge between the two woods - rocky, high, and as far from the town, the fields,
- * the lake, and the harbour as the island allows, which is what a quarry needs before it needs
- * anything else. Zone metadata only: no building, no resource, no gameplay, and the ground stays as
- * natural as it was.
- */
-export const MINING_RESERVE = {
-  center: { x: 34, y: -22 },
-  radiusX: 7,
-  radiusY: 5.5
-} as const;
-
-/**
- * The agricultural reserve's visual field blocks.
- *
- * The catalogue's grid is a square and has to stay one, so the *farm* is drawn as what a farm looks
- * like: four fields of different sizes with grass margins and paths between them, in the quadrant of
- * the reserve the catalogue has not sold yet. Each block is presentation only - no tile, no rule, no
- * collision - and the moment a plot is bought the apron and its tiles are drawn on top of it, so a
- * field block can never sit where the player is farming.
- */
-export interface FieldBlock {
-  readonly id: string;
-  readonly bounds: TileBounds;
-  /**
-   * Which way the furrows run, in radians about Y.
-   *
-   * The block's own outline stays axis-aligned on the tile grid - the reserve is a square and the
-   * land inside it is measured in tiles - so this is the *ploughing* direction, not the parcel's.
-   * Fields worked by the same gang of machines share a direction; the next gang works across them.
-   */
-  readonly rotationY: number;
-  /** How the parcel reads: a field in cultivation, or the yard the machines stand on. */
-  readonly kind: "CULTIVATED" | "FALLOW" | "YARD";
-}
-
-/**
- * The agricultural heartland, drawn as a working farm rather than as a grid of test squares.
- *
- * Six fields of three different sizes, spaced unevenly, worked in two directions, with grass strips
- * between them and a machine yard at the southern end - which is what a farm looks like from above,
- * and what the estate camera has to be able to read in five seconds. Every parcel sits on land the
- * catalogue has not sold yet, so the moment a plot is bought its tiles and its apron paint over the
- * parcel underneath it.
- */
-export const FIELD_BLOCKS: readonly FieldBlock[] = [
-  // The northern band: the biggest field in the north-west, worked along the ridge, and the block
-  // beside it worked across, so the two read as two gangs of machines rather than one pattern.
-  { id: "field_north_west", bounds: { minX: 14, maxX: 21, minY: 3, maxY: 9 }, rotationY: 0, kind: "CULTIVATED" },
-  { id: "field_north_east", bounds: { minX: 26, maxX: 33, minY: 2, maxY: 9 }, rotationY: Math.PI / 2, kind: "CULTIVATED" },
-  // The middle band: three fields, the widest of them between the other two, all worked across the
-  // slope by the same gang.
-  { id: "field_west", bounds: { minX: 3, maxX: 9, minY: 14, maxY: 21 }, rotationY: Math.PI / 2, kind: "CULTIVATED" },
-  { id: "field_middle", bounds: { minX: 14, maxX: 22, minY: 14, maxY: 21 }, rotationY: Math.PI / 2, kind: "CULTIVATED" },
-  { id: "field_east", bounds: { minX: 26, maxX: 33, minY: 14, maxY: 21 }, rotationY: Math.PI / 2, kind: "CULTIVATED" },
-  // The southern band: the strips left fallow this season, and the hard standing beyond them.
-  { id: "field_south_west", bounds: { minX: 3, maxX: 9, minY: 27, maxY: 33 }, rotationY: 0, kind: "FALLOW" },
-  // The smallest parcel on the reserve, which is what a hierarchy of fields needs at its bottom end.
-  { id: "field_south", bounds: { minX: 15, maxX: 20, minY: 27, maxY: 32 }, rotationY: 0, kind: "FALLOW" },
-  { id: "machine_yard", bounds: { minX: 26, maxX: 33, minY: 26, maxY: 30 }, rotationY: 0, kind: "YARD" }
-];
 
 export type FenceSide = "SOUTH" | "NORTH" | "WEST" | "EAST";
 
@@ -931,10 +797,9 @@ export const ROAD_NODES: Readonly<Record<RoadNodeId, TileCoordinate>> = {
   // that ends inside a building is a road that ends nowhere.
   farm_hub: { x: 41, y: -4 },
   agriculture: { x: 17, y: 17 },
-  orchard: { x: -13, y: -15 },
-  forestry: LOGGING_YARD.center,
-  freshwater: { x: -8, y: 49 },
-  mining: MINING_RESERVE.center
+  // Where the north road stops: on the volcano's foothill, short of the steep ground. The mountain
+  // is the island's landmark, not a through-route, so nothing authored goes further up it.
+  highland: { x: 26.5, y: -13 }
 };
 
 /**
@@ -1004,7 +869,15 @@ export const LANDMARKS: readonly LandmarkSpec[] = [
  * farm can own, so it never starts inside a crop, a tree, a landmark, or water. The south gate opens
  * onto the same road, so walking north from here enters the field.
  */
-export const SPAWN_TILE: TileCoordinate = { x: WORLD_ORIGIN_TILE_X, y: 41 };
+/**
+ * Where the character starts: on the southern edge of the twelve-tile square the player owns.
+ *
+ * The spawn used to sit on a lane thirty tiles south of the farm, because an authored road ran to it.
+ * With the lanes gone there is nothing there, and a player who starts in the middle of open country
+ * with their own land out of sight has been given no first move. Thirteen is one tile past the last
+ * owned row, so the first thing in front of them is their own field.
+ */
+export const SPAWN_TILE: TileCoordinate = { x: WORLD_ORIGIN_TILE_X, y: 13 };
 
 /**
  * The island's set dressing: the six places that are furnished rather than decorated.
@@ -1106,25 +979,6 @@ export const COMPOSITION_PRESETS: readonly EnvironmentCompositionPreset[] = [
       { assetId: "prop_sack", offsetX: 0.2, offsetY: 1.9, rotationY: 0.5, scale: 1 },
       { assetId: "prop_barrel_apples", offsetX: -1.5, offsetY: 0.6, rotationY: 0.4, scale: 1 },
       { assetId: "prop_wagon", offsetX: 2.1, offsetY: -0.4, rotationY: 0.5, scale: 1 }
-    ]
-  },
-  {
-    id: "logging_yard_t1",
-    district: "FORESTRY",
-    anchor: LOGGING_YARD.center,
-    rotationY: LOGGING_YARD.rotationY,
-    clearanceTiles: 4.6,
-    props: [
-      // The bench and the sharpening station are where the saws are worked on; the crates are where
-      // the sawn stock is stacked; the anvil log is the stump everything is cut on.
-      { assetId: "prop_workbench", offsetX: -1.7, offsetY: 1.3, rotationY: 0.4, scale: 1 },
-      { assetId: "prop_whetstone", offsetX: -2.7, offsetY: 1.9, rotationY: 0, scale: 1 },
-      { assetId: "prop_axe", offsetX: -1.1, offsetY: 2.1, rotationY: 0.3, scale: 1 },
-      { assetId: "prop_anvil_log", offsetX: -2.9, offsetY: -1.5, rotationY: 0.2, scale: 1 },
-      { assetId: "prop_crate_wooden", offsetX: 1.9, offsetY: -1.3, rotationY: -0.4, scale: 1 },
-      { assetId: "prop_crate_empty", offsetX: 2.5, offsetY: -0.7, rotationY: 0.2, scale: 1 },
-      { assetId: "prop_chest", offsetX: 0.7, offsetY: -2.1, rotationY: 0.5, scale: 1 },
-      { assetId: "prop_bucket", offsetX: 1.5, offsetY: 1.7, rotationY: 0.8, scale: 1 }
     ]
   },
   {
@@ -1266,37 +1120,96 @@ export function terrainFlatAreas(frame: WorldFrame = worldFrame()): readonly Fla
 }
 
 /**
- * The broad rise that makes the island's upland, pointing north-east across it.
+ * The faint directional bias in the rolling ground.
  *
- * The terrain follows the plan rather than the plan following the terrain: the natural forest sits on
- * the highest, roughest ground, the orchard on a gentle slope beside the fields, and the harbour and
- * the wetland on the low side where the water is.
+ * There is no upland any more: the island's height comes from the volcano and a couple of metres of
+ * swell, and every other place is a place the player can build on. What is left here is one small
+ * northward lean, which is enough to give the harbour side and the volcano side of the island a
+ * difference without making either of them a hill.
  */
 export const ISLAND_UPLANDS: readonly UplandBias[] = [
-  // The northern highland: the broad rise the natural wood stands on, running from the north-west
-  // shoulder to the north-eastern headland.
-  { normalX: 0.55, normalZ: -0.83, weight: 0.6 },
-  // The orchard's own shoulder, a gentler second rise to the north-west, so the perennial side of
-  // the island has a shape of its own instead of being the flat end of one slope.
-  { normalX: -0.45, normalZ: -0.89, weight: 0.18 }
+  // One faint bias towards the north, so the ground the volcano stands on is a little higher than the
+  // harbour side and the landmark has a shoulder to rise out of. Deliberately tiny: the V12.1 brief
+  // removes the authored uplands that made the island a bowl with a mountain ring, because most of
+  // the island has to read as usable ground. The volcano is the only tall thing that is left.
+  { normalX: 0.12, normalZ: -0.99, weight: 0.16 }
 ];
 
 /**
  * Height of the tallest hill above the flat ground, in world units.
  *
- * Raised in V7. At 6.5 the island read as a plate with a pattern painted on it from the estate
- * camera: relief is what gives a landscape a near side and a far side, and without it every district
- * sits on the same plane and the composition flattens out. The farm, the settlement, the pond, and
- * the quay are still held dead flat by `terrainFlatAreas`, so the gameplay surfaces stay usable.
+ * Lowered hard in V12.1. V7 raised this to 8 to keep the composition from flattening out, and the
+ * result was an island of domes and ridges whose only job was variation: roads climbed hills for no
+ * reason, buildable land was cut into fragments, and the silhouette read as procedural. The brief now
+ * asks for the opposite - most of the island plainly usable, with one clear landmark - so the rolling
+ * ground is a couple of metres of gentle swell and the volcano supplies every metre of height the
+ * island is allowed to have above that.
  */
-export const TERRAIN_RELIEF_WORLD = 8;
+export const TERRAIN_RELIEF_WORLD = 2.6;
+
+/**
+ * The volcano: the island's one authored landmark, in the north.
+ *
+ * It is the only tall thing on the island, and it is deliberately the *only* one. Everything about it
+ * is a shape rather than an object: one centre, one base radius, one height, and the fractions that
+ * place the rim, the crater floor and the steep ground between them. `terrain-height.ts` turns those
+ * into metres, and the WorldCell map turns the same fractions into the bands a player is or is not
+ * allowed to build on - so the mountain that is drawn and the ground that is *usable* cannot drift
+ * apart.
+ *
+ * North and off-centre on purpose: the island's centre is the land the player develops, and a volcano
+ * there would be a wall across the middle of the map. It sits on the northern shoulder with its
+ * northern flank running into the sea, which is what makes the silhouette read from the estate camera
+ * without a mountain ring anywhere else.
+ */
+export const VOLCANO = {
+  center: { x: 12, y: -23 },
+  /** How far the flanks reach, in tiles. About 14% of the island's land area. */
+  baseRadiusTiles: 21.3,
+  /** Height of the rim above the flat ground, in world metres: over five times the rolling relief. */
+  heightWorld: 18,
+  /** The rim's radius, as a fraction of the base: inside this is the crater. */
+  rimRadiusFraction: 0.34,
+  /** How far the crater floor sits below the rim, as a fraction of the height. */
+  craterDepthFraction: 0.5,
+  /** The fraction of the base inside which the flanks count as steep ground. */
+  steepRadiusFraction: 0.62,
+  /** Asymmetry: one flank is higher, and the summit is therefore off-centre. */
+  // Small on purpose. The first version leaned by a tenth of its height, which put one shoulder of the
+  // rim far above the other and turned the crater into a notch rather than a bowl.
+  tilt: 0.06,
+  tiltDirection: -2.4,
+  /** Radial wobble, so the footprint is an outline rather than a circle. */
+  lobes: [
+    { harmonic: 2, amplitude: 0.07, phase: 1.1 },
+    { harmonic: 3, amplitude: 0.045, phase: -0.6 }
+  ]
+} as const;
+
+/** The volcano's centre in world metres. */
+export const VOLCANO_WORLD = toWorld(VOLCANO.center);
+
+/** The volcano as the terrain function reads it. */
+export const VOLCANO_SHAPE: VolcanoShape = {
+  centerWorldX: VOLCANO_WORLD.worldX,
+  centerWorldZ: VOLCANO_WORLD.worldZ,
+  baseRadiusWorld: VOLCANO.baseRadiusTiles * frame.pitch,
+  heightWorld: VOLCANO.heightWorld,
+  rimRadiusFraction: VOLCANO.rimRadiusFraction,
+  craterDepthFraction: VOLCANO.craterDepthFraction,
+  steepRadiusFraction: VOLCANO.steepRadiusFraction,
+  tilt: VOLCANO.tilt,
+  tiltDirection: VOLCANO.tiltDirection,
+  lobes: VOLCANO.lobes
+};
 
 /** The island's outline, its elevation, and the areas that stay level. Pure data. */
 export const TERRAIN_SHAPE: TerrainShape = {
   ...ISLAND_SHAPE,
   reliefWorld: TERRAIN_RELIEF_WORLD,
   flatAreas: terrainFlatAreas(),
-  uplands: ISLAND_UPLANDS
+  uplands: ISLAND_UPLANDS,
+  volcano: VOLCANO_SHAPE
 };
 
 /**
@@ -1368,8 +1281,8 @@ export const WORLD_CONFIG = {
   pond: POND,
   plaza: PLAZA,
   harbour: HARBOUR,
-  loggingYard: LOGGING_YARD,
-  fishFarm: FISH_FARM,
+  volcano: VOLCANO,
+  volcanoShape: VOLCANO_SHAPE,
   farmstead: FARMSTEAD,
   landmarks: LANDMARKS,
   spawnTile: SPAWN_TILE,

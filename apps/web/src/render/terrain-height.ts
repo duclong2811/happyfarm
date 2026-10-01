@@ -78,7 +78,53 @@ export interface TerrainShape extends IslandShape {
   readonly flatAreas: readonly FlatArea[];
   /** The broad rises that make a lowland and an upland. */
   readonly uplands: readonly UplandBias[];
+  /**
+   * The island's one authored landmark, or nothing on an island that has none.
+   *
+   * Optional so an empty or test world can be a shape with no landmark in it, and so the volcano is
+   * a *term in the height function* rather than a mesh: the terrain mesh, the roads, the scenery and
+   * the camera's ground clamp all read the same function, which is what stops a tree from floating
+   * over the crater rim.
+   */
+  readonly volcano?: VolcanoShape;
 }
+
+/**
+ * The volcano, as a profile rather than a model.
+ *
+ * A cone is the wrong shape for a volcano: it has no crater, it looks procedural, and every silhouette
+ * from every bearing is the same. This describes the four things a volcano actually has - a broad
+ * base, flanks that steepen as they climb, a raised rim, and a floor below it - plus enough asymmetry
+ * that the footprint is not a circle and the summit is not a point.
+ */
+export interface VolcanoShape {
+  readonly centerWorldX: number;
+  readonly centerWorldZ: number;
+  /** Where the flanks reach the surrounding land. Everything outside is ordinary terrain. */
+  readonly baseRadiusWorld: number;
+  /** Height of the crater rim above the flat ground, in world units. */
+  readonly heightWorld: number;
+  /** The rim's radius as a fraction of the base: inside it is the crater. */
+  readonly rimRadiusFraction: number;
+  /** How far the crater floor sits below the rim, as a fraction of the height. */
+  readonly craterDepthFraction: number;
+  /** Radial wobble, so the footprint is an outline rather than a circle. */
+  readonly lobes: readonly IslandLobe[];
+  /** How much higher one side of the cone stands, as a fraction of the height. */
+  readonly tilt: number;
+  /** The bearing the cone leans towards, in radians about Y. */
+  readonly tiltDirection: number;
+  /**
+   * The fraction of the base radius inside which the flanks are "the steep part".
+   *
+   * Not a rendering number: it is the line a road, a building, or a future trail is checked against,
+   * so "do not build on the steep ground" is one shared answer rather than an eyeballed one.
+   */
+  readonly steepRadiusFraction: number;
+}
+
+/** Which band of a volcano a point falls in, or null when it is not on the volcano at all. */
+export type VolcanoZone = "CORE" | "SLOPE" | "FOOTHILL";
 
 /**
  * World height of the flat ground surface the props stand on.
@@ -93,13 +139,82 @@ export const GROUND_SURFACE_Y = -0.04;
 const FLAT_EPSILON_WORLD = 0.015;
 
 /** The outline's displacement at a polar angle, as a fraction of the base radius. */
-export function islandOutlineScale(angle: number, island: IslandShape): number {
+export function islandOutlineScale(angle: number, island: { readonly lobes: readonly IslandLobe[] }): number {
   let scale = 1;
   for (const lobe of island.lobes) {
     scale += lobe.amplitude * Math.sin(lobe.harmonic * angle + lobe.phase);
   }
   // A lobe stack can only shape a coastline if it stays a closed, non-self-intersecting curve.
   return Math.min(1.3, Math.max(0.7, scale));
+}
+
+/**
+ * How far a point is from a volcano's centre, as a fraction of the base radius at its own bearing.
+ *
+ * 0 at the summit, 1 where the flanks meet ordinary ground. The lobes make that fraction depend on
+ * the bearing, which is what turns a circle into a footprint - and why the same function answers both
+ * "how high is the ground here" and "which band of the volcano is this cell in".
+ */
+export function volcanoRadiusFraction(
+  worldX: number,
+  worldZ: number,
+  volcano: VolcanoShape
+): number {
+  const dx = worldX - volcano.centerWorldX;
+  const dz = worldZ - volcano.centerWorldZ;
+  const distance = Math.hypot(dx, dz);
+  if (distance === 0) return 0;
+  const bearing = Math.atan2(dz, dx);
+  return distance / (volcano.baseRadiusWorld * islandOutlineScale(bearing, volcano));
+}
+
+/**
+ * How high a volcano's own ground stands at a point, in world units above the flat ground.
+ *
+ * Three pieces, joined without a seam:
+ *
+ * * **the flanks**, from the base inwards: a concave curve, so the skirt is broad and the climb gets
+ *   steeper as it rises - the profile that reads as a mountain rather than as a bump;
+ * * **the rim**, where the two halves meet at full height;
+ * * **the crater**, a bowl below the rim that is deepest at its centre.
+ *
+ * The whole thing is tilted by one asymmetric term, so the summit is off-centre and no two bearings
+ * give the same silhouette.
+ */
+export function volcanoHeightAt(worldX: number, worldZ: number, volcano: VolcanoShape): number {
+  const fraction = volcanoRadiusFraction(worldX, worldZ, volcano);
+  if (fraction >= 1) return 0;
+  const rim = volcano.rimRadiusFraction;
+  const bearing = Math.atan2(worldZ - volcano.centerWorldZ, worldX - volcano.centerWorldX);
+  // One side of the cone stands a little higher than the other, and the summit therefore leans.
+  const lean = 1 + volcano.tilt * Math.cos(bearing - volcano.tiltDirection);
+  /**
+   * The lip: a narrow band of extra height exactly at the rim.
+   *
+   * Without it the rim is simply where the flank stops rising and the crater begins, and from any
+   * distance the summit reads as a rounded top. A raised edge is what makes the bowl a bowl - it is
+   * the silhouette a viewer recognises - and it costs one gaussian.
+   */
+  const lip = 1 + 0.09 * Math.exp(-Math.pow((fraction - rim) / 0.07, 2));
+  if (fraction >= rim) {
+    const climb = (1 - fraction) / (1 - rim);
+    // A gentler curve than the first pass used: at 1.7 the flanks stayed almost flat for most of
+    // their length and then stood up at the rim, which read as a mesa with a wall around it. At 1.35
+    // the slope is continuous, so the mountain is a mountain and the rim is its top rather than its
+    // edge.
+    return volcano.heightWorld * lean * lip * Math.pow(climb, 1.35);
+  }
+  const inside = fraction / rim;
+  const bowl = 1 - volcano.craterDepthFraction * (1 - inside * inside);
+  return volcano.heightWorld * lean * lip * bowl;
+}
+
+/** Which band of the volcano a point falls in, or null when it is not on the volcano. */
+export function volcanoZoneAt(worldX: number, worldZ: number, volcano: VolcanoShape): VolcanoZone | null {
+  const fraction = volcanoRadiusFraction(worldX, worldZ, volcano);
+  if (fraction >= 1) return null;
+  if (fraction < volcano.rimRadiusFraction) return "CORE";
+  return fraction < volcano.steepRadiusFraction ? "SLOPE" : "FOOTHILL";
 }
 
 /** The base superellipse's own radius for a normalised coordinate: 1 on the unmodulated outline. */
@@ -177,10 +292,14 @@ export function uplandOffset(worldX: number, worldZ: number, shape: TerrainShape
 /**
  * How high the ground stands at a world position, in world units above the flat ground.
  *
- * Four things multiply together, and each has a job:
+ * Five things combine, and each has a job:
  *
- *   * a smooth wave field, so the land is never a plane;
- *   * the upland offset, so one side of the island is genuinely higher than the other;
+ *   * a smooth, small-amplitude wave field, so the land is never a plane - *gently* rolling rather
+ *     than hilly, because the brief for the player-built island is that most of it must read as
+ *     usable ground;
+ *   * a faint upland bias, so one side of the island is a little higher than the other without
+ *     becoming a ridge;
+ *   * the volcano, the island's one landmark, which is the only thing here allowed to be tall;
  *   * the flat mask, so the farm, the pond, and the settlement are exactly level;
  *   * a shore fade, so the land meets the water at zero height and the beach is level.
  */
@@ -196,6 +315,8 @@ export function terrainHeightAt(worldX: number, worldZ: number, shape: TerrainSh
     0.18 * Math.sin((worldX - worldZ) * 0.07 + 0.4) +
     0.1 * Math.sin(worldX * 0.31 - 0.6);
   const local = Math.min(1.3, Math.max(0.12, wave + uplandOffset(worldX, worldZ, shape)));
-  const height = shape.reliefWorld * local * shoreFade * flatMask(worldX, worldZ, shape.flatAreas);
+  const rolling = shape.reliefWorld * local;
+  const volcano = shape.volcano === undefined ? 0 : volcanoHeightAt(worldX, worldZ, shape.volcano);
+  const height = (rolling + volcano) * shoreFade * flatMask(worldX, worldZ, shape.flatAreas);
   return height <= FLAT_EPSILON_WORLD ? 0 : height;
 }

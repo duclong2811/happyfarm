@@ -4,9 +4,7 @@ import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTi
 import {
   DISTRICTS,
   COMPOSITION_PRESETS,
-  FIELD_BLOCKS,
   FIELD_MARGIN_GROVES,
-  FISH_FARM,
   FARMSTEAD,
   FENCE,
   HARBOUR,
@@ -16,7 +14,6 @@ import {
   ISLAND_UPLANDS,
   LANDMARKS,
   LANDMARKS_WORLD,
-  LOGGING_YARD,
   MEADOWS,
   POND,
   PLAZA,
@@ -25,16 +22,23 @@ import {
   ROAD_WIDTH_TILES,
   TERRAIN_RELIEF_WORLD,
   VISUAL_BOUNDS,
+  VOLCANO,
+  VOLCANO_SHAPE,
   terrainFlatAreas,
-  type District,
   type DistrictGround,
   type DistrictKind,
-  type FieldBlock,
   type PlacedLandmark,
   type RoadKind,
   type RoadNodeId
 } from "./world-config";
-import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
+import {
+  GROUND_SURFACE_Y,
+  islandRimPoint,
+  terrainHeightAt,
+  volcanoZoneAt,
+  type TerrainShape,
+  type VolcanoZone
+} from "./terrain-height";
 import { buildRoadSpec, ROAD_LIFT_WORLD, type RoadSpec } from "./roads";
 export type { RoadSpec } from "./roads";
 import type { JunctionSpec } from "./road-surface";
@@ -177,18 +181,6 @@ export interface GroundRect {
   readonly depthWorld: number;
 }
 
-/** One of the agricultural reserve's parcels, in world metres: what the renderer ploughs. */
-export interface FieldBlockSpec {
-  readonly id: string;
-  readonly kind: FieldBlock["kind"];
-  readonly worldX: number;
-  readonly worldZ: number;
-  readonly widthWorld: number;
-  readonly depthWorld: number;
-  /** The direction the furrows run in, in radians about Y. */
-  readonly rotationY: number;
-}
-
 /** The settlement's paved square, in world metres. */
 export interface PlazaSpec {
   readonly worldX: number;
@@ -262,13 +254,6 @@ export interface FarmWorld {
    * roads declare, so a junction cannot exist at a place the network does not actually reach.
    */
   readonly junctions: readonly JunctionSpec[];
-  /**
-   * The agricultural reserve's visual fields.
-   *
-   * Presentation only, and drawn in the overlay: a field block is a picture of a field, and the apron
-   * and the tiles paint over it the moment the land it sits on is bought.
-   */
-  readonly fieldBlocks: readonly FieldBlockSpec[];
   /** The settlement's square: the one paved place on the island. */
   readonly plaza: PlazaSpec;
   /** The harbour's quay, deck, and yard. */
@@ -325,7 +310,6 @@ const EMPTY_WORLD: FarmWorld = {
   districts: [],
   roads: [],
   junctions: [],
-  fieldBlocks: [],
   plaza: { worldX: 0, worldZ: 0, radiusWorldX: 0, radiusWorldZ: 0, rotationY: 0 },
   harbour: { worldX: 0, worldZ: 0, rotationY: 0, lengthWorld: 0, deckWidthWorld: 0, yardWorldX: 0, yardWorldZ: 0 },
   loggingYard: null,
@@ -475,18 +459,21 @@ const HERO_SCENERY_BUDGET = 900;
  * share, and the global budget stays as the backstop rather than as the only rule.
  */
 const SECTION_BUDGET = {
-  /** Per wood, not for all of them: two woods of 55 trees each is a forest, one of 110 is a lump. */
-  forest: 80,
-  orchard: 110,
-  forestry: 150,
-  district: 80,
+  /**
+   * Per wood, not for all of them: two woods of 55 trees each is a forest, one of 110 is a lump.
+   *
+   * Lowered in V12.1. The island is meant to be *undeveloped* land, not a forest with clearings in
+   * it: the woods are anchors to walk between, and the land between them is where the player builds.
+   */
+  forest: 56,
+  /** Groves, thickets, outcrops and flower patches, spread by minimum spacing rather than by blob. */
+  cluster: 190,
+  /** The volcano's gradient: the only place an authored density is still correct. */
+  volcano: 150,
   shore: 34,
-  hedge: 30,
-  /** The planted edges of the agricultural parcels, which V11 made the field's boundary. */
-  fieldHedge: 60,
   /** The groves and outcrops that break up the ring of ground around the reserve. */
-  fieldMargin: 96,
-  wilderness: 88
+  fieldMargin: 74,
+  wilderness: 70
 } as const;
 /** How far outside the fence a planted thing has to be to count as countryside rather than field. */
 const FIELD_CLEARANCE_TILES = 1.4;
@@ -522,31 +509,6 @@ function clusterMemberKind(cluster: ClusterKind, roll: number): SceneryKind {
       return roll < 0.68 ? "rock" : roll < 0.85 ? "bush" : roll < 0.94 ? "plant" : "flower";
     case "FLOWERS":
       return roll < 0.46 ? "flower" : roll < 0.82 ? "plant" : "bush";
-  }
-}
-
-/** Which cluster a district grows, read off its kind. */
-function clusterKindFor(kind: DistrictKind, roll: number): ClusterKind {
-  switch (kind) {
-    case "FOREST":
-      return "FOREST";
-    case "FORESTRY":
-      return roll < 0.75 ? "FOREST" : "SHRUBS";
-    case "ORCHARD":
-      return roll < 0.7 ? "SHRUBS" : "FLOWERS";
-    case "PASTURE":
-      return roll < 0.5 ? "SHRUBS" : "FLOWERS";
-    case "COAST":
-      return roll < 0.55 ? "ROCKS" : "SHRUBS";
-    case "WATER":
-      return roll < 0.6 ? "SHRUBS" : "FLOWERS";
-    case "SETTLEMENT":
-      return roll < 0.6 ? "SHRUBS" : "FLOWERS";
-    case "FUTURE":
-      // Meadow with the occasional thicket: land nobody has decided about yet, not a building site.
-      return roll < 0.55 ? "SHRUBS" : "FLOWERS";
-    case "CROPLAND":
-      return "FLOWERS";
   }
 }
 
@@ -631,12 +593,11 @@ function buildScenery(
     ],
     clearings: [
       { ...tileToWorld(FARMSTEAD.center, frame), radiusWorld: 5 * layout.pitch },
-      // The town square, the quay and its yard, and the timber yard are places with a job, so
-      // nothing decorative stands on them either.
+      // The town square and the quay and its yard are places with a job, so nothing decorative stands
+      // on them either.
       { ...tileToWorld(PLAZA.center, frame), radiusWorld: (PLAZA.radiusX + 1.5) * layout.pitch },
       { ...tileToWorld(HARBOUR.root, frame), radiusWorld: 6 * layout.pitch },
       { ...tileToWorld(HARBOUR.yard, frame), radiusWorld: 4 * layout.pitch },
-      { ...tileToWorld(LOGGING_YARD.center, frame), radiusWorld: (LOGGING_YARD.radiusTiles + 1.5) * layout.pitch },
       // Every furnished place keeps its own ground clear, so a thicket cannot grow through the middle
       // of a market square or a timber yard. The preset declares the radius; the scenery pass obeys it.
       ...compositionClearings.map((clearing) => ({
@@ -682,6 +643,7 @@ function buildScenery(
     ) {
       return;
     }
+    if (!volcanoAllows(kind, position.worldX, position.worldZ)) return;
     heroBudget -= 1;
     scenery.push({
       kind,
@@ -696,6 +658,23 @@ function buildScenery(
       variantRoll: rand(),
       detail: kind === "flower" || kind === "plant"
     });
+  }
+
+  /**
+   * What the volcano's own ground will grow.
+   *
+   * A gradient rather than a rule: pines and grass on the forested foothill it rises out of, rock and
+   * scrub as the flanks steepen, and nothing but rock on the rim and in the crater. Without this the
+   * ordinary scatter would plant a wood inside the crater, which is the single most obvious way to
+   * make a landmark look like a terrain bump somebody painted trees on.
+   */
+  function volcanoAllows(kind: SceneryKind, worldX: number, worldZ: number): boolean {
+    const volcano = terrain.volcano;
+    if (volcano === undefined) return true;
+    const zone: VolcanoZone | null = volcanoZoneAt(worldX, worldZ, volcano);
+    if (zone === null || zone === "FOOTHILL") return true;
+    if (zone === "CORE") return kind === "rock";
+    return kind === "rock" || kind === "bush" || kind === "pine";
   }
 
   /**
@@ -742,97 +721,12 @@ function buildScenery(
     };
   }
 
-  /**
-   * A lattice in a district's own frame: rows across the slope, positions along each row.
-   *
-   * An orchard and a managed wood are the same lattice at two spacings - the wide rows and generous
-   * beds of a fruit orchard, the tight rows and narrow beds of a working stand - which is exactly the
-   * distinction V9 asks a viewer to make from the estate camera.
-   */
-  function plantRows(options: {
-    readonly district: District;
-    /** Distance between rows, in tiles. */
-    readonly spacingTiles: number;
-    /** Distance between the trees *along* a row, in tiles. */
-    readonly columnSpacingTiles: number;
-    readonly jitter: number;
-    readonly scaleBase: number;
-    readonly scaleSpread: number;
-    readonly pineShare: number;
-    /**
-     * The model every tree in this lattice draws, or absent to let the roll choose within the kind.
-     *
-     * A plantation is one cultivar and a wood is a mixture: an orchard row that mixes four canopy
-     * shapes does not read as a row from the estate camera, however regular the lattice is.
-     */
-    readonly modelId?: string;
-    readonly placement: (
-      kind: SceneryKind,
-      tileX: number,
-      tileY: number,
-      scale: number,
-      rotationY: number,
-      modelId?: string
-    ) => void;
-  }): void {
-    const district = options.district;
-    const cos = Math.cos(district.rotationY);
-    const sin = Math.sin(district.rotationY);
-    for (let row = -Math.ceil(district.radiusY); row <= district.radiusY; row += options.spacingTiles) {
-      for (let column = -Math.ceil(district.radiusX); column <= district.radiusX; column += options.columnSpacingTiles) {
-        const jitterX = (rand() - 0.5) * options.jitter;
-        const jitterZ = (rand() - 0.5) * options.jitter;
-        const kindRoll = rand();
-        const scaleRoll = rand();
-        const rotationRoll = rand();
-        const localX = column + jitterX;
-        const localZ = row + jitterZ;
-        // The lattice is clipped to the district's own outline, so a row can never run out of its
-        // district and into the field or the wood beside it.
-        if (Math.hypot(localX / district.radiusX, localZ / district.radiusY) > 0.94) continue;
-        const tileX = district.center.x + localX * cos - localZ * sin;
-        const tileY = district.center.y + localX * sin + localZ * cos;
-        if (!isOpenGround(tileX, tileY)) continue;
-        const kind: SceneryKind = kindRoll < options.pineShare ? "pine" : "tree";
-        options.placement(
-          kind,
-          tileX,
-          tileY,
-          options.scaleBase + scaleRoll * options.scaleSpread,
-          rotationRoll * Math.PI * 2,
-          options.modelId
-        );
-      }
-    }
-  }
-
-  // 2. The orchard: a fruit orchard is a *lattice*, and what makes it legible from the estate camera
-  // is not the trees but the spacing: wide rows, one small tree per station, and glass-clear lanes
-  // between them. It is the first thing a viewer should be able to name from above after the fields.
-  const orchardBudget = within(SECTION_BUDGET.orchard);
-  for (const district of DISTRICTS) {
-    if (district.kind !== "ORCHARD") continue;
-    plantRows({
-      district,
-      spacingTiles: district.rowSpacingTiles ?? 4,
-      // A fruit orchard is planted tighter along the row than between rows: four metres between the
-      // lines, a tree every three. The two spacings are what make a stand of trees read as an
-      // orchard rather than as a grid.
-      // Tight along the row, wide between rows: that ratio *is* the orchard's signature. An even
-      // lattice at any spacing reads as a block of trees; trees almost touching along a line, with a
-      // lane between the lines, read as rows.
-      columnSpacingTiles: (district.rowSpacingTiles ?? 4) * 0.42,
-      jitter: 0.3,
-      // One cultivar, one size, one silhouette: a row of four canopy shapes is a thicket, however
-      // regular the lattice under it. `tree_broad_2` is the roundest canopy in the curated set, which
-      // is what a fruit tree should look like from the estate camera.
-      scaleBase: 2.9,
-      scaleSpread: 0.4,
-      pineShare: 0,
-      modelId: "tree_broad_2",
-      placement: orchardBudget
-    });
-  }
+  // 2. The orchard and the managed wood are *gone*.
+  //
+  // V12.1 deletes the authored production rows: an orchard lattice and a forestry lattice were the
+  // two clearest statements that the developer had built the player's farm for them. The capability
+  // is still on the cells - the ground may carry FORESTRY - but the trees arrive when the player
+  // plants them. What is left below is the island's natural cover, nothing more.
 
   // 3. The great woods. Two masses on the island's high ground, each grown as one dense core with a
   // softer edge, a clearing or two cut into it, and real variation in tree size - because a wood
@@ -899,72 +793,109 @@ function buildScenery(
     }
   }
 
-  // 4. Thickets, rock outcrops, and flowers everywhere else. A cluster's centre is drawn from a
-  // district in proportion to that district's own density, so the pasture is nearly open, the
-  // settlement has a few planted trees in it, and the coast is what the coast is made of.
-  for (const district of DISTRICTS) {
-    // A district with no density grows nothing and does not spend a turn of the seed.
-    if (district.density <= 0) continue;
-    // One quota per district rather than a share of one pool. A pool is spent in list order, which
-    // meant the first two districts - the orchard and the near wood - took every placement and the
-    // pasture, the coast, and the town were left with bare ground however the weighting was tuned.
-    const budget = within(Math.max(3, Math.round(district.density * 30)));
-    const clusters = Math.max(2, Math.round(district.density * 16));
-    for (let cluster = 0; cluster < clusters; cluster += 1) {
-      const kindRoll = rand();
-      const angle = rand() * Math.PI * 2;
-      const radius = Math.sqrt(rand()) * 0.92;
-      const memberRoll = rand();
-      const sizeRoll = rand();
-
-      const cos = Math.cos(district.rotationY);
-      const sin = Math.sin(district.rotationY);
-      const localX = Math.cos(angle) * radius * district.radiusX;
-      const localZ = Math.sin(angle) * radius * district.radiusY;
-      const centerX = district.center.x + localX * cos - localZ * sin;
-      const centerZ = district.center.y + localX * sin + localZ * cos;
-
-      const kind = clusterKindFor(district.kind, kindRoll);
-      const clusterRadius = 2.2 + sizeRoll * 3.2;
-      const members = Math.round(5 + memberRoll * 10 * Math.max(0.35, district.density));
-      for (let member = 0; member < members; member += 1) {
-        const memberAngle = rand() * Math.PI * 2;
-        const memberDistance = clusterRadius * Math.sqrt(rand());
-        const memberKindRoll = rand();
-        const scaleRoll = rand();
-        const rotationRoll = rand();
-        const at = {
-          x: centerX + Math.cos(memberAngle) * memberDistance,
-          y: centerZ + Math.sin(memberAngle) * memberDistance
-        };
-        if (!isOpenGround(at.x, at.y)) continue;
-        // A district's tree share decides how woody its clusters are: a pasture's thicket is mostly
-        // scrub even where a wood's would be canopy.
-        const rolled = clusterMemberKind(kind, memberKindRoll);
-        const kind_: SceneryKind = memberKindRoll > district.treeShare && rolled === "tree" ? "bush" : rolled;
-        budget(kind_, at.x, at.y, unitScaleFor(kind_, scaleRoll), rotationRoll * Math.PI * 2);
+  /**
+   * 4. Groves, thickets, outcrops, and flower patches, spread over the island itself.
+   *
+   * The scatter used to be drawn from the production districts, so the island's cover said which
+   * industry belonged where. It is now drawn from the *island*: a fixed number of clusters, each one
+   * rejected if it lands within a minimum distance of a cluster already placed. That spacing is the
+   * whole composition rule - it is what guarantees the large open stretches the brief asks for,
+   * because two groves cannot crowd together however the dice fall, and the land between them stays
+   * visibly usable.
+   */
+  const clusterBudget = within(SECTION_BUDGET.cluster);
+  const CLUSTER_ATTEMPTS = 90;
+  /** No two clusters may stand closer than this, in tiles. Negative space is the point. */
+  const CLUSTER_MIN_SPACING_TILES = 13;
+  const clusterCentres: { readonly x: number; readonly y: number }[] = [];
+  for (let attempt = 0; attempt < CLUSTER_ATTEMPTS; attempt += 1) {
+    const kindRoll = rand();
+    const angle = rand() * Math.PI * 2;
+    const distance = Math.sqrt(rand()) * 0.94;
+    const memberRoll = rand();
+    const sizeRoll = rand();
+    // Islands are made of water and land, so the candidate is drawn in normalised island space and
+    // converted through the same outline the coastline uses.
+    const worldX = terrain.centerWorldX + Math.cos(angle) * distance * terrain.halfWidthWorld;
+    const worldZ = terrain.centerWorldZ + Math.sin(angle) * distance * terrain.halfDepthWorld;
+    const centre = worldToTile({ worldX, worldZ }, frame);
+    if (!isOpenGround(centre.x, centre.y)) continue;
+    let crowded = false;
+    for (const existing of clusterCentres) {
+      if (Math.hypot(existing.x - centre.x, existing.y - centre.y) < CLUSTER_MIN_SPACING_TILES) {
+        crowded = true;
+        break;
       }
+    }
+    if (crowded) continue;
+    clusterCentres.push(centre);
+
+    const kind: ClusterKind = kindRoll < 0.34 ? "FOREST" : kindRoll < 0.62 ? "SHRUBS" : kindRoll < 0.82 ? "FLOWERS" : "ROCKS";
+    const clusterRadius = 2.4 + sizeRoll * 3.4;
+    const members = Math.round(4 + memberRoll * 7);
+    for (let member = 0; member < members; member += 1) {
+      const memberAngle = rand() * Math.PI * 2;
+      const memberDistance = clusterRadius * Math.sqrt(rand());
+      const memberKindRoll = rand();
+      const scaleRoll = rand();
+      const rotationRoll = rand();
+      const at = {
+        x: centre.x + Math.cos(memberAngle) * memberDistance,
+        y: centre.y + Math.sin(memberAngle) * memberDistance
+      };
+      if (!isOpenGround(at.x, at.y)) continue;
+      const memberKind = clusterMemberKind(kind, memberKindRoll);
+      clusterBudget(memberKind, at.x, at.y, unitScaleFor(memberKind, scaleRoll), rotationRoll * Math.PI * 2);
     }
   }
 
-  // 4. The managed wood: rows too, but tighter, denser, and mixed - a stand somebody planted and
-  // somebody cuts, which is the whole visual difference between it and the wood nobody has touched.
-  const forestryBudget = within(SECTION_BUDGET.forestry);
-  for (const district of DISTRICTS) {
-    if (district.kind !== "FORESTRY") continue;
-    plantRows({
-      district,
-      spacingTiles: district.rowSpacingTiles ?? 3.2,
-      columnSpacingTiles: (district.rowSpacingTiles ?? 3.2) * 0.7,
-      jitter: 0.5,
-      // A working stand is conifers, in rows, of a size: tall enough to read as timber rather than as
-      // scrub, and visually the opposite of the orchard's round canopy at the same distance.
-      scaleBase: 3.4,
-      scaleSpread: 0.8,
-      pineShare: 1,
-      modelId: "tree_pine_2",
-      placement: forestryBudget
-    });
+  /**
+   * 4b. The volcano's own cover.
+   *
+   * Its gradient, from the outside in: pines and broadleaf on the forested foothill, rock and scrub
+   * as the flanks steepen, and bare rock above that. The crater gets nothing but stone, because it
+   * is the one place on the island that is unmistakably not anybody's land - and because a tree in a
+   * crater is the fastest way to make a volcano read as a hill.
+   *
+   * Laid out on rings rather than at random: a candidate is drawn at a bearing and a radius, so the
+   * cover thins with height the way it does on a real cone instead of thinning by chance.
+   */
+  const volcano = terrain.volcano;
+  if (volcano !== undefined) {
+    const volcanoBudget = within(SECTION_BUDGET.volcano);
+    const RINGS = 130;
+    for (let index = 0; index < RINGS; index += 1) {
+      const bearing = rand() * Math.PI * 2;
+      const roll = rand();
+      const kindRoll = rand();
+      const scaleRoll = rand();
+      const rotationRoll = rand();
+      // 0.05 to 1.0 of the base radius, squared so more attempts land near the summit: the band that
+      // needs thinning is the top, and a uniform ring would spend most of its tries on the skirt.
+      const fraction = 0.05 + Math.pow(roll, 0.55) * 0.95;
+      const radius = fraction * volcano.baseRadiusWorld;
+      const worldX = volcano.centerWorldX + Math.cos(bearing) * radius;
+      const worldZ = volcano.centerWorldZ + Math.sin(bearing) * radius;
+      const tile = worldToTile({ worldX, worldZ }, frame);
+      // The same open-ground rule every other placement obeys: nothing grows in the reserve, on a
+      // road, or in a building's clearing, however close to the mountain it is.
+      if (!isOpenGround(tile.x, tile.y)) continue;
+      if (fraction < volcano.rimRadiusFraction) {
+        if (kindRoll < 0.55) volcanoBudget("rock", tile.x, tile.y, unitScaleFor("rock", scaleRoll), rotationRoll * Math.PI * 2);
+        continue;
+      }
+      if (fraction < volcano.steepRadiusFraction) {
+        // The steep ground: outcrops, hard scrub, and a little vegetation clinging to the gullies.
+        const kind: SceneryKind = kindRoll < 0.5 ? "rock" : kindRoll < 0.78 ? "bush" : kindRoll < 0.9 ? "plant" : "pine";
+        volcanoBudget(kind, tile.x, tile.y, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2);
+        continue;
+      }
+      // The foothill: the wood the volcano rises out of, thinning as it climbs.
+      const thin = (fraction - volcano.steepRadiusFraction) / (1 - volcano.steepRadiusFraction);
+      if (kindRoll > 0.35 + thin * 0.55) continue;
+      const kind: SceneryKind = kindRoll < 0.5 ? "pine" : kindRoll < 0.72 ? "tree" : kindRoll < 0.9 ? "bush" : "rock";
+      volcanoBudget(kind, tile.x, tile.y, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2);
+    }
   }
 
   // 5. The wilderness: the land the island has deliberately not decided about.
@@ -1048,60 +979,13 @@ function buildScenery(
     shoreBudget(kind, tile.x, tile.y, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2);
   }
 
-  // 7. The hedgerow along the estate side of the fence.
+  // 7. No hedgerows and no field edges.
   //
-  // The fence draws the reserve as a hard square, and the plots inside it cannot hide that. A hedge
-  // on the outside of the boundary breaks the line into a planted edge - which is what a farm does
-  // with a boundary, and what stops a rectangle reading as the outline of a board. It stands outside
-  // the reserve because that land is never for sale, so the hedge can never end up inside a field the
-  // player buys.
-  const hedgeBudget = within(SECTION_BUDGET.hedge);
-  for (let along = -1; along <= 38; along += 2.5) {
-    const jitter = (rand() - 0.5) * 0.9;
-    const sizeRoll = rand();
-    const rotationRoll = rand();
-    const kind: SceneryKind = rand() < 0.78 ? "bush" : "tree";
-    if (isOpenGround(along + jitter, 38.6)) {
-      hedgeBudget(kind, along + jitter, 38.6, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2);
-    }
-  }
-  for (let along = 1; along <= 38; along += 2.5) {
-    const jitter = (rand() - 0.5) * 0.9;
-    const sizeRoll = rand();
-    const rotationRoll = rand();
-    const kind: SceneryKind = rand() < 0.78 ? "bush" : "tree";
-    if (isOpenGround(-3.4, along + jitter)) {
-      hedgeBudget(kind, -3.4, along + jitter, unitScaleFor(kind, sizeRoll), rotationRoll * Math.PI * 2);
-    }
-  }
-
-  // 8. The field hedgerows.
-  //
-  // A worked field is bounded by something, and on this island that something is a hedge rather than
-  // the fence V11 removed: a planted edge along the roadside of the larger parcels, with gaps where a
-  // cart would go through. It is scenery like the rest, so the placement rules - the coastline, the
-  // roads, the clearings - still decide where it may stand.
-  const fieldHedgeBudget = within(SECTION_BUDGET.fieldHedge);
-  for (const block of FIELD_BLOCKS) {
-    if (block.kind === "YARD") continue;
-    for (const edge of [
-      { fixed: block.bounds.minY, along: "X", close: true },
-      { fixed: block.bounds.maxY, along: "X", close: false }
-    ] as const) {
-      for (let along = block.bounds.minX + 1; along <= block.bounds.maxX - 1; along += 2.4) {
-        // A gap every third step: a hedge with an entrance in it, which is what a field has.
-        if (Math.round(along) % 8 < 2) continue;
-        const jitter = (rand() - 0.5) * 0.5;
-        const sizeRoll = rand();
-        const rotationRoll = rand();
-        const tileX = along + jitter;
-        // The hedge stands on the parcel's own edge line, so it frames the field rather than cutting it.
-        const tileY = edge.fixed + (edge.close ? -0.6 : 0.6);
-        if (!isOpenGround(tileX, tileY)) continue;
-        fieldHedgeBudget("bush", tileX, tileY, unitScaleFor("bush", sizeRoll) * 0.9, rotationRoll * Math.PI * 2);
-      }
-    }
-  }
+  // Both were drawn *for* the authored fields - a planted boundary around a parcel the island had
+  // laid out, and a hedge along the fence the catalogue's plots sit inside. With the parcels gone
+  // they would be a hedge around nothing, and a hedge on the boundary of land the player has not
+  // bought yet is a fence they did not ask for. Natural cover between the groves is the whole
+  // composition now: clusters, clearings, and open ground.
 
   return scenery;
 }
@@ -1152,25 +1036,6 @@ function buildLockedScenery(
   const scenery: SceneryInstance[] = [];
   /** Keeps the plot's edge readable: a stake line with a thicket sitting on top of it is noise. */
   const edgeMargin = 1.4;
-  /**
-   * Whether a point is inside one of the reserve's working parcels.
-   *
-   * A field block is a picture of a *worked* field, so nothing grows on it: the scrub that makes
-   * unclaimed land read as land belongs on the ground *between* the parcels - the headlands, the
-   * lanes, and the strips the plan has left to grass - and a thicket standing in the middle of a
-   * ploughed field is the one thing that would make the heartland read as abandoned.
-   */
-  function onAParcel(tileX: number, tileY: number): boolean {
-    return FIELD_BLOCKS.some(
-      (block) =>
-        block.kind !== "YARD" &&
-        tileX >= block.bounds.minX &&
-        tileX <= block.bounds.maxX &&
-        tileY >= block.bounds.minY &&
-        tileY <= block.bounds.maxY
-    );
-  }
-
   for (const plot of plots) {
     // One seed per plot rather than one for the list: buying a plot has to clear *that* plot's wild
     // growth, not reshuffle every other plot's.
@@ -1187,7 +1052,6 @@ function buildLockedScenery(
       const kindRoll = rand();
       const scaleRoll = rand();
       const rotationRoll = rand();
-      if (onAParcel(x, y)) continue;
       const kind: SceneryKind =
         // Grass, the occasional shrub, the occasional rock: the colours that make unclaimed land look
         // like land rather than like a debug overlay.
@@ -1304,7 +1168,16 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     ...islandShape,
     reliefWorld: TERRAIN_RELIEF_WORLD * pitchScale,
     flatAreas: terrainFlatAreas(mapping),
-    uplands: ISLAND_UPLANDS
+    uplands: ISLAND_UPLANDS,
+    // The island's one landmark, placed through the same frame as everything else and scaled with the
+    // world, so the mountain is the same mountain whatever pitch the layout was drawn at.
+    volcano: {
+      ...VOLCANO_SHAPE,
+      centerWorldX: tileToWorld(VOLCANO.center, mapping).worldX,
+      centerWorldZ: tileToWorld(VOLCANO.center, mapping).worldZ,
+      baseRadiusWorld: VOLCANO.baseRadiusTiles * input.layout.pitch,
+      heightWorld: VOLCANO.heightWorld * pitchScale
+    }
   };
 
   const lockedPlots: LockedPlotSquare[] = previewLockedPlots(input.plots).map((plot) => {
@@ -1361,9 +1234,24 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
    * widest road there, so the road ends tuck under it instead of meeting edge to edge.
    */
   const roadRank: Readonly<Record<RoadKind, number>> = { PRIMARY: 3, SECONDARY: 2, PATH: 1 };
+  /**
+   * How many roads touch each stop.
+   *
+   * A junction is where roads *meet*, so a stop only earns a paved disc if at least two of them run
+   * into it. Every stop used to get one, which put a cobbled circle at the end of a lane that simply
+   * stops - the wide brown blob the QA pass found at the north road's terminus. A dead end is a dead
+   * end.
+   */
+  const roadCountAt = new Map<RoadNodeId, number>();
+  for (const road of ROADS) {
+    for (const node of road.connects) {
+      roadCountAt.set(node, (roadCountAt.get(node) ?? 0) + 1);
+    }
+  }
   const surfaceAt = new Map<RoadNodeId, RoadKind>();
   for (const road of ROADS) {
     for (const node of road.connects) {
+      if ((roadCountAt.get(node) ?? 0) < 2) continue;
       const existing = surfaceAt.get(node);
       if (existing === undefined || roadRank[road.kind] > roadRank[existing]) surfaceAt.set(node, road.kind);
     }
@@ -1380,48 +1268,19 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     };
   });
 
-  // The agricultural fields: rectangles of the reserve the catalogue has not sold yet, drawn as
-  // fields. They are overlay work because they sit where the player will eventually farm, and the
-  // apron has to be able to paint over them.
-  const fieldBlocks = FIELD_BLOCKS.map((block) => {
-    const centre = tileToWorld(
-      { x: (block.bounds.minX + block.bounds.maxX + 1) / 2, y: (block.bounds.minY + block.bounds.maxY + 1) / 2 },
-      mapping
-    );
-    return {
-      id: block.id,
-      kind: block.kind,
-      worldX: centre.worldX,
-      worldZ: centre.worldZ,
-      widthWorld: (block.bounds.maxX - block.bounds.minX + 1) * input.layout.pitch,
-      depthWorld: (block.bounds.maxY - block.bounds.minY + 1) * input.layout.pitch,
-      rotationY: block.rotationY
-    };
-  });
-
-  // The aquaculture cages: two rows of three along the bay, just outside the waterline and clear of
-  // the pier. Placing them from the outline rather than from hand-picked coordinates is what makes
-  // "in water" true by construction, and grouping them into rows is what makes them read as a farm
-  // moored in the bay rather than as five frames adrift.
-  const aquaculture: { readonly worldX: number; readonly worldZ: number; readonly radiusWorld: number; readonly rotationY: number }[] = [];
-  for (const [row, distance] of FISH_FARM.rowDistances.entries()) {
-    for (let column = 0; column < FISH_FARM.perRow; column += 1) {
-      const parameter = FISH_FARM.firstParameter + column * FISH_FARM.parameterStep;
-      const rim = islandRimPoint(parameter, terrain);
-      aquaculture.push({
-        worldX: terrain.centerWorldX + (rim.worldX - terrain.centerWorldX) * distance,
-        worldZ: terrain.centerWorldZ + (rim.worldZ - terrain.centerWorldZ) * distance,
-        radiusWorld: 1.55 * input.layout.pitch,
-        // Cages stand square to the shore they are moored off, so the raft's rows run parallel to it.
-        rotationY: parameter + row * 0.06
-      });
-    }
-  }
-
+  /**
+   * The production presentation V12.1 removed.
+   *
+   * The island used to draw the farm the player had not built yet: authored field parcels across the
+   * reserve, and a raft of aquaculture cages moored in the bay. Both are gone. The *capabilities* are
+   * still on the cells - a field cell may be farmed, a shallow cell may carry a cage - but nothing is
+   * drawn until the player places it, which is the whole point of "do not build the player's farm for
+   * them". The fields and cages are empty arrays rather than deleted members so a renderer that reads
+   * them keeps working while the geometry paths are removed one at a time.
+   */
   const plazaCentre = tileToWorld(PLAZA.center, mapping);
   const harbourRoot = tileToWorld(HARBOUR.root, mapping);
   const harbourYard = tileToWorld(HARBOUR.yard, mapping);
-  const loggingCentre = tileToWorld(LOGGING_YARD.center, mapping);
 
   /**
    * The set dressing, built from the authored presets.
@@ -1475,7 +1334,6 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     }),
     roads,
     junctions,
-    fieldBlocks,
     plaza: {
       worldX: plazaCentre.worldX,
       worldZ: plazaCentre.worldZ,
@@ -1492,14 +1350,13 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
       yardWorldX: harbourYard.worldX,
       yardWorldZ: harbourYard.worldZ
     },
-    loggingYard: {
-      worldX: loggingCentre.worldX,
-      worldZ: loggingCentre.worldZ,
-      radiusWorld: LOGGING_YARD.radiusTiles * input.layout.pitch,
-      rotationY: LOGGING_YARD.rotationY
-    },
+    // The logging yard went with the managed wood: it was the far end of a haul road that no longer
+    // exists, and a timber stack is something a player builds when they start cutting.
+    loggingYard: null,
     compositions,
-    aquaculture,
+    // The cages went with the ranch the island used to draw for the player: aquaculture is a
+    // capability of shallow water now, and the raft is something a player moors.
+    aquaculture: [],
     scenery: buildScenery(input.layout, terrain, roads, compositions.clearings),
     meadows: MEADOWS.map((patch) => {
       const centre = tileToWorld(patch.center, mapping);

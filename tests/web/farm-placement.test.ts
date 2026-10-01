@@ -3,7 +3,7 @@ import type { PlotDTO } from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import { layoutFarmTiles } from "../../apps/web/src/render/layout";
 import { buildFarmWorld, landFrame } from "../../apps/web/src/render/world";
-import { islandRadiusAt } from "../../apps/web/src/render/terrain-height";
+import { islandRadiusAt, volcanoRadiusFraction } from "../../apps/web/src/render/terrain-height";
 import { BUILDINGS, RESERVED_BUILDINGS } from "../../apps/web/src/render/buildings";
 import {
   DISTRICTS,
@@ -16,8 +16,10 @@ import {
   ROAD_NODES,
   ROADS,
   SPAWN_TILE,
+  VOLCANO_SHAPE,
   VISUAL_BOUNDS,
-  districtAt
+  districtAt,
+  isStaticWorldWalkable
 } from "../../apps/web/src/render/world-config";
 
 /**
@@ -178,16 +180,28 @@ describe("the plan is reachable", () => {
     expect(Math.hypot(ROAD_NODES.farm_hub.x - FARMSTEAD.center.x, ROAD_NODES.farm_hub.y - FARMSTEAD.center.y)).toBeLessThan(5);
   });
 
-  it("reaches the field gate by a track rather than by a highway", () => {
-    // The spawn sits on the field's south lane. A highway belongs on the coast, not across land the
-    // catalogue sells, so the last stretch to the gate is a `PATH` - and it is still a route, which
-    // is what the spawn depends on.
-    const lane = ROADS.filter((road) => road.kind === "PATH" && road.connects.includes("agriculture"));
-    expect(lane.length).toBeGreaterThan(0);
-    const points = lane.flatMap((road) => road.points);
-    expect(
-      points.some((point) => Math.hypot(point.x - SPAWN_TILE.x, point.y - SPAWN_TILE.y) <= 3)
-    ).toBe(true);
+  it("reaches the volcano's foothill, and stops short of the steep ground", () => {
+    // V12.1's second road: out of the village and north-west until the ground starts to climb. It is
+    // the island's only route that leaves the settlement, and it deliberately ends on the foothill -
+    // nothing authored climbs the landmark.
+    const north = ROADS.find((road) => road.id === "north_road");
+    expect(north, "the island needs a road north").toBeDefined();
+    expect(north?.kind).toBe("SECONDARY");
+    expect(north?.connects).toEqual(["plaza", "highland"]);
+    const end = north?.points.at(-1);
+    expect(end).toEqual(ROAD_NODES.highland);
+    const endWorld = { worldX: (end?.x ?? 0) * PITCH - ORIGIN_TILE * PITCH, worldZ: (end?.y ?? 0) * PITCH - ORIGIN_TILE * PITCH };
+    expect(volcanoRadiusFraction(endWorld.worldX, endWorld.worldZ, VOLCANO_SHAPE)).toBeGreaterThan(
+      VOLCANO_SHAPE.steepRadiusFraction
+    );
+  });
+
+  it("starts the player beside their own land", () => {
+    // The spawn used to sit on an authored lane thirty tiles south of the farm. With the lanes gone,
+    // it belongs on the edge of the square the player owns.
+    expect(SPAWN_TILE.y).toBeGreaterThan(INITIAL_LAND_SIZE - 1);
+    expect(Math.abs(SPAWN_TILE.x - 5.5)).toBeLessThan(1);
+    expect(isStaticWorldWalkable(SPAWN_TILE)).toBe(true);
   });
 
   it("keeps every road out of the crop reserve", () => {

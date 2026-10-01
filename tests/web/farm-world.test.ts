@@ -241,7 +241,7 @@ describe("buildFarmWorld", () => {
     }
   });
 
-  it("gives every wooded district trees, and the pasture almost none", () => {
+  it("grows the island's cover in clusters, and leaves most of the land open", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
     const inDistrict = (districtId: string): number => {
       const patch = world.districts.find((entry) => entry.id === districtId);
@@ -256,15 +256,13 @@ describe("buildFarmWorld", () => {
         return Math.hypot(localX, localZ) <= 1;
       }).length;
     };
-    // Woodland is dense, an orchard is planted in rows, and a pasture is nearly open ground. The gap
-    // between them is the composition: districts have to *look* different, not just be labelled.
-    //
-    // The counts are lower than they were before V5 on purpose: the placement rules now refuse
-    // anything past the coastline, and these blobs reach past it, so what stands is what the island
-    // actually has room for.
-    expect(inDistrict("forest_north")).toBeGreaterThan(12);
-    expect(inDistrict("orchard")).toBeGreaterThan(6);
-    expect(inDistrict("pasture")).toBeLessThan(inDistrict("forest_north"));
+    // The natural wood is still a mass, and the old production districts no longer plant anything:
+    // an orchard and a pasture grow whatever the island's own scatter gives them and no more.
+    expect(inDistrict("forest_north") + inDistrict("forest_east")).toBeGreaterThan(10);
+    expect(inDistrict("orchard")).toBeLessThan(30);
+    expect(inDistrict("pasture")).toBeLessThan(30);
+    // Undeveloped, not overgrown: the island is mostly open ground with groves standing in it.
+    expect(world.scenery.length).toBeLessThan(600);
   });
 
   it("keeps the roads off the farmland and inside the island", () => {

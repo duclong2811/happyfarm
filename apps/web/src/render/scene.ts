@@ -1071,7 +1071,6 @@ let interactionGeometry: BufferGeometry | null = null;
       `out:${bounds(outer)}`,
       `ls:${String(input.world.lockedScenery.length)}`,
       `lp:${String(input.world.lockedPlots.length)}`,
-      `fb:${String(input.world.fieldBlocks.length)}`,
       selectedCell === null ? "-" : `${String(selectedCell.x)},${String(selectedCell.y)}`
     ];
     for (const tile of input.tiles) {
