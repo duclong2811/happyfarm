@@ -65,6 +65,64 @@ export function thumbnailFraming(
   return { scale: 1, centerY: size.y / 2, cameraDistance: Math.max(cameraDistance, longest) };
 }
 
+/** An axis-aligned box, in the same plain numbers a bounding box is read as. */
+export interface Bounds3 {
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
+}
+
+/**
+ * How much of each end of an axis is ignored when measuring what a model *looks* like.
+ *
+ * Five per cent of the vertices: enough to drop a stray plane, a distant corner, or the transparent
+ * margin around a small subject, and small enough that no real model loses its shape. Bounding boxes
+ * are honest about vertices and dishonest about *pictures* - `plant_fern` is mostly empty quad, and
+ * framing it by its raw box made a fern the size of a thumbnail's shadow.
+ */
+export const THUMBNAIL_TRIM_FRACTION = 0.05;
+
+/**
+ * The box a thumbnail should frame: the raw bounding box with the outer vertices trimmed off.
+ *
+ * `values` is a flat list of xyz triples - every vertex of the model, in the model's own space. Each
+ * axis is sorted on its own, which is what makes this cheap and stable: the result is axis-aligned,
+ * deterministic, and cannot tilt with the camera.
+ */
+export function trimmedBounds(values: readonly number[], trimFraction = THUMBNAIL_TRIM_FRACTION): Bounds3 | null {
+  const count = Math.floor(values.length / 3);
+  if (count === 0) return null;
+  const axes: number[][] = [[], [], []];
+  for (let index = 0; index < count; index += 1) {
+    axes[0]?.push(values[index * 3] ?? 0);
+    axes[1]?.push(values[index * 3 + 1] ?? 0);
+    axes[2]?.push(values[index * 3 + 2] ?? 0);
+  }
+  const trim = Math.min(Math.max(trimFraction, 0), 0.4);
+  const cut = Math.floor(count * trim);
+  const bounds: number[] = [];
+  for (const axis of axes) {
+    axis.sort((left, right) => left - right);
+    const last = axis.length - 1;
+    bounds.push(axis[cut] ?? axis[0] ?? 0);
+    bounds.push(axis[last - cut] ?? axis[last] ?? 0);
+  }
+  const [minX, maxX, minY, maxY, minZ, maxZ] = bounds as [number, number, number, number, number, number];
+  return { minX, minY, minZ, maxX, maxY, maxZ };
+}
+
+/** The size of a box, as the framing rule wants it. */
+export function boundsSize(bounds: Bounds3): { readonly x: number; readonly y: number; readonly z: number } {
+  return {
+    x: Math.max(bounds.maxX - bounds.minX, 0),
+    y: Math.max(bounds.maxY - bounds.minY, 0),
+    z: Math.max(bounds.maxZ - bounds.minZ, 0)
+  };
+}
+
 /**
  * What each road tier looks like in a thumbnail.
  *

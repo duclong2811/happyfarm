@@ -7,9 +7,12 @@
   Color,
   DirectionalLight,
   DoubleSide,
+  EdgesGeometry,
   Float32BufferAttribute,
   Fog,
   Group,
+  LineBasicMaterial,
+  LineSegments,
   HemisphereLight,
   InstancedMesh,
   Matrix4,
@@ -66,6 +69,7 @@ import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
 import { buildRoadSpec, ROAD_LIFT_WORLD } from "./roads";
+import { ROAD_SEGMENT_CELLS } from "@happy-farm/game-data";
 import { ribbonSurface } from "./road-surface";
 import { tileToWorld } from "./layout";
 
@@ -117,6 +121,13 @@ const PLAYER_HEIGHT = 1.6;
 const PLAYER_WALK_BOB = 0.035;
 /** Steps per second at full walking speed, used only to phase the bob. */
 const PLAYER_STEP_FREQUENCY = 9;
+/**
+ * How far the camera stands when placement mode frames a cell.
+ *
+ * Close enough that a one-cell tree, fence or lantern is an object rather than a speck, and far enough
+ * that the ground around it - and whether the footprint fits - is still in the picture.
+ */
+const PLACEMENT_CAMERA_DISTANCE = 13;
 /**
  * What the build shop is about to place, as the renderer needs to hear it.
  *
@@ -215,6 +226,14 @@ export interface FarmSceneHandle {
    * it go here at all" before the authoritative placement command exists to accept a real one.
    */
   setPlacementPreview(preview: PlacementPreview | null): void;
+  /**
+   * Frames a cell for placement: the camera glides to it and comes closer, so a one-cell item reads as
+   * an object rather than a speck while the player decides where it goes.
+   *
+   * A glide, never a cut, and only a request: the player's own drag and wheel still win, exactly as
+   * they do over the recenter key.
+   */
+  focusOnCell(cell: TileCoordinate): void;
   /**
    * Turns the developer overlay on or off: every cell, colour-coded by land use.
    *
@@ -1224,23 +1243,41 @@ let interactionGeometry: BufferGeometry | null = null;
     const footprintMaterial = new MeshBasicMaterial({
       color: preview.valid ? 0x63b354 : 0xc4553f,
       transparent: true,
-      opacity: 0.42,
+      // A fill you can see through and a perimeter you cannot miss: the V12.4 patch was legible in the
+      // screenshot and nearly invisible in play, which is the wrong way round.
+      opacity: 0.3,
       depthWrite: false,
       side: DoubleSide
     });
     const footprint = new Mesh(footprintGeometry, footprintMaterial);
     footprint.rotation.x = -Math.PI / 2;
     footprint.rotation.z = -preview.rotationY;
-    footprint.position.set(centre.worldX, groundY + 0.03, centre.worldZ);
+    footprint.position.set(centre.worldX, groundY + 0.035, centre.worldZ);
     footprint.renderOrder = 2;
     previewGroup.add(footprint);
+    // The perimeter is its own geometry rather than a thicker fill, so the interior stays transparent
+    // and the world underneath is still readable while a player decides.
+    const perimeterGeometry = new EdgesGeometry(footprintGeometry);
+    const perimeterMaterial = new LineBasicMaterial({
+      color: preview.valid ? 0x2f7d33 : 0x9b2f1c,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false
+    });
+    const perimeter = new LineSegments(perimeterGeometry, perimeterMaterial);
+    perimeter.rotation.copy(footprint.rotation);
+    perimeter.position.set(centre.worldX, groundY + 0.05, centre.worldZ);
+    perimeter.renderOrder = 3;
+    previewGroup.add(perimeter);
     previewDisposers.push(() => {
       footprintGeometry.dispose();
       footprintMaterial.dispose();
+      perimeterGeometry.dispose();
+      perimeterMaterial.dispose();
     });
 
     if (preview.roadTierId !== null) {
-      addRoadPreview(preview, selectedCell, groundY, pitch);
+      addRoadPreview(preview, selectedCell, groundY);
       draw();
       return;
     }
@@ -1285,7 +1322,9 @@ let interactionGeometry: BufferGeometry | null = null;
         groundY - box.min.y * scale,
         centre.worldZ - ((box.min.z + box.max.z) / 2) * scale
       );
-      ghost.rotation.y = 0;
+      // The ghost faces the way the footprint does: a rotated barn that still draws square to the world
+      // would be a preview that lies about the thing being placed.
+      ghost.rotation.y = preview.rotationY;
       previewGroup.add(ghost);
       previewDisposers.push(() => {
         ghost.clear();
@@ -1304,26 +1343,28 @@ let interactionGeometry: BufferGeometry | null = null;
   function addRoadPreview(
     preview: PlacementPreview,
     cell: TileCoordinate,
-    groundY: number,
-    pitch: number
+    groundY: number
   ): void {
     const tier = preview.roadTierId;
     if (tier === null) return;
     if (!(tier in ROAD_PREVIEW_STYLES)) return;
     const style = ROAD_PREVIEW_STYLES[tier as keyof typeof ROAD_PREVIEW_STYLES];
+    /** Half the four-cell segment, in cells: what a centred preview reaches either side of the cursor. */
+    const halfCells = ROAD_SEGMENT_CELLS / 2;
     const along = preview.rotationY;
     const stepX = Math.cos(along);
     const stepZ = Math.sin(along);
-    const start = tileToWorld(cell, worldFrame(pitch));
-    const span = 4 * pitch;
+    // Centred on the selected cell, so the drawn segment and the footprint patch agree about where the
+    // four cells are: a road that ran forward from the cursor would sit half a segment off its own
+    // highlight, which is exactly the kind of preview that teaches a player something false.
     const spec = buildRoadSpec(
       {
         id: "preview",
         kind: style.cobbled ? "PRIMARY" : "SECONDARY",
         connects: [],
         points: [
-          { x: cell.x, y: cell.y },
-          { x: cell.x + (stepX * span) / pitch, y: cell.y + (stepZ * span) / pitch }
+          { x: cell.x - stepX * halfCells, y: cell.y - stepZ * halfCells },
+          { x: cell.x + stepX * halfCells, y: cell.y + stepZ * halfCells }
         ]
       },
       state.layout,
@@ -1345,10 +1386,14 @@ let interactionGeometry: BufferGeometry | null = null;
     const mesh = new Mesh(geometry, material);
     const origin = spec.samples[0];
     if (origin === undefined) return;
+    // The geometry is already in world coordinates, because the road builder took the world's own
+    // layout. Only the height needs nudging: the segment sits on the ground under the cursor, not on
+    // the terrain its own endpoints happen to be over.
+    const middle = spec.samples[Math.floor(spec.samples.length / 2)] ?? origin;
     mesh.position.set(
-      start.worldX - origin.worldX,
-      groundY + 0.02 - origin.worldY + ROAD_LIFT_WORLD,
-      start.worldZ - origin.worldZ
+      0,
+      groundY + 0.02 + ROAD_LIFT_WORLD - middle.worldY,
+      0
     );
     previewGroup.add(mesh);
     previewDisposers.push(() => {
@@ -1702,6 +1747,14 @@ let interactionGeometry: BufferGeometry | null = null;
       placementPreview = next;
       rebuildPreview();
       draw();
+    },
+    focusOnCell(cell: TileCoordinate): void {
+      const centre = tileToWorld(cell, worldFrame(state.layout.pitch));
+      cameraRig.recenterTo(centre.worldX, centre.worldZ);
+      const wanted = Math.min(PLACEMENT_CAMERA_DISTANCE, cameraRig.distanceRange.max);
+      const current = Math.max(cameraRig.requestedDistance, 0.001);
+      cameraRig.zoomByScale(wanted / current);
+      scheduleCameraFrame();
     },
     setDebugMode(on: boolean): void {
       if (on === debugMode) return;

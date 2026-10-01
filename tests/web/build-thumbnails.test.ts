@@ -4,8 +4,10 @@ import {
   ROAD_PREVIEW_STYLES,
   THUMBNAIL_FILL,
   THUMBNAIL_SIZE,
+  boundsSize,
   thumbnailCacheKey,
-  thumbnailFraming
+  thumbnailFraming,
+  trimmedBounds
 } from "../../apps/web/src/render/thumbnail-spec";
 
 /**
@@ -115,5 +117,67 @@ describe("road tier previews", () => {
     expect(provisional).toEqual(["road.gravel.t2", "road.paved.t4"]);
     expect(ROAD_PREVIEW_STYLES["road.dirt.t1"].provisional).toBe(false);
     expect(ROAD_PREVIEW_STYLES["road.stone.t3"].provisional).toBe(false);
+  });
+});
+
+describe("measuring what a model looks like", () => {
+  /** A dense cube of vertices around the origin, as a flat xyz list. */
+  function cube(half: number, steps = 10): number[] {
+    const values: number[] = [];
+    for (let x = 0; x <= steps; x += 1) {
+      for (let y = 0; y <= steps; y += 1) {
+        for (let z = 0; z <= steps; z += 1) {
+          values.push(
+            (x / steps) * 2 * half - half,
+            (y / steps) * 2 * half - half,
+            (z / steps) * 2 * half - half
+          );
+        }
+      }
+    }
+    return values;
+  }
+
+  it("measures a solid model as itself", () => {
+    const bounds = trimmedBounds(cube(1));
+    expect(bounds).not.toBeNull();
+    const size = boundsSize(bounds ?? { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 });
+    expect(size.x).toBeGreaterThan(1.8);
+    expect(size.x).toBeLessThanOrEqual(2);
+    expect(size.y).toBeGreaterThan(1.8);
+  });
+
+  it("ignores a stray spike that a raw bounding box would frame", () => {
+    // A small subject with four stray corners far away - which is what a transparent quad around a
+    // plant looks like to a bounding box.
+    const values = [...cube(0.2)];
+    for (const corner of [
+      [-6, -1, -6],
+      [6, -1, 6],
+      [-6, 12, 6],
+      [6, -1, -6]
+    ]) {
+      values.push(corner[0] ?? 0, corner[1] ?? 0, corner[2] ?? 0);
+    }
+    const trimmed = trimmedBounds(values);
+    const raw = { x: 12, y: 13, z: 12 };
+    expect(trimmed).not.toBeNull();
+    const size = boundsSize(trimmed ?? { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 });
+    expect(size.x).toBeLessThan(raw.x / 2);
+    expect(size.y).toBeLessThan(raw.y / 2);
+  });
+
+  it("is deterministic and survives an empty model", () => {
+    const values = cube(0.5, 6);
+    expect(trimmedBounds(values)).toEqual(trimmedBounds(values));
+    expect(trimmedBounds([])).toBeNull();
+  });
+
+  it("keeps a trimmed model framed at the same visual weight as a solid one", () => {
+    const solid = thumbnailFraming(boundsSize(trimmedBounds(cube(1)) ?? { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 }));
+    const flat = thumbnailFraming({ x: 1, y: 0.3, z: 0.94 });
+    // Both are framed by their longest side, so neither can be shrunk to a speck by a thin axis.
+    expect(solid.cameraDistance).toBeGreaterThan(0);
+    expect(flat.cameraDistance).toBeGreaterThan(0);
   });
 });

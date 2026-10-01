@@ -469,11 +469,17 @@ Read `docs/decisions/0007-renderer-foundation-and-plain-typescript-client.md`, t
 
 ### Build shop, thumbnails, placement preview, and road presentation (V12.4)
 
-Read `docs/design/V12_4_VISUAL_BUILD_SHOP.md` before changing the build panel, the thumbnail renderer,
-the placement preview, or the road's surface.
+Read `docs/design/V12_4_VISUAL_BUILD_SHOP.md` and `docs/design/V12_5_CONSTRUCTION_SHOP_UX.md` before
+changing the build panel, the shop's browsing state, the thumbnail renderer, placement mode, or the
+road's surface.
 
-- Shop UI: `apps/web/src/main.ts` (`renderBuildPanel`, `buildCard`, `selectBuildEntry`),
-  `apps/web/index.html`, `apps/web/src/styles.css`, `apps/web/src/icons.ts`, `apps/web/src/i18n.ts`.
+- Shop UI: `apps/web/src/build-shop/shop-state.ts` (categories, availability, search, rotation - pure
+  and tested), `apps/web/src/build-shop/shop-view.ts` (rail, cards, inspector), and the wiring in
+  `apps/web/src/main.ts` (`renderBuildPanel`, `enterPlacement`, `rotatePlacement`, `renderPlacementHud`),
+  plus `apps/web/index.html`, `apps/web/src/styles.css`, `apps/web/src/icons.ts`, `apps/web/src/i18n.ts`.
+- Thumbnail source for the shop: `apps/web/src/build-shop/shop-thumbnails.ts` - one renderer, one URL
+  cache, so the card and the inspector share a picture. The shop renders itself when the panel opens,
+  so a session that never opens it never creates the renderer.
 - Thumbnails: `apps/web/src/render/thumbnail.ts` (the one offscreen renderer) and
   `apps/web/src/render/thumbnail-spec.ts` (the pure cache key, framing rule, and road tier previews).
 - Shared model cache: `apps/web/src/render/model-library.ts` - one `loadModel(modelId)` for the world,

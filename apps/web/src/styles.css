@@ -136,75 +136,202 @@ button .label { margin-left: .3rem; }
 .module-panel button { color: var(--parchment-ink); }
 .module-panel button.primary, .module-panel .shop-action { background: var(--leaf-strong); color: #f4fff1; }
 
-/* ---- The build shop ----------------------------------------------------------------
+/* ---- The construction shop ---------------------------------------------------------
  *
- * A construction catalogue, not a table. The panel is wide because a card is a *picture* of a thing
- * with a price under it; the category row is compact because it is navigation rather than content; and
- * the only thing that scrolls is the grid, so the heading and the categories stay where the hand and
- * the eye left them.
+ * Three areas, one flow: browse on the left, look in the middle, read before you build on the right.
+ * The rail is navigation, the grid is the content, and the inspector is the only place a PLACE button
+ * lives - so a click in the grid can never spend gold by accident.
+ *
+ * Only the grid scrolls. The header, the rail and the inspector stay where the hand and the eye left
+ * them, which is what makes browsing a long category feel like a shop rather than a document.
  */
-.module-panel-wide {
-  width: min(48rem, 68vw);
-  max-height: min(76vh, calc(100% - var(--hud-height) - var(--space-5)));
+.module-panel-build {
+  display: flex; flex-direction: column;
+  width: min(58rem, 88vw);
+  height: min(76vh, calc(100% - var(--hud-height) - var(--space-4)));
+  max-height: min(76vh, calc(100% - var(--hud-height) - var(--space-4)));
+  padding-bottom: var(--space-3);
 }
-.build-categories { display: flex; gap: var(--space-1); padding: 0 var(--space-3) var(--space-2); overflow-x: auto; scrollbar-width: none; }
-.build-categories::-webkit-scrollbar { display: none; }
-.build-category {
-  display: inline-flex; align-items: center; gap: .35rem; flex: 0 0 auto;
-  padding: .3rem .68rem; border-radius: 999px;
-  font-size: var(--text-meta); font-weight: 700; color: var(--parchment-muted);
-  background: var(--raised-surface);
-  border: 1px solid transparent;
+.build-header { align-items: center; }
+.build-header-right { display: flex; align-items: center; gap: var(--space-2); }
+.build-gold {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .18rem .5rem; border-radius: 999px;
+  font-size: var(--text-meta); font-weight: 800; font-variant-numeric: tabular-nums;
+  color: var(--forest-800); background: rgba(232, 167, 44, .18);
 }
-.build-category:hover { color: var(--parchment-ink); }
-.build-category.is-active { color: #f4fff1; background: var(--forest-700); border-color: var(--forest-800); }
-.build-category:focus-visible { outline: 2px solid var(--leaf-strong); outline-offset: 2px; }
+.build-gold svg { color: var(--gold); }
 
-.build-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
-  gap: var(--space-3); padding-top: var(--space-2);
+.build-body {
+  display: grid;
+  grid-template-columns: 7.4rem minmax(0, 1fr) 15.5rem;
+  gap: var(--space-3);
+  flex: 1 1 auto; min-height: 0;
+  padding: 0 var(--space-3);
 }
-.build-card {
-  display: flex; flex-direction: column; gap: 0;
-  padding: 0; overflow: hidden; text-align: left;
+
+/* Rail: icon over a short label, one row per category, and never a wrapped word. */
+.shop-rail { display: flex; flex-direction: column; gap: .2rem; overflow-y: auto; padding-right: .1rem; }
+.shop-rail-item {
+  display: flex; align-items: center; gap: .45rem;
+  padding: .42rem .5rem; border-radius: var(--radius-control);
+  font-size: var(--text-item); font-weight: 700; text-align: left;
+  color: var(--parchment-muted); background: transparent; border: 1px solid transparent;
+}
+.shop-rail-item:hover { color: var(--parchment-ink); background: var(--raised-surface); }
+.shop-rail-item.is-active { color: #f4fff1; background: var(--forest-700); border-color: var(--forest-800); }
+.shop-rail-item:focus-visible { outline: 2px solid var(--leaf-strong); outline-offset: 2px; }
+.shop-rail-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Centre: search above, cards below, and only the cards scroll. */
+.build-center { display: flex; flex-direction: column; min-height: 0; gap: var(--space-2); }
+.shop-search { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.shop-search-input {
+  flex: 1 1 9rem; min-width: 0;
+  padding: .36rem .6rem; border-radius: var(--radius-control);
+  font: inherit; font-size: var(--text-item); color: var(--parchment-ink);
+  background: var(--cream); border: 1px solid var(--parchment-line);
+}
+.shop-search-input:focus-visible { outline: 2px solid var(--leaf-strong); outline-offset: 1px; }
+.shop-filters { display: inline-flex; gap: .15rem; padding: .12rem; border-radius: 999px; background: var(--raised-surface); }
+.shop-filter {
+  padding: .2rem .55rem; border-radius: 999px; border: 1px solid transparent;
+  font-size: var(--text-meta); font-weight: 700; color: var(--parchment-muted); background: transparent;
+}
+.shop-filter.is-active { color: #f4fff1; background: var(--forest-700); }
+.shop-filter:focus-visible { outline: 2px solid var(--leaf-strong); outline-offset: 2px; }
+
+.shop-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* Rows are the height of the cards, never the height of the panel: `auto` rows in a grid that is also
+   * a flex item can be laid out before the pictures have a size, which is what squashed every card to a
+   * strip in the narrow layout. */
+  grid-auto-rows: max-content;
+  gap: var(--space-2); align-content: start;
+  overflow-y: auto; min-height: 0; padding-right: .15rem;
+}
+.shop-card {
+  display: flex; flex-direction: column; padding: 0; overflow: hidden; text-align: left;
   border-radius: var(--radius-control);
-  background: var(--cream);
-  border: 1px solid var(--parchment-line);
+  background: var(--cream); border: 1px solid var(--parchment-line);
   box-shadow: 0 2px 6px rgba(59, 50, 39, .08);
 }
-.build-card:hover:not(:disabled) { border-color: var(--leaf-strong); }
-.build-card:focus-visible { outline: 2px solid var(--leaf-strong); outline-offset: 2px; }
-.build-card.is-selected { border-color: var(--leaf-strong); box-shadow: 0 0 0 2px var(--leaf-strong) inset; }
-.build-card:disabled { cursor: default; }
-.build-thumb {
-  position: relative; aspect-ratio: 1 / 1; width: 100%;
-  display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(160deg, #fbf6e9 0%, #efe4cb 100%);
-  overflow: hidden;
+.shop-card:hover { border-color: var(--leaf-strong); }
+.shop-card:focus-visible { outline: 2px solid var(--leaf-strong); outline-offset: 2px; }
+.shop-card.is-selected { border-color: var(--leaf-strong); box-shadow: 0 0 0 2px var(--leaf-strong); }
+.shop-card-thumb {
+  /* A padding-box square rather than `aspect-ratio`: a percentage padding is always definite, so a card
+   * is never squashed to a strip by a grid row that sized itself before the picture existed. */
+  position: relative; width: 100%; height: 0; padding-top: 100%; overflow: hidden; flex: 0 0 auto;
+  background: radial-gradient(120% 90% at 50% 108%, #efe4cb 0%, #fbf6e9 62%);
 }
-.build-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.build-thumb .build-fallback { width: 42%; height: 42%; color: var(--parchment-muted); opacity: .55; }
-.build-card.is-locked .build-thumb img { filter: grayscale(1) brightness(.82); opacity: .7; }
-.build-lock {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  gap: .3rem; font-size: var(--text-meta); font-weight: 800; letter-spacing: .01em;
-  color: var(--cream); background: rgba(36, 31, 24, .48);
+.shop-card-thumb img, .shop-inspector-picture img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block;
 }
-.build-meta { display: flex; flex-direction: column; gap: .15rem; padding: .42rem .5rem .5rem; }
-.build-name { font-size: var(--text-item); font-weight: 700; color: var(--parchment-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.build-line { display: flex; align-items: center; justify-content: space-between; gap: .3rem; font-size: var(--text-meta); color: var(--parchment-muted); }
-.build-price { display: inline-flex; align-items: center; gap: .2rem; font-weight: 800; color: var(--forest-700); font-variant-numeric: tabular-nums; }
-.build-price svg { color: var(--gold); }
-.build-level { font-weight: 700; }
-.build-tier { font-size: var(--text-meta); color: var(--parchment-muted); }
-.build-preview {
-  margin-left: .3rem; padding: 0 .26rem; border-radius: 3px;
-  font-size: .68rem; font-weight: 800; letter-spacing: .01em;
-  color: #6b5220; background: rgba(232, 167, 44, .28);
+.shop-card-thumb .shop-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--parchment-muted); }
+.shop-card.is-locked .shop-card-thumb img { filter: grayscale(1) brightness(.82); opacity: .7; }
+.shop-card-lock {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: .3rem;
+  font-size: var(--text-meta); font-weight: 800; color: var(--cream); background: rgba(36, 31, 24, .42);
 }
-.build-status { margin: var(--space-3) 0 0; padding-top: var(--space-2); border-top: 1px solid var(--parchment-line); }
+.shop-card-preview {
+  position: absolute; right: .3rem; bottom: .3rem;
+  padding: 0 .3rem; border-radius: 3px;
+  font-size: .66rem; font-weight: 800; color: #6b5220; background: rgba(232, 167, 44, .85);
+}
+.shop-card-meta { display: flex; flex-direction: column; gap: .1rem; padding: .34rem .45rem .42rem; }
+.shop-card-name {
+  font-size: var(--text-item); font-weight: 700; color: var(--parchment-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.shop-card-line { display: flex; align-items: center; justify-content: space-between; gap: .3rem; font-size: var(--text-meta); color: var(--parchment-muted); }
+.shop-card-price { display: inline-flex; align-items: center; gap: .2rem; font-weight: 800; color: var(--forest-700); font-variant-numeric: tabular-nums; }
+.shop-card-price svg { color: var(--gold); }
+.shop-card-level { font-weight: 700; }
+.shop-empty { grid-column: 1 / -1; padding: var(--space-4) 0; color: var(--parchment-muted); text-align: center; }
+
+/* Inspector: the one place a PLACE button exists. */
+.shop-inspector {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  min-height: 0; overflow-y: auto;
+  padding: var(--space-2); border-radius: var(--radius-control);
+  background: rgba(59, 50, 39, .05); border: 1px solid var(--parchment-line);
+}
+.shop-inspector-empty { margin: 0; color: var(--parchment-muted); font-size: var(--text-meta); }
+.shop-inspector-picture {
+  position: relative; width: 100%; height: 0; padding-top: 100%; overflow: hidden; flex: 0 0 auto;
+  border-radius: var(--radius-control); background: radial-gradient(120% 90% at 50% 108%, #efe4cb 0%, #fbf6e9 62%);
+}
+.shop-inspector-name { margin: 0; font-size: var(--text-title); font-weight: 800; color: var(--parchment-ink); }
+.shop-inspector-description { margin: 0; font-size: var(--text-meta); line-height: 1.45; color: var(--parchment-muted); }
+.shop-facts { display: grid; grid-template-columns: auto 1fr; gap: .22rem .5rem; margin: 0; font-size: var(--text-meta); }
+.shop-facts dt { color: var(--parchment-muted); }
+.shop-facts dd { margin: 0; font-weight: 700; color: var(--parchment-ink); text-align: right; }
+.shop-fact-price { display: inline-flex; align-items: center; gap: .2rem; justify-content: flex-end; }
+.shop-fact-price svg { color: var(--gold); }
+.shop-inspector-state { margin: 0; font-size: var(--text-meta); color: var(--forest-700); font-weight: 700; }
+.shop-inspector-state.is-locked { color: #9c4a35; }
+.shop-inspector-state.is-preview { color: #6b5220; }
+.shop-place {
+  margin-top: auto; padding: .5rem .8rem;
+  border-radius: var(--radius-control); border: 1px solid var(--forest-800);
+  font-size: var(--text-item); font-weight: 800; letter-spacing: .02em;
+  color: #f4fff1; background: var(--leaf-strong);
+}
+.shop-place:hover:not(:disabled) { background: var(--forest-700); }
+.shop-place:disabled { color: var(--parchment-muted); background: var(--raised-surface); border-color: var(--parchment-line); }
+.shop-place:focus-visible { outline: 2px solid var(--leaf-strong); outline-offset: 2px; }
+
+.build-status { margin: var(--space-2) var(--space-3) 0; padding-top: var(--space-2); border-top: 1px solid var(--parchment-line); font-size: var(--text-meta); }
 .build-status.is-warning { color: #9c4a35; font-weight: 700; }
-.build-empty { padding: var(--space-4) 0; }
+
+/* Placement HUD: what is in hand, what it costs, whether it fits, and the keys. */
+.placement-hud {
+  position: absolute; z-index: 6; left: 50%; transform: translateX(-50%);
+  bottom: max(var(--space-3), env(safe-area-inset-bottom));
+  width: min(30rem, calc(100% - var(--space-5)));
+  display: flex; flex-direction: column; gap: .3rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-panel);
+  background: var(--hud-surface); color: var(--parchment);
+  box-shadow: 0 12px 30px rgba(6, 18, 13, .4);
+}
+.placement-hud[hidden] { display: none; }
+/* While something is in hand the dock's plant/harvest controls are noise: the HUD owns the corner. */
+body.is-placing .action-dock { display: none; }
+.placement-copy { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.placement-name { font-size: var(--text-title); }
+.placement-meta { display: inline-flex; align-items: center; gap: .3rem; font-size: var(--text-meta); color: var(--cream); }
+.placement-meta svg { color: var(--gold); }
+.placement-sep { opacity: .6; }
+.placement-state { margin: 0; font-size: var(--text-meta); font-weight: 700; }
+.placement-state.is-valid { color: #b9f0a8; }
+.placement-state.is-invalid { color: #ffbcae; }
+.placement-keys { display: flex; flex-wrap: wrap; gap: .15rem .8rem; margin: 0; padding: 0; list-style: none; font-size: var(--text-meta); color: var(--cream); }
+.placement-keys li { display: inline-flex; align-items: center; gap: .3rem; }
+.placement-keys kbd { padding: 0 .28rem; border-radius: 3px; font: inherit; font-weight: 700; background: rgba(255, 255, 255, .16); }
+.placement-note { margin: 0; font-size: .7rem; color: rgba(247, 238, 218, .72); }
+
+@media (max-width: 1180px) {
+  /* The rail keeps enough room for whole words: a truncated "Buil…" is not a category, it is a bug. */
+  .build-body { grid-template-columns: 8rem minmax(0, 1fr) 12rem; }
+  .shop-rail-item { font-size: var(--text-meta); }
+}
+@media (max-width: 980px) {
+  /* Small screens: the rail becomes a strip on top, and the inspector moves under the grid. */
+  .module-panel-build { width: min(40rem, 94vw); height: min(82vh, calc(100% - var(--hud-height) - var(--space-4))); }
+  .build-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .shop-rail { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding-bottom: .15rem; }
+  .shop-rail-item { flex: 0 0 auto; }
+  .shop-inspector { flex-direction: row; align-items: center; gap: var(--space-2); overflow: visible; }
+  .shop-inspector-picture { width: 5.2rem; flex: 0 0 auto; }
+  .shop-facts { grid-template-columns: auto 1fr; }
+  .shop-place { margin-top: 0; margin-left: auto; align-self: center; }
+  .shop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Two columns on a narrow panel would make each card most of the screen; a fixed picture keeps a
+   * screenful of the catalogue browsable. */
+  .shop-card-thumb { padding-top: 0; height: 8.5rem; }
+}
 
 .action-dock { position: absolute; z-index: 5; left: 50%; bottom: max(var(--space-3), env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(38rem, calc(100% - var(--space-5))); padding: var(--space-2) var(--space-3); border-radius: var(--radius-panel); background: var(--hud-surface); backdrop-filter: blur(8px); box-shadow: 0 12px 30px rgba(6, 18, 13, .4); }
 .action-dock[hidden] { display: none; }

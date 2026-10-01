@@ -9,6 +9,8 @@ import {
   HemisphereLight,
   Mesh,
   MeshStandardMaterial,
+  type InterleavedBufferAttribute,
+  type Object3D,
   PerspectiveCamera,
   Scene,
   Vector3,
@@ -23,6 +25,8 @@ import { TERRAIN_SHAPE, type Road } from "./world-config";
 import {
   ROAD_PREVIEW_STYLES,
   THUMBNAIL_SIZE,
+  boundsSize,
+  trimmedBounds,
   thumbnailCacheKey,
   thumbnailFraming,
   type ThumbnailRequest,
@@ -105,6 +109,8 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
       new MeshStandardMaterial({ color: 0xe6dcc4, roughness: 1 })
     );
     ground.rotation.x = -Math.PI / 2;
+    // A slightly flattened disc: a miniature presentation platform rather than a perfect circle.
+    ground.scale.set(1.08, 1, 0.94);
     ground.receiveShadow = false;
     scene.add(ground);
 
@@ -125,12 +131,14 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
     // A clone, not the cached model: the ghost and the world must not inherit a thumbnail's scale, and
     // a thumbnail must not dispose geometry the world is still drawing.
     const instance = model.clone(true);
-    const box = new Box3().setFromObject(instance);
-    const size = box.getSize(new Vector3());
-    const framing = thumbnailFraming(size);
+    // Measured from the vertices, with the outer five per cent of each axis trimmed: a bounding box is
+    // honest about vertices and dishonest about pictures, and a plant that is mostly transparent
+    // margin framed by its raw box fills a card with nothing.
+    const measured = measureModel(instance);
+    const framing = thumbnailFraming(measured.size);
     const holder = new Group();
     // Sit the object on the ground and centre it, whatever its own origin was.
-    instance.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
+    instance.position.set(-measured.center.x, -measured.min.y, -measured.center.z);
     holder.add(instance);
     holder.scale.setScalar(framing.scale);
     stageParts.scene.add(holder);
@@ -209,7 +217,8 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
     // Grass, not cream: a road card is a road in a field, which is the thing being sold.
     const grassTexture = ground?.material as MeshStandardMaterial | undefined;
     grassTexture?.color.setHex(PREVIEW_GRASS);
-    if (ground !== null) ground.scale.setScalar(length * 0.95);
+    // Wide enough that the four-cell segment sits *on* the platform rather than hanging off it.
+    if (ground !== null) ground.scale.setScalar(length * 1.35);
 
     // Frame the whole four-cell segment with grass around it: the card sells "a short piece of road in
     // a field", and a segment that runs off all four corners is a swatch, not a road.
@@ -270,6 +279,63 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
 
 function isRoadTier(value: string): value is RoadTierId {
   return (ROAD_TIERS as readonly string[]).includes(value);
+}
+
+/**
+ * What a model *looks* like: its trimmed bounds, and the centre and size a thumbnail frames.
+ *
+ * Every vertex of every mesh is gathered in the model's own space, then the outer five per cent of
+ * each axis is dropped before the box is taken. That is what lets one rule frame a barn, a pine tree,
+ * a boulder and a fern at roughly the same visual weight: the fern's card is mostly empty quad, and
+ * the boulder's is a solid lump, and their raw bounding boxes say very different things about how big
+ * they look.
+ *
+ * Falls back to the ordinary bounding box when a model has no vertices to sample, so a model that is
+ * only transforms still appears.
+ */
+function measureModel(instance: Object3D): {
+  readonly min: { readonly x: number; readonly y: number; readonly z: number };
+  readonly center: { readonly x: number; readonly y: number; readonly z: number };
+  readonly size: { readonly x: number; readonly y: number; readonly z: number };
+} {
+  instance.updateWorldMatrix(true, true);
+  const vertices: number[] = [];
+  const point = new Vector3();
+  instance.traverse((child) => {
+    if (!(child instanceof Mesh)) return;
+    const geometry = child.geometry as BufferGeometry;
+    // three's types say this is always present; at runtime a mesh without `position` is possible, and
+    // a thumbnail must survive one rather than throw inside a card.
+    const position = geometry.getAttribute("position") as
+      | BufferAttribute
+      | InterleavedBufferAttribute
+      | undefined;
+    if (position === undefined) return;
+    for (let index = 0; index < position.count; index += 1) {
+      point.set(position.getX(index), position.getY(index), position.getZ(index));
+      point.applyMatrix4(child.matrixWorld);
+      vertices.push(point.x, point.y, point.z);
+    }
+  });
+  const bounds = trimmedBounds(vertices);
+  if (bounds === null) {
+    const box = new Box3().setFromObject(instance);
+    const size = box.getSize(new Vector3());
+    return {
+      min: { x: box.min.x, y: box.min.y, z: box.min.z },
+      center: { x: (box.min.x + box.max.x) / 2, y: (box.min.y + box.max.y) / 2, z: (box.min.z + box.max.z) / 2 },
+      size: { x: size.x, y: size.y, z: size.z }
+    };
+  }
+  return {
+    min: { x: bounds.minX, y: bounds.minY, z: bounds.minZ },
+    center: {
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+      z: (bounds.minZ + bounds.maxZ) / 2
+    },
+    size: boundsSize(bounds)
+  };
 }
 
 /** Turns a surface of loose arrays into the geometry a preview mesh needs. */

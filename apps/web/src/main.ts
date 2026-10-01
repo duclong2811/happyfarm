@@ -56,13 +56,44 @@ import {
   type RenderQualityName
 } from "./render";
 import { SPAWN_WORLD } from "./render/world-config";
-import { cellKey, EMPTY_WORLD_CELL_MAP, type CellCapability, type WorldCell, type WorldCellMap } from "./render/world-cell";
+import {
+  cellKey,
+  EMPTY_WORLD_CELL_MAP,
+  worldToCell,
+  type CellCapability,
+  type WorldCell,
+  type WorldCellMap
+} from "./render/world-cell";
 import {
   previewRejection,
   rejectionMessageKey,
   type PreviewRequirement
 } from "./render/placement-preview";
-import { createThumbnailRenderer, ROAD_PREVIEW_STYLES } from "./render/thumbnail";
+import {
+  entryAvailability,
+  descriptionKeyFor,
+  isProceduralVisual,
+  normaliseQuarterTurns,
+  quarterTurnYaw,
+  resolveCategory,
+  rotatedFootprint,
+  shopCategories,
+  visibleEntries,
+  type AvailabilityFilter,
+  type ShopCategory
+} from "./build-shop/shop-state";
+import { createShopThumbnails } from "./build-shop/shop-thumbnails";
+import {
+  renderAssetGrid,
+  renderCategoryRail,
+  renderInspector,
+  renderSearchBar,
+  renderShopGold,
+  type CategoryLabelKey,
+  type ShopViewContext,
+  type ShopViewHandlers,
+  type ShopViewState
+} from "./build-shop/shop-view";
 import { movementDestination } from "./render/world-cell-selection";
 import { cellActionKey, cellLandKey, getAvailableCellActions } from "./render/world-cell-actions";
 import { createPlayerCollisionWorld } from "./player/collision";
@@ -980,37 +1011,30 @@ function shopRow(entry: ShopEntryDTO, direction: MarketDirection): HTMLDivElemen
  * Presentation only, exactly like the market's direction tab: it filters rows the catalogue already
  * labels, and it never changes what a row is or what it costs.
  */
-const BUILD_CATEGORIES = [
-  "ROAD",
-  "VEGETATION",
-  "DECORATION",
-  "FENCE",
-  "LIGHTING",
-  "UTILITY",
-  "WATERFRONT",
-  "BUILDING",
-  "MONUMENT"
-] as const;
-type BuildCategory = (typeof BUILD_CATEGORIES)[number];
+/**
+ * The shop's own browsing state: which category, what is typed in the search box, which filter, and
+ * which card is being inspected.
+ *
+ * Selection lives here rather than in `state`: it is a fact about the panel, not about the farm, and
+ * nothing outside the shop may read it.
+ */
+let buildCategory: ShopCategory = "ROAD";
+let buildQuery = "";
+let buildFilter: AvailabilityFilter = "ALL";
+let shopSelection: BuildCatalogEntryDTO | null = null;
 
-let buildCategory: BuildCategory = "ROAD";
+/** How far the item in hand has been turned, in quarter turns. Placement preview state only. */
+let placementTurns = 0;
 
 /**
- * The shop's thumbnail renderer: one offscreen canvas for the whole catalogue.
+ * The shop's thumbnail source: one renderer for the whole page, created on the first ask.
  *
- * Created on first use rather than at startup, so a session that never opens the shop never pays for
- * it, and never a *second* one - a renderer per card is the design this exists to avoid.
+ * A session that never opens the shop never creates one, and the card grid and the inspector share
+ * everything it has already drawn - which is what makes inspecting an item free.
  */
-let thumbnails: ReturnType<typeof createThumbnailRenderer> | null = null;
-
-function thumbnailRenderer(): ReturnType<typeof createThumbnailRenderer> {
-  thumbnails ??= createThumbnailRenderer({
-    onProblem: (modelId) => {
-      reportMissingThumbnail(modelId);
-    }
-  });
-  return thumbnails;
-}
+const shopThumbnails = createShopThumbnails((modelId) => {
+  reportMissingThumbnail(modelId);
+});
 
 /** A thumbnail that could not be drawn is worth saying once, quietly, on the status line. */
 let reportedThumbnailProblem = false;
@@ -1021,7 +1045,7 @@ function reportMissingThumbnail(modelId: string): void {
 }
 
 /** The translation key for a category, spelled out so the translator stays total. */
-function buildCategoryKey(category: BuildCategory): MessageKey {
+function buildCategoryKey(category: ShopCategory): CategoryLabelKey {
   switch (category) {
     case "ROAD":
       return "build.category.road";
@@ -1045,7 +1069,7 @@ function buildCategoryKey(category: BuildCategory): MessageKey {
 }
 
 /** The glyph a category tab wears, from the same icon set the rest of the HUD uses. */
-function buildCategoryIcon(category: BuildCategory): IconName {
+function buildCategoryIcon(category: ShopCategory): IconName {
   switch (category) {
     case "ROAD":
       return "road";
@@ -1069,66 +1093,144 @@ function buildCategoryIcon(category: BuildCategory): IconName {
 }
 
 /**
- * The build panel: what the island lets a player place, and what the catalogue says it costs.
+ * The construction shop: browse on the left, look in the middle, inspect on the right.
  *
- * A catalogue, not a shop. Every row is read from the server's own list, the level a row needs is
- * compared against the player's progression, and a row the player cannot afford or has not unlocked
- * says so - but *nothing here buys anything*. Placing an object is a command the server does not
- * accept yet, so the panel says that plainly rather than pretending a click built something.
+ * Three areas and one flow. The rail picks a category, the grid shows what things look like, and the
+ * inspector is where a player reads the price, the level and the footprint before pressing PLACE.
+ * Clicking a card only *selects* it - a purchase is not a side effect of browsing, and the placement
+ * pass that follows is a picture of an intention rather than a transaction.
+ *
+ * Everything the shop says about an item comes from the catalogue or from translations. Prices,
+ * levels, footprints, tiers and unlock rules are never restated in this file.
  */
 function renderBuildPanel(): void {
-  const tabs = element<HTMLDivElement>("build-tabs");
-  tabs.replaceChildren();
-  for (const category of BUILD_CATEGORIES) {
-    // A category with nothing in it is not a tab: an empty shelf is worse than no shelf, and the
-    // authoritative catalogue is what decides - MONUMENT has no asset, so it has no tab.
-    if (!state.buildCatalog.some((entry) => entry.category === category)) continue;
-    const tab = make("button", "build-category", t(buildCategoryKey(category)));
-    tab.type = "button";
-    const active = category === buildCategory;
-    tab.classList.toggle("is-active", active);
-    tab.setAttribute("role", "tab");
-    tab.setAttribute("aria-selected", active ? "true" : "false");
-    // `insertBefore` rather than `prepend`: the Workers lib declares its own `prepend` for request
-    // bodies, and the two signatures do not agree.
-    tab.insertBefore(createIcon(buildCategoryIcon(category), 15), tab.firstChild);
-    tab.addEventListener("click", () => {
-      buildCategory = category;
-      renderBuildPanel();
-    });
-    tabs.appendChild(tab);
-  }
+  const categories = shopCategories(state.buildCatalog);
+  buildCategory = resolveCategory(state.buildCatalog, buildCategory) ?? buildCategory;
+  const view = currentShopView(categories);
+  const context = shopContext();
+  const handlers = shopHandlers();
 
-  const container = element<HTMLDivElement>("build-rows");
-  container.replaceChildren();
-  const entries = state.buildCatalog.filter((entry) => entry.category === buildCategory);
-  if (entries.length === 0) {
-    container.appendChild(make("p", "muted build-empty", t("build.empty")));
-    renderBuildStatus();
-    return;
-  }
-  const level = state.progression?.level ?? 1;
-  for (const entry of entries) {
-    container.appendChild(buildCard(entry, level));
-  }
+  renderShopGold(element<HTMLElement>("build-gold"), view, context);
+  renderCategoryRail(element<HTMLElement>("build-rail"), view, context, handlers);
+  renderSearchBar(element<HTMLElement>("build-search"), view, context, handlers);
+  renderAssetGrid(element<HTMLElement>("build-rows"), view, context, handlers);
+  renderInspector(element<HTMLElement>("build-inspector"), view, context, handlers);
   renderBuildStatus();
 }
 
-/** The status line under the grid: what is selected, what it will cost, and where it may go. */
+/**
+ * The pieces of shop state the view needs, derived in one place.
+ *
+ * `visible` is the searched and filtered category; `categorySize` is how many entries the category
+ * holds at all, which is the difference between "this category is empty" and "nothing matched".
+ */
+function currentShopView(categories: readonly ShopCategory[]): ShopViewState {
+  const level = state.progression?.level ?? 1;
+  const inCategory = state.buildCatalog.filter((entry) => entry.category === buildCategory);
+  return {
+    category: buildCategory,
+    categories,
+    query: buildQuery,
+    filter: buildFilter,
+    playerLevel: level,
+    selected: shopSelection,
+    visible: visibleEntries(state.buildCatalog, {
+      category: buildCategory,
+      query: buildQuery,
+      filter: buildFilter,
+      playerLevel: level,
+      nameOf: buildEntryName
+    }),
+    categorySize: inCategory.length,
+    goldText: goldText()
+  };
+}
+
+/** Re-renders the browsing areas and the inspector: what a keystroke in the search box costs. */
+function refreshShopBrowsing(): void {
+  const view = currentShopView(shopCategories(state.buildCatalog));
+  const context = shopContext();
+  const handlers = shopHandlers();
+  renderAssetGrid(element<HTMLElement>("build-rows"), view, context, handlers);
+  renderInspector(element<HTMLElement>("build-inspector"), view, context, handlers);
+  renderBuildStatus();
+}
+
+function shopHandlers(): ShopViewHandlers {
+  return {
+    onCategory: (category) => {
+      buildCategory = category;
+      renderBuildPanel();
+    },
+    onSearch: (query) => {
+      buildQuery = query;
+      // Only the browsing area redraws, so the search box keeps focus and the world is untouched.
+      refreshShopBrowsing();
+    },
+    onFilter: (filter) => {
+      buildFilter = filter;
+      refreshShopBrowsing();
+    },
+    onSelect: (entry) => {
+      // Selection is inspection, not purchase: the card gets a border and the inspector fills in.
+      shopSelection = entry;
+      refreshShopBrowsing();
+    },
+    onPlace: () => {
+      if (shopSelection === null) return;
+      if (entryAvailability(shopSelection, state.progression?.level ?? 1) !== "AVAILABLE") return;
+      enterPlacement(shopSelection);
+    }
+  };
+}
+
+function shopContext(): ShopViewContext {
+  return {
+    t,
+    icon: (name, size) => createIcon(name, size),
+    categoryLabelKey: buildCategoryKey,
+    categoryIcon: buildCategoryIcon,
+    nameOf: buildEntryName,
+    descriptionOf: buildEntryDescription,
+    priceOf: buildPriceText,
+    cachedThumbnail: (entry) => shopThumbnails.cached(entry),
+    requestThumbnail: (entry, image) => {
+      void shopThumbnails
+        .request(entry)
+        .then((result) => {
+          if (result.dataUrl !== null) image.src = result.dataUrl;
+        })
+        .catch(() => {
+          // A thumbnail is decoration: a picture that cannot be drawn leaves the card's background.
+        });
+    },
+    upgradeNameOf: (entry) => {
+      if (entry.upgradeTo === null) return null;
+      const next = state.buildCatalog.find((candidate) => candidate.entryId === entry.upgradeTo);
+      return next === undefined ? null : buildEntryName(next);
+    }
+  };
+}
+
+/** The status line under the shop: what is selected, and whether it can be built today. */
 function renderBuildStatus(): void {
   const node = element<HTMLParagraphElement>("build-status");
-  const selected = state.buildSelection;
   node.classList.remove("is-warning");
-  if (selected === null) {
+  if (shopSelection === null) {
     node.textContent = t("build.catalogOnly");
     return;
   }
-  const rejection = placementRejectionFor(selected);
-  node.textContent =
-    rejection === null
-      ? t("build.status.ready", { item: buildEntryName(selected) })
-      : t("build.status.blocked", { item: buildEntryName(selected), reason: t(rejection) });
-  node.classList.toggle("is-warning", rejection !== null);
+  const availability = entryAvailability(shopSelection, state.progression?.level ?? 1);
+  if (availability === "LOCKED") {
+    node.classList.add("is-warning");
+    node.textContent = t("build.unlocksAt", { level: shopSelection.requiredLevel });
+    return;
+  }
+  if (availability === "PREVIEW_ONLY") {
+    node.textContent = t("build.previewOnly");
+    return;
+  }
+  node.textContent = t("build.status.selected", { item: buildEntryName(shopSelection) });
 }
 
 /** The shop's name for an entry: a translation when the client has one, else the catalogue's label. */
@@ -1137,113 +1239,25 @@ function buildEntryName(entry: BuildCatalogEntryDTO): string {
 }
 
 /**
- * One card: the picture is the card, and the text is a caption under it.
+ * The shop's description for an entry.
  *
- * Everything the card says comes from the catalogue - price, level, tier, footprint - and nothing is
- * restated here, so a rebalance on the server changes the shop without a client release. The
- * thumbnail is asked for on demand and cached in the renderer, so a card that has been seen costs
- * nothing the second time.
+ * A description is presentation: the catalogue's own key when it has one, else the client's mapping
+ * for that stable id, else nothing at all - which is honest, and never an internal id on screen.
  */
-function buildCard(entry: BuildCatalogEntryDTO, level: number): HTMLButtonElement {
-  const locked = level < entry.requiredLevel;
-  const card = make("button", "build-card");
-  card.type = "button";
-  card.classList.toggle("is-locked", locked);
-  card.classList.toggle("is-selected", state.buildSelection?.entryId === entry.entryId);
-  card.disabled = locked;
-  card.setAttribute(
-    "aria-label",
-    locked
-      ? t("build.requiresLevel", { level: entry.requiredLevel })
-      : `${buildEntryName(entry)}, ${String(entry.price)}`
-  );
-
-  const thumb = make("div", "build-thumb");
-  thumb.appendChild(buildSkeleton());
-  card.appendChild(thumb);
-  void loadThumbnail(entry, thumb);
-  if (locked) {
-    const lock = make("div", "build-lock");
-    lock.appendChild(createIcon("lock", 14));
-    lock.appendChild(make("span", undefined, t("build.levelShort", { level: entry.requiredLevel })));
-    thumb.appendChild(lock);
-  }
-
-  const meta = make("div", "build-meta");
-  meta.appendChild(make("span", "build-name", buildEntryName(entry)));
-  const line = make("div", "build-line");
-  const price = make("span", "build-price");
-  price.appendChild(createIcon("coin", 13));
-  price.appendChild(make("span", undefined, entry.price.toLocaleString(state.language)));
-  line.appendChild(price);
-  line.appendChild(make("span", "build-level", t("build.levelShort", { level: entry.requiredLevel })));
-  meta.appendChild(line);
-  if (entry.tierRank !== null) {
-    const tier = make("span", "build-tier", t("build.tier", { tier: entry.tierRank }));
-    // Gravel and paved have a thumbnail identity but no runtime surface yet, and the card says so
-    // rather than selling a picture of a road the island cannot build.
-    if (isProvisionalRoadTier(entry)) tier.appendChild(make("span", "build-preview", t("build.preview")));
-    meta.appendChild(tier);
-  }
-  card.appendChild(meta);
-
-  if (!locked) {
-    card.addEventListener("click", () => {
-      selectBuildEntry(entry);
-    });
-  }
-  return card;
+function buildEntryDescription(entry: BuildCatalogEntryDTO): string {
+  const key = descriptionKeyFor(entry);
+  return key === null ? "" : displayName(state.language, key, "");
 }
 
-/** A neutral placeholder while a thumbnail is being drawn or when nothing can be drawn. */
-function buildSkeleton(): HTMLElement {
-  const holder = make("div", "build-fallback");
-  holder.appendChild(createIcon("build", 34));
-  return holder;
+/** The price, formatted for the language the player is reading. The coin icon carries the currency. */
+function buildPriceText(entry: BuildCatalogEntryDTO): string {
+  return entry.price.toLocaleString(state.language);
 }
 
-/**
- * Fills a card's thumbnail.
- *
- * The renderer owns the cache, so this is deliberately dumb: ask, and either swap in the picture or
- * leave the silhouette. A model that fails to load is a silhouette on one card, never a broken image
- * icon and never a crash.
- */
-async function loadThumbnail(entry: BuildCatalogEntryDTO, holder: HTMLElement): Promise<void> {
-  const modelId = entry.modelId !== null && !isProceduralVisual(entry.modelId) ? entry.modelId : null;
-  const roadTierId = entry.category === "ROAD" ? entry.tier : null;
-  if (modelId === null && roadTierId === null) return;
-  try {
-    const result = await thumbnailRenderer().render({ modelId, roadTierId });
-    if (result.dataUrl === null) return;
-    const image = make("img");
-    image.src = result.dataUrl;
-    image.alt = "";
-    image.decoding = "async";
-    // Only the placeholder goes: a locked card's overlay is a sibling, and replacing *all* the
-    // children here is what used to wipe the lock badge the moment a picture arrived.
-    holder.querySelector(".build-fallback")?.remove();
-    holder.insertBefore(image, holder.firstChild);
-  } catch {
-    // A thumbnail is decoration: if it cannot be drawn, the silhouette stays and the shop works.
-  }
-}
-
-/** Road visuals are drawn by the client rather than loaded, so they are not GLB ids. */
-function isProceduralVisual(modelId: string): boolean {
-  return modelId.startsWith("road.");
-}
-
-/**
- * Whether a road card is selling a tier the island can already draw.
- *
- * Dirt and stone have runtime surfaces; gravel and paved have a preview colour and nothing else. The
- * flag lives with the preview styles - the same table the thumbnail and the ghost draw from - so the
- * badge cannot drift away from what the picture shows.
- */
-function isProvisionalRoadTier(entry: BuildCatalogEntryDTO): boolean {
-  if (entry.category !== "ROAD" || entry.tier === null) return false;
-  return ROAD_PREVIEW_STYLES[entry.tier as keyof typeof ROAD_PREVIEW_STYLES].provisional;
+/** The player's own gold, read from the wallet the server reports. Never a second local balance. */
+function goldText(): string {
+  const gold = state.wallet.find((entry) => entry.currencyId === "currency_gold");
+  return (gold?.balance ?? 0).toLocaleString(state.language);
 }
 
 /** The capability a catalogue entry asks of a cell, as the world's own vocabulary spells it. */
@@ -1251,11 +1265,14 @@ function capabilityOf(entry: BuildCatalogEntryDTO): CellCapability {
   return entry.capability as CellCapability;
 }
 
-/** The requirement the preview rule reads, taken entirely from the catalogue entry. */
-function previewRequirement(entry: BuildCatalogEntryDTO): PreviewRequirement {
+/** The requirement the preview rule reads, taken entirely from the catalogue entry and its rotation. */
+function previewRequirement(
+  entry: BuildCatalogEntryDTO,
+  footprint: { readonly widthCells: number; readonly depthCells: number }
+): PreviewRequirement {
   return {
     capability: capabilityOf(entry),
-    footprint: entry.footprint,
+    footprint,
     isRoad: entry.category === "ROAD",
     // Everything a player builds goes on land the player has. The catalogue says so per entry; today
     // every entry says `OWNED_LAND`, and the field is what lets a later civic item say otherwise.
@@ -1264,37 +1281,67 @@ function previewRequirement(entry: BuildCatalogEntryDTO): PreviewRequirement {
 }
 
 /**
- * Why the selected entry cannot go on the selected cell, or null when it can.
+ * Why the entry in hand cannot go on the selected cell, or null when it can.
  *
  * The rule is the placement-preview module's; this only feeds it the two things it needs.
  */
-function placementRejectionFor(entry: BuildCatalogEntryDTO): MessageKey | null {
+function placementRejectionFor(
+  entry: BuildCatalogEntryDTO,
+  footprint: { readonly widthCells: number; readonly depthCells: number }
+): MessageKey | null {
   if (scene === null) return null;
-  const rejection = previewRejection(state.cellMap, state.selected, previewRequirement(entry));
+  const rejection = previewRejection(state.cellMap, state.selected, previewRequirement(entry, footprint));
   return rejection === null ? null : (rejectionMessageKey(rejection) as MessageKey);
 }
 
 /**
- * Picks an entry up: the shop closes, the ghost appears on the selected cell, and the status line
- * explains what the player is holding.
+ * The footprint the item in hand actually occupies, once its rotation is taken into account.
+ *
+ * A road is the awkward one: its direction comes from the camera as well as from the player's turns,
+ * because a road is laid along the axis the player is looking down. Everything else is turned by the
+ * player alone, so a 2x3 building becomes 3x2 at a quarter turn.
+ */
+function placementFootprint(entry: BuildCatalogEntryDTO): {
+  readonly widthCells: number;
+  readonly depthCells: number;
+} {
+  if (entry.category !== "ROAD") return rotatedFootprint(entry.footprint, placementTurns);
+  const cameraQuarters = Math.round(roadPreviewYaw() / (Math.PI / 2));
+  return rotatedFootprint(entry.footprint, normaliseQuarterTurns(cameraQuarters + placementTurns));
+}
+
+/** Where the ghost faces: the player's turns, plus the road's camera-derived starting direction. */
+function previewRotationY(entry: BuildCatalogEntryDTO): number {
+  const turned = quarterTurnYaw(placementTurns);
+  return entry.category === "ROAD" ? roadPreviewYaw() + turned : turned;
+}
+
+/**
+ * Picks an entry up: the shop closes, the ghost appears, and the placement HUD explains the rest.
  *
  * Deliberately *not* a purchase. The card is a catalogue row, the ghost is a picture of an intention,
  * and the moment this stops being true is the moment the server has a placement command to send.
  */
-function selectBuildEntry(entry: BuildCatalogEntryDTO): void {
+function enterPlacement(entry: BuildCatalogEntryDTO): void {
   state.buildSelection = entry;
+  placementTurns = 0;
   setActivePanel(NO_PANEL);
-  const rejection = placementRejectionFor(entry);
-  scene?.setPlacementPreview({
-    modelId: entry.modelId !== null && !isProceduralVisual(entry.modelId) ? entry.modelId : null,
-    roadTierId: entry.category === "ROAD" ? entry.tier : null,
-    widthCells: entry.footprint.widthCells,
-    depthCells: entry.footprint.depthCells,
-    valid: rejection === null,
-    // A road runs along the axis the camera is facing; everything else is placed square to the world,
-    // which is what the world's own buildings do.
-    rotationY: entry.category === "ROAD" ? roadPreviewYaw() : 0
-  });
+  // Pick a cell to hold the item *before* the camera moves: the one the player selected, or the cell
+  // the camera is already looking at. Placement always starts somewhere concrete, and the camera comes
+  // close enough that a one-cell item is an object rather than a speck.
+  const focus =
+    state.selected ??
+    (scene === null ? null : worldToCell({ worldX: scene.cameraFrame().targetX, worldZ: scene.cameraFrame().targetZ }));
+  if (focus !== null) {
+    state.selected = focus;
+    scene?.setSelection(focus);
+    scene?.focusOnCell(focus);
+    renderField();
+    renderSelection();
+  }
+  updatePlacementPreview();
+  renderPlacementHud();
+  const rejection = placementRejectionFor(entry, placementFootprint(entry));
   setStatus(
     (translate) =>
       rejection === null
@@ -1309,11 +1356,109 @@ function selectBuildEntry(entry: BuildCatalogEntryDTO): void {
   );
 }
 
+/** Draws the item in hand on the selected cell: the ghost, its footprint, and whether it fits. */
+function updatePlacementPreview(): void {
+  const entry = state.buildSelection;
+  if (entry === null) {
+    scene?.setPlacementPreview(null);
+    return;
+  }
+  const footprint = placementFootprint(entry);
+  scene?.setPlacementPreview({
+    modelId: entry.modelId !== null && !isProceduralVisual(entry.modelId) ? entry.modelId : null,
+    roadTierId: entry.category === "ROAD" ? entry.tier : null,
+    widthCells: footprint.widthCells,
+    depthCells: footprint.depthCells,
+    valid: placementRejectionFor(entry, footprint) === null,
+    rotationY: previewRotationY(entry)
+  });
+}
+
+/**
+ * Turns the item in hand a quarter turn.
+ *
+ * Only the preview is rebuilt: no world rebuild, no renderer, no model reload, no catalogue fetch.
+ */
+function rotatePlacement(step: number): void {
+  const entry = state.buildSelection;
+  if (entry === null) return;
+  if (!entry.rotatable) {
+    setStatus(message("build.notRotatable"));
+    return;
+  }
+  placementTurns = normaliseQuarterTurns(placementTurns + step);
+  updatePlacementPreview();
+  renderPlacementHud();
+}
+
+/**
+ * The compact placement HUD: what is in hand, what it costs, where it may go, and the controls.
+ *
+ * Preview only. Nothing here spends gold or writes state, so the confirm line says what a click does
+ * rather than promising a building.
+ */
+function renderPlacementHud(): void {
+  const node = element<HTMLElement>("placement-hud");
+  const entry = state.buildSelection;
+  if (entry === null) {
+    node.hidden = true;
+    node.replaceChildren();
+    document.body.classList.remove("is-placing");
+    return;
+  }
+  node.hidden = false;
+  // The dock's plant/harvest controls are not what a player is doing while something is in hand.
+  document.body.classList.add("is-placing");
+  node.replaceChildren();
+
+  const footprint = placementFootprint(entry);
+  const rejection = placementRejectionFor(entry, footprint);
+
+  const copy = make("div", "placement-copy");
+  copy.appendChild(make("strong", "placement-name", buildEntryName(entry)));
+  const meta = make("span", "placement-meta");
+  meta.appendChild(createIcon("coin", 13));
+  meta.appendChild(make("span", undefined, buildPriceText(entry)));
+  meta.appendChild(make("span", "placement-sep", "·"));
+  meta.appendChild(
+    make(
+      "span",
+      undefined,
+      t("build.inspector.cells", { width: footprint.widthCells, depth: footprint.depthCells })
+    )
+  );
+  copy.appendChild(meta);
+  node.appendChild(copy);
+
+  const line = make("p", rejection === null ? "placement-state is-valid" : "placement-state is-invalid");
+  const where = state.selected === null ? "" : ` ${at(state.selected)}`;
+  line.textContent =
+    (rejection === null
+      ? t("build.validLocation")
+      : t("build.cannotPlace", { reason: t(rejection) })) + where;
+  node.appendChild(line);
+
+  const keys = make("ul", "placement-keys");
+  const entryFor = (keysText: string, label: string): HTMLLIElement => {
+    const item = make("li");
+    item.appendChild(make("kbd", undefined, keysText));
+    item.appendChild(make("span", undefined, label));
+    return item;
+  };
+  if (entry.rotatable) keys.appendChild(entryFor("Q / E", t("build.hud.rotate")));
+  keys.appendChild(entryFor(t("build.hud.clickKey"), t("build.hud.move")));
+  keys.appendChild(entryFor("Esc", t("build.hud.cancel")));
+  node.appendChild(keys);
+  node.appendChild(make("p", "placement-note", t("build.hud.previewNote")));
+}
+
 /** Puts the entry down: no ghost, no footprint, no selection - and nothing was ever spent. */
 function cancelBuildSelection(): void {
   if (state.buildSelection === null) return;
   state.buildSelection = null;
+  placementTurns = 0;
   scene?.setPlacementPreview(null);
+  renderPlacementHud();
   setStatus(message("status.placementCancelled"));
 }
 
@@ -1337,7 +1482,8 @@ function renderChrome(): void {
   element<HTMLElement>("gold-label").textContent = t("hud.gold");
   element<HTMLElement>("inventory-title").textContent = t("panel.inventory");
   element<HTMLElement>("build-title").textContent = t("panel.build");
-  element<HTMLElement>("build-tabs").setAttribute("aria-label", t("build.categories"));
+  element<HTMLElement>("build-rail").setAttribute("aria-label", t("build.categories"));
+  element<HTMLElement>("build-search").setAttribute("aria-label", t("build.search"));
   element<HTMLElement>("land-title").textContent = t("panel.land");
   element<HTMLElement>("market-title").textContent = t("panel.market");
   element<HTMLElement>("module-rail").setAttribute("aria-label", t("hud.modules"));
@@ -1368,7 +1514,8 @@ function render(): void {
   renderGo();
   renderInventory();
   renderShop();
-  renderBuildPanel();
+  // The shop's own render is driven by the panel: see `setActivePanel`.
+  if (panels.active === "build") renderBuildPanel();
   renderStatus();
   renderSceneState();
   syncLayoutMetrics();
@@ -1438,6 +1585,9 @@ function setActivePanel(next: PanelState): void {
   panels = next;
   renderPanels();
   syncLayoutMetrics();
+  // The shop draws itself when it is opened, and only then: a session that never opens it never asks
+  // for a thumbnail, and so never creates the offscreen renderer those thumbnails need.
+  if (panels.active === "build") renderBuildPanel();
 }
 
 /**
@@ -1618,10 +1768,17 @@ function selectCell(x: number, y: number): void {
   refreshScene();
   scene?.setSelection(state.selected);
   // While an item is in hand, a click is also "put it here": the ghost follows the selection and the
-  // status line re-reads whether this cell would accept it.
+  // placement HUD re-reads whether this cell would accept it.
   if (state.buildSelection !== null) {
-    selectBuildEntry(state.buildSelection);
-    renderBuildPanel();
+    updatePlacementPreview();
+    renderPlacementHud();
+    setStatus(
+      (translate) =>
+        translate("status.placing", {
+          item: buildEntryName(state.buildSelection as BuildCatalogEntryDTO),
+          at: at(state.selected)
+        })
+    );
   }
   // Clicking the ground is also how a player says "walk there". The destination is offered only for
   // a cell a character can actually stand on, and it is never an *action*: planting and harvesting
@@ -2144,12 +2301,26 @@ function wire(): void {
     );
   }
   document.addEventListener("keydown", (event) => {
+    // A key typed into the search box belongs to the search box, not to the item in hand.
+    const target = event.target;
+    const typing =
+      target instanceof HTMLElement &&
+      (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+    // Turn the item in hand. Q and E are the shop's own keys: they exist only in placement mode, so
+    // they cannot collide with the camera or with the field's own shortcuts.
+    if (!typing && state.buildSelection !== null && (event.key === "q" || event.key === "Q")) {
+      rotatePlacement(-1);
+      return;
+    }
+    if (!typing && state.buildSelection !== null && (event.key === "e" || event.key === "E")) {
+      rotatePlacement(1);
+      return;
+    }
     if (event.key !== "Escape") return;
-    // Escape lets go of whatever the page is holding, innermost first: the item in hand, then the open
+    // Escape lets go of whatever the page is holding, innermost first: the item in hand, then the
     // panel. Cancelling a placement must leave nothing behind - no ghost, no footprint, no state.
     if (state.buildSelection !== null) {
       cancelBuildSelection();
-      renderBuildPanel();
       return;
     }
     if (panels.active !== null) setActivePanel(closePanel(panels));

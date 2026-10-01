@@ -48,17 +48,26 @@
         <div id="market-body" class="module-body"><div id="shop" class="shop-rows"></div></div>
       </aside>
 
-      <aside id="build-panel" class="module-panel module-panel-wide" aria-labelledby="build-title" hidden>
-        <header class="module-header">
+      <aside id="build-panel" class="module-panel module-panel-build" aria-labelledby="build-title" hidden>
+        <header class="module-header build-header">
           <h2 id="build-title">Build</h2>
-          <button id="build-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
+          <div class="build-header-right">
+            <span id="build-gold" class="build-gold"></span>
+            <button id="build-close" class="panel-close" type="button" aria-label="Close"><span data-icon="close" data-icon-size="16"></span></button>
+          </div>
         </header>
-        <div class="market-tabs build-categories" id="build-tabs" role="tablist" aria-label="Build categories"></div>
-        <div id="build-body" class="module-body">
-          <div id="build-rows" class="build-grid"></div>
-          <p id="build-status" class="build-status muted"></p>
+        <div class="build-body">
+          <nav id="build-rail" class="shop-rail" role="tablist" aria-label="Build categories"></nav>
+          <section class="build-center">
+            <div id="build-search" class="shop-search"></div>
+            <div id="build-rows" class="shop-grid"></div>
+          </section>
+          <aside id="build-inspector" class="shop-inspector" aria-label="Selected asset"></aside>
         </div>
+        <p id="build-status" class="build-status muted"></p>
       </aside>
+
+      <section id="placement-hud" class="placement-hud" aria-label="Placement" hidden></section>
 
       <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>
         <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>

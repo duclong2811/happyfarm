@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { rotatedFootprint } from "../../apps/web/src/build-shop/shop-state";
 import {
   footprintCells,
   previewRejection,
@@ -149,5 +150,36 @@ describe("the reason line", () => {
     for (const key of keys) {
       expect(key.startsWith("build.reason.")).toBe(true);
     }
+  });
+});
+
+describe("a rotated footprint", () => {
+  /** A three-wide, two-deep strip of owned land: enough for a 3x2 item and not for a 2x3 one. */
+  function wideStrip(): typeof EMPTY_WORLD_CELL_MAP {
+    const cells: WorldCell[] = [];
+    for (let x = 0; x < 3; x += 1) {
+      for (let y = 0; y < 2; y += 1) cells.push(cell(x, y));
+    }
+    return mapOf(...cells);
+  }
+
+  const barn: PreviewRequirement = {
+    capability: "BUILD",
+    footprint: { widthCells: 2, depthCells: 3 },
+    isRoad: false,
+    requiresOwnership: true
+  };
+
+  it("is what the rule checks, not the catalogue's own numbers", () => {
+    const map = wideStrip();
+    // Upright, the barn needs three cells of depth and the strip has two.
+    expect(previewRejection(map, { x: 1, y: 0 }, barn)).toBe("OUTSIDE_ISLAND");
+    // Turned a quarter, the same barn is three wide and two deep, which is exactly the strip.
+    const turned = rotatedFootprint(barn.footprint, 1);
+    expect(previewRejection(map, { x: 1, y: 0 }, { ...barn, footprint: turned })).toBeNull();
+  });
+
+  it("returns to the catalogue's own footprint after a half turn", () => {
+    expect(rotatedFootprint(barn.footprint, 2)).toEqual(barn.footprint);
   });
 });
