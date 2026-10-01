@@ -110,6 +110,13 @@ export type DistrictGround = "NONE" | "PLAZA" | "ORCHARD" | "PASTURE" | "WETLAND
  * A blob rather than a rectangle - centre, two radii, a rotation - so no district has a straight
  * edge anywhere except where a road or the reserve itself gives it one. Districts are *rules for
  * ground and vegetation*, never ownership: a district does not unlock, block, or price anything.
+ *
+ * **A district is landscape, never a production plan.** The V12 direction moved the island off
+ * fixed production districts and onto player-built land: the ground says what it *can* support
+ * (`CellCapability` in `world-cell.ts`), the player owns it, and what they place decides what it
+ * becomes. Nothing may reintroduce a "this blob is the orchard" rule - see
+ * `docs/design/WORLD_V12_PLAYER_BUILT_ISLAND.md`. The rows below are drawn as vegetation, and every
+ * one of them would look the same if the player deleted it and planted something else.
  */
 export interface District {
   readonly id: string;
@@ -347,212 +354,166 @@ export function districtAt(tile: TileCoordinate): District | null {
 export type RoadKind = "PRIMARY" | "SECONDARY" | "PATH";
 
 /**
- * A road: a polyline through the landscape, plus the class that decides how wide it is drawn.
+ * The places the road network has to reach, by name.
  *
- * Roads are the map's explanation. The primary road runs from the settlement past the field's south
- * gate to the harbour; the secondary roads reach the orchard, the pasture, the pond, and the woods;
- * the paths are the last few metres into a place. All of them run *around* the reserved field rather
- * than through it, so no road ever crosses a tile the farm can own.
+ * A road names the stops it makes rather than only the pixels it passes through, so "is every
+ * district connected" is a question about a graph instead of a question about a screenshot. The
+ * anchor is the tile a stop sits on; the road's own waypoints are what make the shape.
+ */
+export type RoadNodeId =
+  | "harbour"
+  | "harbour_yard"
+  | "civic"
+  | "plaza"
+  | "farm_hub"
+  | "agriculture"
+  | "orchard"
+  | "forestry"
+  | "freshwater"
+  | "mining";
+
+/**
+ * A road: a polyline through the landscape, the class that decides how wide it is drawn, and the
+ * stops along it.
+ *
+ * Roads are the map's explanation. One stone spine runs from the harbour, through the harbour yard
+ * and the settlement's square, to the farm hub. Dirt roads leave that hub for the orchard, the
+ * managed wood, the lake, and the quarry reserve. Paths are the last few metres into a place - a
+ * lane between two fields, a lane under the orchard rows, a footpath to the water.
+ *
+ * Every `PRIMARY` and `SECONDARY` road runs *around* the reserved field rather than through it: a
+ * plot the catalogue sells must never have a highway crossing it. A `PATH` may cross the reserve,
+ * because the farm track is how a tractor gets between two fields and that is exactly where it
+ * belongs.
  */
 export interface Road {
   readonly id: string;
   readonly kind: RoadKind;
+  /** The stops this road passes through, in order. Consecutive pairs are the graph's edges. */
+  readonly connects: readonly RoadNodeId[];
   readonly points: readonly TileCoordinate[];
 }
 
-/** How wide each class of road is drawn, in tiles. */
+/**
+ * How wide each class of road is drawn, in tiles.
+ *
+ * Three classes, three widths, and the gaps between them are wide enough to read from the estate
+ * camera: a stone spine is nearly twice a dirt road, and a dirt road is half again a field track.
+ */
 export const ROAD_WIDTH_TILES: Readonly<Record<RoadKind, number>> = {
-  PRIMARY: 2.6,
-  SECONDARY: 1.5,
-  PATH: 0.9
+  PRIMARY: 2.9,
+  SECONDARY: 1.7,
+  PATH: 1.1
 };
 
 export const ROADS: readonly Road[] = [
   {
-    id: "primary",
+    id: "harbour_spine",
     kind: "PRIMARY",
+    connects: ["harbour", "harbour_yard", "civic", "plaza"],
     points: [
-      // The ring road. One primary goes the whole way round the agricultural heartland: out of the
-      // quay at the south-east bay, up the waterfront to the town, west along the wood's southern
-      // edge, down the orchard's shoulder, south past the pasture and the managed wood, east along
-      // the meadow to the field's own south gate and the spawn, and back to the harbour. That is the
-      // skeleton the territory is organised around, and it is deliberately *around* the reserve: the
-      // square the catalogue sells is the one piece of ground no road may cross.
+      // The stone spine, in the order a cart travels it: off the quay at the south-east bay, up the
+      // waterfront, and into the settlement. It hugs the island's east flank so it never has to cross
+      // the reserve, and it climbs nothing: the harbour yard and the town are both held flat.
+      //
+      // It stops at the square. Past the village the road is the *player's* - this is the V12
+      // direction's one authored highway, the harbour-to-village connection, and everything beyond
+      // the settlement is ground somebody has to build on.
       { x: 53, y: 53 },
-      { x: 50, y: 52 },
-      { x: 46, y: 49 },
-      { x: 42, y: 45 },
-      { x: 40, y: 38 },
-      { x: 41, y: 28 },
-      { x: 42, y: 18 },
-      { x: 42, y: 8 },
-      { x: 42, y: -1 },
-      { x: 40, y: -8 },
-      { x: 30, y: -9 },
-      { x: 18, y: -9 },
-      { x: 6, y: -10 },
-      { x: -5, y: -11 },
-      { x: -9, y: -6 },
-      { x: -10, y: 4 },
-      { x: -10, y: 16 },
-      { x: -9, y: 28 },
-      { x: -7, y: 36 },
-      { x: -7, y: 40 },
-      { x: 0, y: 43 },
-      { x: 6, y: 41.5 },
-      { x: 16, y: 41 },
-      { x: 26, y: 41 },
-      { x: 34, y: 43 },
-      { x: 40, y: 47 },
-      { x: 46, y: 50 },
-      { x: 50, y: 52 },
-      { x: 53, y: 53 }
+      { x: 50, y: 50 },
+      { x: 49.2, y: 44 },
+      { x: 48.4, y: 34 },
+      { x: 47.6, y: 24 },
+      { x: 46.8, y: 14 },
+      { x: 45.8, y: 7 },
+      { x: 45, y: 3 }
     ]
   },
   {
-    id: "orchard_road",
+    id: "farm_road",
     kind: "SECONDARY",
+    connects: ["plaza", "farm_hub"],
     points: [
-      // Off the ring at the north-west corner, down into the orchard: the rows themselves run on the
-      // district's own axis, so the spur is what turns a planted field into a place you can enter.
-      { x: -5, y: -11 },
-      { x: -9, y: -14 },
-      { x: -14, y: -17 },
-      { x: -20, y: -17 }
+      // The village's own working road: the dirt that starts where the paving stops and runs out to
+      // the barn's yard. A stone surface in the settlement and a warm earth one outside it is the
+      // whole road hierarchy in two hundred metres, and it is the last stretch the island authors.
+      { x: 45, y: 3 },
+      { x: 46.6, y: 0.4 },
+      { x: 44.4, y: -3.2 },
+      { x: 41, y: -4 }
     ]
   },
   {
-    id: "pasture_road",
-    kind: "SECONDARY",
-    points: [
-      { x: -10, y: 6 },
-      { x: -14, y: 6 },
-      { x: -17, y: 10 },
-      { x: -19, y: 16 }
-    ]
-  },
-  {
-    id: "water_road",
-    kind: "SECONDARY",
-    points: [
-      // Down the western bank of the lake: the road stops at the water's edge, which is where the
-      // platform and the reeds are.
-      { x: -7, y: 40 },
-      { x: -9, y: 45 },
-      { x: -10, y: 48 }
-    ]
-  },
-  {
-    id: "forest_road",
-    kind: "SECONDARY",
-    points: [
-      // The wood's access track: off the ring, into the mass, and out the far side of it.
-      { x: 18, y: -9 },
-      { x: 18, y: -15 },
-      { x: 16, y: -22 }
-    ]
-  },
-  {
-    id: "forest_east_road",
-    kind: "SECONDARY",
-    points: [
-      { x: 40, y: -8 },
-      { x: 45, y: -13 },
-      { x: 50, y: -18 }
-    ]
-  },
-  {
-    id: "forestry_road",
-    kind: "SECONDARY",
-    points: [
-      // The haul road: off the ring, along the stand, and into the loading yard at its far end.
-      { x: -9, y: 28 },
-      { x: -14, y: 28 },
-      { x: -18, y: 31 },
-      { x: -21, y: 34 }
-    ]
-  },
-  {
-    id: "east_gate_road",
-    kind: "SECONDARY",
-    points: [
-      // The approach to the field's east gate, so the town's street is the field's other entrance.
-      { x: 42, y: 16 },
-      { x: 40, y: 15 },
-      { x: 38.5, y: 14.5 }
-    ]
-  },
-  {
-    id: "west_gate_road",
-    kind: "SECONDARY",
-    points: [
-      { x: -10, y: 18 },
-      { x: -9, y: 16 },
-      { x: -4.5, y: 14.5 }
-    ]
-  },
-  {
-    id: "settlement_loop",
+    id: "east_field_lane",
     kind: "PATH",
+    connects: ["farm_hub", "agriculture"],
     points: [
-      // The street around the square: the plaza, the market row, the well, and the way back.
-      { x: 39, y: -1 },
-      { x: 49, y: -1 },
-      { x: 49, y: 8 },
-      { x: 39, y: 8 },
-      { x: 39, y: -1 }
+      // Down the eastern lane, between the middle and the eastern parcels, to the machine yard:
+      // the storage and work area the track into the fields ends at.
+      { x: 41, y: -4 },
+      { x: 39, y: -3 },
+      { x: 37, y: 2 },
+      { x: 35, y: 7 },
+      { x: 34.5, y: 12 },
+      { x: 34, y: 18 },
+      { x: 34, y: 24 },
+      { x: 34, y: 28 },
+      { x: 30, y: 28 }
     ]
   },
   {
-    id: "orchard_lane",
+    id: "village_street",
     kind: "PATH",
+    connects: ["plaza"],
     points: [
-      // The lane along the orchard's headland: the far side of the rows, where the grass strip is.
-      { x: -20, y: -17 },
-      { x: -24, y: -20 }
+      // The street around the square: past the market row, the well, and back. It is what makes the
+      // buildings face a *place* rather than stand beside each other.
+      { x: 40.5, y: -1 },
+      { x: 48.4, y: -0.4 },
+      { x: 49.6, y: 4 },
+      { x: 47.8, y: 8.6 },
+      { x: 41.2, y: 8.2 },
+      { x: 39.8, y: 3.6 },
+      { x: 40.5, y: -1 }
     ]
   },
   {
-    id: "pasture_lane",
+    id: "spawn_lane",
     kind: "PATH",
+    connects: ["agriculture"],
     points: [
-      { x: -19, y: 16 },
-      { x: -19, y: 22 }
+      // The south gate's own lane: the field track reaches the gate the player spawns at, so the
+      // first thing a walker sees is the way into the fields.
+      { x: 17, y: 38 },
+      { x: 12, y: 39.5 },
+      { x: 7, y: 40.5 },
+      { x: 4, y: 41 }
     ]
   },
   {
     id: "harbour_boardwalk",
     kind: "PATH",
+    connects: ["harbour"],
     points: [
+      // The quay's own walkway, out over the water to the moored boats.
       { x: 53, y: 53 },
       { x: 55, y: 56 }
     ]
   },
   {
-    id: "mining_road",
-    kind: "SECONDARY",
-    points: [
-      // Off the ring into the highland the island is keeping for quarrying: the reserve has no
-      // building and no system yet, but a piece of land nothing can reach is not part of the island.
-      { x: 28, y: -9 },
-      { x: 30, y: -15 },
-      { x: 33, y: -20 },
-      { x: 34, y: -25 }
-    ]
-  },
-  {
-    id: "farm_track",
+    id: "north_trail",
     kind: "PATH",
+    connects: ["agriculture", "mining"],
     points: [
-      // The farm's own track: from the barn's yard, across the fields, to the western parcels. A path
-      // and not a road - it is what a tractor follows between two fields - which is why it is the one
-      // way the network is allowed to cross the land the catalogue sells.
-      { x: 39, y: -4 },
-      { x: 33, y: 0 },
-      { x: 26, y: 5 },
-      { x: 18, y: 9 },
-      { x: 10, y: 12 },
-      { x: 3, y: 16 }
+      // The one track that leaves the farmland for the high ground: north along the lane between the
+      // two woods, to the rough northern reserve. It is a footpath rather than a road because that is
+      // what it is - and in the V12 direction it is the hook the volcano trail grows from.
+      { x: 17, y: 17 },
+      { x: 22, y: 12 },
+      { x: 28, y: 4 },
+      { x: 33, y: -4 },
+      { x: 36, y: -12 },
+      { x: 38.5, y: -21 }
     ]
   }
 ];
@@ -891,7 +852,55 @@ export const MEADOWS: readonly MeadowPatch[] = [
   { id: "farmhouse_path", kind: "DIRT", center: { x: 45, y: -0.6 }, radiusX: 2.2, radiusY: 1.1, rotationY: 0 },
   { id: "wild_meadow_east", kind: "MEADOW", center: { x: 30, y: 52 }, radiusX: 6, radiusY: 3, rotationY: 0.15 },
   { id: "wild_meadow_west", kind: "MEADOW", center: { x: 12, y: 48 }, radiusX: 5, radiusY: 2.6, rotationY: -0.1 },
-  { id: "forest_edge_meadow", kind: "MEADOW", center: { x: 30, y: -24 }, radiusX: 7, radiusY: 2.4, rotationY: 0.08 }
+  { id: "forest_edge_meadow", kind: "MEADOW", center: { x: 30, y: -24 }, radiusX: 7, radiusY: 2.4, rotationY: 0.08 },
+  // The farmland's own margin: the ring of ground around the reserve, where a young farm leaves rough
+  // grass, a hedgerow that has not been laid, and the stones it has pulled out of the ploughing. The
+  // reserve itself is not tinted - the apron and its tiles cover it - so these sit just outside it.
+  { id: "margin_meadow_north", kind: "MEADOW", center: { x: 14, y: -4 }, radiusX: 8, radiusY: 2.4, rotationY: 0.05 },
+  { id: "margin_meadow_east", kind: "MEADOW", center: { x: 44, y: 24 }, radiusX: 3.5, radiusY: 8, rotationY: 0.15 },
+  { id: "margin_meadow_south", kind: "MEADOW", center: { x: 14, y: 40 }, radiusX: 7, radiusY: 2.8, rotationY: -0.06 },
+  { id: "margin_meadow_west", kind: "MEADOW", center: { x: -5, y: 26 }, radiusX: 2.6, radiusY: 6, rotationY: -0.2 },
+  // The southern slopes, which the estate view reads as the far end of the island: colour variation
+  // rather than objects, so the ground has a shape without the coast turning into a prop display.
+  { id: "margin_meadow_south_east", kind: "MEADOW", center: { x: 36, y: 48 }, radiusX: 8, radiusY: 3.2, rotationY: 0.2 },
+  { id: "margin_meadow_coast", kind: "MEADOW", center: { x: 52, y: 38 }, radiusX: 3.4, radiusY: 7, rotationY: 0.35 }
+];
+
+/**
+ * A grove, a thicket, or an outcrop on the farmland's margin.
+ *
+ * The crop district is deliberately empty of scenery inside the reserve, because that land belongs to
+ * the catalogue - but its blob reaches several tiles past the reserve's edge, and a bare ring around a
+ * farm reads as a green plane rather than as countryside. These are the places that ring is broken
+ * up, authored one by one rather than scattered: a wood's southern verge, the stones rolled off the
+ * ploughing, the hedge nobody has laid yet.
+ *
+ * A grove is a centre, a radius, and a member count, and its members follow the same cluster rules the
+ * districts use. Nothing here is gameplay: no grove is a tile, a rule, or a collision.
+ */
+export interface MarginGrove {
+  readonly id: string;
+  readonly kind: "GROVE" | "THICKET" | "ROCKS" | "FLOWERS";
+  readonly center: TileCoordinate;
+  readonly radiusTiles: number;
+  readonly members: number;
+}
+
+export const FIELD_MARGIN_GROVES: readonly MarginGrove[] = [
+  { id: "margin_grove_north", kind: "GROVE", center: { x: 6, y: -5 }, radiusTiles: 3.2, members: 16 },
+  { id: "margin_thicket_west", kind: "THICKET", center: { x: -6, y: 20 }, radiusTiles: 3, members: 14 },
+  { id: "margin_rocks_west", kind: "ROCKS", center: { x: -7, y: 32 }, radiusTiles: 2.4, members: 11 },
+  { id: "margin_grove_south_west", kind: "GROVE", center: { x: 2, y: 40 }, radiusTiles: 3.4, members: 16 },
+  { id: "margin_thicket_south", kind: "THICKET", center: { x: 34, y: 40 }, radiusTiles: 3.2, members: 15 },
+  { id: "margin_flowers_south_east", kind: "FLOWERS", center: { x: 44, y: 40 }, radiusTiles: 3, members: 16 },
+  { id: "margin_grove_east", kind: "GROVE", center: { x: 52, y: 22 }, radiusTiles: 3.4, members: 16 },
+  { id: "margin_rocks_east", kind: "ROCKS", center: { x: 55, y: 6 }, radiusTiles: 2.6, members: 12 },
+  { id: "margin_thicket_north_east", kind: "THICKET", center: { x: 46, y: -18 }, radiusTiles: 3.4, members: 15 },
+  // The southern slopes: the ground between the fields and the island's south coast, which the
+  // five-second test reads as the empty end of the estate if nothing stands on it.
+  { id: "margin_grove_south_east", kind: "GROVE", center: { x: 40, y: 46 }, radiusTiles: 3.6, members: 16 },
+  { id: "margin_rocks_south", kind: "ROCKS", center: { x: 26, y: 52 }, radiusTiles: 3, members: 13 },
+  { id: "margin_thicket_coast", kind: "THICKET", center: { x: 52, y: 40 }, radiusTiles: 3.2, members: 14 }
 ];
 
 /**
@@ -905,6 +914,28 @@ export const FARMSTEAD = {
   // The barn faces the fields it serves: its front looks south, over the fence and the crop rows.
   rotationY: 0
 } as const;
+
+/**
+ * Where each road stop is, in tile coordinates.
+ *
+ * Every one is derived from the definition it belongs to - the quay root from `HARBOUR`, the hub
+ * from `FARMSTEAD`, the mill yard from `LOGGING_YARD` - so a stop cannot drift away from the place
+ * it names when the place moves.
+ */
+export const ROAD_NODES: Readonly<Record<RoadNodeId, TileCoordinate>> = {
+  harbour: HARBOUR.root,
+  harbour_yard: HARBOUR.yard,
+  civic: { x: 44, y: 8 },
+  plaza: PLAZA.center,
+  // The yard in front of the barn, not the barn itself: the hub is where the roads meet, and a road
+  // that ends inside a building is a road that ends nowhere.
+  farm_hub: { x: 41, y: -4 },
+  agriculture: { x: 17, y: 17 },
+  orchard: { x: -13, y: -15 },
+  forestry: LOGGING_YARD.center,
+  freshwater: { x: -8, y: 49 },
+  mining: MINING_RESERVE.center
+};
 
 /**
  * The kinds of structure the world places.
@@ -963,8 +994,9 @@ export const LANDMARKS: readonly LandmarkSpec[] = [
   { id: "windmill", kind: "WINDMILL", tile: { x: -16, y: -13 }, rotationY: 0.35, blockingRadiusWorld: 1.8 },
   { id: "coop", kind: "COOP", tile: { x: -18, y: 6 }, rotationY: 0.5, blockingRadiusWorld: 1.1 },
   // The bay runs out to the south-east, so the quay faces that way and its pier reaches the water
-  // rather than the grass behind it.
-  { id: "harbor", kind: "HARBOR", tile: HARBOUR.yard, rotationY: HARBOUR.bearing, blockingRadiusWorld: 1.4 }
+  // rather than the grass behind it. It stands on the *landward* side of the yard, so the road can
+  // run through the yard itself: a store built where the road ends is a store in the way.
+  { id: "harbor", kind: "HARBOR", tile: { x: 47.5, y: 48 }, rotationY: HARBOUR.bearing, blockingRadiusWorld: 1.4 }
 ];
 
 /**
@@ -1329,6 +1361,7 @@ export const WORLD_CONFIG = {
   farmFieldBounds: FARM_FIELD_BOUNDS,
   districts: DISTRICTS,
   roads: ROADS,
+  roadNodes: ROAD_NODES,
   roadWidths: ROAD_WIDTH_TILES,
   meadows: MEADOWS,
   fence: FENCE,

@@ -28,7 +28,18 @@
 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
-import { cameraFrameExtent, createCameraRig, zoomRangeFor, ZOOM_MIN } from "./camera";
+import {
+  createOrbitCamera,
+  pointerRoleForButton,
+  rotationForDrag,
+  zoomDistanceRangeFor,
+  CAMERA_FOV_DEGREES,
+  DEFAULT_CAMERA_DISTANCE,
+  DEFAULT_CAMERA_PITCH,
+  DEFAULT_CAMERA_YAW,
+  MAX_DISTANCE,
+  MIN_DISTANCE
+} from "./camera";
 import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials";
@@ -51,6 +62,8 @@ import { GROUND_SURFACE_Y, terrainHeightAt } from "./terrain-height";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
 import { EMPTY_WORLD_CELL_MAP } from "./world-cell";
+import { STATIC_OBSTACLES } from "./world-config";
+import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 
 /**
  * Three.js view of the farm.
@@ -73,21 +86,12 @@ export const CROP_MAX_HEIGHT = 0.95;
 /** A just-planted crop still has to be visible, so growth never scales below this. */
 export const MIN_CROP_HEIGHT = 0.14;
 
-const CAMERA_FOV = 45;
-/**
- * Where the camera sits relative to what it looks at.
- *
- * A three-quarter view: far enough off the vertical to show the sides of a building and the slope of
- * the ground, high enough that a field of crops reads as rows rather than as a wall of them.
- */
-const CAMERA_DIRECTION = new Vector3(0.62, 0.95, 0.62).normalize();
 /** Near and far planes. The near plane is far enough out to keep the depth buffer quiet at zoom. */
 const CAMERA_NEAR = 0.5;
 const CAMERA_FAR = 1400;
 /** Radius of the sky dome. Inside the far plane, and far outside the island. */
 const SKY_RADIUS = 600;
 const MIN_FRAMED_EXTENT = 7;
-const MAX_PIXEL_RATIO = 2;
 const CROP_RADIUS_FACTOR = 0.32;
 /** The horizon colour: the sky's bottom band, the fog, and the shallows all agree with it. */
 const HORIZON_COLOR = 0xcfe9f7;
@@ -109,16 +113,6 @@ const PLAYER_HEIGHT = 1.6;
 const PLAYER_WALK_BOB = 0.035;
 /** Steps per second at full walking speed, used only to phase the bob. */
 const PLAYER_STEP_FREQUENCY = 9;
-/**
- * Framing used while a character is drawn.
- *
- * The default view frames the farm - the field and its apron - and a follow camera at that distance
- * would show the avatar as a few pixels, so a character pulls the camera in to a fixed, much smaller
- * extent while zoom and the camera direction stay exactly as they were. Nine metres is about eight
- * tiles: enough to see the row being planted and the path behind it without losing the crop detail.
- */
-const FOLLOW_FRAME_EXTENT = 9;
-
 /** Thrown when the browser cannot give the page a WebGL context. */
 export class FarmRendererUnavailableError extends Error {
   constructor(cause: unknown) {
@@ -129,6 +123,28 @@ export class FarmRendererUnavailableError extends Error {
 }
 
 export interface FarmSceneOptions {
+  /**
+   * How expensive the view is allowed to be. Presentation only - see `render-quality.ts`.
+   *
+   * A development switch, not a player setting: the host page resolves it (from `?quality=low`) and
+   * hands it in, so nothing in the renderer reads a URL or a stored preference.
+   */
+  readonly quality?: RenderQualityName;
+  /**
+   * Where the camera looks when the first world arrives, if the host already knows.
+   *
+   * The scene's own opening frame is the island's middle at the default bearing and distance. A host
+   * page that remembers a view - a returning session, a preferred angle, a screenshot of a named place
+   * - can hand one in instead. Everything is clamped to what the island allows (pitch to the rig's own
+   * limits, the target to the pan limit), so a bad value is a bad frame rather than a broken camera.
+   */
+  readonly initialCamera?: {
+    readonly yaw?: number;
+    readonly pitch?: number;
+    readonly distance?: number;
+    readonly targetX?: number;
+    readonly targetZ?: number;
+  };
   /**
    * Called with the island cell the player clicked. The renderer reports the coordinate only;
    * selecting it, walking to it, and what it means stay with the caller.
@@ -176,6 +192,21 @@ export interface FarmSceneHandle {
   setDebugMode(on: boolean): void;
   /** Re-measures the canvas and redraws. */
   resize(): void;
+  /**
+   * The camera's own frame: which way it faces, how far away it is, and what it orbits.
+   *
+   * Read-only, and the scene still owns the camera: this hands out five numbers and takes none. It is
+   * here so a host page (a screenshot harness, a future minimap, a "remember my view" setting) can ask
+   * where the camera is rather than having to infer it from the picture, and so "the world refreshed
+   * and the view did not move" is a comparison rather than a promise.
+   */
+  cameraFrame(): {
+    readonly yaw: number;
+    readonly pitch: number;
+    readonly distance: number;
+    readonly targetX: number;
+    readonly targetZ: number;
+  };
   /** Releases GPU resources, detaches observers and listeners, and leaves the canvas unusable. */
   dispose(): void;
 }
@@ -413,24 +444,31 @@ function buildPlayerAvatar(assets: SharedAssets, farmer: Object3D | undefined): 
 }
 
 export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOptions = {}): FarmSceneHandle {
+  /**
+   * The quality the host asked for, resolved once.
+   *
+   * Every use of it is a rendering decision - the pixel ratio, the shadow map, whether the small
+   * scenery is built - and none of them is read by gameplay. See `render-quality.ts`.
+   */
+  const quality = renderQualityPreset(options.quality ?? "NORMAL");
   let renderer: WebGLRenderer;
   try {
-    renderer = new WebGLRenderer({ canvas, antialias: true });
+    renderer = new WebGLRenderer({ canvas, antialias: quality.antialias });
   } catch (error: unknown) {
     throw new FarmRendererUnavailableError(error);
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatioCap));
   // A filmic curve keeps the sunlit grass and the shaded sides of a building from clipping to flat
   // colour, which is most of what separated the alpha's look from a stylised one. It is a few lines of
   // shader work, not a post-processing pass.
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = quality.shadows;
   renderer.shadowMap.type = PCFShadowMap;
 
   const scene = new Scene();
   scene.background = new Color(HORIZON_COLOR);
-  const camera = new PerspectiveCamera(CAMERA_FOV, 1, CAMERA_NEAR, CAMERA_FAR);
+  const camera = new PerspectiveCamera(CAMERA_FOV_DEGREES, 1, CAMERA_NEAR, CAMERA_FAR);
 
   const assets = createSharedAssets();
   const worldGroup = new Group();
@@ -491,8 +529,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   scene.add(new HemisphereLight(0xdcf0ff, 0x6d8f52, 0.9));
   scene.add(new AmbientLight(0xffffff, 0.16));
   const sun = new DirectionalLight(0xfff0cd, 2.3);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.castShadow = quality.shadows;
+  sun.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize);
   sun.shadow.camera.left = -SHADOW_EXTENT_WORLD;
   sun.shadow.camera.right = SHADOW_EXTENT_WORLD;
   sun.shadow.camera.top = SHADOW_EXTENT_WORLD;
@@ -528,14 +566,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     cells: EMPTY_WORLD_CELL_MAP
   };
   let worldSignature = "";
-  /**
-   * True when the next static rebuild is caused by an asset arriving rather than by the world moving.
-   *
-   * A model finishing its download must not re-frame a camera the player has positioned; land being
-   * bought may, because the farm the camera frames has changed size. Without this, zooming out and
-   * then waiting for the trees to load snapped the view back every time.
-   */
-  let keepZoomOnRebuild = false;
+  /** The dynamic layer's own key: what the last rebuild drew, so an unchanged farm draws nothing. */
+  let dynamicWorldSignature = "";
   /**
    * How far the camera may drift from the world's centre, and how far the fog starts.
    *
@@ -544,15 +576,35 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
    */
   let worldExtent = MIN_FRAMED_EXTENT;
   /**
-   * What the camera frames when there is no character yet.
+   * The camera, and where it is looking.
    *
-   * The farm, not the island: opening on a small field inside a large empty circle is exactly the
-   * view the alpha shipped. Zooming out from here still reaches the whole world.
+   * The rig is created once and `applyState` never rebuilds it: yaw, pitch, distance and the panned
+   * target all survive a farm refresh, which is what the brief asks for and what a player expects
+   * when land arrives while they are looking at something.
    */
-  let farmExtent = MIN_FRAMED_EXTENT;
-  // Zoom and the player's manual pan live in the rig, so a farm refresh cannot quietly reset either
-  // one: `applyState` never touches them.
-  const cameraRig = createCameraRig();
+  const cameraRig = createOrbitCamera({
+    yaw: options.initialCamera?.yaw ?? DEFAULT_CAMERA_YAW,
+    pitch: options.initialCamera?.pitch ?? DEFAULT_CAMERA_PITCH,
+    distance: options.initialCamera?.distance ?? DEFAULT_CAMERA_DISTANCE,
+    targetX: 0,
+    targetZ: 0,
+    panLimit: 140,
+    minDistance: MIN_DISTANCE,
+    maxDistance: MAX_DISTANCE
+  });
+  /** The point the camera orbits when the world has not been framed yet. */
+  let cameraHomeX = 0;
+  let cameraHomeZ = 0;
+  /**
+   * Whether the island's centre has been handed to the camera yet.
+   *
+   * Only the first world frames anything. Every later refresh - a plot bought, a scene rebuilt
+   * because a model arrived - leaves the yaw, the pitch, the distance and the panned target exactly
+   * where the player put them, which is the whole point of the rig being created once.
+   */
+  let cameraFramed = false;
+  /** Circles the camera may not sit inside: the buildings the world config already declares. */
+  let cameraBlockers: readonly { readonly centerWorldX: number; readonly centerWorldZ: number; readonly radiusWorld: number }[] = [];
   let playerPose: FarmScenePlayer | null = null;
   /** The island's ground surface: what a click on open ground lands on. */
   let groundMesh: Object3D | null = null;
@@ -629,8 +681,8 @@ let interactionGeometry: BufferGeometry | null = null;
         }
         sceneryModels.set(id, gltf.scene);
         // Static scenery is cached behind the world signature. Invalidate that cache once when each
-        // asset arrives so primitive fallbacks are replaced without changing world state.
-        keepZoomOnRebuild = true;
+        // asset arrives so primitive fallbacks are replaced without changing world state - and
+        // without touching the camera, because a download must never move where the player is looking.
         worldSignature = "";
         applyState(state);
         draw();
@@ -661,7 +713,6 @@ let interactionGeometry: BufferGeometry | null = null;
           return;
         }
         buildingModels.set(id, gltf.scene);
-        keepZoomOnRebuild = true;
         worldSignature = "";
         applyState(state);
         draw();
@@ -697,7 +748,6 @@ let interactionGeometry: BufferGeometry | null = null;
           }
           generatedModels[id] = gltf.scene;
           if (id === "building_barn") {
-            keepZoomOnRebuild = true;
             worldSignature = "";
           }
           if (id === "character_farmer") rebuildAvatar();
@@ -778,74 +828,41 @@ let interactionGeometry: BufferGeometry | null = null;
     renderer.render(scene, camera);
   }
 
-  function cameraDistance(): number {
-    return framedExtent() * 2.35 * cameraRig.zoom;
-  }
-
-  function framedExtent(): number {
-    return cameraFrameExtent({
-      islandExtent: worldExtent,
-      farmExtent,
-      followExtent: FOLLOW_FRAME_EXTENT,
-      hasCharacter: playerPose !== null,
-      // The zoom is what decides how much of the world the frame covers once a character exists:
-      // close in it is the follow distance, pulled back it becomes the island's own frame.
-      zoom: cameraRig.zoom
-    });
-  }
-
   /**
    * How far out the camera may be before small scenery stops being worth drawing.
    *
    * Roughly the estate view: past it, a flower is a fraction of a pixel and a hundred of them are a
    * haze over the fields. One comparison per camera update, and the group toggles with it.
    */
-  const DETAIL_ZOOM_LIMIT = 2.2;
+  const DETAIL_DISTANCE_LIMIT = 55;
 
   function updateDetailVisibility(): void {
-    const visible = cameraRig.zoom <= DETAIL_ZOOM_LIMIT;
+    const visible = cameraRig.state.distance <= DETAIL_DISTANCE_LIMIT;
     detailGroup.visible = visible;
     overlayDetailGroup.visible = visible;
   }
 
-  function updateCamera(): void {
-    // The target is the character's position plus the player's own drag, clamped so the camera can
-    // never leave the farm. The character is not moved by any of it.
-    //
-    // With no character yet the camera frames the *field*, not the island's centre: the farm the
-    // player owns is the smallest thing in the world and the only thing they can act on, so it is
-    // what a first view has to land on. The pan clamp is centred on the same point, which is what
-    // keeps a dragged view from wandering off the farm while a zoomed-out one can still reach the sea.
-    const frameCentre = state.world.apron;
-    // Zoomed out, the camera frames the *island*, not the field: the estate view is where the plan is
-    // supposed to be legible, and framing the farm put the island off to one side of the screen with
-    // the settlement half out of shot.
-    // The camera follows the character until the *island itself* is in frame, and only then centres
-    // on the island. Switching earlier - at the follow distance, say - would put the camera on the
-    // island's middle as soon as the player zoomed past arm's length, so a district could never be
-    // looked at: walking to the orchard and zooming out showed the fields instead.
-    const islandFraming = playerPose === null || cameraRig.zoom * FOLLOW_FRAME_EXTENT >= worldExtent;
-    const targetX = islandFraming ? state.world.centerWorldX : frameCentre?.worldX ?? state.world.centerWorldX;
-    const targetZ = islandFraming ? state.world.centerWorldZ : frameCentre?.worldZ ?? state.world.centerWorldZ;
-    const target = cameraRig.target({
-      playerWorldX: playerPose?.worldX ?? null,
-      playerWorldZ: playerPose?.worldZ ?? null,
-      centerWorldX: targetX,
-      centerWorldZ: targetZ,
-      worldExtent
-    });
-    const distance = cameraDistance();
-    camera.position.set(
-      target.worldX + CAMERA_DIRECTION.x * distance,
-      CAMERA_DIRECTION.y * distance,
-      target.worldZ + CAMERA_DIRECTION.z * distance
+  /** The ground under a world position, in the same terms the props and the roads use. */
+  function groundHeightAt(worldX: number, worldZ: number): number {
+    return GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, state.world.terrain);
+  }
+
+  /** Whether something solid stands at a world position: what the camera must not sit inside. */
+  function cameraBlockedAt(worldX: number, worldZ: number): boolean {
+    return cameraBlockers.some(
+      (blocker) =>
+        Math.hypot(worldX - blocker.centerWorldX, worldZ - blocker.centerWorldZ) < blocker.radiusWorld
     );
-    // Look at the *ground* the camera is framing, not at sea level. The island is eleven metres of
-    // relief, so a camera aimed at y = 0 from an orchard on a hill points into the hillside: the
-    // orchard lands above the frame and the shot is of whatever slope happens to be behind it.
-    const groundY =
-      GROUND_SURFACE_Y + terrainHeightAt(target.worldX, target.worldZ, state.world.terrain);
-    camera.lookAt(target.worldX, groundY + (playerPose === null ? 0.6 : PLAYER_HEIGHT * 0.5), target.worldZ);
+  }
+
+  function updateCamera(): void {
+    // The camera is wherever the player put it: it orbits a target on the ground, and the target
+    // never moves on its own unless the player asked for a recenter. Looking is then a matter of
+    // placing the eye on the orbit and aiming it at the ground the target stands on.
+    const orbit = cameraRig.state;
+    const eye = cameraRig.eye(groundHeightAt, cameraBlockedAt);
+    camera.position.set(eye.x, eye.y, eye.z);
+    camera.lookAt(orbit.targetX, groundHeightAt(orbit.targetX, orbit.targetZ) + 0.8, orbit.targetZ);
     updateDetailVisibility();
   }
 
@@ -1025,9 +1042,67 @@ let interactionGeometry: BufferGeometry | null = null;
     ].join(";");
   }
 
+  /**
+   * Everything the *dynamic* layer draws, as one comparison key.
+   *
+   * The host page polls the farm so that a crop that ripens while nobody is looking appears without a
+   * reload, and most polls find the farm exactly as it was. Rebuilding the tile slabs, every crop
+   * instance, the locked-land overlay and the selection overlay for an unchanged farm is the single
+   * largest piece of avoidable work in the client, so an unchanged key skips all of it.
+   *
+   * Growth is quantised to the same whole percentage the panels display: a crop is redrawn when its
+   * height would visibly change, not for every fraction of a percent the server's clock produces.
+   * Nothing authoritative is involved - the server still owns maturity, and a maturity flip changes
+   * `mature`, which is compared exactly.
+   */
+  function dynamicSignatureOf(input: FarmSceneInput): string {
+    // Progression first: the locked ring, the apron and the field blocks follow the plots the player
+    // owns, so a purchase changes this layer without changing the island. The bounds and the counts
+    // are enough to tell every state apart without walking the scenery.
+    const inner = input.world.inner;
+    const outer = input.world.outer;
+    const bounds = (value: typeof inner): string =>
+      value === null ? "-" : `${String(value.minX)},${String(value.maxX)},${String(value.minY)},${String(value.maxY)}`;
+    const parts: string[] = [
+      input.layout.pitch.toFixed(4),
+      input.layout.tileSize.toFixed(4),
+      input.layout.tileGap.toFixed(4),
+      `in:${bounds(inner)}`,
+      `out:${bounds(outer)}`,
+      `ls:${String(input.world.lockedScenery.length)}`,
+      `lp:${String(input.world.lockedPlots.length)}`,
+      `fb:${String(input.world.fieldBlocks.length)}`,
+      selectedCell === null ? "-" : `${String(selectedCell.x)},${String(selectedCell.y)}`
+    ];
+    for (const tile of input.tiles) {
+      const crop = tile.crop;
+      const tree = tile.tree;
+      parts.push(
+        `t${String(tile.tileX)},${String(tile.tileY)},${tile.terrainType},${tile.selected ? "1" : "0"}` +
+          (crop === null
+            ? ""
+            : `,c${crop.definitionId},${Math.round(crop.heightFraction * 100).toString()},${crop.mature ? "1" : "0"}`) +
+          (tree === null
+            ? ""
+            : `,r${tree.definitionId},${tree.visualStage},${Math.round(tree.growthProgress * 100).toString()}`)
+      );
+    }
+    return parts.join(";");
+  }
+
   function applyState(next: FarmSceneInput): void {
     state = next;
     const signature = signatureOf(next);
+    const dynamicSignature = dynamicSignatureOf(next);
+    /**
+     * Whether this state describes any world at all.
+     *
+     * A scene is created before it has been handed a farm, and the empty world it holds meanwhile has
+     * no land, no centre and no extent. Framing it would point the camera at the coordinate origin
+     * and clamping the zoom to a world seven metres across would quietly *shrink* the opening view -
+     * so neither happens until there is something to look at.
+     */
+    const hasWorld = next.world.outer !== null;
     if (signature !== worldSignature) {
       worldSignature = signature;
       worldGroup.clear();
@@ -1041,14 +1116,24 @@ let interactionGeometry: BufferGeometry | null = null;
         propModel
       );
       // Two passes, one destination each: mass scenery into the world group and small detail into the
-      // group the camera switches off when it pulls back.
+      // group the camera switches off when it pulls back. The detail pass belongs to the dynamic
+      // layer, which owns both detail groups, so it is not duplicated here.
       buildScenery(worldGroup, assets, next.world.scenery.filter((entry) => !entry.detail), sceneryModel);
-      buildScenery(detailGroup, assets, next.world.scenery.filter((entry) => entry.detail), sceneryModel);
+      // A new static world means new scenery for the detail groups and the overlay to draw, so the
+      // dynamic layer cannot be considered up to date.
+      dynamicWorldSignature = "";
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
-      // A world rebuild re-frames the zoom but keeps the player's own drag: buying land is not a
-      // reason to move the camera the player positioned.
-      if (!keepZoomOnRebuild) cameraRig.setZoom(1);
-      keepZoomOnRebuild = false;
+      // The buildings the camera must not sit inside: the same circles the player's own collision
+      // uses, so "solid" means one thing in this client rather than two.
+      cameraBlockers = STATIC_OBSTACLES;
+      if (hasWorld && !cameraFramed) {
+        // The very first world frames the island's middle. After that the camera is the player's:
+        // buying land, or a model arriving, must never move where somebody is looking.
+        cameraHomeX = options.initialCamera?.targetX ?? next.world.centerWorldX;
+        cameraHomeZ = options.initialCamera?.targetZ ?? next.world.centerWorldZ;
+        cameraRig.moveTargetTo(cameraHomeX, cameraHomeZ);
+        cameraFramed = true;
+      }
       // Fog the colour of the sky's horizon band, starting well past the field: the far shore and the
       // hills dissolve into the sky instead of ending against a hard edge.
       scene.fog = new Fog(HORIZON_COLOR, worldExtent * 2, worldExtent * 5);
@@ -1062,20 +1147,30 @@ let interactionGeometry: BufferGeometry | null = null;
       sun.target.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
       sun.target.updateMatrixWorld();
     }
-    // Outside the signature: the framing extent follows the land the farm owns, and that changes when
-    // a plot is bought without the island itself changing.
-    farmExtent = Math.max(next.world.farmHalfExtentWorld, MIN_FRAMED_EXTENT);
-    // …and so does how far the camera is allowed to pull back, because the estate view has to reach
-    // the island from a frame that starts on the field.
-    const range = zoomRangeFor({ islandExtent: worldExtent, farmExtent });
-    cameraRig.setZoomRange(ZOOM_MIN, range.max);
+    // How far the camera may pull back is a property of the island: the estate view has to reach all
+    // of it, on an island of any size, and the range is derived from the island's own extent.
+    if (hasWorld) {
+      const range = zoomDistanceRangeFor(worldExtent);
+      cameraRig.setDistanceRange(range.min, range.max);
+    }
 
+    // The dynamic layer: the farm's own land, its rows, its locked ring, and the selection. Skipped
+    // entirely when the farm is exactly what was drawn last time - see `dynamicSignatureOf`.
+    if (dynamicSignature === dynamicWorldSignature) return;
+    dynamicWorldSignature = dynamicSignature;
     tileGroup.clear();
     cropGroup.clear();
     treeGroup.clear();
     overlayGroup.clear();
     detailGroup.clear();
     overlayDetailGroup.clear();
+    buildScenery(
+      detailGroup,
+      assets,
+      quality.detailScenery ? next.world.scenery.filter((entry) => entry.detail) : [],
+      sceneryModel,
+      false
+    );
     buildLockedPlotOverlay(
       overlayGroup,
       assets,
@@ -1086,8 +1181,9 @@ let interactionGeometry: BufferGeometry | null = null;
     buildScenery(
       overlayDetailGroup,
       assets,
-      next.world.lockedScenery.filter((entry) => entry.detail),
-      sceneryModel
+      quality.detailScenery ? next.world.lockedScenery.filter((entry) => entry.detail) : [],
+      sceneryModel,
+      false
     );
     pickTargets.clear();
     pickedInstances.clear();
@@ -1140,14 +1236,50 @@ let interactionGeometry: BufferGeometry | null = null;
   }
 
   let hoveredCoordinate: TileCoordinate | null = null;
+
+  /**
+   * The last hover position, and the frame that will act on it.
+   *
+   * A mouse reports positions far faster than the screen refreshes, and every one of them used to
+   * raycast the whole scene and redraw it. Only the last position before a frame can be seen, so the
+   * work is scheduled instead of done inline - and a frame that finds the same cell under the pointer
+   * as the one already marked redraws nothing at all. That is the difference between hovering costing
+   * a redraw per hardware event and costing nothing at all while the pointer rests.
+   */
+  let pendingHover: { readonly clientX: number; readonly clientY: number } | null = null;
+  let hoverHandle: number | null = null;
+
+  function scheduleHover(clientX: number, clientY: number): void {
+    pendingHover = { clientX, clientY };
+    if (hoverHandle !== null || disposed) return;
+    hoverHandle = window.requestAnimationFrame(() => {
+      hoverHandle = null;
+      const point = pendingHover;
+      pendingHover = null;
+      if (point === null || disposed) return;
+      const coordinate = raycastTileAt(point.clientX, point.clientY);
+      const unchanged =
+        coordinate === hoveredCoordinate ||
+        (coordinate !== null &&
+          hoveredCoordinate !== null &&
+          coordinate.x === hoveredCoordinate.x &&
+          coordinate.y === hoveredCoordinate.y);
+      if (unchanged) return;
+      hoveredCoordinate = coordinate;
+      canvas.style.cursor = coordinate === null ? "grab" : "pointer";
+      updateMarkers();
+      draw();
+    });
+  }
+
   const gesture = createPointerGesture();
 
-  function raycastTile(event: PointerEvent): TileCoordinate | null {
+  function raycastTileAt(clientX: number, clientY: number): TileCoordinate | null {
     const bounds = canvas.getBoundingClientRect();
     if (bounds.width === 0 || bounds.height === 0) return null;
     pointer.set(
-      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
-      -((event.clientY - bounds.top) / bounds.height) * 2 + 1
+      ((clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((clientY - bounds.top) / bounds.height) * 2 + 1
     );
     raycaster.setFromCamera(pointer, camera);
     // Crops, trees and tile slabs first: a click on something standing on the ground selects the
@@ -1179,35 +1311,126 @@ let interactionGeometry: BufferGeometry | null = null;
     return null;
   }
 
-  function panBy(deltaX: number, deltaY: number): void {
-    // Dragging moves the camera's offset, never the character: the two are separate on purpose.
-    const worldPerPixel = (2 * cameraDistance() * Math.tan((CAMERA_FOV / 2) * (Math.PI / 180))) / Math.max(canvas.clientHeight, 1);
-    cameraRig.panByPixels(deltaX, deltaY, worldPerPixel);
+  /**
+   * What the camera is doing while a pointer is down.
+   *
+   * Kept beside the rig rather than inside the gesture module: the gesture answers "was this a tap",
+   * and the camera answers "which button is dragging it". A later touch layer can feed the rig the
+   * same two operations without a mouse ever entering the game logic.
+   */
+  let viewDrag: "none" | "rotate" | "pan" = "none";
+  let dragPointerId = -1;
+  let dragX = 0;
+  let dragY = 0;
+
+  /** Middle-drag: the target moves across the ground, in the camera's own frame rather than north. */
+  function panByScreen(deltaX: number, deltaY: number): void {
+    cameraRig.panByScreen(deltaX, deltaY, canvas.clientHeight);
     updateCamera();
   }
 
-  function zoomByPinch(scale: number): void {
-    cameraRig.zoomByScale(scale);
+  /**
+   * The camera's own animation: the glide between where it is and where it was asked to be.
+   *
+   * Nothing runs while nothing moves. A wheel step, a pinch or a recenter starts a short run of
+   * frames, and the loop stops itself the moment the rig reports it has settled - which is what makes
+   * a zoom smooth instead of a snap, and why it costs nothing at rest.
+   */
+  let frameHandle: number | null = null;
+  let lastFrameTime = 0;
+
+  function cameraFrame(time: number): void {
+    frameHandle = null;
+    if (disposed) return;
+    const deltaMs = lastFrameTime === 0 ? 16 : time - lastFrameTime;
+    lastFrameTime = time;
+    cameraRig.update(deltaMs);
     updateCamera();
+    draw();
+    if (cameraRig.isSettling()) scheduleCameraFrame();
+    else lastFrameTime = 0;
+  }
+
+  function scheduleCameraFrame(): void {
+    if (frameHandle !== null || disposed) return;
+    frameHandle = window.requestAnimationFrame(cameraFrame);
+  }
+
+  /**
+   * A redraw, at most once per frame.
+   *
+   * A pointer moving at a thousand events a second used to call `draw()` a thousand times, which is
+   * a thousand renders of the whole island for the sixty frames the screen can actually show. The
+   * camera's state is applied the moment the event arrives; only the *drawing* waits for the frame,
+   * so a drag still tracks the pointer exactly and costs one render per frame.
+   */
+  let drawHandle: number | null = null;
+
+  function scheduleDraw(): void {
+    if (drawHandle !== null || disposed) return;
+    drawHandle = window.requestAnimationFrame(() => {
+      drawHandle = null;
+      if (disposed) return;
+      updateCamera();
+      draw();
+    });
   }
 
   function onPointerDown(event: PointerEvent): void {
     // Capture keeps a drag or a pinch alive when it wanders off the canvas, which is also what keeps
     // the browser from handing the rest of the gesture to the page underneath.
-    canvas.setPointerCapture(event.pointerId);
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // A pointer the browser no longer considers active - released around a cancel, or synthetic -
+      // cannot be captured; the gesture still works, it just stops at the canvas edge.
+    }
+    // A mouse or a stylus steers the view with its buttons; a finger keeps the touch language, which
+    // is a tap to select and two fingers to zoom.
+    if (event.pointerType === "mouse" || event.pointerType === "pen") {
+      const role = pointerRoleForButton(event.button);
+      if (role === "ROTATE" || role === "PAN") {
+        event.preventDefault();
+        viewDrag = role === "ROTATE" ? "rotate" : "pan";
+        dragPointerId = event.pointerId;
+        dragX = event.clientX;
+        dragY = event.clientY;
+        canvas.style.cursor = role === "ROTATE" ? "grabbing" : "move";
+        return;
+      }
+      if (role === "IGNORE") return;
+    }
     gesture.down({ id: event.pointerId, x: event.clientX, y: event.clientY });
   }
 
   function onPointerMove(event: PointerEvent): void {
+    if (viewDrag !== "none" && event.pointerId === dragPointerId) {
+      const deltaX = event.clientX - dragX;
+      const deltaY = event.clientY - dragY;
+      dragX = event.clientX;
+      dragY = event.clientY;
+      if (viewDrag === "rotate") {
+        const turn = rotationForDrag(deltaX, deltaY);
+        cameraRig.rotate(turn.yaw, turn.pitch);
+      } else {
+        panByScreen(deltaX, deltaY);
+      }
+      scheduleDraw();
+      return;
+    }
+
     const intent = gesture.move({ id: event.pointerId, x: event.clientX, y: event.clientY });
     switch (intent.kind) {
       case "pan":
-        panBy(intent.deltaX, intent.deltaY);
-        draw();
+        // A finger drag pans; a mouse's left drag belongs to selection, so it never moves the view.
+        if (event.pointerType !== "mouse") {
+          panByScreen(intent.deltaX, intent.deltaY);
+          scheduleDraw();
+        }
         return;
       case "pinch":
-        zoomByPinch(intent.scale);
-        draw();
+        cameraRig.zoomByScale(intent.scale);
+        scheduleCameraFrame();
         return;
       case "none":
         break;
@@ -1215,26 +1438,35 @@ let interactionGeometry: BufferGeometry | null = null;
     // Only a pointer that can hover gets a hover marker: a finger has no hover, and lighting the
     // tile up under it would read as a selection.
     if (event.pointerType !== "touch") {
-      hoveredCoordinate = raycastTile(event);
-      canvas.style.cursor = hoveredCoordinate === null ? "grab" : "pointer";
-      updateMarkers();
-      draw();
+      scheduleHover(event.clientX, event.clientY);
     }
   }
 
   function onPointerUp(event: PointerEvent): void {
-    const tap = gesture.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
+    const wasDragging = viewDrag !== "none" && event.pointerId === dragPointerId;
+    if (wasDragging) {
+      viewDrag = "none";
+      dragPointerId = -1;
+      canvas.style.cursor = "grab";
+    }
+    const tap = wasDragging ? false : gesture.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!tap) return;
-    const coordinate = raycastTile(event);
+    const coordinate = raycastTileAt(event.clientX, event.clientY);
     if (coordinate !== null) options.onCellSelected?.(coordinate);
   }
 
   function onPointerCancel(event: PointerEvent): void {
+    if (viewDrag !== "none" && event.pointerId === dragPointerId) {
+      viewDrag = "none";
+      dragPointerId = -1;
+      canvas.style.cursor = "grab";
+    }
     gesture.cancel(event.pointerId);
   }
 
   function onPointerLeave(): void {
+    pendingHover = null;
     hoveredCoordinate = null;
     if (hoverMarker !== null) hoverMarker.visible = false;
     draw();
@@ -1243,6 +1475,54 @@ let interactionGeometry: BufferGeometry | null = null;
   function onWheel(event: WheelEvent): void {
     event.preventDefault();
     cameraRig.zoomByWheel(event.deltaY);
+    scheduleCameraFrame();
+  }
+
+  /** The context menu belongs to the game's own right-drag, not to the browser's. */
+  function onContextMenu(event: Event): void {
+    event.preventDefault();
+  }
+
+  /** How far one press of Q or E turns the camera. */
+  const KEY_ROTATION_STEP = Math.PI / 30;
+
+  /** Editors own the keyboard; a shortcut must not fire while somebody is typing. */
+  function isTypingTarget(target: EventTarget | null): boolean {
+    if (target === null || typeof target !== "object") return false;
+    const element = target as { tagName?: unknown; isContentEditable?: unknown };
+    if (element.isContentEditable === true) return true;
+    if (typeof element.tagName !== "string") return false;
+    const tag = element.tagName.toUpperCase();
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
+  /**
+   * Keyboard camera shortcuts: Q/E orbit, F recenters on the character.
+   *
+   * WASD is deliberately not among them. The brief allows WASD to pan the camera, but WASD already
+   * walks the avatar in this client, and silently repurposing a shipped movement key would be exactly
+   * the kind of takeover the brief's left-click rule forbids. Panning is the middle button.
+   */
+  function onKeyDown(event: KeyboardEvent): void {
+    if (isTypingTarget(event.target)) return;
+    switch (event.key) {
+      case "q":
+      case "Q":
+        cameraRig.rotate(-KEY_ROTATION_STEP, 0);
+        break;
+      case "e":
+      case "E":
+        cameraRig.rotate(KEY_ROTATION_STEP, 0);
+        break;
+      case "f":
+      case "F":
+        // A glide, not a cut: the camera is never taken away from the player, only asked to move.
+        cameraRig.recenterTo(playerPose?.worldX ?? cameraHomeX, playerPose?.worldZ ?? cameraHomeZ);
+        scheduleCameraFrame();
+        return;
+      default:
+        return;
+    }
     updateCamera();
     draw();
   }
@@ -1260,6 +1540,8 @@ let interactionGeometry: BufferGeometry | null = null;
   canvas.addEventListener("pointercancel", onPointerCancel);
   canvas.addEventListener("pointerleave", onPointerLeave);
   canvas.addEventListener("wheel", onWheel, { passive: false });
+  canvas.addEventListener("contextmenu", onContextMenu);
+  window.addEventListener("keydown", onKeyDown);
   canvas.style.cursor = "grab";
 
   applyState(state);
@@ -1301,6 +1583,7 @@ let interactionGeometry: BufferGeometry | null = null;
       draw();
     },
     resize: draw,
+    cameraFrame: () => cameraRig.state,
     dispose(): void {
       disposed = true;
       canvas.removeEventListener("pointerdown", onPointerDown);
@@ -1309,6 +1592,15 @@ let interactionGeometry: BufferGeometry | null = null;
       canvas.removeEventListener("pointercancel", onPointerCancel);
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("keydown", onKeyDown);
+      if (frameHandle !== null) window.cancelAnimationFrame(frameHandle);
+      frameHandle = null;
+      if (hoverHandle !== null) window.cancelAnimationFrame(hoverHandle);
+      hoverHandle = null;
+      if (drawHandle !== null) window.cancelAnimationFrame(drawHandle);
+      drawHandle = null;
+      pendingHover = null;
       observer?.disconnect();
       worldGroup.clear();
       tileGroup.clear();

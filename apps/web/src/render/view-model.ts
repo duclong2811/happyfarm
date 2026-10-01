@@ -79,6 +79,46 @@ function coordinateKey(x: number, y: number): string {
   return `${String(x)},${String(y)}`;
 }
 
+/**
+ * Whether two polls of the farm describe the same picture, as one comparison key.
+ *
+ * The host page polls so that a crop which ripens while nobody is looking appears without a reload,
+ * and most polls find the farm exactly as it was. Everything below is a *display* input - what the
+ * panels print and what the renderer draws - so an unchanged key means the whole projection can be
+ * skipped: no world model, no cell map, no renderer push.
+ *
+ * Two deliberate choices:
+ *
+ * * Growth is quantised to whole percent, which is the precision the panels show. A crop is re-drawn
+ *   when its printed percentage changes, not for every fraction the server's clock produces.
+ * * `version`, ids, and flags are compared exactly, so nothing the client draws can miss a real
+ *   change - a maturity flip, a harvest, or a plot purchase all produce a different key.
+ */
+export function farmPresentationSignature(state: FarmViewState): string {
+  const parts: string[] = [
+    state.selected === null ? "-" : `s${String(state.selected.x)},${String(state.selected.y)}`
+  ];
+  for (const plot of state.plots) {
+    parts.push(`p${String(plot.plotIndex)}:${plot.unlocked ? "1" : "0"}:${String(plot.price)}:${String(plot.requiredLevel)}`);
+  }
+  for (const tile of state.tiles) {
+    parts.push(`t${String(tile.x)},${String(tile.y)}:${tile.terrainType}:${tile.state}:${String(tile.version)}`);
+  }
+  for (const crop of state.crops) {
+    parts.push(
+      `c${crop.cropInstanceId}:${crop.definitionId}@${String(crop.tileX)},${String(crop.tileY)}` +
+        `:${String(Math.round(crop.growthProgress * 100))}:${crop.mature ? "1" : "0"}:${String(crop.version)}`
+    );
+  }
+  for (const tree of state.trees) {
+    parts.push(
+      `r${tree.treeInstanceId}:${tree.definitionId}@${String(tree.tileX)},${String(tree.tileY)}` +
+        `:${tree.phase}:${String(Math.round(tree.growthProgress * 100))}:${tree.ready ? "1" : "0"}:${String(tree.version)}`
+    );
+  }
+  return parts.join(";");
+}
+
 function heightFractionOf(crop: CropStateDTO): number {
   if (crop.mature) return 1;
   const progress = crop.growthProgress;

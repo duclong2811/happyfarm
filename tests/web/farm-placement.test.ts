@@ -7,10 +7,13 @@ import { islandRadiusAt } from "../../apps/web/src/render/terrain-height";
 import { BUILDINGS, RESERVED_BUILDINGS } from "../../apps/web/src/render/buildings";
 import {
   DISTRICTS,
+  FARMSTEAD,
   FARM_FIELD_BOUNDS,
   FENCE,
+  HARBOUR,
   ISLAND_SHAPE,
   LANDMARKS,
+  ROAD_NODES,
   ROADS,
   SPAWN_TILE,
   VISUAL_BOUNDS,
@@ -149,19 +152,42 @@ describe("districts hold what they claim to hold", () => {
 });
 
 describe("the plan is reachable", () => {
-  it("connects the settlement, the fields and the harbour by one primary road", () => {
+  it("connects the harbour, the village and the farm by the one road the island authors", () => {
+    // V12 split the old single spine in two. The paving still runs harbour to village - that is the
+    // island's own road - and a dirt road the island also authors carries on from the square to the
+    // barn's yard. Past the yard, everything is the player's to build.
     const primary = ROADS.find((road) => road.kind === "PRIMARY");
     expect(primary, "the island needs a primary road").toBeDefined();
-    const points = primary?.points ?? [];
+    const authored = ROADS.filter((road) => road.kind !== "PATH");
+    const points = authored.flatMap((road) => road.points);
     const settlement = DISTRICTS.find((district) => district.kind === "SETTLEMENT")?.center ?? { x: 0, y: 0 };
     const coast = DISTRICTS.find((district) => district.kind === "COAST")?.center ?? { x: 0, y: 0 };
     const near = (tile: { readonly x: number; readonly y: number }, target: { readonly x: number; readonly y: number }, within: number): boolean =>
       Math.hypot(tile.x - target.x, tile.y - target.y) <= within;
-    // The three anchors of the territory plan: where people live, where the fields are, and where the
-    // boats will be.
+    // The three anchors of the territory plan, in the order the road visits them: the quay the boats
+    // use, the town people live in, and the barn where the fields begin.
+    expect(points.some((point) => near(point, HARBOUR.root, 2))).toBe(true);
     expect(points.some((point) => near(point, settlement, 16))).toBe(true);
     expect(points.some((point) => near(point, coast, 16))).toBe(true);
-    expect(points.some((point) => near(point, SPAWN_TILE, 3))).toBe(true);
+    // The paved spine itself stops at the square: the harbour-to-village connection is the one
+    // highway the island owns, and a stone road across the working land is what V12 removed.
+    expect(primary?.connects).toEqual(["harbour", "harbour_yard", "civic", "plaza"]);
+    // ...and the authored network still reaches the yard in front of the barn, not inside the barn:
+    // the hub is where the roads meet, and the barn stands beside it.
+    expect(points.some((point) => near(point, ROAD_NODES.farm_hub, 1))).toBe(true);
+    expect(Math.hypot(ROAD_NODES.farm_hub.x - FARMSTEAD.center.x, ROAD_NODES.farm_hub.y - FARMSTEAD.center.y)).toBeLessThan(5);
+  });
+
+  it("reaches the field gate by a track rather than by a highway", () => {
+    // The spawn sits on the field's south lane. A highway belongs on the coast, not across land the
+    // catalogue sells, so the last stretch to the gate is a `PATH` - and it is still a route, which
+    // is what the spawn depends on.
+    const lane = ROADS.filter((road) => road.kind === "PATH" && road.connects.includes("agriculture"));
+    expect(lane.length).toBeGreaterThan(0);
+    const points = lane.flatMap((road) => road.points);
+    expect(
+      points.some((point) => Math.hypot(point.x - SPAWN_TILE.x, point.y - SPAWN_TILE.y) <= 3)
+    ).toBe(true);
   });
 
   it("keeps every road out of the crop reserve", () => {

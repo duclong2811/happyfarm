@@ -149,7 +149,8 @@ function addInstancedModel(
   group: Group,
   model: Object3D,
   instances: readonly SceneryInstance[],
-  unitScale: number
+  unitScale: number,
+  castShadow: boolean
 ): void {
   model.updateMatrixWorld(true);
   const matrix = new Matrix4();
@@ -172,7 +173,7 @@ function addInstancedModel(
       instanced.setMatrixAt(index, matrix);
     });
     instanced.instanceMatrix.needsUpdate = true;
-    instanced.castShadow = true;
+    instanced.castShadow = castShadow;
     instanced.receiveShadow = false;
     // The bounding sphere has to account for the instance matrices, or the whole group would be
     // culled as soon as the model's own origin left the frustum.
@@ -185,7 +186,15 @@ export function buildScenery(
   group: Group,
   assets: SharedAssets,
   instances: readonly SceneryInstance[],
-  getModel: (id: string) => Object3D | undefined
+  getModel: (id: string) => Object3D | undefined,
+  /**
+   * Whether this pass casts shadows.
+   *
+   * False for the small-scenery groups. A flower or a tuft of grass is a few pixels wide and casts a
+   * shadow nobody can read, but every caster is a second render of the whole instance into the shadow
+   * map - which is what made the estate view pay for detail it deliberately switches off there.
+   */
+  castShadow = true
 ): void {
   // One bucket per model: a hundred trees of one variant are one instanced draw per mesh, and the
   // primitive fallback is only built for placements whose model is not loaded yet.
@@ -213,7 +222,9 @@ export function buildScenery(
   });
 
   for (const bucket of buckets.values()) {
-    if (bucket.instances.length > 0) addInstancedModel(group, bucket.model, bucket.instances, bucket.unitScale);
+    if (bucket.instances.length > 0) {
+      addInstancedModel(group, bucket.model, bucket.instances, bucket.unitScale, castShadow);
+    }
   }
 
   missing.forEach((instance, index) => {

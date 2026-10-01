@@ -15,9 +15,11 @@ import {
 } from "./world-config";
 import { RESERVED_BUILDINGS } from "./buildings";
 import {
+  cellCapabilitiesFor,
   cellKey,
   productionCapabilityFor,
   type CellOccupancy,
+  type CellCapability,
   type CellTerrain,
   type CellZone,
   type WorldCell,
@@ -298,6 +300,10 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
       const allowed = productionCapabilityFor(terrain, zone);
       const capability: WorldCell["productionCapability"] =
         allowed === "CROP" && !inReserve ? "NONE" : allowed;
+      // What the ground may be used for, which is a question about the ground and not about the
+      // district drawn over it, the reservation, or what happens to stand there now. A cell blocked by
+      // a building answers for itself inside `cellCapabilitiesFor`.
+      const capabilities: readonly CellCapability[] = cellCapabilitiesFor(terrain, zone);
       const buildable =
         terrain === "LAND" &&
         !reserved &&
@@ -315,6 +321,7 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
         buildable,
         occupancy,
         productionCapability: capability,
+        capabilities,
         road,
         legacyFarmTile: inReserve ? { x, y: z } : null
       };

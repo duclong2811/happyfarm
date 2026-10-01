@@ -5,6 +5,7 @@ import {
   DISTRICTS,
   COMPOSITION_PRESETS,
   FIELD_BLOCKS,
+  FIELD_MARGIN_GROVES,
   FISH_FARM,
   FARMSTEAD,
   FENCE,
@@ -19,7 +20,9 @@ import {
   MEADOWS,
   POND,
   PLAZA,
+  ROAD_NODES,
   ROADS,
+  ROAD_WIDTH_TILES,
   TERRAIN_RELIEF_WORLD,
   VISUAL_BOUNDS,
   terrainFlatAreas,
@@ -27,11 +30,14 @@ import {
   type DistrictGround,
   type DistrictKind,
   type FieldBlock,
-  type PlacedLandmark
+  type PlacedLandmark,
+  type RoadKind,
+  type RoadNodeId
 } from "./world-config";
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
-import { buildRoadSpec, type RoadSpec } from "./roads";
+import { buildRoadSpec, ROAD_LIFT_WORLD, type RoadSpec } from "./roads";
 export type { RoadSpec } from "./roads";
+import type { JunctionSpec } from "./road-surface";
 import { placementRejection, type PlacementWorld, type ShorelineClass } from "./placement";
 import { buildCompositions, type CompositionClearing, type CompositionWorld } from "./composition";
 import { PROP_MODELS } from "./prop-model-urls";
@@ -249,6 +255,14 @@ export interface FarmWorld {
   /** Every road, already resampled into a terrain-following centreline. */
   readonly roads: readonly RoadSpec[];
   /**
+   * Where two or more roads meet, in world metres.
+   *
+   * A junction is a small paved place the roads run into rather than an overlap of two strips, which
+   * is what stops an intersection from looking like a cross-shaped seam. Derived from the stops the
+   * roads declare, so a junction cannot exist at a place the network does not actually reach.
+   */
+  readonly junctions: readonly JunctionSpec[];
+  /**
    * The agricultural reserve's visual fields.
    *
    * Presentation only, and drawn in the overlay: a field block is a picture of a field, and the apron
@@ -310,6 +324,7 @@ const EMPTY_WORLD: FarmWorld = {
   landmarks: [],
   districts: [],
   roads: [],
+  junctions: [],
   fieldBlocks: [],
   plaza: { worldX: 0, worldZ: 0, radiusWorldX: 0, radiusWorldZ: 0, rotationY: 0 },
   harbour: { worldX: 0, worldZ: 0, rotationY: 0, lengthWorld: 0, deckWidthWorld: 0, yardWorldX: 0, yardWorldZ: 0 },
@@ -450,7 +465,7 @@ const MAX_SCENERY = 1000;
  * generous for the districts a player walks and tight enough that the far side of the island is
  * filler, which is what the estate camera wants anyway.
  */
-const HERO_SCENERY_BUDGET = 820;
+const HERO_SCENERY_BUDGET = 900;
 /**
  * How many props each part of the island may spend.
  *
@@ -469,6 +484,8 @@ const SECTION_BUDGET = {
   hedge: 30,
   /** The planted edges of the agricultural parcels, which V11 made the field's boundary. */
   fieldHedge: 60,
+  /** The groves and outcrops that break up the ring of ground around the reserve. */
+  fieldMargin: 96,
   wilderness: 88
 } as const;
 /** How far outside the fence a planted thing has to be to count as countryside rather than field. */
@@ -978,7 +995,38 @@ function buildScenery(
     }
   }
 
-  // 6. The shoreline: a sparse, controlled band of what a coast is actually made of.
+  // 6. The farmland's margin.
+  //
+  // The crop district grows nothing inside the reserve on purpose - that land belongs to the
+  // catalogue - but the blob reaches several tiles past the reserve's edge, and leaving that ring
+  // empty is what made the estate view read as a green plane with a farmhouse on it. `isOpenGround`
+  // still refuses the reserve itself and `placementRejection` still refuses the water, the roads, and
+  // every building's clearing, so a grove only ever stands on open countryside. The anchors are
+  // authored rather than sampled: a ring of evenly scattered bushes is confetti, and a dozen decided
+  // places are a landscape.
+  //
+  // It is placed *before* the shoreline, the hedgerows, and the field edges because the budget is
+  // spent in order: a section that runs last only gets what is left, and the whole point of this one
+  // is that the ring around the fields is not left to chance.
+  const marginBudget = within(SECTION_BUDGET.fieldMargin);
+  for (const grove of FIELD_MARGIN_GROVES) {
+    const cluster: ClusterKind =
+      grove.kind === "GROVE" ? "FOREST" : grove.kind === "ROCKS" ? "ROCKS" : grove.kind === "THICKET" ? "SHRUBS" : "FLOWERS";
+    for (let member = 0; member < grove.members; member += 1) {
+      const angle = rand() * Math.PI * 2;
+      const distance = grove.radiusTiles * Math.sqrt(rand());
+      const kindRoll = rand();
+      const scaleRoll = rand();
+      const rotationRoll = rand();
+      const tileX = grove.center.x + Math.cos(angle) * distance;
+      const tileY = grove.center.y + Math.sin(angle) * distance;
+      if (!isOpenGround(tileX, tileY)) continue;
+      const kind = clusterMemberKind(cluster, kindRoll);
+      marginBudget(kind, tileX, tileY, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2);
+    }
+  }
+
+  // 7. The shoreline: a sparse, controlled band of what a coast is actually made of.
   //
   // The island no longer gets a continuous ring of trees - that hid the coastline and read as a wall
   // - so the edge is decorated by walking the shore and stepping a short way inland, placing small
@@ -1305,6 +1353,33 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
 
   const roads = ROADS.map((road) => buildRoadSpec(road, input.layout, terrain));
 
+  /**
+   * The places the roads meet.
+   *
+   * A stop's surface is the most important road that touches it - a stone spine passing through a
+   * village square paves the whole junction, not half of it - and the disc is a little wider than the
+   * widest road there, so the road ends tuck under it instead of meeting edge to edge.
+   */
+  const roadRank: Readonly<Record<RoadKind, number>> = { PRIMARY: 3, SECONDARY: 2, PATH: 1 };
+  const surfaceAt = new Map<RoadNodeId, RoadKind>();
+  for (const road of ROADS) {
+    for (const node of road.connects) {
+      const existing = surfaceAt.get(node);
+      if (existing === undefined || roadRank[road.kind] > roadRank[existing]) surfaceAt.set(node, road.kind);
+    }
+  }
+  const junctions: JunctionSpec[] = [...surfaceAt].map(([node, kind]) => {
+    const centre = tileToWorld(ROAD_NODES[node], mapping);
+    return {
+      id: `junction_${node}`,
+      worldX: centre.worldX,
+      worldY: GROUND_SURFACE_Y + terrainHeightAt(centre.worldX, centre.worldZ, terrain) + ROAD_LIFT_WORLD,
+      worldZ: centre.worldZ,
+      radiusWorld: ROAD_WIDTH_TILES[kind] * input.layout.pitch * 0.62,
+      kind
+    };
+  });
+
   // The agricultural fields: rectangles of the reserve the catalogue has not sold yet, drawn as
   // fields. They are overlay work because they sit where the player will eventually farm, and the
   // apron has to be able to paint over them.
@@ -1399,6 +1474,7 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
       };
     }),
     roads,
+    junctions,
     fieldBlocks,
     plaza: {
       worldX: plazaCentre.worldX,

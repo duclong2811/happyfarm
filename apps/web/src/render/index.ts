@@ -21,8 +21,10 @@ export {
 } from "./scene";
 export {
   buildFarmSceneInput,
+  farmPresentationSignature,
   type FarmSceneInput,
   type FarmViewState,
   type SceneCrop,
   type SceneTile
 } from "./view-model";
+export { renderQualityPreset, resolveRenderQuality, type RenderQualityName } from "./render-quality";

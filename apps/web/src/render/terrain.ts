@@ -19,13 +19,21 @@ import {
   type FarmWorld,
   type LockedPlotSquare,
   type MeadowSpec,
-  type PondSpec,
-  type RoadSpec
+  type PondSpec
 } from "./world";
+import {
+  junctionSurface,
+  ribbonSurface,
+  roadsideStones,
+  stonePlateSurface,
+  type SurfaceData
+} from "./road-surface";
 import { GROUND_SURFACE_Y, islandRadiusAt, islandRimPoint, terrainHeightAt, type TerrainShape } from "./terrain-height";
+import { ROAD_LIFT_WORLD } from "./roads";
 import {
   DISTRICTS,
   TERRAIN_SHAPE,
+  type RoadKind
 } from "./world-config";
 import { buildLandmarks } from "./landmarks";
 import { buildScenery } from "./scenery";
@@ -375,57 +383,25 @@ function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld, la
   group.add(mesh);
 }
 
+/** How far each road layer is lifted, so the layers stack instead of fighting. */
+const ROAD_SHOULDER_LIFT = -0.006;
+const ROAD_BED_LIFT = 0;
+const ROAD_PLATE_LIFT = 0.01;
+const ROAD_JUNCTION_LIFT = 0.014;
 /**
- * The road network, as ribbons on the ground.
+ * How much wider than the road its shoulder is drawn, per class.
  *
- * Each road arrives already resampled into a terrain-following centreline, so all this has to do is
- * offset every sample by half the road's width and stitch the offsets into a strip. Roads are the
- * map's explanation - the primary road is the way to the harbour, the secondary roads are the ways to
- * work - which is why they are drawn as one continuous surface rather than as a set of decals.
+ * The shoulder is what softens an edge, and it must not flatten the hierarchy while doing it: a stone
+ * spine keeps a generous fringe and a field track keeps almost none, so the three classes stay as
+ * clearly separated on the ground as they are in the config.
  */
-function roadGeometry(roads: readonly RoadSpec[]): { readonly major: BufferGeometry; readonly minor: BufferGeometry } {
-  const majorPositions: number[] = [];
-  const majorIndices: number[] = [];
-  const minorPositions: number[] = [];
-  const minorIndices: number[] = [];
+const ROAD_SHOULDER_WIDTHS: Readonly<Record<RoadKind, number>> = {
+  PRIMARY: 1.3,
+  SECONDARY: 0.7,
+  PATH: 0.28
+};
 
-  for (const road of roads) {
-    const positions = road.kind === "PATH" ? minorPositions : majorPositions;
-    const indices = road.kind === "PATH" ? minorIndices : majorIndices;
-    const half = road.widthWorld / 2;
-    const base = positions.length / 3;
-    const count = road.samples.length;
-    for (let index = 0; index < count; index += 1) {
-      const sample = road.samples[index];
-      const previous = road.samples[index - 1] ?? sample;
-      const next = road.samples[index + 1] ?? sample;
-      if (sample === undefined || previous === undefined || next === undefined) continue;
-      const tangentX = next.worldX - previous.worldX;
-      const tangentZ = next.worldZ - previous.worldZ;
-      const length = Math.hypot(tangentX, tangentZ);
-      // A zero-length step would put both edges on the centreline and collapse the strip.
-      const normalX = length === 0 ? 0 : -tangentZ / length;
-      const normalZ = length === 0 ? 1 : tangentX / length;
-      positions.push(sample.worldX + normalX * half, sample.worldY, sample.worldZ + normalZ * half);
-      positions.push(sample.worldX - normalX * half, sample.worldY, sample.worldZ - normalZ * half);
-    }
-    for (let index = 0; index < count - 1; index += 1) {
-      const left = base + index * 2;
-      const right = left + 1;
-      const nextLeft = left + 2;
-      const nextRight = left + 3;
-      // Wound so the strip's normal is up: left, next right, right / left, next left, next right.
-      indices.push(left, nextRight, right);
-      indices.push(left, nextLeft, nextRight);
-    }
-  }
-
-  return {
-    major: ribbonGeometry(majorPositions, majorIndices),
-    minor: ribbonGeometry(minorPositions, minorIndices)
-  };
-}
-
+/** A flat strip from loose positions and indices, wound so its normal is up. */
 function ribbonGeometry(positions: readonly number[], indices: readonly number[]): BufferGeometry {
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
@@ -434,19 +410,129 @@ function ribbonGeometry(positions: readonly number[], indices: readonly number[]
   return geometry;
 }
 
+/** One mesh from one surface, or nothing when the surface is empty. */
+function surfaceMesh(data: SurfaceData, material: Material, lift: number, name: string): Mesh | null {
+  if (data.positions.length === 0) return null;
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(data.positions, 3));
+  if (data.colors !== null) geometry.setAttribute("color", new BufferAttribute(data.colors, 3));
+  geometry.setIndex(new BufferAttribute(data.indices, 1));
+  geometry.computeVertexNormals();
+  const mesh = new Mesh(geometry, material);
+  mesh.name = name;
+  mesh.position.y = lift;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/**
+ * The road network, drawn as the hierarchy it is.
+ *
+ * Seven layers, in the order they are laid: a soft shoulder under everything, three beds - dirt,
+ * worn path, and the stone spine's own surface - then the cobbles on top of the stone bed, then a
+ * paved disc at each junction, then the stones the verges collect. Roads are the map's explanation,
+ * so this is the one place the composition of the island is spelled out in materials rather than in
+ * words: grey stone, warm dirt, pale worn ground, and a darker fringe beneath all of them.
+ *
+ * Generated once per world refresh and read by nothing per frame. Every layer is a single mesh, and
+ * the cobbles are batched into one geometry rather than instanced per stone.
+ */
 function addRoads(group: Group, assets: SharedAssets, world: FarmWorld): void {
   if (world.roads.length === 0) return;
-  const { major, minor } = roadGeometry(world.roads);
-  const majorMesh = new Mesh(major, assets.road);
-  majorMesh.receiveShadow = true;
-  group.add(majorMesh);
-  if (world.roads.some((road) => road.kind === "PATH")) {
-    const minorMesh = new Mesh(minor, assets.roadMinor);
-    minorMesh.receiveShadow = true;
-    group.add(minorMesh);
-  } else {
-    minor.dispose();
+
+  /** The ground a road follows: the same terrain mesh the island is drawn from, plus the road's lift. */
+  const roadHeightAt = (worldX: number, worldZ: number): number =>
+    GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, world.terrain) + ROAD_LIFT_WORLD;
+
+  const shoulder = surfaceMesh(
+    ribbonSurface(
+      world.roads.map((road) => ({ ...road, widthWorld: road.widthWorld + ROAD_SHOULDER_WIDTHS[road.kind] })),
+      ["PRIMARY", "SECONDARY", "PATH"],
+      roadHeightAt
+    ),
+    assets.roadShoulder,
+    ROAD_SHOULDER_LIFT,
+    "road-shoulder"
+  );
+  if (shoulder !== null) group.add(shoulder);
+
+  const dirt = surfaceMesh(
+    ribbonSurface(world.roads, ["SECONDARY"], roadHeightAt),
+    assets.roadDirt,
+    ROAD_BED_LIFT,
+    "road-dirt"
+  );
+  if (dirt !== null) group.add(dirt);
+
+  const paths = surfaceMesh(
+    ribbonSurface(world.roads, ["PATH"], roadHeightAt),
+    assets.roadPath,
+    ROAD_BED_LIFT,
+    "road-path"
+  );
+  if (paths !== null) group.add(paths);
+
+  const stoneBed = surfaceMesh(
+    ribbonSurface(world.roads, ["PRIMARY"], roadHeightAt),
+    assets.roadStoneBed,
+    ROAD_BED_LIFT,
+    "road-stone-bed"
+  );
+  if (stoneBed !== null) group.add(stoneBed);
+
+  const plates = surfaceMesh(
+    stonePlateSurface(world.roads, roadHeightAt),
+    assets.roadStone,
+    ROAD_PLATE_LIFT,
+    "road-cobbles"
+  );
+  if (plates !== null) group.add(plates);
+
+  const junctionLayers = [
+    [world.junctions.filter((junction) => junction.kind === "PRIMARY"), assets.roadStone, "road-junction-stone"],
+    [world.junctions.filter((junction) => junction.kind === "SECONDARY"), assets.roadDirt, "road-junction-dirt"],
+    [world.junctions.filter((junction) => junction.kind === "PATH"), assets.roadPath, "road-junction-path"]
+  ] as const;
+  for (const [junctions, asset, name] of junctionLayers) {
+    const mesh = surfaceMesh(junctionSurface(junctions), asset, ROAD_JUNCTION_LIFT, name);
+    if (mesh !== null) group.add(mesh);
   }
+
+  addRoadsideStones(group, assets, world);
+}
+
+/**
+ * The stones along a dirt road's verge, as one `InstancedMesh`.
+ *
+ * A stone is a low-poly octahedron squashed onto the ground and turned to a hash; the whole verge of
+ * the network costs one draw call and a few hundred triangles, and the occasional rock is what keeps
+ * a dirt road from reading as a painted stripe.
+ */
+function addRoadsideStones(group: Group, assets: SharedAssets, world: FarmWorld): void {
+  const stones = roadsideStones(world.roads);
+  if (stones.length === 0) return;
+  const mesh = new InstancedMesh(assets.octa, assets.roadsideStone, stones.length);
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  const axis = new Vector3(0, 1, 0);
+  const colour = new Color();
+  stones.forEach((stone, index) => {
+    position.set(stone.worldX, stone.worldY + stone.scale * 0.22, stone.worldZ);
+    scale.set(stone.scale, stone.scale * 0.62, stone.scale);
+    rotation.setFromAxisAngle(axis, stone.rotationY);
+    matrix.compose(position, rotation, scale);
+    mesh.setMatrixAt(index, matrix);
+    mesh.setColorAt(index, colour.setRGB(stone.tone, stone.tone, stone.tone));
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
+  mesh.name = "road-verge-stones";
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.computeBoundingSphere();
+  group.add(mesh);
 }
 
 /**

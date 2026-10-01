@@ -238,10 +238,18 @@ describe("buildings occupy ground and block movement", () => {
     expect(plaza?.occupancy).not.toBe("BUILDING");
     expect(plaza?.walkable).toBe(true);
 
-    // The primary road runs past the town's western side: a cell on it is walkable ground.
-    const road = worldCellAt(input.cells, 42, 8);
-    expect(road?.walkable).toBe(true);
-    expect(road?.road).not.toBeNull();
+    // The stone spine runs through the town: the map knows a road is there without a second
+    // coordinate system for roads, and a road cell is ground - walkable unless a building stands on
+    // it, which is the rule the brief states in as many words.
+    const onARoad = [...input.cells.cells.values()].filter((cell) => cell.road !== null);
+    expect(onARoad.length).toBeGreaterThan(0);
+    expect(onARoad.some((cell) => Math.hypot(cell.x - 45, cell.z - 3) <= 8)).toBe(true);
+    for (const cell of onARoad) {
+      if (cell.terrain === "BLOCKED") expect(cell.occupancy).toBe("BUILDING");
+      // The quay's walkway runs from the beach out over open water; the deck is the walkway.
+      else if (cell.road === "harbour_boardwalk") continue;
+      else expect(cell.walkable).toBe(true);
+    }
   });
 
   it("refuses a movement destination inside a building or in the sea", () => {

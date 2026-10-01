@@ -69,9 +69,22 @@ export interface SharedAssets {
   readonly dirtDark: MeshStandardMaterial;
   /** Dry, muted earth for meadow patches: bare ground that has not been worked. */
   readonly bareEarth: MeshStandardMaterial;
-  /** The road network: packed earth for the roads that matter, a lighter track for the paths. */
-  readonly road: MeshStandardMaterial;
-  readonly roadMinor: MeshStandardMaterial;
+  /**
+   * The road network's three surfaces, plus the trodden ground underneath them all.
+   *
+   * A stone spine is grey and laid; a dirt road is warm packed earth; a path is paler worn ground;
+   * the shoulder is the softer fringe every road sits in, so an edge is a blend rather than a cut.
+   * The first three carry vertex colours - the geometry tints each stone and each ribbon vertex a
+   * little, and the colour here is what that tint multiplies.
+   */
+  readonly roadShoulder: MeshStandardMaterial;
+  readonly roadStone: MeshStandardMaterial;
+  /** The mortar the stone road's plates are laid on: darker, so a joint reads as a joint. */
+  readonly roadStoneBed: MeshStandardMaterial;
+  readonly roadDirt: MeshStandardMaterial;
+  readonly roadPath: MeshStandardMaterial;
+  /** The stones a dirt road's verge collects, drawn instanced with a colour per stone. */
+  readonly roadsideStone: MeshStandardMaterial;
   /** District grounds: the settlement's square, pasture, wetland edge, and forest floor. */
   readonly plaza: MeshStandardMaterial;
   readonly pasture: MeshStandardMaterial;
@@ -216,8 +229,15 @@ export function createSharedAssets(): SharedAssets {
     dirt: material(standard(0xc9a26a)),
     dirtDark: material(standard(0xb0854f)),
     bareEarth: material(standard(0xc4a97b, { roughness: 0.94 })),
-    road: material(standard(0xc19a63, { roughness: 0.96 })),
-    roadMinor: material(standard(0xccab7c, { roughness: 0.96 })),
+    // Grey and laid for the spine, warm earth for the working roads, paler worn ground for a track,
+    // and one darker fringe under all of them. Read together they are the hierarchy, before a single
+    // stone is drawn.
+    roadShoulder: material(standard(0x8a6940, { roughness: 0.97, vertexColors: true })),
+    roadStone: material(standard(0x9d998d, { roughness: 0.9, vertexColors: true })),
+    roadStoneBed: material(standard(0x817d72, { roughness: 0.94, vertexColors: true })),
+    roadDirt: material(standard(0x9a7444, { roughness: 0.96, vertexColors: true })),
+    roadPath: material(standard(0xac9068, { roughness: 0.97, vertexColors: true })),
+    roadsideStone: material(standard(0x9a958c, { roughness: 0.9 })),
     plaza: material(standard(0xcbb894, { roughness: 0.92 })),
     pasture: material(standard(0x8ec663, { roughness: 0.95 })),
     wetland: material(standard(0x6f9f5e, { roughness: 0.95 })),

@@ -241,6 +241,24 @@ function devApiPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [devApiPlugin()],
+  /**
+   * The development server watches the tree for hot reloads.
+   *
+   * Two things are deliberate here, both from the V12 recovery audit:
+   *
+   * * **Native watching, never polling.** `usePolling` is absent and must stay absent. Polling walks
+   *   the whole tree on a timer, and on a repository this size that alone can hold a core at full
+   *   load. Vite's default watcher uses the platform's own change notifications, which cost nothing
+   *   while nothing changes.
+   * * **Build output and tool caches are ignored.** `dist/`, coverage, Wrangler's scratch state and
+   *   the temporary directories a build or a screenshot pass writes into are not source. A watcher
+   *   that follows them into a build re-triggers itself once per file it just produced.
+   */
+  server: {
+    watch: {
+      ignored: ["**/dist/**", "**/coverage/**", "**/.wrangler/**", "**/tmp/**", "**/.tmp/**"]
+    }
+  },
   build: {
     outDir: "dist"
   }

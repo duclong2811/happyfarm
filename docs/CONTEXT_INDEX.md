@@ -258,6 +258,24 @@ navigation, land use, occupancy, or the visibility of any grid.
 Regions are client/static and visual only: they are not domain concepts, not D1 rows, and never gate
 gameplay. Land authority stays `farm_tiles` plus the plot catalogue.
 
+## World V12: the player-built island (current direction)
+
+Read `docs/design/WORLD_V12_PLAYER_BUILT_ISLAND.md` before changing terrain, districts, roads, land
+use, ownership, expansion, or the build catalogue. It records the direction change itself: **OLD** -
+developer-defined production districts; **NEW** - player-developed land using WorldCell capabilities
+plus ownership plus placed objects.
+
+- Capabilities and the land-use rule: `apps/web/src/render/world-cell.ts` (`CellCapability`,
+  `cellCapabilitiesFor`, `cellHasCapability`), filled by `world-cell-map.ts`, with
+  `tests/web/world-cell-capabilities.test.ts`. A district never appears in that rule.
+- Road tier data (the one price table): `packages/game-data/src/roads/index.ts`. The build catalogue
+  foundation, which is *not* the market: `packages/game-data/src/placement/index.ts`.
+- Road network and its required destinations: `apps/web/src/render/road-network.ts`. The V12 recovery
+  removed the authored spurs across the future player land; do not re-add a road to a production
+  district.
+- Performance of the client: `docs/decisions/V12_PERFORMANCE_RECOVERY.md` before touching the poll,
+  the render loop, pointer handling, shadows, or the renderer's quality switch.
+
 ## Player character (Phase 7B.7)
 
 Read `docs/decisions/0016-player-character-and-follow-camera.md` before editing movement, collision,

@@ -45,6 +45,29 @@ export type CellOccupancy = "EMPTY" | "BUILDING" | "SCENERY" | "RESOURCE" | "PRO
 export type CellProductionCapability = "NONE" | "CROP" | "AQUACULTURE" | "TIMBER" | "MINING";
 
 /**
+ * What a cell may be *used for*.
+ *
+ * This is the new direction's whole land-use idea, in one type. The island does not decide that a
+ * patch of ground is an orchard, a field, or a wood: the ground says what it *can* support, and the
+ * player's own ownership plus the objects they place decide what it actually becomes. A district is
+ * landscape - it changes what grows there and how the place reads - and it never appears in this list.
+ *
+ * The set is deliberately small, and the same words are used by the build catalogue in
+ * `packages/game-data`, so a placeable object names the capability it needs and a cell either has it
+ * or does not.
+ */
+export type CellCapability =
+  | "WALK"
+  | "BUILD"
+  | "FARM"
+  | "FORESTRY"
+  | "LIVESTOCK"
+  | "ROAD"
+  | "DECORATION"
+  | "AQUACULTURE"
+  | "DOCK";
+
+/**
  * One cell of the island.
  *
  * A value, not an object with behaviour: the map is rebuilt from server land plus the world config
@@ -60,6 +83,14 @@ export interface WorldCell {
   readonly buildable: boolean;
   readonly occupancy: CellOccupancy;
   readonly productionCapability: CellProductionCapability;
+  /**
+   * What this ground may be used for, whatever a landscape district happens to be drawn over it.
+   *
+   * Independent of `productionCapability`, which stays the *narrower* "what the server could grant
+   * today" answer. A cell can be FARM-capable without being plantable: the reservation still decides
+   * which ground the plot catalogue can sell, and this decides which uses the ground could carry.
+   */
+  readonly capabilities: readonly CellCapability[];
   /** The id of the road that crosses this cell, or null. Roads are landscape, not grid lines. */
   readonly road: string | null;
   /**
@@ -164,6 +195,44 @@ export function productionCapabilityFor(terrain: CellTerrain, zone: CellZone): C
     case "NONE":
       return "NONE";
   }
+}
+
+/**
+ * What a piece of ground may be used for, from the ground alone.
+ *
+ * The one rule the whole player-built island rests on, and it is total: every combination of terrain
+ * and landscape zone has an answer here rather than a caller deciding for itself. Two properties are
+ * the point of it:
+ *
+ * * **It is not the district.** An orchard's blob and open countryside give the same answer for the
+ *   same ground, because the district is scenery. Land use belongs to the player, and this is the
+ *   permission the player's placement is checked against.
+ * * **It is not the reservation.** FARM is a capability of any dry cell. Whether a *particular* cell
+ *   may be planted is the reservation and the server's business, exactly as before.
+ *
+ * Order is stable, and the set is small: callers compare it, and a test pins the vocabulary.
+ */
+export function cellCapabilitiesFor(terrain: CellTerrain, zone: CellZone): readonly CellCapability[] {
+  switch (terrain) {
+    case "BLOCKED":
+      // A building already stands here. Nothing else may be placed, and nothing may be walked into.
+      return [];
+    case "WATER":
+      // Open water is not a place to build: only planned water carries fish cages, and only a shore
+      // cell may meet it with a dock.
+      return zone === "AQUACULTURE" ? ["AQUACULTURE"] : [];
+    case "SHORE":
+      // The beach is walkable, and it is the one ground a dock may stand on - which is what makes
+      // "land meets water" the dock's own rule rather than a rectangle somebody authored.
+      return ["WALK", "DOCK"];
+    case "LAND":
+      return ["WALK", "BUILD", "FARM", "FORESTRY", "LIVESTOCK", "ROAD", "DECORATION"];
+  }
+}
+
+/** Whether a cell carries a capability. The reader for every placement check. */
+export function cellHasCapability(cell: WorldCell, capability: CellCapability): boolean {
+  return cell.capabilities.includes(capability);
 }
 
 /** Whether a capability and the ground it wants actually agree. The inverse of the rule above. */

@@ -31,9 +31,17 @@ export interface RoadSpec {
 }
 
 /** How many points a spline segment is sampled into. Higher is smoother and costs more vertices. */
-const SAMPLES_PER_SEGMENT = 7;
-/** A road is lifted this far above the ground so it cannot z-fight with the grass it lies on. */
-const ROAD_LIFT_WORLD = 0.012;
+const SAMPLES_PER_SEGMENT = 11;
+/**
+ * A road is lifted this far above the ground it follows.
+ *
+ * The ground is drawn as a coarse mesh and a road is placed on the *analytic* height, so between two
+ * of the ground mesh's rings the drawn surface sits a centimetre or two above where the curve says it
+ * is - and a road lifted by less than that disappears into the grass in patches, which is the "road
+ * swallowed by a hill" the estate view kept showing. Five centimetres is above every interpolation
+ * error the relief can produce and far below the height a player reads as a step.
+ */
+export const ROAD_LIFT_WORLD = 0.05;
 
 function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
   const t2 = t * t;

@@ -45,9 +45,12 @@ import {
   buildFarmSceneInput,
   createFarmScene,
   FarmRendererUnavailableError,
+  farmPresentationSignature,
+  resolveRenderQuality,
   type FarmSceneInput,
   type FarmScenePlayer,
-  type FarmSceneHandle
+  type FarmSceneHandle,
+  type RenderQualityName
 } from "./render";
 import { SPAWN_WORLD } from "./render/world-config";
 import { cellKey, type WorldCell } from "./render/world-cell";
@@ -1172,6 +1175,22 @@ function debugRequested(): boolean {
   }
 }
 
+/**
+ * How expensive the 3D view is allowed to be, from the query string.
+ *
+ * A development switch, not a player setting: `?quality=low` caps the pixel ratio, turns the shadow
+ * map off, and drops the small scenery, so a development machine can keep a *correct* scene running
+ * while somebody works on it. Nothing it changes is read by a game rule - land, walkability, crop
+ * maturity, and ownership are identical at either level.
+ */
+function renderQualityRequested(): RenderQualityName {
+  try {
+    return resolveRenderQuality(new URLSearchParams(window.location.search).get("quality"));
+  } catch {
+    return "NORMAL";
+  }
+}
+
 /** Applies a selection from either the 2D field or the 3D view; both read and write this one state. */
 function selectCell(x: number, y: number): void {
   state.selected = { x, y };
@@ -1214,7 +1233,17 @@ function sceneInput(): FarmSceneInput {
 }
 
 /** Pushes authoritative farm state into the renderer. The renderer invents no land and no crops. */
+let scenePushSignature: string | null = null;
+
 function refreshScene(): void {
+  // The 3D view is the only consumer, so there is nothing to build while it is closed. Returning
+  // before the world model is projected is the difference between a poll costing nothing and a poll
+  // building an island, a cell map and a thousand scenery placements nobody will draw.
+  if (scene === null) return;
+  // A poll that finds the farm exactly as it was has nothing to push. `farmPresentationSignature`
+  // covers everything these groups draw, growth quantised to the precision the panels print.
+  const signature = farmPresentationSignature(state);
+  if (signature === scenePushSignature) return;
   const input = sceneInput();
   // Movement is blocked by the same rows the renderer draws, so a crop that grows under the
   // character starts blocking the next step without a second refresh path. Rebuilding the collision
@@ -1223,7 +1252,6 @@ function refreshScene(): void {
   // The selection asks the same world whether a cell can be walked to, so a destination can never be
   // offered for ground the character would refuse.
   selectionCollision = createPlayerCollisionWorld(input.tiles);
-  if (scene === null) return;
   try {
     scene.setState(input);
   } catch (error: unknown) {
@@ -1234,6 +1262,9 @@ function refreshScene(): void {
     setSceneState((translate, language) => translate("scene.error", { message: described(translate, language) }));
     return;
   }
+  // Recorded only once the push succeeded, so a renderer problem is retried by the next refresh
+  // rather than being remembered as done.
+  scenePushSignature = signature;
   setSceneState((translate) =>
     translate("scene.active", { tiles: state.tiles.length, crops: state.crops.length })
   );
@@ -1243,6 +1274,7 @@ function enable3D(): void {
   if (scene === null) {
     try {
       scene = createFarmScene(element<HTMLCanvasElement>("scene"), {
+        quality: renderQualityRequested(),
         onCellSelected: (cell) => {
           selectCell(cell.x, cell.y);
         },
@@ -1274,6 +1306,9 @@ function enable3D(): void {
     // so a normal session never sees the lattice the engine thinks in.
     scene.setDebugMode(debugRequested());
   }
+  // A fresh renderer holds nothing, whatever the last one was told: forgetting the signature is what
+  // makes the very next refresh fill it.
+  scenePushSignature = null;
   refreshScene();
   renderGo();
   setStatus(message("scene.ready"));
@@ -1704,14 +1739,29 @@ function wire(): void {
     setSceneState((translate) => translate("scene.idle"));
   });
 
+  /**
+   * Whether a poll is still running.
+   *
+   * The interval is fixed, and a slow round trip - a cold development API, a machine already under
+   * load - used to let ticks stack: another four requests, another state push, another whole-page
+   * re-render, every two seconds, all overlapping the tick before. That is a self-sustaining load
+   * spiral on exactly the machine this recovery pass exists to rescue, so a tick that arrives while
+   * the previous one is still running is dropped. The next tick is at most two seconds away and the
+   * lost poll is indistinguishable from a slow response.
+   */
+  let farmRefreshInFlight = false;
+
   window.setInterval(() => {
-    if (state.farmId === null) return;
+    if (state.farmId === null || farmRefreshInFlight) return;
+    farmRefreshInFlight = true;
     void (async () => {
       try {
         await refreshFarm();
         render();
       } catch {
         // Growth polling is best-effort; explicit actions surface their own errors.
+      } finally {
+        farmRefreshInFlight = false;
       }
     })();
   }, REFRESH_INTERVAL_MS);
