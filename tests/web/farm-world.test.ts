@@ -17,13 +17,13 @@ import {
   previewLockedPlots,
 } from "../../apps/web/src/render/world";
 import {
-  DISTRICTS,
   FENCE,
   ISLAND_SHORE_MARGIN_TILES,
   LANDMARKS,
   POND,
   ROADS,
-  VISUAL_BOUNDS
+  VISUAL_BOUNDS,
+  WOODLANDS
 } from "../../apps/web/src/render/world-config";
 
 function plot(plotIndex: number, unlocked: boolean): PlotDTO {
@@ -148,7 +148,6 @@ describe("buildFarmWorld", () => {
       6
     );
     expect(world.roads.length).toBe(ROADS.length);
-    expect(world.districts.length).toBe(DISTRICTS.length);
     expect(world.pond).not.toBeNull();
     expect(world.barn).not.toBeNull();
     expect(world.meadows.length).toBeGreaterThan(0);
@@ -172,7 +171,6 @@ describe("buildFarmWorld", () => {
     expect(grown.pond).toEqual(small.pond);
     expect(grown.barn).toEqual(small.barn);
     expect(grown.roads).toEqual(small.roads);
-    expect(grown.districts).toEqual(small.districts);
     expect(grown.scenery).toEqual(small.scenery);
     expect(grown.meadows).toEqual(small.meadows);
     expect(grown.landmarks).toEqual(small.landmarks);
@@ -243,24 +241,22 @@ describe("buildFarmWorld", () => {
 
   it("grows the island's cover in clusters, and leaves most of the land open", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
-    const inDistrict = (districtId: string): number => {
-      const patch = world.districts.find((entry) => entry.id === districtId);
-      if (patch === undefined) return -1;
-      return world.scenery.filter((entry) => {
-        const dx = entry.worldX - patch.worldX;
-        const dz = entry.worldZ - patch.worldZ;
+    // The woods are landscape now, not districts, and they are still the island's one large mass:
+    // count the trees that stand inside one.
+    const frame = worldFrame();
+    const inWood = (patch: (typeof WOODLANDS)[number]): number =>
+      world.scenery.filter((entry) => {
+        const tile = worldToTile({ worldX: entry.worldX, worldZ: entry.worldZ }, frame);
+        const dx = tile.x - patch.center.x;
+        const dz = tile.y - patch.center.y;
         const cos = Math.cos(-patch.rotationY);
         const sin = Math.sin(-patch.rotationY);
-        const localX = (dx * cos - dz * sin) / patch.radiusWorldX;
-        const localZ = (dx * sin + dz * cos) / patch.radiusWorldZ;
+        const localX = (dx * cos - dz * sin) / patch.radiusX;
+        const localZ = (dx * sin + dz * cos) / patch.radiusY;
         return Math.hypot(localX, localZ) <= 1;
       }).length;
-    };
-    // The natural wood is still a mass, and the old production districts no longer plant anything:
-    // an orchard and a pasture grow whatever the island's own scatter gives them and no more.
-    expect(inDistrict("forest_north") + inDistrict("forest_east")).toBeGreaterThan(10);
-    expect(inDistrict("orchard")).toBeLessThan(30);
-    expect(inDistrict("pasture")).toBeLessThan(30);
+    const wooded = WOODLANDS.reduce((total, patch) => total + inWood(patch), 0);
+    expect(wooded).toBeGreaterThan(20);
     // Undeveloped, not overgrown: the island is mostly open ground with groves standing in it.
     expect(world.scenery.length).toBeLessThan(600);
   });
@@ -289,7 +285,6 @@ describe("buildFarmWorld", () => {
   it("furnishes the land the farm has not bought instead of leaving a slab on it", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
     expect(world.lockedScenery.length).toBeGreaterThan(0);
-    expect(world.lockedBoundary.length).toBeGreaterThan(0);
     expect(world.lockedScenery).toEqual(worldFor(starterTiles(), CATALOGUE).lockedScenery);
 
     for (const prop of world.lockedScenery) {

@@ -90,14 +90,18 @@ at junctions), the junction graph, and the tier data.
 
 Authored roads are now only:
 
-1. `harbour_spine` (PRIMARY, paved) - harbour → the village square. It stops at the square: past the
-   village the road is the player's;
-2. `farm_road` (SECONDARY, dirt) - the square → the barn's yard;
-3. `north_road` (SECONDARY, dirt) - the square → the volcano's **foothill**, terminating outside the
-   steep band (`volcanoRadiusFraction` at the last waypoint is checked by a test). Nothing authored
-   climbs the landmark;
+1. `harbour_spine` (**dirt**, `SECONDARY`) - harbour → the village square. V12.2's correction: the
+   island is undeveloped, so the one road it supplies is the cheapest one that works. It stops at the
+   square, and past the village the road is the player's;
+2. `farm_road` (dirt) - the square → the barn's yard;
+3. `north_road` (**footpath**) - the square → the volcano's **foothill**, terminating outside the steep
+   band (`volcanoRadiusFraction` at the last waypoint is checked by a test). A walk to the landmark,
+   not a second highway, and nothing authored climbs the mountain;
 4. `village_street` (PATH) - circulation inside the village;
 5. `harbour_boardwalk` (PATH) - the quay.
+
+Paving is **civic**: the village square, and nothing else. That single rule is what the estate view
+has to say - harbour → dirt road → village entrance → paved plaza.
 
 Removed across the recovery and V12.1 passes, because they were roads built across land the player is
 supposed to build on: `orchard_road`, `west_country_road`, `freshwater_road`, `forestry_track`,
@@ -110,16 +114,21 @@ dead end reads as a dead end.
 
 `packages/game-data/src/roads/index.ts` is the one price table.
 
-| Tier | Surface | Drawn as | Gold per tile |
-| --- | --- | --- | --- |
-| T1 | dirt path | `PATH` | 6 |
-| T2 | dirt road | `SECONDARY` | 12 |
-| T3 | stone road | `PRIMARY` | 60 |
-| T4 | paved road | `PRIMARY` | 150 |
+Roads are bought in **segments of four cells**, each tier upgrades into the one above it, and every
+price lives in `packages/game-data/src/roads/index.ts`.
 
-The prototype ratio the brief names holds exactly: the same length of dirt road costs a fifth of a
-stone road. T4 reuses the stone surface on purpose - a premium road is a better stone road, and a
-fourth geometry would be decoration before gameplay.
+| Tier | Id | Surface | Drawn as | Gold per 4-cell segment |
+| --- | --- | --- | --- | --- |
+| T1 | `road.dirt.t1` | dirt | `SECONDARY` | 100 |
+| T2 | `road.gravel.t2` | gravel | `SECONDARY` | 250 |
+| T3 | `road.stone.t3` | stone | `PRIMARY` | 500 |
+| T4 | `road.paved.t4` | paved | `PRIMARY` | 900 |
+
+These are **provisional placeholders**, and the ratio the brief asks for holds exactly: a stone segment
+costs five times a dirt one. Stone and paved share the widest drawn class because the client draws three
+ribbons, not four - a gravel and a paved *material* are later imports, and a fourth geometry before the
+art exists is decoration before gameplay. Upgrading reuses the same cells: the tier a road becomes is a
+lookup, not a demolition.
 
 ## The village
 
@@ -179,11 +188,21 @@ fences, larger storage, fountains, lamps, statues, and civic buildings. Every im
 
 ## Workers
 
-Documented, not implemented. Low levels are played by hand; higher levels allow hiring workers, whose
-count rises with level. The intended loop for one worker - assigned cells, travel, harvest mature
-rice, collect, replant, wait, repeat - is what a later pass builds. No worker loop is added in V12,
-partly because a background simulation per worker is exactly the kind of cost the performance recovery
-removed.
+Documented, not implemented - and deliberately so. A worker is a simulation that runs while the player
+is not looking, which is exactly the kind of cost the performance recovery removed, so it arrives with
+its own pass rather than as a side effect of this one.
+
+**The intended progression.** Early game the player does everything by hand: plant, wait, harvest,
+replant. At a level the player can hire, and the workforce cap rises with level. Roles a worker will
+specialise in: crop, orchard, forestry, fishery, livestock, transport. A crop worker assigned to a set
+of cells travels to them, plants where a cell is empty and authorised, works elsewhere while the crop
+grows, harvests when the server says it is mature, and repeats - the same commands a player issues,
+issued by a system with the same authorisation, never a shortcut past the server.
+
+**What V12.2 establishes so that pass is not a rewrite.** The cell is the unit of assignment
+(`WorldCell` + `CellCapability`), the capability vocabulary is shared with the build catalogue in
+`packages/game-data`, and production is *placed objects on owned cells* rather than districts - so
+"these four cells are this worker's" is already expressible. No worker type, schedule, or AI exists.
 
 ## What is removed, and what is still to remove
 
@@ -201,18 +220,25 @@ Removed in V12.1:
   (`AQUACULTURE_ZONE`, `MINING_RESERVE`, and the cropland/orchard/pasture/forestry zone mappings);
 * the uplands that made the island a bowl with a mountain ring, and the nine-centimetre tile step.
 
+Removed in V12.2:
+
+* the production district *entries* themselves. `DistrictKind` is now `SETTLEMENT | COAST` and
+  `DISTRICTS` holds two places, because a name with no reader is a name the next pass treats as a rule.
+  The woodland masses they used to describe were kept as `WOODLANDS`: landscape, not districts and not
+  claims;
+* the locked-plot boundary stakes, which no renderer had drawn since V12.1;
+* the island's finished stone road - it is dirt now, and the volcano's access is a footpath;
+* the orchard yard composition preset, which furnished a road that no longer exists.
+
 Still to remove or replace:
 
-* the district *entries* themselves (`DISTRICTS` in `world-config.ts`). They no longer decide what a
-  cell may be used for - a test proves it - and they are now only a scatter hint and a label, but the
-  cropland, orchard, pasture and managed-wood rows are still the names of places that no longer mean
-  anything. Removing them is a small, contained follow-up;
 * the player's own cultivated plot still reads as a slightly raised patch of ground; the apron that
-  surrounds the owned tiles could be blended further into the terrain.
+  surrounds the owned tiles could be blended further into the terrain;
+* a building's `district` is `null` when it stands on open land (the windmill, the coop, the storage
+  shed). Those landmarks occupy cells a player might want; a later pass could make them movable, or
+  place them only where the island still owns the ground.
 
-The district vocabulary itself may stay, because districts still describe *landscape* - what grows
-where, how a place reads from the estate camera. What may not come back is a district deciding what
-the player is allowed to do with their own land.
+What may not come back is a district deciding what the player is allowed to do with their own land.
 
 ## Visual acceptance
 
@@ -225,11 +251,20 @@ SOUTH/COAST    harbour
 BETWEEN        large player-developable landscape
 ```
 
-It must not say: finished farm, fixed orchard, fixed forestry plantation, fixed fishery, giant grid,
-or mountain ring.
+It must not say: a finished stone highway across the island, trees standing in roads, rocks blocking
+roads, pre-built industrial agriculture, pre-built fish farms, pre-built managed forestry, a permanent
+world grid, a mountain ring, or giant authored production districts.
 
 **Measured in V12.1.** The eighteen views in `apps/web/qa/views.ts` were rendered with headless Edge
 and inspected. From the estate camera the island reads as: volcano north, village east, harbour
 south-east, and open ground between them, with one small cultivated plot belonging to the player. The
 crater is legible from elevated angles and subtle from a low one; the harbour's pier reads better from
 above than from the waterline. Both are recorded as remaining weaknesses rather than fixed.
+
+**Measured in V12.2.** The same eighteen views, re-rendered and re-inspected after the dirt-road pass.
+The road now reads as harbour → dirt → village → paved plaza, and the QA pass found and fixed three
+things the numbers could not: ground poking through the road near the quay (the road's lift was raised
+from 5 cm to 16 cm - the shore fade is the steepest terrain on the island and the ground mesh
+interpolates across it), canopy overhang at the road's edge (large scenery now keeps half again the
+clearance a small thing does), and the volcano's access reading as a wide smear from the estate camera
+(it is a footpath now).

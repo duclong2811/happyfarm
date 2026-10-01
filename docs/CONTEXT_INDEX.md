@@ -274,6 +274,14 @@ plus ownership plus placed objects.
   "nothing may be built in the crater" a property of the ground. `ISLAND_RINGS` and
   `ISLAND_SECTORS` in `terrain.ts` are the resolution of the static ground mesh, and a crater needs
   them: 14 rings flattened the landmark into a dome.
+- Roads are **dirt**: the island authors one, from the harbour to the village, and paving exists only
+  in the village plaza. Widening, shoulders and the tier data are `ROAD_WIDTH_TILES` /
+  `ROAD_SHOULDER_WORLD` in `world-config.ts` and `packages/game-data/src/roads/index.ts`; the shoulder
+  table lives there rather than in `terrain.ts` because scenery clearance is measured from the
+  rendered edge. `ROAD_CLEARANCE_WORLD` in `placement.ts` is the corridor, scaled per scenery class.
+- `WOODLANDS` in `world-config.ts` is the island's two tree masses. They are landscape, not districts:
+  a player clears them like any other tree, and `CellCapability` is still the only thing that decides
+  what a cell may become.
 - The ground mesh's colour is part of the height function, not a separate material. The volcanic tint
   is gated by *height* as well as by footprint - a footprint alone painted rock on the flat north
   shore and read as a cliff.

@@ -72,59 +72,23 @@ export const ISLAND_LOBES: readonly IslandLobe[] = [
 ];
 
 /**
- * The functions the island's land is divided between.
+ * The places the island itself owns.
  *
- * The set is deliberately small and non-overlapping: a crop district, a civic centre, a perennial
- * orchard, grazing, a water district, woodland, *managed* woodland, and the coast that will one day
- * carry the fishery and the harbour. Nothing here is gameplay - a district neither unlocks nor
- * produces anything - but the ground, the roads, and the vegetation all follow it, so the territory
- * reads the same way from the estate camera as it does on foot.
+ * Two, and the list is deliberately shrinking rather than growing. V12.1 removed the *production*
+ * districts' meaning; V12.2 deletes the entries themselves, because a name like "orchard" or
+ * "managed wood" that no longer describes anything is a name the next pass will mistake for a rule.
+ * What is left is what the island actually keeps for itself: the village, and the harbour it sits
+ * beside. Land use everywhere else is `CellCapability` on the cell, and the player's own.
  */
-export type DistrictKind =
-  | "SETTLEMENT"
-  | "CROPLAND"
-  | "ORCHARD"
-  | "PASTURE"
-  | "WATER"
-  | "FOREST"
-  | "FORESTRY"
-  | "COAST"
-  /**
-   * Land the plan has deliberately left alone.
-   *
-   * Not "empty": reserved. A territory that has already filled every corner has nowhere to put the
-   * system nobody has designed yet, and redesigning the map for each new one is how a world ends up
-   * incoherent. This is ordinary meadow and sparse woodland today and the next district tomorrow. It
-   * is never labelled in the game.
-   */
-  | "FUTURE";
+export type DistrictKind = "SETTLEMENT" | "COAST";
 
 /**
- * How a district's ground *could* be drawn, if a district ever wanted a treatment of its own.
+ * One place the island keeps for itself: a blob with a centre, two radii, and a rotation.
  *
- * Every district is `NONE` today, and that is the fourth pass to reach that conclusion: a district
- * painted as one coloured blob reads as a debug overlay from the estate camera, not as land. The V9
- * pass removed the last tint - the orchard's bare-earth oval, which turned the island's north-west
- * into something that looked like a sand dune with trees standing on it - and the renderer no longer
- * draws district ground at all. Identity comes from rows, beds, paths, buildings, trees, and water.
- * The vocabulary stays because the crop district's own test pins it, and because the honest way to
- * bring a treatment back is to give it a shape and an edge rather than a blob.
- */
-export type DistrictGround = "NONE" | "PLAZA" | "ORCHARD" | "PASTURE" | "WETLAND" | "FOREST_FLOOR" | "SAND";
-
-/**
- * A district: a zone of the island with an identity.
- *
- * A blob rather than a rectangle - centre, two radii, a rotation - so no district has a straight
- * edge anywhere except where a road or the reserve itself gives it one. Districts are *rules for
- * ground and vegetation*, never ownership: a district does not unlock, block, or price anything.
- *
- * **A district is landscape, never a production plan.** The V12 direction moved the island off
- * fixed production districts and onto player-built land: the ground says what it *can* support
- * (`CellCapability` in `world-cell.ts`), the player owns it, and what they place decides what it
- * becomes. Nothing may reintroduce a "this blob is the orchard" rule - see
- * `docs/design/WORLD_V12_PLAYER_BUILT_ISLAND.md`. The rows below are drawn as vegetation, and every
- * one of them would look the same if the player deleted it and planted something else.
+ * A blob rather than a rectangle, so a civic edge is not a straight line except where a road gives it
+ * one. A district does not unlock, block, or price anything, and since V12.2 nothing reads it for
+ * scenery either: it exists so the settlement has a middle and the harbour has a place, and so
+ * `districtAt` can answer "is this civic ground?" for the cell map and the building plan.
  */
 export interface District {
   readonly id: string;
@@ -134,208 +98,87 @@ export interface District {
   readonly radiusX: number;
   readonly radiusY: number;
   readonly rotationY: number;
-  /** Ground tint drawn under the district's vegetation. `NONE` leaves the island's own grass. */
-  readonly ground: DistrictGround;
-  /** How much open-country vegetation the district holds, 0..1. */
-  readonly density: number;
-  /** Of that vegetation, how much is trees rather than scrub, 0..1. */
-  readonly treeShare: number;
-  /**
-   * Distance between the rows of a district that is planted in rows, in tiles.
-   *
-   * Absent for a district that is a scatter. An orchard's rows are wide and its beds generous; a
-   * managed wood's are tighter and its beds narrow, which is the whole visual difference between the
-   * two - and the reason the spacing is a property of the district rather than a constant in the
-   * renderer.
-   */
-  readonly rowSpacingTiles?: number;
-  /** How wide the bed drawn under one row is, in tiles. Only read where `rowSpacingTiles` is. */
-  readonly rowBedWidthTiles?: number;
-  /** How wide the lane alongside the rows is, in tiles: the space that makes a stand walkable. */
-  readonly rowLaneWidthTiles?: number;
 }
 
 /**
- * The island's districts.
+ * The island's woodland masses.
  *
- * Laid out the way a settlement actually grows: the field it works, the settlement beside it, the
- * orchard and the pasture that feed it, the water it draws from, the woodland it cuts, and the coast
- * it will one day trade from. Their order in this list is their draw order for ground tints, so the
- * reserve's own treatment stays on top of the landscape it sits in.
+ * A grove is *landscape*, not a district and not a claim: it says where trees grow today, which is a
+ * fact about the place rather than a rule about the land. A player who wants that ground clears it
+ * and builds there, exactly as they would clear any other tree; nothing here is ownership, capability,
+ * or production, and `CellCapability` remains the only thing that says what a cell may become.
  *
- * `density` and `treeShare` are the island's explicit vegetation profile, one row per function -
- * they are not a global scatter. A crop district is *empty* of scenery (its land belongs to the
- * catalogue), a settlement is nearly empty and deliberately planted, an orchard is structured,
- * pasture is open grazing with shade trees, natural woodland is the densest thing on the island,
- * managed woodland is one step behind it, and the coast is sparse so the shoreline silhouette stays
- * readable.
+ * They exist because removing the forest districts left the island with no large vegetation at all:
+ * scattered clusters read as scrub, and an island with no woods loses the depth that makes the open
+ * ground between them read as *open*. Two masses, deliberately apart, with the volcano's foothill
+ * between them.
  */
-export const DISTRICTS: readonly District[] = [
+export interface WoodlandPatch {
+  readonly id: string;
+  readonly center: TileCoordinate;
+  readonly radiusX: number;
+  readonly radiusY: number;
+  readonly rotationY: number;
+}
+
+export const WOODLANDS: readonly WoodlandPatch[] = [
   {
-    id: "cropland",
-    kind: "CROPLAND",
-    labelKey: "world.district.cropland",
-    center: { x: 17.5, y: 17.5 },
-    radiusX: 21,
-    radiusY: 21,
-    rotationY: 0,
-    ground: "NONE",
-    density: 0,
-    treeShare: 0
-  },
-  {
-    id: "orchard",
-    kind: "ORCHARD",
-    labelKey: "world.district.orchard",
-    // North-west of the fields, on the gentle shoulder between the lowland and the high wood. Rows
-    // run with the slope, so a lane on its own axis is a lane that does not climb.
-    // Turned to follow the coast rather than to follow the compass. The island's north-west is a
-    // curved band, and an orchard laid out on the first axis that came to mind ran its far corner
-    // into the sea; laid along the shoreline it fits twice the plantation on the same land - and its
-    // rows end up running across the estate camera's view instead of away from it, which is what
-    // makes a row of trees read as a row.
-    center: { x: -14, y: -14 },
-    radiusX: 14,
-    radiusY: 8,
-    rotationY: -0.78,
-    // District identity comes from rows, paths and trees, not from a tinted ellipse: the ground
-    // treatments that used to paint each district a different colour are switched off, because at
-    // estate zoom they read as a debug overlay rather than as land.
-    ground: "NONE",
-    // Low: a district that is planted in rows gets its structure from the rows, and a scatter on top
-    // of them is what stops the rows reading at all.
-    density: 0.18,
-    treeShare: 0.98,
-    // Rows at 3.6 tiles and a tree every 2.4 along them: dense enough that a row reads as a line of
-    // trees rather than as three dots, wide enough that the lane between two rows is still a lane.
-    // Rows a tree and a bit apart, a tree every 1.4 tiles along them, and a mown lane two tiles wide
-    // between the rows. That ratio - tight along the line, wide across it - is what a plantation looks
-    // like from above, and it is the only spacing that survives the estate camera.
-    rowSpacingTiles: 2.6,
-    rowBedWidthTiles: 1.7,
-    rowLaneWidthTiles: 1
-  },
-  {
-    id: "forest_north",
-    kind: "FOREST",
-    labelKey: "world.district.forest",
-    // The first of the island's two great woods, along the northern highland: the largest single
-    // mass on the island, and the reason the north reads as a different kind of place from the
-    // field.
+    id: "wood_north",
+    // The northern mass, running along the shoulder the volcano rises out of - the forested foothill
+    // the volcano's own gradient thins into as the ground climbs.
     center: { x: 12, y: -18 },
     radiusX: 16,
     radiusY: 9,
-    rotationY: 0.06,
-    ground: "NONE",
-    density: 0.95,
-    treeShare: 0.98
+    rotationY: 0.06
   },
   {
-    id: "forest_east",
-    kind: "FOREST",
-    labelKey: "world.district.forest",
-    // The second mass, on the north-eastern headland. Two woods with open ground between them read
-    // as a landscape; one wide band around the whole north edge reads as a painted border.
+    id: "wood_east",
+    // A second, smaller mass on the north-eastern headland. Two woods with open ground between them
+    // read as a landscape; one band around the whole north edge reads as a painted border.
     center: { x: 50, y: -16 },
     radiusX: 10,
     radiusY: 8,
-    rotationY: 0.2,
-    ground: "NONE",
-    density: 0.92,
-    treeShare: 0.96
-  },
-  {
-    id: "pasture",
-    kind: "PASTURE",
-    labelKey: "world.district.pasture",
-    center: { x: -15, y: 8 },
-    radiusX: 9,
-    radiusY: 10,
-    rotationY: 0.2,
-    ground: "NONE",
-    density: 0.12,
-    treeShare: 0.3
-  },
+    rotationY: 0.2
+  }
+];
+
+/**
+ * The two places the island keeps for itself, and nothing else.
+ *
+ * V12.2 deleted the rest: cropland, orchard, pasture, "managed wood", the freshwater basin, and the
+ * reserve the plan had left undecided. None of them described anything any more - the production
+ * presentation they existed for was removed in V12.1, and nothing reads a district to decide scenery,
+ * ground, or capability since. A name with no reader is a name the next pass treats as a rule, so
+ * they are gone rather than deprecated.
+ *
+ * What remains is what the island genuinely owns: the village, which is civic ground, and the coast
+ * the harbour stands on. Ordinary land is `CellCapability` on the cell and the player's own.
+ */
+export const DISTRICTS: readonly District[] = [
   {
     id: "settlement",
     kind: "SETTLEMENT",
     labelKey: "world.district.settlement",
-    // The civic centre sits on the island's east flank, between the fields and the coast: the square
-    // is at its middle, the buildings face onto it, the barn stands on its western edge where the
-    // fields begin, and the warehouse and the town hall have reserved ground rather than whatever
-    // happened to be free.
+    // The community the island already has: the square at its middle, the buildings facing onto it,
+    // the barn on its western edge where the working land begins, and reserved ground for the town
+    // hall and the warehouse that a later pass will build. It is a *civic area*, not a production
+    // district - the player's fields are their own business and they start nowhere near here.
     center: { x: 44, y: 2 },
     radiusX: 13,
     radiusY: 11,
-    rotationY: 0,
-    ground: "NONE",
-    density: 0.05,
-    treeShare: 0.5
-  },
-  {
-    id: "water",
-    kind: "WATER",
-    labelKey: "world.district.water",
-    // The freshwater basin on the island's southern flank: the lake, the wetland around it, and the
-    // reedy bank the island draws its water from. It sits on the low side of the relief, which is
-    // where water actually collects, and it is the one place on the island the player reads as water
-    // rather than as coast.
-    center: { x: 0, y: 43 },
-    radiusX: 11,
-    radiusY: 8,
-    rotationY: 0.1,
-    // No tint: the lake, its reedy bank, and the stones along it are the district's identity. A
-    // district-wide ground colour is the thing V6 removed and V9 must not put back.
-    ground: "NONE",
-    density: 0.14,
-    treeShare: 0.3
-  },
-  {
-    id: "forestry",
-    kind: "FORESTRY",
-    labelKey: "world.district.forestry",
-    // Managed woodland on the western shoulder, between the pasture and the freshwater basin. Rows,
-    // a haul road and a loading yard are what separate it from the untouched wood to the north.
-    center: { x: -18, y: 30 },
-    radiusX: 8,
-    radiusY: 8,
-    rotationY: -0.15,
-    ground: "NONE",
-    density: 0.28,
-    treeShare: 1,
-    rowSpacingTiles: 2,
-    rowBedWidthTiles: 1.3,
-    rowLaneWidthTiles: 2.2
+    rotationY: 0
   },
   {
     id: "coast",
     kind: "COAST",
     labelKey: "world.district.coast",
-    // The bay the harbour stands in, on the south-east flank: the quay, the yard behind it, the
-    // boats, and the fish farm just offshore.
+    // The bay the harbour stands in, on the south-east flank: the quay, the yard behind it, and the
+    // water the boats moor in. The water is protected so that nothing a player places can block the
+    // pier - the one piece of the island where a *rule* is allowed to keep the sea clear.
     center: { x: 44, y: 44 },
     radiusX: 12,
     radiusY: 8,
-    rotationY: 0.5,
-    // No tint: a district-wide sand colour is exactly the "coloured blob" the plan forbids, and the
-    // beach the island already draws along its own outline is where the sand belongs.
-    ground: "NONE",
-    density: 0.05,
-    treeShare: 0.2
-  },
-  {
-    id: "future_reserve",
-    kind: "FUTURE",
-    labelKey: "world.district.future",
-    // Meadow south of the fields, between the freshwater basin and the coast: the land the island
-    // has deliberately not decided about yet.
-    center: { x: 22, y: 52 },
-    radiusX: 12,
-    radiusY: 7.5,
-    rotationY: 0.12,
-    ground: "NONE",
-    density: 0.16,
-    treeShare: 0.5
+    rotationY: 0.5
   }
 ];
 
@@ -403,29 +246,55 @@ export interface Road {
  * How wide each class of road is drawn, in tiles.
  *
  * Three classes, three widths, and the gaps between them are wide enough to read from the estate
- * camera: a stone spine is nearly twice a dirt road, and a dirt road is half again a field track.
+ * camera. V12.2 widened the middle class: the island's own road is now a *dirt* road, and a dirt road
+ * that has to carry the eye from the harbour to the village from the estate camera needs more than the
+ * narrow track it used to be. `PRIMARY` is kept because the player's stone and paved tiers will draw
+ * with it; nothing the island authors uses it any more.
  */
 export const ROAD_WIDTH_TILES: Readonly<Record<RoadKind, number>> = {
   PRIMARY: 2.9,
-  SECONDARY: 1.7,
+  SECONDARY: 2.2,
   PATH: 1.1
+};
+
+/**
+ * How much wider than the road itself each class's shoulder is drawn, in world metres.
+ *
+ * The shoulder is the soft fringe every road sits in, and it belongs here rather than in the
+ * renderer because it is part of the road's *width*: scenery clearance has to be measured from the
+ * edge a player can see, and a rule that only knew about the ribbon left trees standing on the
+ * shoulder of a wide road. One table, two readers - `terrain.ts` draws it and `placement.ts` clears
+ * it.
+ */
+export const ROAD_SHOULDER_WORLD: Readonly<Record<RoadKind, number>> = {
+  PRIMARY: 1.3,
+  SECONDARY: 0.7,
+  PATH: 0.28
 };
 
 export const ROADS: readonly Road[] = [
   {
     id: "harbour_spine",
-    kind: "PRIMARY",
+    kind: "SECONDARY",
     connects: ["harbour", "harbour_yard", "civic", "plaza"],
     points: [
-      // The stone spine, in the order a cart travels it: off the quay at the south-east bay, up the
-      // waterfront, and into the settlement. It hugs the island's east flank so it never has to cross
-      // the reserve, and it climbs nothing: the harbour yard and the town are both held flat.
+      // The island's one road, in the order a cart travels it: off the quay at the south-east bay, up
+      // the waterfront, and into the settlement. It hugs the island's east flank so it never has to
+      // cross the reserve, and it climbs nothing: the harbour yard and the town are both held flat.
       //
-      // It stops at the square. Past the village the road is the *player's* - this is the V12
-      // direction's one authored highway, the harbour-to-village connection, and everything beyond
-      // the settlement is ground somebody has to build on.
+      // It is **dirt**, and that is the V12.2 correction: the island is undeveloped, so the only road
+      // it supplies is the cheapest one that works. The paving starts inside the village, where the
+      // plaza is, and the transition between the two is the whole visual story of the road.
+      //
+      // It stops at the square. Past the village the road is the *player's*: everything beyond the
+      // settlement is ground somebody has to build on.
       { x: 53, y: 53 },
+      // The bend off the quay is spread over three waypoints rather than one. A single 37-degree turn
+      // taken at half a metre per sample makes the ribbon's inner edge cross itself, and the fold is a
+      // hole in the road - which is exactly what the V12.2 close-up caught at the harbour.
+      { x: 51.6, y: 51.6 },
       { x: 50, y: 50 },
+      { x: 49.6, y: 47 },
       { x: 49.2, y: 44 },
       { x: 48.4, y: 34 },
       { x: 47.6, y: 24 },
@@ -476,7 +345,15 @@ export const ROADS: readonly Road[] = [
   },
   {
     id: "north_road",
-    kind: "SECONDARY",
+    /**
+     * A **path**, not a road.
+     *
+     * V12.2's rule is that the island supplies only the infrastructure it needs. The harbour road is
+     * needed: the settlement lives off the sea. The way to the volcano is a walk to a landmark, so it
+     * is a footpath - narrow, unpaved, and obviously not something a cart uses - and the ground it
+     * crosses stays the player's to develop around.
+     */
+    kind: "PATH",
     connects: ["plaza", "highland"],
     points: [
       // The island's second road, and the only other one it authors: out of the village's own gate,
@@ -963,22 +840,6 @@ export const COMPOSITION_PRESETS: readonly EnvironmentCompositionPreset[] = [
       { assetId: "prop_lantern", offsetX: 2.7, offsetY: -2.9, rotationY: 0, scale: 1 },
       { assetId: "prop_sack", offsetX: 4.1, offsetY: 1.9, rotationY: 0.4, scale: 1 },
       { assetId: "prop_chest", offsetX: -4.5, offsetY: 1.3, rotationY: 0.15, scale: 1 }
-    ]
-  },
-  {
-    id: "orchard_yard_t1",
-    district: "ORCHARD",
-    anchor: { x: -19.5, y: -16 },
-    rotationY: -0.22,
-    clearanceTiles: 3.4,
-    props: [
-      // The picking station at the end of the row the orchard lane runs to: what was picked, and what
-      // it is carried away in.
-      { assetId: "prop_crate_produce", offsetX: 0.7, offsetY: 1.0, rotationY: 0.3, scale: 1 },
-      { assetId: "prop_crate_carrot", offsetX: -0.6, offsetY: 1.2, rotationY: -0.2, scale: 1 },
-      { assetId: "prop_sack", offsetX: 0.2, offsetY: 1.9, rotationY: 0.5, scale: 1 },
-      { assetId: "prop_barrel_apples", offsetX: -1.5, offsetY: 0.6, rotationY: 0.4, scale: 1 },
-      { assetId: "prop_wagon", offsetX: 2.1, offsetY: -0.4, rotationY: 0.5, scale: 1 }
     ]
   },
   {

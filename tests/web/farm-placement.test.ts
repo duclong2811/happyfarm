@@ -105,18 +105,15 @@ describe("nothing stands in the sea", () => {
 });
 
 describe("districts hold what they claim to hold", () => {
-  it("gives every kind of district a definition, and one that is a real area", () => {
+  it("keeps only the island's own places, and each one a real area", () => {
     for (const district of DISTRICTS) {
       expect(districtAt(district.center)?.id, district.id).toBe(district.id);
       expect(district.radiusX).toBeGreaterThan(0);
       expect(district.radiusY).toBeGreaterThan(0);
     }
-    // The functions the plan separates: crops, civic, perennial, grazing, water, woodland, managed
-    // woodland, and coast. Losing one of these is losing a district, not a style choice.
-    const kinds = new Set<string>(DISTRICTS.map((district) => district.kind));
-    for (const required of ["CROPLAND", "SETTLEMENT", "ORCHARD", "PASTURE", "WATER", "FOREST", "FORESTRY", "COAST"]) {
-      expect(kinds.has(required), required).toBe(true);
-    }
+    // V12.2 deleted the production districts. The island owns the village and the coast it trades
+    // from, and nothing else: every other kind of land is the player's, decided by capability.
+    expect(DISTRICTS.map((district) => district.kind).sort()).toEqual(["COAST", "SETTLEMENT"]);
   });
 
   it("keeps scenery out of the crop reserve, because that land belongs to the catalogue", () => {
@@ -134,9 +131,14 @@ describe("districts hold what they claim to hold", () => {
 
   it("keeps every building inside the district it belongs to", () => {
     for (const building of [...BUILDINGS, ...RESERVED_BUILDINGS]) {
+      const owner = districtAt(building.tile);
+      if (building.district === null) {
+        // A building that stands on open land says so, and open land is not a district.
+        expect(owner, `${building.id} claims no district but stands in ${owner?.kind ?? ""}`).toBeNull();
+        continue;
+      }
       const host = DISTRICTS.find((district) => district.kind === building.district);
       expect(host, `${building.id} needs a ${building.district} district`).toBeDefined();
-      const owner = districtAt(building.tile);
       expect(owner?.kind, `${building.id} stands in ${owner?.kind ?? "no district"}`).toBe(building.district);
     }
   });
@@ -154,12 +156,13 @@ describe("districts hold what they claim to hold", () => {
 });
 
 describe("the plan is reachable", () => {
-  it("connects the harbour, the village and the farm by the one road the island authors", () => {
-    // V12 split the old single spine in two. The paving still runs harbour to village - that is the
-    // island's own road - and a dirt road the island also authors carries on from the square to the
-    // barn's yard. Past the yard, everything is the player's to build.
-    const primary = ROADS.find((road) => road.kind === "PRIMARY");
-    expect(primary, "the island needs a primary road").toBeDefined();
+  it("connects the harbour, the village and the barn by one dirt road", () => {
+    // V12.2's correction: the island is undeveloped, so the road it supplies is the cheapest one
+    // that works. Paving is civic - it exists inside the village, and nowhere else yet.
+    const spine = ROADS.find((road) => road.id === "harbour_spine");
+    expect(spine, "the island needs its harbour road").toBeDefined();
+    expect(spine?.kind, "the harbour road must be dirt, not stone").toBe("SECONDARY");
+    expect(ROADS.filter((road) => road.kind === "PRIMARY")).toEqual([]);
     const authored = ROADS.filter((road) => road.kind !== "PATH");
     const points = authored.flatMap((road) => road.points);
     const settlement = DISTRICTS.find((district) => district.kind === "SETTLEMENT")?.center ?? { x: 0, y: 0 };
@@ -171,9 +174,8 @@ describe("the plan is reachable", () => {
     expect(points.some((point) => near(point, HARBOUR.root, 2))).toBe(true);
     expect(points.some((point) => near(point, settlement, 16))).toBe(true);
     expect(points.some((point) => near(point, coast, 16))).toBe(true);
-    // The paved spine itself stops at the square: the harbour-to-village connection is the one
-    // highway the island owns, and a stone road across the working land is what V12 removed.
-    expect(primary?.connects).toEqual(["harbour", "harbour_yard", "civic", "plaza"]);
+    // It stops at the square: past the village the road is the player's.
+    expect(spine?.connects).toEqual(["harbour", "harbour_yard", "civic", "plaza"]);
     // ...and the authored network still reaches the yard in front of the barn, not inside the barn:
     // the hub is where the roads meet, and the barn stands beside it.
     expect(points.some((point) => near(point, ROAD_NODES.farm_hub, 1))).toBe(true);
@@ -186,7 +188,9 @@ describe("the plan is reachable", () => {
     // nothing authored climbs the landmark.
     const north = ROADS.find((road) => road.id === "north_road");
     expect(north, "the island needs a road north").toBeDefined();
-    expect(north?.kind).toBe("SECONDARY");
+    // A footpath to the landmark, not a second highway: the island supplies what it needs and the
+    // player builds the rest.
+    expect(north?.kind).toBe("PATH");
     expect(north?.connects).toEqual(["plaza", "highland"]);
     const end = north?.points.at(-1);
     expect(end).toEqual(ROAD_NODES.highland);

@@ -96,20 +96,20 @@ describe("the island is not the player's farm yet", () => {
   });
 
   it("has no district that decides what a cell may be used for", () => {
-    // Capability comes from the ground: two land cells with different districts answer alike, and a
-    // district cannot hand a cell a production capability that the reservation would not.
+    // V12.2 deleted the production districts outright, so the only two left are the village and the
+    // coast. Neither may change what ordinary land is capable of: capability comes from the ground,
+    // and the one thing a district *is* allowed to do is mark civic ground.
+    expect(DISTRICTS.map((district) => district.kind).sort()).toEqual(["COAST", "SETTLEMENT"]);
     const land = [...cells.cells.values()].filter((cell) => cell.terrain === "LAND");
-    const inOrchard = land.filter(
-      (cell) =>
-        (() => {
-          const owner = districtAt({ x: cell.x, y: cell.z });
-          return owner?.kind === "ORCHARD" || owner?.kind === "FORESTRY" || owner?.kind === "PASTURE";
-        })()
-    );
     const open = land.filter((cell) => districtAt({ x: cell.x, y: cell.z }) === null);
-    expect(inOrchard.length).toBeGreaterThan(0);
-    expect(open.length).toBeGreaterThan(0);
-    for (const cell of [...inOrchard, ...open]) {
+    expect(open.length).toBeGreaterThan(100);
+    for (const cell of open) {
+      expect(cell.capabilities).toEqual(["WALK", "BUILD", "FARM", "FORESTRY", "LIVESTOCK", "ROAD", "DECORATION"]);
+    }
+    // The coast's own blob is walkable sea and beach, and a district there changes nothing either.
+    for (const cell of cells.cells.values()) {
+      if (districtAt({ x: cell.x, y: cell.z })?.kind !== "COAST") continue;
+      if (cell.terrain !== "LAND") continue;
       expect(cell.capabilities).toEqual(["WALK", "BUILD", "FARM", "FORESTRY", "LIVESTOCK", "ROAD", "DECORATION"]);
     }
   });
@@ -203,7 +203,31 @@ describe("buildings", () => {
   it("puts every building in the district its kind belongs to", () => {
     for (const building of BUILDINGS) {
       const owner = districtAt(building.tile);
+      if (building.district === null) {
+        // A working building out in the country claims no district, and stands on land the player may
+        // one day own - which is the point of the V12.2 cleanup.
+        expect(owner, `${building.id} claims open land`).toBeNull();
+        continue;
+      }
       expect(owner?.kind, `${building.id} stands in ${owner?.kind ?? "no district"}`).toBe(building.district);
+    }
+  });
+
+  it("keeps a tier ladder for every building, including the ones not built yet", () => {
+    for (const building of BUILDINGS) {
+      expect(building.variants.length, building.id).toBeGreaterThan(1);
+    }
+    for (const plot of RESERVED_BUILDINGS) {
+      // The reserved plots are a village that can grow: every one of them names the tiers it will be
+      // drawn at, so a later pass replaces a model rather than re-planning the square.
+      expect(plot.variants.length, plot.id).toBeGreaterThanOrEqual(2);
+      expect(plot.variants[0]?.tier, plot.id).toBe(1);
+      expect(plot.tier, plot.id).toBe(1);
+      for (const variant of plot.variants) {
+        // No model exists for these yet; the contract is that the field is present so one can be
+        // dropped in without touching the layout.
+        expect(variant.labelKey.startsWith("building."), plot.id).toBe(true);
+      }
     }
   });
 

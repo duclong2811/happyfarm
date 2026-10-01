@@ -66,8 +66,29 @@ const INLAND_LIMIT: Readonly<Record<ShorelineClass, number>> = {
   SMALL: 0.975
 };
 
-/** How much room a placement keeps from the *edge* of a road, in world metres. */
-const ROAD_CLEARANCE_WORLD = 1.2;
+/**
+ * How much room a placement keeps from the *edge* of a road, in world metres.
+ *
+ * The edge is the rendered one - ribbon plus shoulder - so this is a real margin of a little under a
+ * world cell. V12.2 lowered it from 1.2 and, more importantly, moved the edge it is measured from:
+ * the corridor is now `rendered half-width + this`, which is the rule the brief asks for and the one
+ * that keeps large scenery out of the road rather than merely off its centreline.
+ */
+export const ROAD_CLEARANCE_WORLD = 1;
+
+/**
+ * How much *more* room the big things keep, as a multiple of the base clearance.
+ *
+ * The corridor is measured to a placement's centre, so a tree whose trunk is a metre clear of the
+ * road still puts its canopy over the road: the trunk clears the rule and the picture does not.
+ * Canopies are three or four metres across on this island, so the large class keeps half again the
+ * margin. Grass and pebbles are what a road's edge is made of, and they keep the base.
+ */
+const CLEARANCE_SCALE: Readonly<Record<ShorelineClass, number>> = {
+  LARGE: 1.5,
+  MEDIUM: 1.2,
+  SMALL: 1
+};
 
 export interface PlacementRequest {
   readonly worldX: number;
@@ -115,7 +136,7 @@ export function placementRejection(
     if (dx * dx + dz * dz <= 1) return "IN_WATER";
   }
 
-  const clearance = request.clearanceWorld ?? ROAD_CLEARANCE_WORLD;
+  const clearance = (request.clearanceWorld ?? ROAD_CLEARANCE_WORLD) * CLEARANCE_SCALE[request.shoreline];
   if (nearRoad(worldX, worldZ, clearance, world)) return "ON_A_ROAD";
 
   for (const clearing of world.clearings) {

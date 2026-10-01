@@ -2,7 +2,6 @@
 import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTile } from "./layout";
 import {
-  DISTRICTS,
   COMPOSITION_PRESETS,
   FIELD_MARGIN_GROVES,
   FARMSTEAD,
@@ -19,14 +18,14 @@ import {
   PLAZA,
   ROAD_NODES,
   ROADS,
+  ROAD_SHOULDER_WORLD,
   ROAD_WIDTH_TILES,
   TERRAIN_RELIEF_WORLD,
   VISUAL_BOUNDS,
   VOLCANO,
   VOLCANO_SHAPE,
+  WOODLANDS,
   terrainFlatAreas,
-  type DistrictGround,
-  type DistrictKind,
   type PlacedLandmark,
   type RoadKind,
   type RoadNodeId
@@ -142,30 +141,10 @@ export interface SceneryInstance {
   readonly detail: boolean;
 }
 
-/** A stake on the boundary of the land that is still locked. */
-export interface BoundaryStake {
-  readonly id: string;
-  readonly worldX: number;
-  readonly worldY: number;
-  readonly worldZ: number;
-}
-
 /** A patch of ground with its own colour, in world metres. */
 export interface MeadowSpec {
   readonly id: string;
   readonly kind: "MEADOW" | "DIRT" | "SAND";
-  readonly worldX: number;
-  readonly worldZ: number;
-  readonly radiusWorldX: number;
-  readonly radiusWorldZ: number;
-  readonly rotationY: number;
-}
-
-/** A district's ground, in world metres: what the renderer tints beneath its vegetation. */
-export interface DistrictPatch {
-  readonly id: string;
-  readonly kind: DistrictKind;
-  readonly ground: DistrictGround;
   readonly worldX: number;
   readonly worldZ: number;
   readonly radiusWorldX: number;
@@ -239,11 +218,8 @@ export interface FarmWorld {
    */
   readonly lockedScenery: readonly SceneryInstance[];
   /** Stakes along the outer edge of the locked ring: the boundary marker the player reads. */
-  readonly lockedBoundary: readonly BoundaryStake[];
   /** The landmarks the world config places, in world metres. */
   readonly landmarks: readonly PlacedLandmark[];
-  /** The island's districts, as blobs of ground for the renderer to tint. */
-  readonly districts: readonly DistrictPatch[];
   /** Every road, already resampled into a terrain-following centreline. */
   readonly roads: readonly RoadSpec[];
   /**
@@ -305,9 +281,7 @@ const EMPTY_WORLD: FarmWorld = {
   bed: null,
   lockedPlots: [],
   lockedScenery: [],
-  lockedBoundary: [],
   landmarks: [],
-  districts: [],
   roads: [],
   junctions: [],
   plaza: { worldX: 0, worldZ: 0, radiusWorldX: 0, radiusWorldZ: 0, rotationY: 0 },
@@ -477,8 +451,6 @@ const SECTION_BUDGET = {
 } as const;
 /** How far outside the fence a planted thing has to be to count as countryside rather than field. */
 const FIELD_CLEARANCE_TILES = 1.4;
-/** Tile spacing between the stakes that mark the edge of the land that is still locked. */
-const LOCKED_STAKE_SPACING_TILES = 3;
 /** How many wild props a locked plot grows, before the per-prop open-ground filter. */
 /**
  * How much scrub a plot of unclaimed land grows.
@@ -581,7 +553,10 @@ function buildScenery(
       road.samples.map((sample) => ({
         worldX: sample.worldX,
         worldZ: sample.worldZ,
-        halfWidthWorld: road.widthWorld / 2
+        // The edge a player can *see*: the ribbon plus the shoulder it is drawn in. Clearance is
+        // measured from there, so a tree can no longer stand on the shoulder of a wide road - which
+        // is exactly what the V12.2 visual pass caught.
+        halfWidthWorld: road.widthWorld / 2 + ROAD_SHOULDER_WORLD[road.kind]
       }))
     ),
     waterBodies: [
@@ -732,8 +707,7 @@ function buildScenery(
   // softer edge, a clearing or two cut into it, and real variation in tree size - because a wood
   // reads as a wood from above only when it has a thick middle, a ragged edge, and a hole in it. This
   // is the largest visual mass on the island and the anchor of the natural half of the composition.
-  for (const district of DISTRICTS) {
-    if (district.kind !== "FOREST") continue;
+  for (const district of WOODLANDS) {
     // A budget per wood rather than one for all of them: shares of a single counter meant the first
     // wood in the list took the whole of it and the second grew as a thicket.
     const forestBudget = within(SECTION_BUDGET.forest);
@@ -898,34 +872,6 @@ function buildScenery(
     }
   }
 
-  // 5. The wilderness: the land the island has deliberately not decided about.
-  //
-  // It is not a place the plan forgot and it is not a thicket either. Tall grass, low scrub, the odd
-  // tree, and a lot of room is what land waiting for its purpose actually looks like - and it is the
-  // reading the five-second test is checking for when it asks whether the island is finished.
-  const wildernessBudget = within(SECTION_BUDGET.wilderness);
-  for (const district of DISTRICTS) {
-    if (district.kind !== "FUTURE") continue;
-    const cos = Math.cos(district.rotationY);
-    const sin = Math.sin(district.rotationY);
-    for (let index = 0; index < 110; index += 1) {
-      const angle = rand() * Math.PI * 2;
-      const distance = Math.sqrt(rand()) * 0.92;
-      const localX = Math.cos(angle) * distance * district.radiusX;
-      const localZ = Math.sin(angle) * distance * district.radiusY;
-      const tileX = district.center.x + localX * cos - localZ * sin;
-      const tileY = district.center.y + localX * sin + localZ * cos;
-      const kindRoll = rand();
-      const scaleRoll = rand();
-      const rotationRoll = rand();
-      if (!isOpenGround(tileX, tileY)) continue;
-      // Mostly meadow grass with occasional scrub: nothing here is a landmark, because a landmark
-      // would be the plan deciding what this land is for.
-      const kind: SceneryKind = kindRoll < 0.62 ? "plant" : kindRoll < 0.9 ? "bush" : "tree";
-      wildernessBudget(kind, tileX, tileY, unitScaleFor(kind, scaleRoll), rotationRoll * Math.PI * 2);
-    }
-  }
-
   // 6. The farmland's margin.
   //
   // The crop district grows nothing inside the reserve on purpose - that land belongs to the
@@ -1077,64 +1023,6 @@ function buildLockedScenery(
   }
 
   return scenery;
-}
-
-/**
- * The stakes that mark where the farm's land ends and the land for sale begins.
- *
- * Only an edge whose outside neighbour is *not* locked land gets a stake: the interior seams between
- * two locked plots are invisible, and the edge the player already owns is the one boundary worth
- * drawing. The result is a single line around the claimed field, which is the affordance the grey
- * slab used to carry, without the slab.
- */
-function buildLockedBoundary(plots: readonly PlotSquare[], layout: FarmLayout): BoundaryStake[] {
-  const frame = worldFrame(layout.pitch);
-  const stakes: BoundaryStake[] = [];
-  const isLocked = (x: number, y: number): boolean =>
-    plots.some((plot) => x >= plot.minX && x <= plot.maxX && y >= plot.minY && y <= plot.maxY);
-
-  for (const plot of plots) {
-    const horizontal: number[] = [];
-    for (let x = plot.minX + 1; x <= plot.maxX - 1; x += LOCKED_STAKE_SPACING_TILES) horizontal.push(x);
-    const vertical: number[] = [];
-    for (let y = plot.minY + 1; y <= plot.maxY - 1; y += LOCKED_STAKE_SPACING_TILES) vertical.push(y);
-
-    const edges: readonly {
-      readonly along: readonly number[];
-      readonly line: number;
-      readonly outward: number;
-      readonly horizontal: boolean;
-    }[] = [
-      { along: horizontal, line: plot.minY, outward: -1, horizontal: true },
-      { along: horizontal, line: plot.maxY, outward: 1, horizontal: true },
-      { along: vertical, line: plot.minX, outward: -1, horizontal: false },
-      { along: vertical, line: plot.maxX, outward: 1, horizontal: false }
-    ];
-
-    for (const edge of edges) {
-      for (const along of edge.along) {
-        const tile = edge.horizontal
-          ? { x: along, y: edge.line + edge.outward }
-          : { x: edge.line + edge.outward, y: along };
-        if (isLocked(tile.x, tile.y)) continue;
-        const position = tileToWorld(
-          edge.horizontal ? { x: along, y: edge.line } : { x: edge.line, y: along },
-          frame
-        );
-        const offset = layout.pitch * 0.5 * edge.outward;
-        const worldX = edge.horizontal ? position.worldX : position.worldX + offset;
-        const worldZ = edge.horizontal ? position.worldZ + offset : position.worldZ;
-        stakes.push({
-          id: `plot${String(plot.plotIndex)}_${edge.horizontal ? "h" : "v"}_${String(along)}_${String(edge.outward)}`,
-          worldX,
-          worldY: LOCKED_GROUND_SURFACE_Y,
-          worldZ
-        });
-      }
-    }
-  }
-
-  return stakes;
 }
 
 export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
@@ -1314,24 +1202,7 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
         .map((plot) => plotSquare(plot.plotIndex)),
       input.layout
     ),
-    lockedBoundary: buildLockedBoundary(
-      previewLockedPlots(input.plots).map((plot) => plotSquare(plot.plotIndex)),
-      input.layout
-    ),
     landmarks: LANDMARKS.map((landmark) => ({ ...landmark, ...tileToWorld(landmark.tile, mapping) })),
-    districts: DISTRICTS.map((district) => {
-      const centre = tileToWorld(district.center, mapping);
-      return {
-        id: district.id,
-        kind: district.kind,
-        ground: district.ground,
-        worldX: centre.worldX,
-        worldZ: centre.worldZ,
-        radiusWorldX: district.radiusX * input.layout.pitch,
-        radiusWorldZ: district.radiusY * input.layout.pitch,
-        rotationY: district.rotationY
-      };
-    }),
     roads,
     junctions,
     plaza: {

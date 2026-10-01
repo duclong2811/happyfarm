@@ -47,7 +47,9 @@ describe("composition presets", () => {
   it("uses unique preset ids and a non-empty cast", () => {
     const ids = COMPOSITION_PRESETS.map((preset) => preset.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(COMPOSITION_PRESETS.length).toBeGreaterThanOrEqual(5);
+    // Four places the island furnishes: the farmyard, the market square, the well, and the quay. The
+    // orchard yard and the timber yard went with the production districts they belonged to.
+    expect(COMPOSITION_PRESETS.length).toBeGreaterThanOrEqual(4);
     for (const preset of COMPOSITION_PRESETS) {
       expect(preset.props.length, preset.id).toBeGreaterThan(2);
       expect(preset.clearanceTiles, preset.id).toBeGreaterThan(0);

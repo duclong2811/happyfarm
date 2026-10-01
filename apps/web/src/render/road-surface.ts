@@ -243,14 +243,22 @@ export function junctionSurface(junctions: readonly JunctionSpec[]): SurfaceData
   const positions: number[] = [];
   const indices: number[] = [];
   const colors: number[] = [];
-  const segments = 16;
+  /**
+   * More segments and a gentler wobble than the first pass used.
+   *
+   * A junction disc is laid *over* the ribbon ends that run into it, so any irregularity in its
+   * outline shows as a frayed seam where the two surfaces meet - which is exactly what the V12.2
+   * close-up caught at the harbour. Sixteen segments with a fourteen per cent wobble read as a
+   * torn edge from a few metres away; twenty-four with six do not, and cost nothing.
+   */
+  const segments = 24;
   for (const [junctionIndex, junction] of junctions.entries()) {
     const base = positions.length / 3;
     positions.push(junction.worldX, junction.worldY, junction.worldZ);
     colors.push(1, 1, 1);
     for (let segment = 0; segment < segments; segment += 1) {
       const angle = (segment / segments) * Math.PI * 2;
-      const wobble = 0.86 + hash(junctionIndex * 31 + segment) * 0.26;
+      const wobble = 0.94 + hash(junctionIndex * 31 + segment) * 0.12;
       const radius = junction.radiusWorld * wobble;
       positions.push(
         junction.worldX + Math.cos(angle) * radius,

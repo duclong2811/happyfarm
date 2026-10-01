@@ -6,6 +6,7 @@ import {
   DISTRICTS,
   FARM_FIELD_BOUNDS,
   FARMSTEAD,
+  HARBOUR,
   LANDMARKS_WORLD,
   isWaterTile,
   TERRAIN_SHAPE,
@@ -56,29 +57,37 @@ const SHORE_BAND = 0.955;
  * tiles wide on this island: enough to be a real shelf, narrow enough that the open sea stays open.
  */
 const SHALLOW_WATER_BAND = 0.06;
+/**
+ * How much water around the harbour is kept clear of anything a player places, in tiles.
+ *
+ * The pier, the moorings and the approach to them are navigation, not farmland: a fish cage moored
+ * across the quay would block the one piece of the island that exists to be sailed into. This is the
+ * spatial rule the brief asks for, and it is a *rule* rather than a picture - the cell map simply
+ * declines to offer aquaculture capability inside it.
+ */
+const HARBOUR_CLEARANCE_TILES = 9;
 /** How close a scenery instance must be to a cell's centre to count as standing on it, in cells. */
 const SCENERY_OCCUPANCY_RADIUS_CELLS = 0.5;
 
+/** Whether a cell is inside the harbour's own water, which nothing may be placed in. */
+function insideHarbourWater(tile: TileCoordinate): boolean {
+  return (
+    Math.hypot(tile.x - HARBOUR.root.x, tile.y - HARBOUR.root.y) < HARBOUR_CLEARANCE_TILES ||
+    Math.hypot(tile.x - HARBOUR.yard.x, tile.y - HARBOUR.yard.y) < HARBOUR_CLEARANCE_TILES
+  );
+}
+
 /**
- * The zone a district's land use maps to.
+ * The zone a place the island owns maps to.
  *
- * Landscape only, and shrinking on purpose. The production districts (cropland, orchard, pasture,
- * managed wood) no longer name a land use at all: the ground says what it *can* carry through
- * `CellCapability`, and the player's placement says what it *is*. What is left here is the two
- * places the *island* has an opinion about - the village square, which is civic ground, and the
- * natural landscape, which is wilderness - because those describe what the place is, not what may be
- * built on it.
+ * Exactly one of the two produces anything: the village is civic ground, which is why a crop cannot
+ * grow on the square. The harbour's coast is zone `NONE` - it is protected by water and shore rules,
+ * not by a land-use zone. Everything else on the island is ordinary `NONE` land whose capability
+ * comes from the ground, and there is no district left anywhere that could claim otherwise.
  */
 const ZONE_BY_DISTRICT: Readonly<Record<DistrictKind, CellZone>> = {
-  CROPLAND: "NONE",
-  ORCHARD: "NONE",
-  FOREST: "WILDERNESS",
-  FORESTRY: "NONE",
-  PASTURE: "NONE",
   SETTLEMENT: "CIVIC",
-  WATER: "NONE",
-  COAST: "NONE",
-  FUTURE: "WILDERNESS"
+  COAST: "NONE"
 };
 
 export interface CellScenerySource {
@@ -301,9 +310,15 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
             : volcanoZone === "SLOPE"
               ? "VOLCANO_SLOPE"
               : "VOLCANO_FOOTHILL";
-      } else if (terrain === "WATER" && radius > 1 && radius <= 1 + SHALLOW_WATER_BAND) {
+      } else if (
+        terrain === "WATER" &&
+        radius > 1 &&
+        radius <= 1 + SHALLOW_WATER_BAND &&
+        !insideHarbourWater(tile)
+      ) {
         // The shelf just outside the waterline: the water a cage can actually be moored in. Deeper
-        // water keeps its own answer, which is that nothing may be built there.
+        // water keeps its own answer, which is that nothing may be built there - and the harbour's own
+        // water is excluded, because a fish cage moored across the pier is a cage nobody can sail past.
         zone = "AQUACULTURE";
       }
 

@@ -30,7 +30,14 @@ export interface BuildingVariant {
 export interface BuildingDefinition {
   readonly id: string;
   readonly kind: LandmarkKind;
-  readonly district: DistrictKind;
+  /**
+   * The place this building belongs to, or null when it stands on open land.
+   *
+   * V12.2 removed the production districts, and a windmill or a coop out in the country does not
+   * belong to a place the island owns - it belongs to the land, which is the player's. Saying so is
+   * the point: a building only claims a district when the island has one to claim.
+   */
+  readonly district: DistrictKind | null;
   readonly tile: TileCoordinate;
   readonly rotationY: number;
   /** The ground the building stands on, in world metres. Used to keep scenery and roads clear. */
@@ -43,13 +50,25 @@ export interface BuildingDefinition {
 }
 
 /** A place reserved for a building that does not exist yet: the settlement's plan, written down. */
+/**
+ * The kinds of building the island has set ground aside for but has not built.
+ *
+ * They are not landmarks: nothing draws them, and no model exists for any tier yet. What exists is
+ * the *ladder* - the ground is reserved at its largest tier, and the tier a later pass will draw is
+ * one field away, so "the village grows" is a table edit rather than a redesign of the square.
+ */
+export type ReservedKind = "TOWN_HALL" | "WAREHOUSE";
+
 export interface ReservedBuilding {
   readonly id: string;
-  readonly kind: LandmarkKind | "TOWN_HALL" | "WAREHOUSE";
-  readonly district: DistrictKind;
+  readonly kind: LandmarkKind | ReservedKind;
+  readonly district: DistrictKind | null;
   readonly tile: TileCoordinate;
   readonly rotationY: number;
   readonly footprint: { readonly halfWidthWorld: number; readonly halfDepthWorld: number };
+  /** Which tier this plot is drawn at today. Nothing draws it yet, so every one is tier 1. */
+  readonly tier: number;
+  readonly variants: readonly BuildingVariant[];
 }
 
 /**
@@ -102,19 +121,45 @@ const LADDERS: Readonly<Record<LandmarkKind, readonly BuildingVariant[]>> = {
   ]
 };
 
-/** Which district a kind belongs to. A building placed anywhere else is a plan error, not a style. */
-const DISTRICT_BY_KIND: Readonly<Record<LandmarkKind, DistrictKind>> = {
+/**
+ * The tier ladders for the buildings the island has reserved ground for.
+ *
+ * No model is named yet and nothing draws them: what this establishes is that the *shape* of the
+ * upgrade exists before the art does - a village office becomes a town hall and then a civic hall, a
+ * storage shed becomes a warehouse and then a logistics building - so the reserved footprints and the
+ * future shop entries have something to point at.
+ */
+const RESERVED_LADDERS: Readonly<Record<ReservedKind, readonly BuildingVariant[]>> = {
+  TOWN_HALL: [
+    { tier: 1, modelId: null, labelKey: "building.town_hall.t1" },
+    { tier: 2, modelId: null, labelKey: "building.town_hall.t2" },
+    { tier: 3, modelId: null, labelKey: "building.town_hall.t3" }
+  ],
+  WAREHOUSE: [
+    { tier: 1, modelId: null, labelKey: "building.warehouse.t1" },
+    { tier: 2, modelId: null, labelKey: "building.warehouse.t2" },
+    { tier: 3, modelId: null, labelKey: "building.warehouse.t3" }
+  ]
+};
+
+/**
+ * Which place a kind belongs to.
+ *
+ * The island's own buildings are civic: they stand in the village or on the coast. The working
+ * buildings that used to claim the orchard and the pasture stand on open land now, which is exactly
+ * what they do - and the honest answer is `null` rather than a district that no longer exists.
+ */
+const DISTRICT_BY_KIND: Readonly<Record<LandmarkKind, DistrictKind | null>> = {
   FARMHOUSE: "SETTLEMENT",
   WELL: "SETTLEMENT",
   MARKET_STALL: "SETTLEMENT",
-  WINDMILL: "ORCHARD",
-  STORAGE_SHED: "PASTURE",
   HARBOR: "COAST",
-  // The silo stands with the settlement's working buildings, and the coop is out on the pasture where
-  // the animals will be - which is also the only place on the island a coop belongs.
   SILO: "SETTLEMENT",
   OPEN_BARN: "SETTLEMENT",
-  COOP: "PASTURE"
+  // Out in the country, on land the island has not kept for itself.
+  WINDMILL: null,
+  STORAGE_SHED: null,
+  COOP: null
 };
 
 /** The buildings the island draws today, one per placed landmark. */
@@ -150,7 +195,9 @@ export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
     rotationY: Math.PI,
     // The reserved footprint is the *largest* the building will ever be, so a tier-3 town hall has
     // the ground it needs before anybody decides to build it.
-    footprint: { halfWidthWorld: 5, halfDepthWorld: 4 }
+    footprint: { halfWidthWorld: 5, halfDepthWorld: 4 },
+    tier: 1,
+    variants: RESERVED_LADDERS.TOWN_HALL
   },
   {
     id: "warehouse",
@@ -158,7 +205,9 @@ export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
     district: "SETTLEMENT",
     tile: { x: 51.5, y: 8 },
     rotationY: -Math.PI / 2,
-    footprint: { halfWidthWorld: 5, halfDepthWorld: 3.5 }
+    footprint: { halfWidthWorld: 5, halfDepthWorld: 3.5 },
+    tier: 1,
+    variants: RESERVED_LADDERS.WAREHOUSE
   },
   {
     id: "fishery_store",
@@ -166,7 +215,9 @@ export const RESERVED_BUILDINGS: readonly ReservedBuilding[] = [
     district: "COAST",
     tile: { x: 41.5, y: 48 },
     rotationY: -Math.PI / 3,
-    footprint: { halfWidthWorld: 3.5, halfDepthWorld: 2.5 }
+    footprint: { halfWidthWorld: 3.5, halfDepthWorld: 2.5 },
+    tier: 1,
+    variants: RESERVED_LADDERS.WAREHOUSE
   }
 ];
 

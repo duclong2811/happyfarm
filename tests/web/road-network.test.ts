@@ -6,7 +6,7 @@ import { createSharedAssets } from "../../apps/web/src/render/materials";
 import { ribbonSurface, stonePlateSurface } from "../../apps/web/src/render/road-surface";
 import { buildRoadNetwork, reachableFrom, REQUIRED_ROAD_DESTINATIONS } from "../../apps/web/src/render/road-network";
 import { GROUND_SURFACE_Y, islandRadiusAt, terrainHeightAt } from "../../apps/web/src/render/terrain-height";
-import { ROAD_LIFT_WORLD } from "../../apps/web/src/render/roads";
+import { buildRoadSpec, ROAD_LIFT_WORLD } from "../../apps/web/src/render/roads";
 import {
   FARMSTEAD,
   HARBOUR,
@@ -14,6 +14,7 @@ import {
   LANDMARKS,
   ROAD_NODES,
   ROADS,
+  ROAD_SHOULDER_WORLD,
   ROAD_WIDTH_TILES,
   VISUAL_BOUNDS
 } from "../../apps/web/src/render/world-config";
@@ -66,9 +67,14 @@ describe("the road hierarchy", () => {
   it("is three widths, in the order the classes are drawn", () => {
     expect(ROAD_WIDTH_TILES.PRIMARY).toBeGreaterThan(ROAD_WIDTH_TILES.SECONDARY);
     expect(ROAD_WIDTH_TILES.SECONDARY).toBeGreaterThan(ROAD_WIDTH_TILES.PATH);
-    // A primary is not merely wider than a secondary; it is wide enough to read as a different thing
-    // from the far side of the estate.
-    expect(ROAD_WIDTH_TILES.PRIMARY).toBeGreaterThan(ROAD_WIDTH_TILES.SECONDARY * 1.5);
+    // V12.2 widened the middle class rather than the top one: the island's own road *is* a dirt road
+    // now, and it has to carry the eye from the harbour to the village from the estate camera. The top
+    // class stays for the player's stone and paved tiers.
+    expect(ROAD_WIDTH_TILES.SECONDARY).toBeGreaterThanOrEqual(2);
+    expect(ROAD_WIDTH_TILES.PRIMARY).toBeGreaterThan(ROAD_WIDTH_TILES.SECONDARY * 1.2);
+    // Every class keeps a shoulder, and the widest road keeps the widest one.
+    expect(ROAD_SHOULDER_WORLD.PRIMARY).toBeGreaterThan(ROAD_SHOULDER_WORLD.SECONDARY);
+    expect(ROAD_SHOULDER_WORLD.SECONDARY).toBeGreaterThan(ROAD_SHOULDER_WORLD.PATH);
   });
 
   it("gives each class its own surface", () => {
@@ -90,10 +96,14 @@ describe("the road hierarchy", () => {
     }
   });
 
-  it("writes every class into the network", () => {
+  it("writes only the cheap classes into the network", () => {
     const kinds = new Set(ROADS.map((road) => road.kind));
-    expect(kinds).toEqual(new Set(["PRIMARY", "SECONDARY", "PATH"]));
-    expect(ROADS.filter((road) => road.kind === "PRIMARY")).toHaveLength(1);
+    // V12.2: the island authors a dirt road and its paths. Stone and paved are the player's to build,
+    // so a `PRIMARY` in the authored network is now the bug this test is looking for.
+    expect(kinds).toEqual(new Set(["SECONDARY", "PATH"]));
+    expect(ROADS.filter((road) => road.kind === "PRIMARY")).toHaveLength(0);
+    // The hierarchy itself still exists in the renderer, ready for those tiers.
+    expect(Object.keys(ROAD_WIDTH_TILES).sort()).toEqual(["PATH", "PRIMARY", "SECONDARY"]);
   });
 });
 
@@ -199,16 +209,25 @@ describe("the drawn network follows the ground and the island", () => {
 });
 
 describe("the road surfaces are drawn once, cheaply", () => {
-  const { world } = sceneInput();
+  const { world, layout } = sceneInput();
 
   it("batches the cobbles of the stone road into one geometry", () => {
-    const plates = stonePlateSurface(world.roads);
+    // The island authors no stone road yet, so the surface is exercised with the stone *tier* applied
+    // to the road the island does have: the player's first stone road will be built exactly this way,
+    // and what this test guards is that a thousand stones are one geometry rather than a thousand
+    // meshes.
+    const spine = ROADS.find((road) => road.id === "harbour_spine");
+    if (spine === undefined) throw new Error("the island must have its harbour road");
+    const stone = buildRoadSpec({ ...spine, kind: "PRIMARY" }, layout, world.terrain);
+    const plates = stonePlateSurface([stone]);
     const plateCount = plates.indices.length / 6;
-    expect(plateCount).toBeGreaterThan(400);
+    expect(plateCount).toBeGreaterThan(200);
     // One geometry, not one mesh per stone, and still a bounded amount of geometry to upload.
     expect(plateCount).toBeLessThan(6000);
     expect(plates.positions.length / 3).toBe(plateCount * 4);
     expect(plates.colors?.length).toBe(plates.positions.length);
+    // …and the authored network itself draws none of it.
+    expect(stonePlateSurface(world.roads).indices.length).toBe(0);
   });
 
   it("does not draw a stone surface for a world with no stone road", () => {
@@ -242,8 +261,13 @@ describe("the road surfaces are drawn once, cheaply", () => {
       const expected = GROUND_SURFACE_Y + terrainHeightAt(junction.worldX, junction.worldZ, world.terrain) + ROAD_LIFT_WORLD;
       expect(junction.worldY).toBeCloseTo(expected, 9);
     }
-    // The harbour end of the spine is a junction, and it is stone.
+    // The harbour end of the spine is a junction - the walkway meets the road there - and it is dirt,
+    // because the road that reaches it is.
     const harbour = world.junctions.find((junction) => junction.id === "junction_harbour");
-    expect(harbour?.kind).toBe("PRIMARY");
+    expect(harbour?.kind).toBe("SECONDARY");
+    // The village square is *not* a junction disc: it is already a paved place, and a dirt disc laid
+    // over the paving would have painted a brown blot in the middle of the one paved thing on the
+    // island. `FarmWorld.junctions` still records it, and the renderer skips it.
+    expect(world.junctions.some((junction) => junction.id === "junction_plaza")).toBe(true);
   });
 });

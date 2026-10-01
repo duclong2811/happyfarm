@@ -92,18 +92,16 @@ describe("fixed world coordinates", () => {
 });
 
 describe("static world config", () => {
-  it("keeps every district a real area, and the farmland district on the reserve", () => {
-    const farmland = DISTRICTS.find((district) => district.kind === "CROPLAND");
-    expect(farmland, "the island needs a district for the land the catalogue sells").toBeDefined();
-    expect(farmland?.density).toBe(0);
-    expect(farmland?.ground).toBe("NONE");
+  it("keeps only the two places the island owns, both real areas outside the reserve", () => {
+    // V12.2 deleted the production districts. What must not come back is a district that decides
+    // anything: the two that remain are civic ground and coastal ground, and they are places.
+    expect(DISTRICTS.map((district) => district.kind).sort()).toEqual(["COAST", "SETTLEMENT"]);
     for (const district of DISTRICTS) {
       expect(district.radiusX, district.id).toBeGreaterThan(0);
       expect(district.radiusY, district.id).toBeGreaterThan(0);
       expect(district.labelKey.startsWith("world.district."), district.id).toBe(true);
-      if (district.kind === "CROPLAND") continue;
-      // Every other district sits *outside* the reserve: a district is landscape, and the reserve is
-      // the land the catalogue sells. A blob's own edge may reach the fence, but its centre may not.
+      // A district sits outside the reserve: a district is the island's own ground, and the reserve is
+      // the land the catalogue sells. A blob's edge may reach the fence, but its centre may not.
       const centreInsideReserve =
         district.center.x >= FARM_FIELD_BOUNDS.minX &&
         district.center.x <= FARM_FIELD_BOUNDS.maxX &&
@@ -182,11 +180,13 @@ describe("static world config", () => {
         expect(insideReserve, `${road.id} at ${String(point.x)},${String(point.y)}`).toBe(false);
       }
     }
-    // …and the network has a hierarchy rather than being one class of line.
+    // …and the classes it uses are the cheap ones. The island's own road is dirt and its lanes are
+    // paths: the stone and paved classes exist for the player's later construction, not for a highway
+    // nobody built yet.
     const kinds = new Set(ROADS.map((road) => road.kind));
-    expect(kinds.has("PRIMARY")).toBe(true);
     expect(kinds.has("SECONDARY")).toBe(true);
     expect(kinds.has("PATH")).toBe(true);
+    expect(kinds.has("PRIMARY")).toBe(false);
   });
 
   it("keeps every terrain patch off the land the farm owns at the start", () => {

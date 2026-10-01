@@ -31,17 +31,30 @@ export interface RoadSpec {
 }
 
 /** How many points a spline segment is sampled into. Higher is smoother and costs more vertices. */
-const SAMPLES_PER_SEGMENT = 11;
+/**
+ * How finely a spline segment is walked.
+ *
+ * Raised in V12.2 from 11. A ribbon's inner edge folds whenever the corner's radius is smaller than
+ * the road's half-width, and at eleven samples a bend could turn far enough between two samples to
+ * cross itself - the hole the harbour close-up showed. The geometry is static and built once, so the
+ * extra samples cost nothing at runtime and buy a road that does not tear at its corners.
+ */
+const SAMPLES_PER_SEGMENT = 18;
 /**
  * A road is lifted this far above the ground it follows.
  *
  * The ground is drawn as a coarse mesh and a road is placed on the *analytic* height, so between two
  * of the ground mesh's rings the drawn surface sits a centimetre or two above where the curve says it
  * is - and a road lifted by less than that disappears into the grass in patches, which is the "road
- * swallowed by a hill" the estate view kept showing. Five centimetres is above every interpolation
- * error the relief can produce and far below the height a player reads as a step.
+ * swallowed by a hill" the estate view kept showing.
+ *
+ * Raised again in V12.2, from five centimetres to sixteen. Five was enough on the inland relief but not
+ * where the road runs down to the harbour: the shore fade is the steepest thing the terrain does, and
+ * between two rings of the ground mesh the drawn surface can stand well above the analytic curve the
+ * road is placed on. The result was green wedges cutting through the road near the quay, which the QA
+ * pass caught and a lift experiment confirmed.
  */
-export const ROAD_LIFT_WORLD = 0.05;
+export const ROAD_LIFT_WORLD = 0.16;
 
 function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
   const t2 = t * t;

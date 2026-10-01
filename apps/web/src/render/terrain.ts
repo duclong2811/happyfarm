@@ -37,7 +37,7 @@ import {
   type TerrainShape
 } from "./terrain-height";
 import { ROAD_LIFT_WORLD } from "./roads";
-import { type RoadKind } from "./world-config";
+import { ROAD_SHOULDER_WORLD } from "./world-config";
 import { buildLandmarks } from "./landmarks";
 import { buildScenery } from "./scenery";
 import { buildCompositionProps } from "./dressing";
@@ -429,21 +429,21 @@ function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld, la
 
 /** How far each road layer is lifted, so the layers stack instead of fighting. */
 const ROAD_SHOULDER_LIFT = -0.006;
+/**
+ * The three beds sit a hair apart rather than at the same height.
+ *
+ * Two ribbons of different classes meet wherever a road meets a path - the quay's walkway is a `PATH`
+ * and the harbour road is dirt - and drawn at exactly the same height their overlap is a z-fight: a
+ * torn, jagged seam that the V12.2 close-up caught near the harbour. A few millimetres of separation
+ * is invisible from any camera and makes the winner deterministic.
+ */
 const ROAD_BED_LIFT = 0;
+const ROAD_PATH_LIFT = 0.004;
+const ROAD_STONE_BED_LIFT = 0.002;
 const ROAD_PLATE_LIFT = 0.01;
 const ROAD_JUNCTION_LIFT = 0.014;
-/**
- * How much wider than the road its shoulder is drawn, per class.
- *
- * The shoulder is what softens an edge, and it must not flatten the hierarchy while doing it: a stone
- * spine keeps a generous fringe and a field track keeps almost none, so the three classes stay as
- * clearly separated on the ground as they are in the config.
- */
-const ROAD_SHOULDER_WIDTHS: Readonly<Record<RoadKind, number>> = {
-  PRIMARY: 1.3,
-  SECONDARY: 0.7,
-  PATH: 0.28
-};
+/** The shoulder table lives with the road widths, because scenery clearance reads it too. */
+const ROAD_SHOULDER_WIDTHS = ROAD_SHOULDER_WORLD;
 
 /** One mesh from one surface, or nothing when the surface is empty. */
 function surfaceMesh(data: SurfaceData, material: Material, lift: number, name: string): Mesh | null {
@@ -502,7 +502,7 @@ function addRoads(group: Group, assets: SharedAssets, world: FarmWorld): void {
   const paths = surfaceMesh(
     ribbonSurface(world.roads, ["PATH"], roadHeightAt),
     assets.roadPath,
-    ROAD_BED_LIFT,
+    ROAD_PATH_LIFT,
     "road-path"
   );
   if (paths !== null) group.add(paths);
@@ -510,7 +510,7 @@ function addRoads(group: Group, assets: SharedAssets, world: FarmWorld): void {
   const stoneBed = surfaceMesh(
     ribbonSurface(world.roads, ["PRIMARY"], roadHeightAt),
     assets.roadStoneBed,
-    ROAD_BED_LIFT,
+    ROAD_STONE_BED_LIFT,
     "road-stone-bed"
   );
   if (stoneBed !== null) group.add(stoneBed);
@@ -523,10 +523,35 @@ function addRoads(group: Group, assets: SharedAssets, world: FarmWorld): void {
   );
   if (plates !== null) group.add(plates);
 
+  /**
+   * A junction disc is drawn only where the roads meet on open ground.
+   *
+   * The village square is already a paved place: it has its own surface, and V12.2 made every road
+   * that reaches it dirt, so a dirt disc laid over the paving would have painted a brown blot in the
+   * middle of the one paved thing on the island. The plaza is the junction, and the square is where
+   * the roads stop.
+   */
+  const outsidePlaza = (worldX: number, worldZ: number, margin: number): boolean => {
+    const dx = (worldX - world.plaza.worldX) / (world.plaza.radiusWorldX + margin);
+    const dz = (worldZ - world.plaza.worldZ) / (world.plaza.radiusWorldZ + margin);
+    return dx * dx + dz * dz > 1;
+  };
   const junctionLayers = [
-    [world.junctions.filter((junction) => junction.kind === "PRIMARY"), assets.roadStone, "road-junction-stone"],
-    [world.junctions.filter((junction) => junction.kind === "SECONDARY"), assets.roadDirt, "road-junction-dirt"],
-    [world.junctions.filter((junction) => junction.kind === "PATH"), assets.roadPath, "road-junction-path"]
+    [
+      world.junctions.filter((junction) => junction.kind === "PRIMARY" && outsidePlaza(junction.worldX, junction.worldZ, 0.6)),
+      assets.roadStone,
+      "road-junction-stone"
+    ],
+    [
+      world.junctions.filter((junction) => junction.kind === "SECONDARY" && outsidePlaza(junction.worldX, junction.worldZ, 0.6)),
+      assets.roadDirt,
+      "road-junction-dirt"
+    ],
+    [
+      world.junctions.filter((junction) => junction.kind === "PATH" && outsidePlaza(junction.worldX, junction.worldZ, 0.6)),
+      assets.roadPath,
+      "road-junction-path"
+    ]
   ] as const;
   for (const [junctions, asset, name] of junctionLayers) {
     const mesh = surfaceMesh(junctionSurface(junctions), asset, ROAD_JUNCTION_LIFT, name);
