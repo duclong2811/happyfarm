@@ -15,6 +15,7 @@ import {
   GameDataPlotDefinitions,
   GameDataShopEntries,
   GameDataTreeDefinitions,
+  GameDataConstructionDefinitions,
   Sha256Fingerprint,
   SystemClock,
   gameDataProgressionDefinition,
@@ -94,6 +95,7 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
     shopEntries: new GameDataShopEntries(),
     plotDefinitions: new GameDataPlotDefinitions(),
     treeDefinitions: new GameDataTreeDefinitions(),
+    constructionDefinitions: new GameDataConstructionDefinitions(),
     progressionDefinition: gameDataProgressionDefinition,
     clock
   });

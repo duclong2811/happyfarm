@@ -1,6 +1,7 @@
 import {
   cropInstanceIdFromUuid,
   economyTransactionIdFromUuid,
+  constructionIdFromUuid,
   farmIdFromUuid,
   parseCropDefinitionId,
   parseCurrencyDefinitionId,
@@ -12,6 +13,8 @@ import {
   type CropDefinition,
   type CropDefinitionId,
   type CropInstanceId,
+  type ConstructionDefinition,
+  type ConstructionId,
   type FarmId,
   type CurrencyDefinition,
   type CurrencyDefinitionId,
@@ -30,6 +33,8 @@ import type {
   ActorContext,
   AuthenticationPort,
   Clock,
+  ConstructionDefinitionRepository,
+  ConstructionIdGenerator,
   CropDefinitionRepository,
   CropIdGenerator,
   CurrencyDefinitionRepository,
@@ -46,7 +51,9 @@ import type {
 import {
   cropRegistry,
   currencyRegistry,
+  gameplayFor,
   itemRegistry,
+  placementEntries,
   playerProgression,
   plotRegistry,
   shopRegistry,
@@ -89,7 +96,7 @@ export class SystemClock implements Clock {
 }
 
 export class CryptoIdGenerator
-  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator
+  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator, ConstructionIdGenerator
 {
   newFarmId(): FarmId {
     return farmIdFromUuid(crypto.randomUUID());
@@ -105,6 +112,38 @@ export class CryptoIdGenerator
 
   newEconomyTransactionId(): EconomyTransactionId {
     return economyTransactionIdFromUuid(crypto.randomUUID());
+  }
+
+  newConstructionId(): ConstructionId {
+    return constructionIdFromUuid(crypto.randomUUID());
+  }
+}
+
+/**
+ * The build catalogue, read as placement rules.
+ *
+ * The client sees this data as a shop, the server sees it as the definition of what may be built: the
+ * price it charges, the level it requires, the ground the thing needs, and whether it is buildable at
+ * all. There is exactly one source - game data - and this class is the adapter, not a second opinion.
+ */
+export class GameDataConstructionDefinitions implements ConstructionDefinitionRepository {
+  findById(entryId: string): ConstructionDefinition | null {
+    const entry = placementEntries.find((candidate) => candidate.id === entryId);
+    if (entry === undefined) return null;
+    const gameplay = gameplayFor(entry.id);
+    if (gameplay === null) return null;
+    return {
+      entryId: entry.id,
+      category: entry.category,
+      requiredLevel: entry.requiredLevel,
+      price: entry.price,
+      currencyDefinitionId: entry.currencyDefinitionId,
+      footprint: { widthCells: entry.footprint.widthCells, depthCells: entry.footprint.depthCells },
+      capability: entry.capability,
+      rotatable: entry.rotatable,
+      status: gameplay.status,
+      requiresOwnership: entry.unlockCondition === "OWNED_LAND"
+    };
   }
 }
 

@@ -14,6 +14,8 @@ import {
   ListTreeDefinitions,
   PlantCrop,
   PlantTree,
+  PlaceConstruction,
+  ListFarmConstructions,
   HarvestTree,
   RemoveTree,
   TreeStateProjector,
@@ -34,10 +36,12 @@ import {
   type ItemDefinitionRepository,
   type PayloadFingerprint,
   type PlotDefinitionRepository,
+  type ConstructionDefinitionRepository,
   type PlotView,
   type ShopEntryRepository,
   type TreeDefinitionRepository,
   type TreeIdGenerator
+  ,type ConstructionIdGenerator
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
@@ -52,6 +56,7 @@ import {
   RemoveTreeRequestSchema,
   SellItemRequestSchema,
   PlantCropRequestSchema,
+  PlaceConstructionRequestSchema,
   UprootCropRequestSchema,
   type ApiFailure,
   type ApiSuccess,
@@ -77,11 +82,13 @@ import {
   ,type TreeDefinitionDTO,
   type TreeStateDTO,
   type BuildCatalogEntryDTO
+  ,type ConstructionDTO
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
 import {
   parseCurrencyDefinitionId,
   parseFarmId,
+  type ConstructionInstance,
   type ProgressionDefinition,
   type ShopEntry,
   type Wallet
@@ -93,6 +100,7 @@ import {
   D1EconomySettlementRepository,
   D1FarmExpansionRepository,
   D1TreeRepository,
+  D1ConstructionRepository,
   D1TreeHarvestSettlementRepository,
   D1IdempotencyRepository,
   D1WalletRepository,
@@ -109,7 +117,11 @@ const MAX_JSON_BODY_BYTES = 16_384;
 export interface HandlerDependencies {
   readonly db: D1DatabaseLike;
   readonly authenticator: AuthenticationPort<Request>;
-  readonly ids: IdGenerator & CropIdGenerator & TreeIdGenerator & EconomyTransactionIdGenerator;
+  readonly ids: IdGenerator &
+    CropIdGenerator &
+    TreeIdGenerator &
+    EconomyTransactionIdGenerator &
+    ConstructionIdGenerator;
   readonly fingerprints: PayloadFingerprint;
   readonly cropDefinitions: CropDefinitionRepository;
   readonly itemDefinitions: ItemDefinitionRepository;
@@ -117,6 +129,8 @@ export interface HandlerDependencies {
   readonly shopEntries: ShopEntryRepository;
   readonly plotDefinitions: PlotDefinitionRepository;
   readonly treeDefinitions: TreeDefinitionRepository;
+  /** The build catalogue as placement rules: price, level, footprint, capability, buildability. */
+  readonly constructionDefinitions: ConstructionDefinitionRepository;
   /** The levelling curve. Passed in rather than imported, so application code stays game-data free. */
   readonly progressionDefinition: ProgressionDefinition;
   readonly clock: Clock;
@@ -124,6 +138,27 @@ export interface HandlerDependencies {
 
 function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "cache-control": "no-store" } });
+}
+
+/** One persisted construction, as the client reads it. Pure projection: nothing is derived here. */
+function toConstructionDTO(construction: ConstructionInstance): ConstructionDTO {
+  return {
+    constructionId: construction.id,
+    farmId: construction.farmId,
+    entryId: construction.entryId,
+    category: construction.category,
+    anchorX: construction.anchorX,
+    anchorY: construction.anchorY,
+    rotation: construction.rotation,
+    footprint: {
+      widthCells: construction.footprint.widthCells,
+      depthCells: construction.footprint.depthCells
+    },
+    state: construction.state,
+    costAmount: construction.costAmount,
+    costCurrencyDefinitionId: construction.costCurrencyDefinitionId,
+    createdAt: construction.createdAt
+  };
 }
 
 function toFarmDTO(farm: {
@@ -250,6 +285,9 @@ function errorStatus(code: ErrorCode): number {
     case "CROP_LEVEL_REQUIRED":
     case "PLOT_LEVEL_REQUIRED":
     case "TREE_LEVEL_REQUIRED":
+    case "CONSTRUCTION_LEVEL_REQUIRED":
+    case "CONSTRUCTION_NOT_ALLOWED":
+    case "CONSTRUCTION_NOT_OWNED":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -259,6 +297,7 @@ function errorStatus(code: ErrorCode): number {
     case "SHOP_ENTRY_NOT_FOUND":
     case "TREE_DEFINITION_NOT_FOUND":
     case "TREE_NOT_FOUND":
+    case "CONSTRUCTION_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
     case "REQUEST_ALREADY_PROCESSED":
@@ -275,7 +314,10 @@ function errorStatus(code: ErrorCode): number {
     case "PROGRESSION_CONFLICT":
     case "PLOT_LIMIT_REACHED":
     case "TREE_NOT_READY":
+    case "CONSTRUCTION_OCCUPIED":
       return 409;
+    case "CONSTRUCTION_UNSUITABLE_GROUND":
+      return 400;
     case "RATE_LIMITED":
       return 429;
     default:
@@ -300,6 +342,7 @@ export function createHandler(dependencies: HandlerDependencies) {
   const economySettlement = new D1EconomySettlementRepository(dependencies.db);
   const farmExpansionSettlement = new D1FarmExpansionRepository(dependencies.db);
   const trees = new D1TreeRepository(dependencies.db);
+  const constructions = new D1ConstructionRepository(dependencies.db);
   const treeHarvestSettlement = new D1TreeHarvestSettlementRepository(dependencies.db);
   const progressions = new D1ProgressionRepository(dependencies.db);
   const unlockedLand = {
@@ -422,6 +465,31 @@ export function createHandler(dependencies: HandlerDependencies) {
     dependencies.itemDefinitions
   );
   const listFarmTrees = new ListFarmTrees(farms, members, trees, treeProjector);
+  /**
+   * Construction: one use case for every buildable thing, and one list for the world to draw.
+   *
+   * The idempotency receipts live in their own repository because planting's rows are keyed by the
+   * crop repository (`D1CropRepository` implements `IdempotencyRepository`); construction does not
+   * write crops, so it reads and writes the general table directly.
+   */
+  const constructionIdempotency = new D1IdempotencyRepository(dependencies.db);
+  const placeConstruction = new PlaceConstruction({
+    farms,
+    members,
+    tiles,
+    constructions,
+    definitions: dependencies.constructionDefinitions,
+    progression: progressions,
+    progressionDefinition: dependencies.progressionDefinition,
+    wallets,
+    currencies: dependencies.currencyDefinitions,
+    economyService: new EconomyService(dependencies.ids, dependencies.clock),
+    idempotency: constructionIdempotency,
+    ids: dependencies.ids,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
+  const listFarmConstructions = new ListFarmConstructions(farms, members, constructions);
   const expandFarm = new ExpandFarm({
     farms,
     members,
@@ -686,6 +754,39 @@ export function createHandler(dependencies: HandlerDependencies) {
           const body: ApiSuccess<{ trees: TreeStateDTO[] }> = {
             ok: true,
             data: { trees: [...treeStates] }
+          };
+          return jsonResponse(body);
+        }
+      }
+
+      /**
+       * Construction: build something, or read what has been built.
+       *
+       * The body carries which catalogue entry and where; everything else - price, level, footprint,
+       * ground, collisions, funds - is derived here from the catalogue and the farm's own rows.
+       */
+      const constructionsRoute = /^\/farms\/([^/]+)\/constructions$/.exec(url.pathname);
+      if (constructionsRoute?.[1] !== undefined) {
+        const decodedId = decodePathSegment(constructionsRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const farmId = parseFarmId(decodedId);
+        if (request.method === "POST") {
+          const parsed = PlaceConstructionRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const construction = await placeConstruction.execute(actor, farmId, parsed.data);
+          const body: ApiSuccess<{ construction: ConstructionDTO }> = {
+            ok: true,
+            data: { construction: toConstructionDTO(construction) }
+          };
+          return jsonResponse(body, 201);
+        }
+        if (request.method === "GET") {
+          const built = await listFarmConstructions.execute(actor, farmId);
+          const body: ApiSuccess<{ constructions: ConstructionDTO[] }> = {
+            ok: true,
+            data: { constructions: built.map(toConstructionDTO) }
           };
           return jsonResponse(body);
         }

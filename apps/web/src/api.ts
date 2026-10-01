@@ -16,6 +16,8 @@ import {
   HarvestCropResponseSchema,
   HarvestTreeResponseSchema,
   PlantCropResponseSchema,
+  PlaceConstructionResponseSchema,
+  GetFarmConstructionsResponseSchema,
   PlantTreeResponseSchema,
   RemoveTreeResponseSchema,
   UprootCropResponseSchema,
@@ -38,6 +40,7 @@ import type {
   SellItemResultDTO,
   ShopEntryDTO,
   TreeDefinitionDTO,
+  ConstructionDTO,
   BuildCatalogEntryDTO,
   TreeStateDTO,
   UprootCropResponse,
@@ -251,6 +254,38 @@ export class ApiClient {
 
   plantCrop(farmId: string, body: PlantCropBody): Promise<{ readonly crop: CropStateDTO }> {
     return this.post(`/farms/${encodeURIComponent(farmId)}/crops`, body, PlantCropResponseSchema);
+  }
+
+  /**
+   * Builds one thing the player has paid for.
+   *
+   * The body names a catalogue entry and a cell; the server decides the price, the level, the
+   * footprint, the ground and the collisions. The request id makes the command idempotent, so a
+   * double click creates one building and one charge.
+   */
+  placeConstruction(
+    farmId: string,
+    body: {
+      readonly requestId: string;
+      readonly entryId: string;
+      readonly anchorX: number;
+      readonly anchorY: number;
+      readonly rotation: 0 | 1 | 2 | 3;
+    }
+  ): Promise<{ readonly construction: ConstructionDTO }> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/constructions`,
+      body,
+      PlaceConstructionResponseSchema
+    );
+  }
+
+  /** Everything built on a farm, for the world to draw after a reload. */
+  getFarmConstructions(farmId: string): Promise<{ readonly constructions: ConstructionDTO[] }> {
+    return this.get(
+      `/farms/${encodeURIComponent(farmId)}/constructions`,
+      GetFarmConstructionsResponseSchema
+    );
   }
 
   harvestCrop(

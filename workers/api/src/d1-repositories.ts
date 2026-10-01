@@ -1,4 +1,7 @@
 import type {
+  CellBounds,
+  ConstructionId,
+  ConstructionInstance,
   Farm,
   FarmId,
   FarmMember,
@@ -23,10 +26,12 @@ import type {
   TileState,
   TreeInstance,
   TreeInstanceId,
+  QuarterTurns,
   XpAward,
   Wallet
 } from "@happy-farm/domain";
 import {
+  parseConstructionId,
   parseCropDefinitionId,
   parseCropInstanceId,
   parseCurrencyDefinitionId,
@@ -41,6 +46,8 @@ import {
   PLOT_TILE_SIZE
 } from "@happy-farm/domain";
 import type {
+  ConstructionPlacement,
+  ConstructionRepository,
   CropInstanceRepository,
   FarmExpansionRepository,
   FarmMemberRepository,
@@ -628,6 +635,171 @@ export class D1EconomyMutationRepository implements EconomyMutationRepository {
       throw error;
     }
   }
+}
+
+export class D1ConstructionRepository implements ConstructionRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  /**
+   * Building something: the money, the row, and the receipt, all or nothing.
+   *
+   * The wallet movement is not written by this class - `economy_ledger`'s own triggers move it, so a
+   * construction charge travels the same path a shop purchase does and cannot skip the ledger. The
+   * construction insert brings its own database-level rules with it: the cells must be owned, must be
+   * free, and must not hold a crop or a tree. The receipt is written last and only if the wallet and
+   * the construction it names both exist at the balances this batch produced, so a half-applied
+   * placement cannot leave a receipt behind.
+   */
+  async placeAtomically(
+    placement: ConstructionPlacement,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    const { construction, economy } = placement;
+    if (
+      economy.playerId !== idempotency.actorPlayerId ||
+      construction.builtByPlayerId !== idempotency.actorPlayerId ||
+      economy.reason !== "CONSTRUCTION" ||
+      economy.referenceId !== construction.id
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Construction settlement ownership does not match");
+    }
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+          .bind(economy.playerId, economy.currencyDefinitionId, economy.createdAt, economy.createdAt),
+        this.db
+          .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(
+            economy.transactionId,
+            economy.playerId,
+            economy.currencyDefinitionId,
+            economy.delta,
+            economy.balanceBefore,
+            economy.balanceAfter,
+            economy.expectedWalletVersion,
+            economy.reason,
+            economy.referenceType,
+            economy.referenceId,
+            economy.requestId,
+            economy.createdAt
+          ),
+        this.db
+          .prepare("INSERT INTO farm_constructions (id, farm_id, catalogue_entry_id, category, anchor_x, anchor_y, rotation, footprint_width, footprint_depth, min_x, max_x, min_y, max_y, cell_count, state, built_by_player_id, cost_amount, cost_currency_id, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(
+            construction.id,
+            construction.farmId,
+            construction.entryId,
+            construction.category,
+            construction.anchorX,
+            construction.anchorY,
+            construction.rotation,
+            construction.footprint.widthCells,
+            construction.footprint.depthCells,
+            construction.bounds.minX,
+            construction.bounds.maxX,
+            construction.bounds.minY,
+            construction.bounds.maxY,
+            construction.footprint.widthCells * construction.footprint.depthCells,
+            construction.state,
+            construction.builtByPlayerId,
+            construction.costAmount,
+            construction.costCurrencyDefinitionId,
+            construction.createdAt,
+            construction.updatedAt,
+            construction.version
+          ),
+        this.db
+          .prepare("INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM farm_constructions WHERE id = ? AND farm_id = ? AND built_by_player_id = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(
+            economy.playerId,
+            economy.currencyDefinitionId,
+            economy.balanceAfter,
+            economy.expectedWalletVersion + 1,
+            construction.id,
+            construction.farmId,
+            construction.builtByPlayerId,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 4 || results.some((result) => !result.success)) {
+        throw new Error("Atomic construction placement failed");
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("economy conflict") ||
+          error.message.includes("construction cells") ||
+          error.message.includes("idempotency_keys.actor_player_id"))
+      ) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "Construction state changed concurrently");
+      }
+      throw error;
+    }
+  }
+
+  async findById(id: ConstructionId): Promise<ConstructionInstance | null> {
+    const row = await this.db
+      .prepare("SELECT * FROM farm_constructions WHERE id = ?")
+      .bind(id)
+      .first<Record<string, unknown>>();
+    return row === null ? null : toConstructionInstance(row);
+  }
+
+  async listByFarm(farmId: FarmId): Promise<readonly ConstructionInstance[]> {
+    const rows = await this.db
+      .prepare("SELECT * FROM farm_constructions WHERE farm_id = ? ORDER BY created_at, id")
+      .bind(farmId)
+      .all<Record<string, unknown>>();
+    return rows.results.map(toConstructionInstance);
+  }
+
+  async listBounds(farmId: FarmId): Promise<readonly CellBounds[]> {
+    const rows = await this.db
+      .prepare("SELECT min_x, max_x, min_y, max_y FROM farm_constructions WHERE farm_id = ?")
+      .bind(farmId)
+      .all<Record<string, unknown>>();
+    return rows.results.map((row) => ({
+      minX: Number(row.min_x),
+      maxX: Number(row.max_x),
+      minY: Number(row.min_y),
+      maxY: Number(row.max_y)
+    }));
+  }
+}
+
+/** One persisted construction, as the domain reads it back. */
+function toConstructionInstance(row: Record<string, unknown>): ConstructionInstance {
+  return {
+    id: parseConstructionId(String(row.id)),
+    farmId: parseFarmId(String(row.farm_id)),
+    entryId: String(row.catalogue_entry_id),
+    category: String(row.category),
+    anchorX: Number(row.anchor_x),
+    anchorY: Number(row.anchor_y),
+    rotation: Number(row.rotation) as QuarterTurns,
+    footprint: { widthCells: Number(row.footprint_width), depthCells: Number(row.footprint_depth) },
+    bounds: {
+      minX: Number(row.min_x),
+      maxX: Number(row.max_x),
+      minY: Number(row.min_y),
+      maxY: Number(row.max_y)
+    },
+    state: "BUILT",
+    builtByPlayerId: parsePlayerId(String(row.built_by_player_id)),
+    costAmount: Number(row.cost_amount),
+    costCurrencyDefinitionId: String(row.cost_currency_id),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    version: Number(row.version)
+  };
 }
 
 export class D1EconomySettlementRepository implements EconomySettlementRepository {

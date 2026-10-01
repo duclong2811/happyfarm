@@ -169,6 +169,31 @@ export const roadTiers = createRoadTierRegistry([
 export const STARTER_ROAD_TIER: RoadTierId = "road.dirt.t1";
 
 /**
+ * How wide each drawn road surface is, in cells.
+ *
+ * This is the **one** place a road's width is decided. It used to live in the client's world config,
+ * which is how the catalogue came to advertise a one-cell footprint for a road the renderer drew one
+ * and three-quarter cells wide. The renderer reads these numbers, the catalogue's footprint is derived
+ * from them, and a test holds the two together.
+ */
+export const ROAD_WIDTH_CELLS: Readonly<Record<RoadRenderKind, number>> = {
+  PRIMARY: 2.9,
+  // The island's own road: wide enough for a cart to pass a walker and no wider.
+  SECONDARY: 1.75,
+  PATH: 1.1
+};
+
+/**
+ * The logical footprint width of a road of this kind, in whole cells.
+ *
+ * The logical area has to *contain* what is drawn, so the width is rounded up: a one-and-three-quarter
+ * cell road reserves two cells, and nothing may be built in the strip the ribbon actually covers.
+ */
+export function roadFootprintWidthCells(kind: RoadRenderKind): number {
+  return Math.ceil(ROAD_WIDTH_CELLS[kind]);
+}
+
+/**
  * What a length of road costs, in gold, in a given tier.
  *
  * Whole segments only, rounded up: a player buys road in the unit the shop sells it in, and can never

@@ -11,6 +11,7 @@ declare const plotIdBrand: unique symbol;
 declare const treeInstanceIdBrand: unique symbol;
 declare const treeDefinitionIdBrand: unique symbol;
 declare const economyTransactionIdBrand: unique symbol;
+declare const constructionIdBrand: unique symbol;
 
 export type PlayerId = string & { readonly [playerIdBrand]: true };
 export type FarmId = string & { readonly [farmIdBrand]: true };
@@ -23,6 +24,7 @@ export type PlotId = string & { readonly [plotIdBrand]: true };
 export type TreeInstanceId = string & { readonly [treeInstanceIdBrand]: true };
 export type TreeDefinitionId = string & { readonly [treeDefinitionIdBrand]: true };
 export type EconomyTransactionId = string & { readonly [economyTransactionIdBrand]: true };
+export type ConstructionId = string & { readonly [constructionIdBrand]: true };
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const PLAYER_ID_PATTERN = new RegExp(`^player_${UUID_PATTERN}$`, "i");
@@ -154,4 +156,23 @@ export function parseEconomyTransactionId(value: string): EconomyTransactionId {
 
 export function economyTransactionIdFromUuid(uuid: string): EconomyTransactionId {
   return parseEconomyTransactionId(`econ_${uuid}`);
+}
+
+const CONSTRUCTION_ID_PATTERN = new RegExp(`^construct_${UUID_PATTERN}$`, "i");
+
+/**
+ * A player construction's identifier.
+ *
+ * Branded exactly like every other id in the game so a farm id can never be passed where a
+ * construction id is expected, and prefixed so a row in the database says what it is.
+ */
+export function parseConstructionId(value: string): ConstructionId {
+  if (!CONSTRUCTION_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid construction ID");
+  }
+  return value as ConstructionId;
+}
+
+export function constructionIdFromUuid(uuid: string): ConstructionId {
+  return parseConstructionId(`construct_${uuid}`);
 }

@@ -1,4 +1,8 @@
 import type {
+  CellBounds,
+  ConstructionDefinition,
+  ConstructionId,
+  ConstructionInstance,
   CropDefinition,
   CropDefinitionId,
   CropInstance,
@@ -171,6 +175,42 @@ export interface IdempotencyRecord {
 
 export interface IdempotencyRepository {
   find(actorPlayerId: PlayerId, operation: string, requestId: string): Promise<IdempotencyRecord | null>;
+}
+
+/** Mints the identifier of one player construction. */
+export interface ConstructionIdGenerator {
+  newConstructionId(): ConstructionId;
+}
+
+/**
+ * A placement waiting to be written: the row a player built, and the wallet mutation that pays for it.
+ *
+ * They travel together because they are one transaction. A repository that writes one without the
+ * other is a repository that can give away a building or take gold for nothing.
+ */
+export interface ConstructionPlacement {
+  readonly construction: ConstructionInstance;
+  readonly economy: EconomyMutation;
+}
+
+/**
+ * The one write boundary for player construction.
+ *
+ * `listBounds` is what the collision rule reads: the rectangles already covered on this farm, so a
+ * new footprint can be refused before a row is written. `placeAtomically` writes the construction, the
+ * wallet movement, its ledger row, and the idempotency receipt as one batch - and the database itself
+ * refuses a second construction on the same ground, so two racing placements cannot both win.
+ */
+export interface ConstructionRepository {
+  findById(id: ConstructionId): Promise<ConstructionInstance | null>;
+  listByFarm(farmId: FarmId): Promise<readonly ConstructionInstance[]>;
+  listBounds(farmId: FarmId): Promise<readonly CellBounds[]>;
+  placeAtomically(placement: ConstructionPlacement, idempotency: IdempotencyRecord): Promise<void>;
+}
+
+/** The catalogue, as the placement rules need it: what may be built, and what it costs. */
+export interface ConstructionDefinitionRepository {
+  findById(entryId: string): ConstructionDefinition | null;
 }
 
 export interface CropInstanceRepository {

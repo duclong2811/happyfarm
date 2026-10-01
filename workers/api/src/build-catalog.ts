@@ -1,4 +1,4 @@
-import { catalogueLabel, placementEntries, roadTiers } from "@happy-farm/game-data";
+import { catalogueLabel, gameplayFor, placementEntries, roadTiers } from "@happy-farm/game-data";
 import type { BuildCatalogEntryDTO } from "@happy-farm/contracts";
 
 /**
@@ -25,10 +25,35 @@ export function listBuildCatalog(): readonly BuildCatalogEntryDTO[] {
     capability: entry.capability,
     tier: entry.tier,
     tierRank: entry.tier === null ? null : (roadTiers.get(entry.tier)?.rank ?? null),
+    // The effect data the shop is allowed to describe, and the status it must be honest about.
+    gameplay: essentialGameplay(entry.id),
     upgradeTo: entry.upgradeTo,
     rotatable: entry.rotatable,
     decorative: entry.decorative,
     tags: [...entry.tags],
     unlockCondition: entry.unlockCondition
   }));
+}
+
+/**
+ * The gameplay definition as the wire carries it.
+ *
+ * A catalogue entry with no definition is a loading error rather than a row the shop has to guess
+ * about: `gameplayCoverageProblems` exists for that, and this throws so a broken catalogue fails the
+ * request instead of shipping an item whose effects nobody can describe.
+ */
+function essentialGameplay(entryId: string): BuildCatalogEntryDTO["gameplay"] {
+  const definition = gameplayFor(entryId);
+  if (definition === null) {
+    throw new Error(`Build catalogue entry has no gameplay definition: ${entryId}`);
+  }
+  return {
+    classification: definition.classification,
+    status: definition.status,
+    summaryKey: definition.summaryKey,
+    production: definition.production,
+    storage: definition.storage,
+    movement: definition.movement,
+    workerTask: definition.workerTask
+  };
 }

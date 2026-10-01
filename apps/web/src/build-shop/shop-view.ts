@@ -63,6 +63,14 @@ export interface ShopViewContext {
   readonly requestThumbnail: (entry: BuildCatalogEntryDTO, image: HTMLImageElement) => void;
   /** `Upgrade to <name>`: the next rung's name, when the catalogue names one. */
   readonly upgradeNameOf: (entry: BuildCatalogEntryDTO) => string | null;
+  /** The one-line "what it does", already localised. */
+  readonly effectOf: (entry: BuildCatalogEntryDTO) => string;
+  /** A resource id (WOOD, FOOD…) as the player reads it. */
+  readonly resourceOf: (resource: string) => string;
+  /** A number of seconds as a duration a player reads ("10 min"). */
+  readonly durationOf: (seconds: number) => string;
+  /** A worker role as the player reads it. */
+  readonly workerName: (role: string) => string;
 }
 
 function make<K extends keyof HTMLElementTagNameMap>(
@@ -249,6 +257,88 @@ export function renderInspector(
 
   inspector.appendChild(make("h3", "shop-inspector-name", context.nameOf(entry)));
   inspector.appendChild(make("p", "shop-inspector-description", context.descriptionOf(entry)));
+
+  /*
+   * WHAT IT DOES.
+   *
+   * The shop's answer to "why would I build this?", built from the catalogue's own gameplay metadata.
+   * A cosmetic asset says so and nothing more; a functional one shows the numbers it would actually
+   * produce or hold, and if those numbers are not live yet the status line says that too - the shop is
+   * never allowed to present a foundation as a working machine.
+   */
+  const gameplay = entry.gameplay;
+  const does = make("section", "shop-does");
+  does.appendChild(make("h4", "shop-does-title", context.t("build.whatItDoes")));
+  does.appendChild(make("p", "shop-does-line", context.effectOf(entry)));
+
+  const stats = make("ul", "shop-stats");
+  const stat = (icon: IconName, label: string, value: string, tip: string): void => {
+    const row = make("li", "shop-stat");
+    row.title = tip;
+    row.appendChild(context.icon(icon, 14));
+    row.appendChild(make("span", "shop-stat-label", label));
+    row.appendChild(make("span", "shop-stat-value", value));
+    stats.appendChild(row);
+  };
+
+  if (gameplay.production !== null) {
+    const yieldText =
+      gameplay.production.minYield === gameplay.production.maxYield
+        ? context.t("build.stat.perHarvest", { amount: gameplay.production.minYield })
+        : context.t("build.stat.perHarvest", {
+            amount: `${String(gameplay.production.minYield)}–${String(gameplay.production.maxYield)}`
+          });
+    stat(
+      "plant",
+      context.t("build.stat.produces"),
+      `${context.resourceOf(gameplay.production.output)} ${yieldText}`,
+      context.t("build.tip.growth")
+    );
+    stat(
+      "harvest",
+      context.t("build.stat.growth"),
+      context.durationOf(gameplay.production.firstYieldSeconds),
+      context.t("build.tip.growth")
+    );
+    if (gameplay.production.regrowSeconds !== null) {
+      stat(
+        "refresh",
+        context.t("build.stat.regrow"),
+        context.durationOf(gameplay.production.regrowSeconds),
+        context.t("build.tip.growth")
+      );
+    }
+    if (gameplay.workerTask !== null) {
+      stat("farm", context.t("build.stat.worker"), context.workerName(gameplay.workerTask.workerRole), context.t("build.tip.worker"));
+    }
+  }
+  if (gameplay.storage !== null) {
+    for (const [resource, capacity] of Object.entries(gameplay.storage.capacity)) {
+      stat(
+        "build",
+        context.resourceOf(resource),
+        `+${capacity.toLocaleString()}`,
+        context.t("build.tip.storage")
+      );
+    }
+  }
+  if (gameplay.movement !== null) {
+    stat(
+      "road",
+      context.t("build.stat.movement"),
+      context.t("build.stat.movementValue", {
+        percent: Math.round((gameplay.movement.multiplier - 1) * 100)
+      }),
+      context.t("build.tip.movement")
+    );
+  }
+  if (stats.childElementCount > 0) does.appendChild(stats);
+  if (gameplay.status === "FOUNDATION_ONLY") {
+    does.appendChild(make("p", "shop-does-status", context.t("build.effectPlanned")));
+  } else if (gameplay.status === "PREVIEW_ONLY") {
+    does.appendChild(make("p", "shop-does-status", context.t("build.effectPreviewOnly")));
+  }
+  inspector.appendChild(does);
 
   const facts = make("dl", "shop-facts");
   const fact = (label: string, value: Node | string): void => {

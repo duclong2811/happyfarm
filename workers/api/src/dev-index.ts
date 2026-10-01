@@ -17,6 +17,7 @@ import {
   GameDataPlotDefinitions,
   GameDataShopEntries,
   GameDataTreeDefinitions,
+  GameDataConstructionDefinitions,
   Sha256Fingerprint,
   SystemClock,
   gameDataProgressionDefinition,
@@ -86,6 +87,7 @@ export function createDevWorker(env: DevEnv) {
     shopEntries: new GameDataShopEntries(),
     plotDefinitions: new GameDataPlotDefinitions(),
     treeDefinitions: new GameDataTreeDefinitions(),
+    constructionDefinitions: new GameDataConstructionDefinitions(),
     progressionDefinition: gameDataProgressionDefinition,
     clock
   });

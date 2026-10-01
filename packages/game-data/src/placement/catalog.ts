@@ -1,4 +1,11 @@
-import { ROAD_SEGMENT_CELLS, ROAD_TIERS, PROVISIONAL_ROAD_PRICES, roadTiers, type RoadTierId } from "../roads";
+import {
+  ROAD_SEGMENT_CELLS,
+  ROAD_TIERS,
+  PROVISIONAL_ROAD_PRICES,
+  roadFootprintWidthCells,
+  roadTiers,
+  type RoadTierId
+} from "../roads";
 import { createPlacementCatalog, type PlacementCatalogEntryData } from "./schema";
 
 /**
@@ -88,8 +95,13 @@ function roadEntries(): PlacementCatalogEntryData[] {
       price: PROVISIONAL_ROAD_PRICES[tierId],
       currencyDefinitionId: "currency_gold",
       modelId: `road.${tier.surface.toLowerCase()}`,
-      // A segment is one cell wide and four long, laid along the row the player is standing on.
-      footprint: { widthCells: 1, depthCells: ROAD_SEGMENT_CELLS },
+      // The footprint *contains* the drawn ribbon: four cells long, and as many cells wide as the
+      // renderer actually paints. V12.5 advertised one cell for a road drawn 1.75 cells wide, which is
+      // a collision rule that does not match the picture it is supposed to protect.
+      footprint: {
+        widthCells: roadFootprintWidthCells(tier.renderKind),
+        depthCells: ROAD_SEGMENT_CELLS
+      },
       capability: "ROAD" as const,
       tier: tierId,
       upgradeTo: next === undefined ? null : `place_road_${next.surface.toLowerCase()}`,

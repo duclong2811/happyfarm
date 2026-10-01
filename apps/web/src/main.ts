@@ -1,5 +1,6 @@
 import type {
   BuildCatalogEntryDTO,
+  ConstructionDTO,
   CropDefinitionDTO,
   CropStateDTO,
   FarmTileDTO,
@@ -145,6 +146,13 @@ interface AppState {
    */
   buildSelection: BuildCatalogEntryDTO | null;
   /**
+   * Everything built on this farm, as the server last reported it.
+   *
+   * The world draws these; the shop's collision rule treats their footprints as taken. It is server
+   * state, refreshed with the rest of the farm - never a local list the client maintains.
+   */
+  constructions: readonly ConstructionDTO[];
+  /**
    * The island, cell by cell, as the renderer last projected it.
    *
    * The shop's placement preview has to ask the same question the world answers - is this ground, has
@@ -180,6 +188,7 @@ const state: AppState = {
   treeDefinitions: [],
   buildCatalog: [],
   buildSelection: null,
+  constructions: [],
   cellMap: EMPTY_WORLD_CELL_MAP,
   inventory: [],
   shop: [],
@@ -1026,6 +1035,9 @@ let shopSelection: BuildCatalogEntryDTO | null = null;
 /** How far the item in hand has been turned, in quarter turns. Placement preview state only. */
 let placementTurns = 0;
 
+/** True while a placement command is in flight, so one click cannot build twice. */
+let placementPending = false;
+
 /**
  * The shop's thumbnail source: one renderer for the whole page, created on the first ask.
  *
@@ -1208,7 +1220,18 @@ function shopContext(): ShopViewContext {
       if (entry.upgradeTo === null) return null;
       const next = state.buildCatalog.find((candidate) => candidate.entryId === entry.upgradeTo);
       return next === undefined ? null : buildEntryName(next);
-    }
+    },
+    effectOf: (entry) => buildEntryEffect(entry),
+    resourceOf: (resource) => t(resourceLabelKey(resource)),
+    durationOf: (seconds) => durationText(seconds),
+    workerName: (role) =>
+      t(
+        role === "FORESTRY_WORKER"
+          ? "build.worker.forestry"
+          : role === "FISHERY_WORKER"
+            ? "build.worker.fishery"
+            : "build.worker.farm"
+      )
   };
 }
 
@@ -1233,6 +1256,31 @@ function renderBuildStatus(): void {
   node.textContent = t("build.status.selected", { item: buildEntryName(shopSelection) });
 }
 
+/**
+ * A persisted construction, as the renderer wants it: which model, where, and how far turned.
+ *
+ * The model is looked up from the entry's `modelId` through the catalogue the shop already holds, so
+ * the world and the shop draw the same asset and a client cannot invent one.
+ */
+function toSceneConstruction(construction: ConstructionDTO): {
+  readonly id: string;
+  readonly modelId: string | null;
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly rotationY: number;
+} {
+  const entry = state.buildCatalog.find((candidate) => candidate.entryId === construction.entryId);
+  const anchor = tileToWorld({ x: construction.anchorX, y: construction.anchorY }, worldFrame());
+  const modelId = entry?.modelId ?? null;
+  return {
+    id: construction.constructionId,
+    modelId: modelId !== null && !modelId.startsWith("road.") ? modelId : null,
+    worldX: anchor.worldX,
+    worldZ: anchor.worldZ,
+    rotationY: (construction.rotation * Math.PI) / 2
+  };
+}
+
 /** The shop's name for an entry: a translation when the client has one, else the catalogue's label. */
 function buildEntryName(entry: BuildCatalogEntryDTO): string {
   return displayName(state.language, entry.displayNameKey, entry.label);
@@ -1247,6 +1295,37 @@ function buildEntryName(entry: BuildCatalogEntryDTO): string {
 function buildEntryDescription(entry: BuildCatalogEntryDTO): string {
   const key = descriptionKeyFor(entry);
   return key === null ? "" : displayName(state.language, key, "");
+}
+
+/** The one-line "what it does": the catalogue's own summary, with an honest fallback. */
+function buildEntryEffect(entry: BuildCatalogEntryDTO): string {
+  const text = displayName(state.language, entry.gameplay.summaryKey, "");
+  if (text !== "") return text;
+  return entry.gameplay.classification === "COSMETIC" ? t("build.decorationOnly") : "";
+}
+
+/** A resource id as a player reads it. */
+function resourceLabelKey(resource: string): MessageKey {
+  switch (resource) {
+    case "WOOD":
+      return "build.resource.wood";
+    case "FOOD":
+      return "build.resource.food";
+    case "STONE":
+      return "build.resource.stone";
+    default:
+      return "build.resource.gold";
+  }
+}
+
+/** A duration in seconds, said the way the rest of the HUD says it. */
+function durationText(seconds: number): string {
+  if (seconds < 60) return t("time.seconds", { seconds });
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return t("time.minutes", { minutes });
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? t("time.hours", { hours }) : t("time.hoursMinutes", { hours, minutes: rest });
 }
 
 /** The price, formatted for the language the player is reading. The coin icon carries the currency. */
@@ -1447,9 +1526,73 @@ function renderPlacementHud(): void {
   };
   if (entry.rotatable) keys.appendChild(entryFor("Q / E", t("build.hud.rotate")));
   keys.appendChild(entryFor(t("build.hud.clickKey"), t("build.hud.move")));
+  keys.appendChild(entryFor("Enter", t("build.hud.confirm")));
   keys.appendChild(entryFor("Esc", t("build.hud.cancel")));
   node.appendChild(keys);
-  node.appendChild(make("p", "placement-note", t("build.hud.previewNote")));
+
+  const confirm = make("button", "placement-confirm");
+  confirm.type = "button";
+  confirm.disabled = placementPending || rejection !== null;
+  confirm.textContent = placementPending ? t("build.hud.pending") : t("build.hud.confirm");
+  confirm.addEventListener("click", () => {
+    void confirmPlacement();
+  });
+  node.appendChild(confirm);
+}
+
+/**
+ * Confirms the placement: the one place in the client that asks the server to build something.
+ *
+ * The preview has already told the player whether the cell *looks* acceptable; this sends the intent
+ * and lets the server decide. The request id makes a double click a single command, and the button is
+ * disabled while the command is in flight, so the two together make a duplicate construction
+ * impossible from this page.
+ */
+async function confirmPlacement(): Promise<void> {
+  const entry = state.buildSelection;
+  if (entry === null || placementPending) return;
+  if (state.farmId === null || state.selected === null) {
+    setStatus(message("status.placingPickCell"), true);
+    return;
+  }
+  const footprint = placementFootprint(entry);
+  const rejection = placementRejectionFor(entry, footprint);
+  if (rejection !== null) {
+    setStatus((translate) => translate("build.cannotPlace", { reason: translate(rejection) }), true);
+    return;
+  }
+
+  placementPending = true;
+  renderPlacementHud();
+  try {
+    const built = await api().placeConstruction(state.farmId, {
+      requestId: newRequestId("build"),
+      entryId: entry.entryId,
+      anchorX: state.selected.x,
+      anchorY: state.selected.y,
+      rotation: normaliseQuarterTurns(placementTurns)
+    });
+    // The server's own row is what the world draws: no local guess at an id, a cost or a footprint.
+    state.constructions = [...state.constructions, built.construction];
+    state.buildSelection = null;
+    placementTurns = 0;
+    scene?.setPlacementPreview(null);
+    renderPlacementHud();
+    refreshScene();
+    await refreshAccount();
+    setStatus(
+      (translate) =>
+        translate("build.built", {
+          item: buildEntryName(entry),
+          price: buildPriceText(entry)
+        })
+    );
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+  } finally {
+    placementPending = false;
+    renderPlacementHud();
+  }
 }
 
 /** Puts the entry down: no ghost, no footprint, no selection - and nothing was ever spent. */
@@ -1822,6 +1965,9 @@ function refreshScene(): void {
   if (scene === null) return;
   // A poll that finds the farm exactly as it was has nothing to push. `farmPresentationSignature`
   // covers everything these groups draw, growth quantised to the precision the panels print.
+  // Built things are pushed before the gate: the signature is about the farm the server reports, and
+  // a construction arriving is exactly the kind of change the setter is written to accept cheaply.
+  scene.setConstructions(state.constructions.map(toSceneConstruction));
   const signature = farmPresentationSignature(state);
   if (signature === scenePushSignature) return;
   const input = sceneInput();
@@ -1900,16 +2046,18 @@ function enable3D(): void {
 async function refreshFarm(): Promise<void> {
   if (state.farmId === null) return;
   const client = api();
-  const [tiles, crops, plots, trees] = await Promise.all([
+  const [tiles, crops, plots, trees, constructions] = await Promise.all([
     client.getTiles(state.farmId),
     client.getCrops(state.farmId),
     client.getPlots(state.farmId),
-    client.getTrees(state.farmId)
+    client.getTrees(state.farmId),
+    client.getFarmConstructions(state.farmId)
   ]);
   state.tiles = tiles.tiles;
   state.crops = crops.crops;
   state.plots = plots.plots;
   state.trees = trees.trees;
+  state.constructions = constructions.constructions;
   refreshScene();
 }
 
@@ -2314,6 +2462,10 @@ function wire(): void {
     }
     if (!typing && state.buildSelection !== null && (event.key === "e" || event.key === "E")) {
       rotatePlacement(1);
+      return;
+    }
+    if (state.buildSelection !== null && event.key === "Enter") {
+      void confirmPlacement();
       return;
     }
     if (event.key !== "Escape") return;

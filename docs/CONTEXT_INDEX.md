@@ -496,6 +496,32 @@ Placement is **preview only**. Price, level, footprint, tier, and unlock conditi
 `GET /build-catalog` and must never be restated in the client, and no purchase or placement command
 exists yet.
 
+### Persistent construction, economy and functional assets (V13)
+
+Read `docs/design/V13_CONSTRUCTION_SYSTEM.md` before changing construction; `V13_ECONOMY_FOUNDATION.md`
+before changing a price, a yield or a capacity; `V13_FUNCTIONAL_ASSETS.md` before adding a catalogue
+entry; and `V13_ROAD_V2.md` before touching a road's width or footprint.
+
+- Construction rules (pure): `packages/domain/src/construction.ts` - rotation, bounds, collisions,
+  every refusal - plus the id in `packages/domain/src/ids.ts`.
+- Use case: `packages/application/src/construction.ts` (`PlaceConstruction`, `ListFarmConstructions`)
+  and the `ConstructionRepository` port in `packages/application/src/ports.ts`.
+- Persistence: `database/migrations/0010_farm_constructions.sql` (the table, its ownership and
+  collision triggers, and the rebuilt ledger that admits the `CONSTRUCTION` reason) and
+  `D1ConstructionRepository` in `workers/api/src/d1-repositories.ts`.
+- API: `POST` and `GET /farms/:farmId/constructions` in `workers/api/src/handler.ts`; the DTOs and the
+  strict request schema are in `packages/contracts/src/index.ts`.
+- Functional asset metadata: `packages/game-data/src/placement/gameplay.ts`; road width and the
+  footprint contract: `packages/game-data/src/roads/index.ts`.
+- Client: `apps/web/src/api.ts`, the placement confirm flow in `apps/web/src/main.ts`, the
+  `setConstructions` half of `apps/web/src/render/scene.ts`, and the inspector's "What it does" in
+  `apps/web/src/build-shop/shop-view.ts`.
+- Tests: `tests/domain/construction.test.ts`, `tests/game-data/placement-gameplay.test.ts`, and the
+  construction describe block in `tests/api/handler.test.ts`.
+
+Construction is server-authoritative: the client sends a catalogue entry id, a cell and a rotation,
+and never a price, a level, a footprint or an effect.
+
 ## Game-data/content task
 - relevant schema/type in `packages/game-data`
 - validation tests

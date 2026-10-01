@@ -389,6 +389,57 @@ export const BuildCatalogEntryDTOSchema = z
      * data, and a player reading a card should be reading a name.
      */
     tierRank: z.number().int().min(1).max(8).nullable(),
+    /**
+     * What the thing does, as data: its classification, its structured effects, and whether those
+     * effects are live yet. Presentation reads it; the server's placement rules read it; a client may
+     * never invent it.
+     */
+    gameplay: z
+      .object({
+        classification: z.enum([
+          "COSMETIC",
+          "PRODUCTION",
+          "STORAGE",
+          "INFRASTRUCTURE",
+          "WORKER_CAPACITY",
+          "PROCESSING",
+          "UTILITY"
+        ]),
+        status: z.enum(["ACTIVE", "FOUNDATION_ONLY", "PREVIEW_ONLY"]),
+        summaryKey: z.string().min(1).max(120),
+        production: z
+          .object({
+            output: z.enum(["GOLD", "FOOD", "WOOD", "STONE"]),
+            minYield: z.number().int().positive(),
+            maxYield: z.number().int().positive(),
+            firstYieldSeconds: z.number().int().positive(),
+            regrowSeconds: z.number().int().positive().nullable(),
+            input: z
+              .object({ resource: z.enum(["GOLD", "FOOD", "WOOD", "STONE"]), amount: z.number().int().positive() })
+              .strict()
+              .nullable(),
+            requiredCapability: z.string().min(1).max(40),
+            workerRole: z.enum(["FARM_WORKER", "FORESTRY_WORKER", "FISHERY_WORKER"]).nullable()
+          })
+          .strict()
+          .nullable(),
+        storage: z
+          .object({
+            // Partial by design: a silo holds food and nothing else.
+            capacity: z.record(z.string(), z.number().int().positive())
+          })
+          .strict()
+          .nullable(),
+        movement: z.object({ multiplier: z.number().min(1).max(3) }).strict().nullable(),
+        workerTask: z
+          .object({
+            taskType: z.enum(["PLANT", "HARVEST", "FEED", "COLLECT"]),
+            workerRole: z.enum(["FARM_WORKER", "FORESTRY_WORKER", "FISHERY_WORKER"])
+          })
+          .strict()
+          .nullable()
+      })
+      .strict(),
     /** The entry this one upgrades into, or null at the top of its ladder. */
     upgradeTo: z.string().min(1).max(120).nullable(),
     rotatable: z.boolean(),
@@ -403,6 +454,61 @@ export type BuildCatalogEntryDTO = z.infer<typeof BuildCatalogEntryDTOSchema>;
 
 export const GetBuildCatalogResponseSchema = z
   .object({ entries: z.array(BuildCatalogEntryDTOSchema) })
+  .strict();
+
+/** The four quarter turns a construction may be saved with. */
+export const ConstructionRotationSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
+
+/**
+ * A construction the player has actually built.
+ *
+ * One shape for every buildable thing: the catalogue entry says what it is, this says where it is and
+ * who paid for it. `costAmount` is recorded here for audit; the ledger records the same amount from
+ * the other side of the same transaction.
+ */
+export const ConstructionDTOSchema = z
+  .object({
+    constructionId: z.string().regex(/^construct_[0-9a-f-]{36}$/i),
+    farmId: FarmIdSchema,
+    entryId: z.string().regex(/^place_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    category: z.string().min(1).max(40),
+    anchorX: z.number().int().min(-1_000_000).max(1_000_000),
+    anchorY: z.number().int().min(-1_000_000).max(1_000_000),
+    rotation: ConstructionRotationSchema,
+    footprint: z
+      .object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() })
+      .strict(),
+    state: z.literal("BUILT"),
+    costAmount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    costCurrencyDefinitionId: z.string().min(1).max(120),
+    createdAt: z.string().min(1).max(40)
+  })
+  .strict();
+export type ConstructionDTO = z.infer<typeof ConstructionDTOSchema>;
+
+/**
+ * A placement command: what to build, where, and which way round.
+ *
+ * The client sends **nothing** about price, level, effects or capability - only which catalogue entry
+ * it means and where it pointed. The request id is the idempotency key, exactly as planting's is.
+ */
+export const PlaceConstructionRequestSchema = z
+  .object({
+    requestId: z.string().min(8).max(100),
+    entryId: z.string().regex(/^place_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    anchorX: z.number().int().min(-1_000_000).max(1_000_000),
+    anchorY: z.number().int().min(-1_000_000).max(1_000_000),
+    rotation: ConstructionRotationSchema
+  })
+  .strict();
+export type PlaceConstructionRequest = z.infer<typeof PlaceConstructionRequestSchema>;
+
+export const PlaceConstructionResponseSchema = z
+  .object({ construction: ConstructionDTOSchema })
+  .strict();
+
+export const GetFarmConstructionsResponseSchema = z
+  .object({ constructions: z.array(ConstructionDTOSchema) })
   .strict();
 
 export const MAX_SHOP_COMMAND_QUANTITY = 1_000_000;
@@ -548,6 +654,12 @@ export const ErrorCodeSchema = z.enum([
   "TREE_NOT_FOUND",
   "TREE_NOT_READY",
   "TREE_LEVEL_REQUIRED",
+  "CONSTRUCTION_NOT_FOUND",
+  "CONSTRUCTION_NOT_ALLOWED",
+  "CONSTRUCTION_LEVEL_REQUIRED",
+  "CONSTRUCTION_OCCUPIED",
+  "CONSTRUCTION_NOT_OWNED",
+  "CONSTRUCTION_UNSUITABLE_GROUND",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
   "REQUEST_ALREADY_PROCESSED",

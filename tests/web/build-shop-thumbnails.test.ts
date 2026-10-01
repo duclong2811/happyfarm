@@ -31,6 +31,15 @@ function entry(overrides: Partial<BuildCatalogEntryDTO> = {}): BuildCatalogEntry
     decorative: true,
     tags: [],
     unlockCondition: "OWNED_LAND",
+    gameplay: {
+      classification: "COSMETIC" as const,
+      status: "ACTIVE" as const,
+      summaryKey: "place.barrel.effect",
+      production: null,
+      storage: null,
+      movement: null,
+      workerTask: null
+    },
     ...overrides
   };
 }

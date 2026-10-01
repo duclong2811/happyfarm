@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  roadFootprintWidthCells,
   CATALOGUE_MODEL_IDS,
   PLACEMENT_CAPABILITIES,
   PLACEMENT_CATEGORIES,
@@ -178,7 +179,13 @@ describe("the build catalogue", () => {
       expect(entry?.capability).toBe("ROAD");
       expect(entry?.price).toBe(roadTiers.get(tierId)?.pricePerSegment);
       // A road segment is four cells long and one wide, and it can be turned.
-      expect(entry?.footprint).toEqual({ widthCells: 1, depthCells: ROAD_SEGMENT_CELLS });
+      // The footprint contains the ribbon the renderer draws: a 1.75-cell dirt road reserves two
+      // cells, a 2.9-cell stone road reserves three. The width comes from the one table both the
+      // renderer and the catalogue read.
+      expect(entry?.footprint).toEqual({
+        widthCells: roadFootprintWidthCells(roadTiers.get(tierId)?.renderKind ?? "SECONDARY"),
+        depthCells: ROAD_SEGMENT_CELLS
+      });
       expect(entry?.rotatable).toBe(true);
       expect(entry?.decorative).toBe(false);
     }
@@ -293,7 +300,9 @@ describe("the build catalogue", () => {
       price: 100,
       currencyDefinitionId: "currency_gold",
       modelId: "road.dirt",
-      footprint: { widthCells: 1, depthCells: 4 },
+      // The logical footprint contains the drawn ribbon: a dirt road paints 1.75 cells wide, so it
+      // reserves two. V12.5 advertised one, which is the mismatch V13 fixed.
+      footprint: { widthCells: 2, depthCells: 4 },
       capability: "ROAD",
       tier: "road.dirt.t1",
       upgradeTo: null,

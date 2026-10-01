@@ -135,6 +135,20 @@ const PLACEMENT_CAMERA_DISTANCE = 13;
  * catalogue, the player's level and the WorldCell map. The renderer is handed the answer and draws it:
  * a footprint on the ground, tinted by validity, and a ghost of the model above it.
  */
+/**
+ * One persisted construction, as the renderer needs it: which model, where, and which way round.
+ *
+ * Deliberately not the whole DTO: the scene draws what it is given and knows nothing about prices,
+ * levels or collisions. The host page resolves the entry to a model id through the catalogue.
+ */
+export interface SceneConstruction {
+  readonly id: string;
+  readonly modelId: string | null;
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly rotationY: number;
+}
+
 export interface PlacementPreview {
   /** The GLB to ghost, or null for a road - which is drawn as a segment of its own surface instead. */
   readonly modelId: string | null;
@@ -234,6 +248,14 @@ export interface FarmSceneHandle {
    * they do over the recenter key.
    */
   focusOnCell(cell: TileCoordinate): void;
+  /**
+   * Draws the things the player has built.
+   *
+   * A separate call from `setState` on purpose: construction is the one layer whose *identity* comes
+   * from the server's own rows rather than from the farm projection, and it changes on a different
+   * cadence. The models come from the shared library, so a farm with forty fences downloads one fence.
+   */
+  setConstructions(constructions: readonly SceneConstruction[]): void;
   /**
    * Turns the developer overlay on or off: every cell, colour-coded by land use.
    *
@@ -554,6 +576,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
    * rest of the time.
    */
   const previewGroup = new Group();
+  /**
+   * The things the player has built.
+   *
+   * Their own group because they are the only layer whose contents come from the construction rows
+   * rather than from the farm projection, and because a rebuild has to be able to drop every instance
+   * without touching the world, the crops, or anything the shop owns.
+   */
+  const constructionGroup = new Group();
   scene.add(
     worldGroup,
     detailGroup,
@@ -565,6 +595,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     interactionGroup,
     cellOverlayGroup,
     previewGroup,
+    constructionGroup,
     playerGroup
   );
 
@@ -693,6 +724,10 @@ let interactionGeometry: BufferGeometry | null = null;
    */
   const stopListening = library.onArrive((modelId) => {
     if (disposed) return;
+    // A construction may have been waiting for exactly this model, so the layer is rebuilt when one
+    // lands rather than left with a hole where a barn should be.
+    constructionSignature = "";
+    rebuildConstructions();
     if (isGeneratedModelId(modelId)) {
       const model = library.get(modelId);
       if (model !== undefined) generatedModels[modelId] = model;
@@ -1218,6 +1253,49 @@ let interactionGeometry: BufferGeometry | null = null;
   let placementPreview: PlacementPreview | null = null;
   let previewDisposers: (() => void)[] = [];
   let previewLoadToken = 0;
+
+  /** What the player has built, and the last signature drawn, so a poll that changed nothing is free. */
+  let constructions: readonly SceneConstruction[] = [];
+  let constructionSignature = "";
+  let constructionToken = 0;
+
+  /** A cheap identity for the construction layer: ids, models, places, and turns. */
+  function constructionSignatureOf(list: readonly SceneConstruction[]): string {
+    return list
+      .map(
+        (item) =>
+          `${item.id}:${item.modelId ?? "-"}:${item.worldX.toFixed(2)},${item.worldZ.toFixed(2)}:${item.rotationY.toFixed(3)}`
+      )
+      .join("|");
+  }
+
+  /**
+   * Draws every built thing, once.
+   *
+   * Models come from the shared library and are cloned per construction, so forty fences are forty
+   * small clones of one loaded fence rather than forty downloads. A model that is still arriving is
+   * drawn when it lands - see the library listener in `createFarmScene`.
+   */
+  function rebuildConstructions(): void {
+    const signature = constructionSignatureOf(constructions);
+    if (signature === constructionSignature) return;
+    constructionSignature = signature;
+    constructionGroup.clear();
+    if (constructions.length === 0) return;
+    const token = ++constructionToken;
+    for (const item of constructions) {
+      if (item.modelId === null) continue;
+      void library.load(item.modelId).then((model) => {
+        if (disposed || token !== constructionToken || model === null) return;
+        const instance = model.clone(true);
+        const groundY = GROUND_SURFACE_Y + terrainHeightAt(item.worldX, item.worldZ, state.world.terrain);
+        instance.position.set(item.worldX, groundY, item.worldZ);
+        instance.rotation.y = item.rotationY;
+        constructionGroup.add(instance);
+        draw();
+      });
+    }
+  }
 
   function rebuildPreview(): void {
     previewGroup.clear();
@@ -1748,6 +1826,11 @@ let interactionGeometry: BufferGeometry | null = null;
       rebuildPreview();
       draw();
     },
+    setConstructions(next: readonly SceneConstruction[]): void {
+      constructions = next;
+      rebuildConstructions();
+      draw();
+    },
     focusOnCell(cell: TileCoordinate): void {
       const centre = tileToWorld(cell, worldFrame(state.layout.pitch));
       cameraRig.recenterTo(centre.worldX, centre.worldZ);
@@ -1810,6 +1893,7 @@ let interactionGeometry: BufferGeometry | null = null;
       models.clear();
       stopListening();
       previewGroup.clear();
+      constructionGroup.clear();
       for (const dispose of previewDisposers) dispose();
       previewDisposers = [];
       placementPreview = null;

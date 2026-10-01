@@ -1,5 +1,6 @@
 import { DomainError } from "./errors";
 import type {
+  ConstructionId,
   CurrencyDefinitionId,
   EconomyTransactionId,
   ItemDefinitionId,
@@ -7,7 +8,7 @@ import type {
   PlotId,
   ShopEntryId
 } from "./ids";
-import { parsePlayerId, parsePlotId, parseShopEntryId } from "./ids";
+import { parseConstructionId, parsePlayerId, parsePlotId, parseShopEntryId } from "./ids";
 
 export const MAX_WALLET_BALANCE = Number.MAX_SAFE_INTEGER;
 export const MAX_SHOP_QUANTITY = 1_000_000;
@@ -42,8 +43,8 @@ export interface Wallet {
   readonly updatedAt: string;
 }
 
-export type EconomyReason = "SHOP_BUY" | "SHOP_SELL" | "FARM_EXPANSION" | "STARTER_GRANT";
-export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER";
+export type EconomyReason = "SHOP_BUY" | "SHOP_SELL" | "FARM_EXPANSION" | "STARTER_GRANT" | "CONSTRUCTION";
+export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION";
 
 /**
  * What a ledger row points at: the shop entry that was traded, the land that was bought, or the
@@ -55,13 +56,16 @@ export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER";
  * audit: `reason`, `reference_type`, and `reference_id` agree by construction rather than by
  * convention.
  */
-export type EconomyReferenceId = ShopEntryId | PlotId | PlayerId;
+export type EconomyReferenceId = ShopEntryId | PlotId | PlayerId | ConstructionId;
 
 const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   SHOP_BUY: "SHOP_ENTRY",
   SHOP_SELL: "SHOP_ENTRY",
   FARM_EXPANSION: "PLOT",
-  STARTER_GRANT: "PLAYER"
+  STARTER_GRANT: "PLAYER",
+  // Construction money points at the thing that was built, so an audit can read the ledger row and
+  // the construction row against each other.
+  CONSTRUCTION: "CONSTRUCTION"
 };
 
 /** The one reference kind a reason may carry. The mapping is total, or the reason is not one. */
@@ -77,7 +81,8 @@ export function referenceTypeForReason(reason: EconomyReason): EconomyReferenceT
 export function parseEconomyReferenceId(value: string): EconomyReferenceId {
   const shopEntry = parseOrNull(parseShopEntryId, value);
   const plot = parseOrNull(parsePlotId, value);
-  const reference = shopEntry ?? plot ?? parseOrNull(parsePlayerId, value);
+  const construction = parseOrNull(parseConstructionId, value);
+  const reference = shopEntry ?? plot ?? construction ?? parseOrNull(parsePlayerId, value);
   if (reference === null) {
     throw new DomainError("INVALID_ID", "Invalid economy reference ID");
   }
@@ -102,6 +107,7 @@ function assertReferenceMatchesType(referenceType: EconomyReferenceType, referen
   try {
     if (referenceType === "SHOP_ENTRY") parseShopEntryId(referenceId);
     else if (referenceType === "PLOT") parsePlotId(referenceId);
+    else if (referenceType === "CONSTRUCTION") parseConstructionId(referenceId);
     else parsePlayerId(referenceId);
   } catch {
     throw new DomainError("INVALID_ECONOMY_MUTATION", "Economy reference does not match its reason");

@@ -270,6 +270,25 @@ button .label { margin-left: .3rem; }
 .shop-fact-price { display: inline-flex; align-items: center; gap: .2rem; justify-content: flex-end; }
 .shop-fact-price svg { color: var(--gold); }
 .shop-inspector-state { margin: 0; font-size: var(--text-meta); color: var(--forest-700); font-weight: 700; }
+
+/* What it does: the shop's answer to "why would I build this?". */
+.shop-does { display: flex; flex-direction: column; gap: .25rem; padding-top: .35rem; border-top: 1px solid var(--parchment-line); }
+.shop-does-title { margin: 0; font-size: var(--text-meta); font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--parchment-muted); }
+.shop-does-line { margin: 0; font-size: var(--text-meta); line-height: 1.4; color: var(--parchment-ink); }
+.shop-does-status { margin: .1rem 0 0; font-size: .72rem; color: #6b5220; }
+.shop-stats { display: flex; flex-direction: column; gap: .18rem; margin: .2rem 0 0; padding: 0; list-style: none; }
+.shop-stat { display: flex; align-items: center; gap: .35rem; font-size: var(--text-meta); }
+.shop-stat svg { color: var(--leaf-strong); }
+.shop-stat-label { color: var(--parchment-muted); }
+.shop-stat-value { margin-left: auto; font-weight: 700; color: var(--parchment-ink); font-variant-numeric: tabular-nums; }
+
+.placement-confirm {
+  margin-top: .35rem; padding: .45rem .8rem; border-radius: var(--radius-control);
+  border: 1px solid var(--forest-800); background: var(--leaf-strong);
+  font-size: var(--text-item); font-weight: 800; color: #f4fff1;
+}
+.placement-confirm:disabled { color: var(--cream-dim); background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .16); }
+.placement-confirm:hover:not(:disabled) { background: var(--forest-700); }
 .shop-inspector-state.is-locked { color: #9c4a35; }
 .shop-inspector-state.is-preview { color: #6b5220; }
 .shop-place {

@@ -12,20 +12,25 @@ import {
   TreeStateDTOSchema,
   GetShopResponseSchema,
   GetWalletResponseSchema
+  ,ConstructionDTOSchema
 } from "@happy-farm/contracts";
-import { INITIAL_LAND_SIZE, PLOT_TILE_COUNT, parseCropInstanceId, parseEconomyTransactionId, plotTiles, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
+import { INITIAL_LAND_SIZE, PLOT_TILE_COUNT, parseConstructionId, parseCropInstanceId, parseEconomyTransactionId, plotTiles, type ConstructionId, type CropInstanceId, type EconomyTransactionId, type FarmId } from "@happy-farm/domain";
 import { parseTreeInstanceId, type TreeInstanceId } from "@happy-farm/domain";
 import { itemRegistry, shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
-import { GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
+import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataProgressionDefinition } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
 const ShopEnvelopeSchema = z.object({ ok: z.literal(true), data: GetShopResponseSchema }).strict();
+const FarmEnvelopeSchema = z.object({ ok: z.literal(true), data: z.object({ farm: z.looseObject({ id: z.string() }) }) });
+const ConstructionEnvelopeSchema = z.object({ ok: z.literal(true), data: z.object({ construction: ConstructionDTOSchema }) });
+const ConstructionsEnvelopeSchema = z.object({ ok: z.literal(true), data: z.object({ constructions: z.array(ConstructionDTOSchema) }) });
+const FailureEnvelopeSchema = z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) });
 const WalletEnvelopeSchema = z.object({ ok: z.literal(true), data: GetWalletResponseSchema }).strict();
 const TilesEnvelopeSchema = z.object({ ok: z.literal(true), data: GetFarmTilesResponseSchema }).strict();
 const CropDefinitionsEnvelopeSchema = z
@@ -69,6 +74,9 @@ class FixedIds implements IdGenerator {
   newEconomyTransactionId(): EconomyTransactionId {
     return parseEconomyTransactionId(`econ_eeeeeeee-eeee-4eee-8eee-${String(this.economySequence++).padStart(12, "0")}`);
   }
+  newConstructionId(): ConstructionId {
+    return parseConstructionId("construct_11111111-1111-4111-8111-111111111111");
+  }
 }
 
 describe("Worker API foundation", () => {
@@ -95,6 +103,7 @@ describe("Worker API foundation", () => {
       shopEntries: new GameDataShopEntries(),
       plotDefinitions: new GameDataPlotDefinitions(),
       treeDefinitions: new GameDataTreeDefinitions(),
+      constructionDefinitions: new GameDataConstructionDefinitions(),
       progressionDefinition: gameDataProgressionDefinition,
       clock: new FixedClock()
     });
@@ -1166,5 +1175,228 @@ describe("Worker API foundation", () => {
         : await plant(injected);
       expect(response.status, JSON.stringify(injected)).toBe(400);
     }
+  });
+
+  /**
+   * Construction, end to end through the API.
+   *
+   * This is the V13 acceptance scenario in miniature: the server charges the catalogue's own price,
+   * writes the row, refuses an overlap without charging, refuses a client that names a price or a
+   * level, refuses another player's farm, and hands the same farm back after a "reload" - a fresh
+   * read through the same handler with the same database.
+   */
+  describe("construction", () => {
+    const post = (path: string, body: unknown) =>
+      handle(
+        new Request(`https://api.test${path}`, {
+          method: "POST",
+          body: JSON.stringify(body),
+          headers: { "content-type": "application/json" }
+        })
+      );
+
+    async function farmWithGold(gold: number): Promise<string> {
+      const created = await handle(
+        new Request("https://api.test/farms", {
+          method: "POST",
+          body: JSON.stringify({ name: "Construction Farm" }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+      const farmId = FarmEnvelopeSchema.parse(await created.json()).data.farm.id;
+      db.sqlite
+        .prepare("INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', ?, 1, ?, ?)")
+        .run(PLAYER_ONE_ID, gold, NOW, NOW);
+      return farmId;
+    }
+
+    const goldOf = (player = PLAYER_ONE_ID): number =>
+      (db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(player) as { balance: number })
+        .balance;
+
+    /** The failure envelope's code, read without trusting the shape of a JSON body in a test. */
+    const codeOf = async (response: Response): Promise<string> =>
+      FailureEnvelopeSchema.parse(await response.json()).error.code;
+
+    /** The construction a success envelope carries. */
+    const constructionOf = async (response: Response) =>
+      ConstructionEnvelopeSchema.parse(await response.json()).data.construction;
+
+    it("builds a tree, charges the catalogue price, and still has it after a reload", async () => {
+      const farmId = await farmWithGold(761);
+      const built = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_api_001",
+        entryId: "place_tree_broad",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(built.status).toBe(201);
+      const construction = await constructionOf(built);
+      expect(construction.entryId).toBe("place_tree_broad");
+      expect(construction.footprint).toEqual({ widthCells: 1, depthCells: 1 });
+      expect(goldOf()).toBe(721);
+
+      // The money went through the ledger, with the construction as its reference.
+      const ledger = db.sqlite
+        .prepare("SELECT delta, reason, reference_type, reference_id FROM economy_ledger WHERE player_id = ?")
+        .get(PLAYER_ONE_ID) as { delta: number; reason: string; reference_type: string; reference_id: string };
+      expect(ledger.delta).toBe(-40);
+      expect(ledger.reason).toBe("CONSTRUCTION");
+      expect(ledger.reference_type).toBe("CONSTRUCTION");
+      expect(ledger.reference_id).toBe(construction.constructionId);
+
+      // Reload: a fresh read of the farm reports the same building, at the same cell.
+      const reloaded = await handle(new Request(`https://api.test/farms/${farmId}/constructions`));
+      expect(reloaded.status).toBe(200);
+      const list = ConstructionsEnvelopeSchema.parse(await reloaded.json()).data.constructions;
+      expect(list).toHaveLength(1);
+      expect(list[0]?.entryId).toBe("place_tree_broad");
+      expect(list[0]?.anchorX).toBe(5);
+      expect(goldOf()).toBe(721);
+    });
+
+    it("refuses an overlapping placement without charging again", async () => {
+      const farmId = await farmWithGold(761);
+      const first = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_overlap_001",
+        entryId: "place_tree_broad",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(first.status).toBe(201);
+      const second = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_overlap_002",
+        // A level-one decoration, so the refusal under test is the collision rather than the level.
+        entryId: "place_tree_pine",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(second.status).toBe(409);
+      expect(await codeOf(second)).toBe("CONSTRUCTION_OCCUPIED");
+      expect(goldOf()).toBe(721);
+      const count = db.sqlite
+        .prepare("SELECT COUNT(*) AS total FROM farm_constructions WHERE farm_id = ?")
+        .get(farmId) as { total: number };
+      expect(count.total).toBe(1);
+    });
+
+    it("refuses land the farm does not own", async () => {
+      const farmId = await farmWithGold(761);
+      const response = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_offland_001",
+        entryId: "place_tree_broad",
+        anchorX: 4_000,
+        anchorY: 4_000,
+        rotation: 0
+      });
+      expect(response.status).toBe(403);
+      expect(await codeOf(response)).toBe("CONSTRUCTION_NOT_OWNED");
+      expect(goldOf()).toBe(761);
+    });
+
+    it("refuses a client that tries to name a price, a level or a footprint", async () => {
+      const farmId = await farmWithGold(761);
+      for (const injected of [
+        { requestId: "build_price_001", entryId: "place_tree_broad", anchorX: 5, anchorY: 5, rotation: 0, price: 0 },
+        { requestId: "build_level_001", entryId: "place_tree_broad", anchorX: 5, anchorY: 5, rotation: 0, level: 99 },
+        { requestId: "build_foot_001", entryId: "place_tree_broad", anchorX: 5, anchorY: 5, rotation: 0, footprint: { widthCells: 9, depthCells: 9 } }
+      ]) {
+        const response = await post(`/farms/${farmId}/constructions`, injected);
+        expect(response.status, JSON.stringify(injected)).toBe(400);
+      }
+      expect(goldOf()).toBe(761);
+    });
+
+    it("refuses a level the player has not reached, and a road that cannot be built yet", async () => {
+      const farmId = await farmWithGold(100_000);
+      const locked = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_locked_001",
+        entryId: "place_barn_t3",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(locked.status).toBe(403);
+      expect(await codeOf(locked)).toBe("CONSTRUCTION_LEVEL_REQUIRED");
+
+      const road = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_road_001",
+        entryId: "place_road_dirt",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(road.status).toBe(403);
+      expect(await codeOf(road)).toBe("CONSTRUCTION_NOT_ALLOWED");
+      expect(goldOf()).toBe(100_000);
+    });
+
+    it("refuses a placement the player cannot pay for", async () => {
+      const farmId = await farmWithGold(10);
+      const response = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_poor_001",
+        entryId: "place_tree_broad",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(response.status).toBe(409);
+      expect(await codeOf(response)).toBe("INSUFFICIENT_FUNDS");
+      expect(goldOf()).toBe(10);
+    });
+
+    it("charges once for a repeated request id, and refuses one reused for another payload", async () => {
+      const farmId = await farmWithGold(761);
+      const body = {
+        requestId: "build_repeat_001",
+        entryId: "place_tree_broad",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      };
+      const first = await post(`/farms/${farmId}/constructions`, body);
+      const second = await post(`/farms/${farmId}/constructions`, body);
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      const firstId = (await constructionOf(first)).constructionId;
+      const secondId = (await constructionOf(second)).constructionId;
+      expect(secondId).toBe(firstId);
+      expect(goldOf()).toBe(721);
+
+      const reused = await post(`/farms/${farmId}/constructions`, { ...body, anchorX: 6 });
+      expect(reused.status).toBe(409);
+      expect(await codeOf(reused)).toBe("IDEMPOTENCY_CONFLICT");
+      expect(goldOf()).toBe(721);
+    });
+
+    it("refuses another player's farm, and an unauthenticated caller", async () => {
+      const farmId = await farmWithGold(761);
+      db.sqlite
+        .prepare("INSERT INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'https://identity.test', 'subject-two', 'Player Two', 'ACTIVE', ?, ?)")
+        .run(PLAYER_TWO_ID, NOW, NOW);
+      auth.setActor({ playerId: PLAYER_TWO_ID });
+      const foreign = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_foreign_001",
+        entryId: "place_tree_broad",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(foreign.status).toBe(403);
+
+      auth.setActor(null);
+      const anonymous = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_anon_001",
+        entryId: "place_tree_broad",
+        anchorX: 5,
+        anchorY: 5,
+        rotation: 0
+      });
+      expect(anonymous.status).toBe(401);
+      expect(goldOf()).toBe(761);
+    });
   });
 });
