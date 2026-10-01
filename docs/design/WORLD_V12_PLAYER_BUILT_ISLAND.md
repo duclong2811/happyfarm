@@ -103,6 +103,13 @@ Authored roads are now only:
 Paving is **civic**: the village square, and nothing else. That single rule is what the estate view
 has to say - harbour → dirt road → village entrance → paved plaza.
 
+The geometry behind that reading is one authoritative centreline: waypoints, a Catmull-Rom spline,
+resampled **by arc length** at a fixed step, one clamped mitre per sample, constant-width edges. The
+width is a property of the class and nothing perturbs it - the organic part of a dirt road is in its
+material and its wheel lanes, not in its outline. V12.3 narrowed the island's road to 1.75 cells and
+its shoulder to 0.26 metres, because at estate zoom the previous road read as a highway rather than a
+farm track.
+
 Removed across the recovery and V12.1 passes, because they were roads built across land the player is
 supposed to build on: `orchard_road`, `west_country_road`, `freshwater_road`, `forestry_track`,
 `orchard_lane`, `pond_path`, `west_field_lane`, `east_field_lane`, `spawn_lane`, `mining_road`,

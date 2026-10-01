@@ -2,6 +2,7 @@ import {
   BuyItemResultDTOSchema,
   CreateFarmResponseSchema,
   GetCropDefinitionsResponseSchema,
+  GetBuildCatalogResponseSchema,
   GetFarmCropsResponseSchema,
   GetFarmResponseSchema,
   GetFarmTilesResponseSchema,
@@ -37,6 +38,7 @@ import type {
   SellItemResultDTO,
   ShopEntryDTO,
   TreeDefinitionDTO,
+  BuildCatalogEntryDTO,
   TreeStateDTO,
   UprootCropResponse,
   RemoveTreeResponse,
@@ -197,6 +199,17 @@ export class ApiClient {
   /** The trees this deployment can plant, which is what the tree planting choices are built from. */
   getTreeDefinitions(): Promise<{ readonly definitions: TreeDefinitionDTO[] }> {
     return this.get("/tree-definitions", GetTreeDefinitionsResponseSchema);
+  }
+
+  /**
+   * What this deployment lets a player place, and what the catalogue says it costs.
+   *
+   * The build panel is built from this rather than from a list compiled into the bundle, so an entry
+   * the server adds appears without a client release. Nothing here buys anything: placing is a command
+   * the server does not accept yet, and the panel is a catalogue rather than a shop.
+   */
+  getBuildCatalog(): Promise<{ readonly entries: BuildCatalogEntryDTO[] }> {
+    return this.get("/build-catalog", GetBuildCatalogResponseSchema);
   }
 
   getTrees(farmId: string): Promise<{ readonly trees: TreeStateDTO[] }> {

@@ -49,6 +49,27 @@ const PLATE_WIDTH_WORLD = 0.56;
  */
 const TONE_MIN = 0.9;
 const TONE_RANGE = 0.16;
+
+/**
+ * How many vertices the ribbon has across its width, and where they sit.
+ *
+ * Five, from one edge to the other through the centre. Two would be enough to draw a strip, but a
+ * dirt road is not a flat colour: the brief asks for a compacted centre and slightly darker wheel
+ * lanes, and both are *across* the road, so they need vertices to live on. Five columns across a road
+ * is a few hundred vertices for the whole network, in geometry that is built once.
+ */
+const RIBBON_COLUMNS: readonly number[] = [-1, -0.5, 0, 0.5, 1];
+
+/**
+ * The tone multiplier across the road: compacted in the middle, worn where the wheels run, dusty at
+ * the edge. Nothing here changes the geometry - the road stays exactly as wide as it was measured to
+ * be - and nothing here is a texture, so it costs no memory and no draw call.
+ */
+function dirtProfile(across: number): number {
+  const wheel = Math.abs(Math.abs(across) - 0.5);
+  const edge = Math.abs(across);
+  return 1 - 0.07 * Math.max(0, 1 - wheel * 4) - 0.1 * Math.max(0, edge - 0.85) * 6;
+}
 /** Fraction of the outermost plates dropped, so grass shows through the edge of a stone road. */
 const EDGE_GAP_CHANCE = 0.07;
 /** Fraction of roadside stones skipped, so the verge does not read as a generated line. */
@@ -102,40 +123,40 @@ export function ribbonSurface(
     for (let index = 0; index < count; index += 1) {
       const sample = samples[index];
       if (sample === undefined) continue;
-      const previous = samples[index - 1] ?? sample;
-      const next = samples[index + 1] ?? sample;
-      const tangentX = next.worldX - previous.worldX;
-      const tangentZ = next.worldZ - previous.worldZ;
-      const length = Math.hypot(tangentX, tangentZ);
-      // A zero-length step would put both edges on the centreline and collapse the strip.
-      const normalX = length === 0 ? 0 : -tangentZ / length;
-      const normalZ = length === 0 ? 1 : tangentX / length;
-      const extend = index === 0 ? -half : index === count - 1 ? half : 0;
-      const extendX = length === 0 ? 0 : (tangentX / length) * extend;
-      const extendZ = length === 0 ? 0 : (tangentZ / length) * extend;
-      // Each edge takes its *own* height when the caller can supply one. A strip that used the
-      // centreline's height for both edges would bury its uphill side in the hillside and hang its
-      // downhill side in the air the moment it crossed a slope - which is the ragged edge the estate
-      // view used to show on every road that climbed.
-      const leftX = sample.worldX + normalX * half + extendX;
-      const leftZ = sample.worldZ + normalZ * half + extendZ;
-      const rightX = sample.worldX - normalX * half + extendX;
-      const rightZ = sample.worldZ - normalZ * half + extendZ;
-      positions.push(leftX, heightAt === undefined ? sample.worldY : heightAt(leftX, leftZ), leftZ);
-      positions.push(rightX, heightAt === undefined ? sample.worldY : heightAt(rightX, rightZ), rightZ);
+      /**
+       * The offset comes from the centreline's own mitred normal, never from this sample's neighbours.
+       *
+       * That is the whole difference between a road and a wobble: the width is `half * miter` on both
+       * sides of the same bisector, so it cannot vary along the route however the spline bends, and it
+       * cannot disagree between the two edges.
+       */
+      const offsetX = sample.normalX * half * sample.miter;
+      const offsetZ = sample.normalZ * half * sample.miter;
+      for (const column of RIBBON_COLUMNS) {
+        const worldX = sample.worldX + offsetX * column;
+        const worldZ = sample.worldZ + offsetZ * column;
+        positions.push(worldX, heightAt === undefined ? sample.worldY : heightAt(worldX, worldZ), worldZ);
+      }
     }
+    const columns = RIBBON_COLUMNS.length;
     for (let index = 0; index < count - 1; index += 1) {
-      const left = base + index * 2;
-      const right = left + 1;
-      const nextLeft = left + 2;
-      const nextRight = left + 3;
-      // Wound so the strip's normal is up.
-      indices.push(left, nextRight, right);
-      indices.push(left, nextLeft, nextRight);
+      for (let column = 0; column < columns - 1; column += 1) {
+        const near = base + index * columns + column;
+        const nearNext = near + 1;
+        const far = near + columns;
+        const farNext = far + 1;
+        // Wound so the strip's normal is up. The columns run from `-normal` to `+normal`, which is the
+        // opposite order to the two-vertex strip this replaced - so the winding is the opposite too,
+        // and getting it wrong is invisible in the data and obvious on screen (a culled road).
+        indices.push(near, nearNext, farNext);
+        indices.push(near, farNext, far);
+      }
     }
-    for (let vertex = 0; vertex < count * 2; vertex += 1) {
-      const tone = TONE_MIN + hash(base + vertex) * TONE_RANGE;
-      colors.push(tone, tone, tone);
+    for (let index = 0; index < count; index += 1) {
+      for (const column of RIBBON_COLUMNS) {
+        const tone = (TONE_MIN + hash(base + index * columns + column) * TONE_RANGE) * dirtProfile(column);
+        colors.push(tone, tone, tone);
+      }
     }
   }
   return toSurface(positions, indices, colors);

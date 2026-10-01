@@ -12,7 +12,7 @@
 
 import type { MessageKey } from "./i18n";
 
-export type ModuleId = "inventory" | "market";
+export type ModuleId = "inventory" | "market" | "build";
 
 export interface ModuleDefinition {
   readonly id: ModuleId;
@@ -50,6 +50,15 @@ export const MODULES: readonly ModuleDefinition[] = [
     bodyId: "market-body",
     launcherId: "market-launcher",
     closeId: "market-close"
+  },
+  {
+    id: "build",
+    glyph: "🔨",
+    labelKey: "panel.build",
+    panelId: "build-panel",
+    bodyId: "build-body",
+    launcherId: "build-launcher",
+    closeId: "build-close"
   }
 ];
 

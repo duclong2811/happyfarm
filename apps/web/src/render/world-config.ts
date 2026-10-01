@@ -253,7 +253,10 @@ export interface Road {
  */
 export const ROAD_WIDTH_TILES: Readonly<Record<RoadKind, number>> = {
   PRIMARY: 2.9,
-  SECONDARY: 2.2,
+  // The island's own road. V12.3 brought this down from 2.2: at estate zoom the dirt road read as a
+  // highway rather than a farm track. One and three-quarter cells is wide enough for a cart to pass a
+  // walker and no wider.
+  SECONDARY: 1.75,
   PATH: 1.1
 };
 
@@ -267,9 +270,9 @@ export const ROAD_WIDTH_TILES: Readonly<Record<RoadKind, number>> = {
  * it.
  */
 export const ROAD_SHOULDER_WORLD: Readonly<Record<RoadKind, number>> = {
-  PRIMARY: 1.3,
-  SECONDARY: 0.7,
-  PATH: 0.28
+  PRIMARY: 0.3,
+  SECONDARY: 0.26,
+  PATH: 0.15
 };
 
 export const ROADS: readonly Road[] = [
@@ -289,12 +292,7 @@ export const ROADS: readonly Road[] = [
       // It stops at the square. Past the village the road is the *player's*: everything beyond the
       // settlement is ground somebody has to build on.
       { x: 53, y: 53 },
-      // The bend off the quay is spread over three waypoints rather than one. A single 37-degree turn
-      // taken at half a metre per sample makes the ribbon's inner edge cross itself, and the fold is a
-      // hole in the road - which is exactly what the V12.2 close-up caught at the harbour.
-      { x: 51.6, y: 51.6 },
       { x: 50, y: 50 },
-      { x: 49.6, y: 47 },
       { x: 49.2, y: 44 },
       { x: 48.4, y: 34 },
       { x: 47.6, y: 24 },

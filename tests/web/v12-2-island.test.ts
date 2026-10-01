@@ -92,7 +92,8 @@ describe("the island's own road", () => {
     // Only the two cheap classes are authored: a stone or paved road in the starting world would be
     // infrastructure the player is supposed to build.
     expect(new Set(ROADS.map((road) => road.kind))).toEqual(new Set(["SECONDARY", "PATH"]));
-    expect(ROAD_WIDTH_TILES.SECONDARY).toBeGreaterThanOrEqual(2);
+    // V12.3 narrowed it to a farm road: see `road-network.test.ts` for the width contract.
+    expect(ROAD_WIDTH_TILES.SECONDARY).toBeGreaterThanOrEqual(1.6);
   });
 
   it("keeps large scenery out of its clearance corridor", () => {

@@ -290,6 +290,14 @@ plus ownership plus placed objects.
   It projects the *server's* land; nothing here may grant, price, or sell anything.
 - Road tier data (the one price table): `packages/game-data/src/roads/index.ts`. The build catalogue
   foundation, which is *not* the market: `packages/game-data/src/placement/index.ts`.
+- The build catalogue is two modules: `placement/schema.ts` is the rules (what an entry may say, and
+  what makes a catalogue valid) and `placement/catalog.ts` is the content - the rows that ship, built
+  from the assets that actually exist. Read `docs/V12_3_ASSET_CATALOGUE.md` before adding, replacing
+  or re-pricing a placeable asset; it records every model, its level, its price and its status.
+- The catalogue reaches the client through `GET /build-catalog`
+  (`workers/api/src/build-catalog.ts`), which is read-only reference data like `/crop-definitions`.
+  The Build panel in `apps/web/src/main.ts` is a *catalogue*, not a shop: placing an object is a
+  command the server does not accept yet, and the panel says so.
 - Road network and its required destinations: `apps/web/src/render/road-network.ts`. The V12 recovery
   removed the authored spurs across the future player land; do not re-add a road to a production
   district.

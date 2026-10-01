@@ -22,7 +22,8 @@ export type IconName =
   | "plant"
   | "harvest"
   | "remove"
-  | "land";
+  | "land"
+  | "build";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -42,7 +43,9 @@ const PATHS: Readonly<Record<IconName, readonly string[]>> = {
   plant: ["M12 21v-7", "M12 14c0-3 2-5 5.5-5 0 3-2.2 5-5.5 5", "M12 17c0-2.4-1.6-4-4.5-4 0 2.4 1.7 4 4.5 4"],
   harvest: ["M7 20V9", "M17 20V9", "M7 13h10", "M9 9c0-3 1.4-5 3-5s3 2 3 5"],
   remove: ["M6 12h12", "M12 6v12"],
-  land: ["M3 17l4-6 4 3 4-7 6 10z", "M3 20h18"]
+  land: ["M3 17l4-6 4 3 4-7 6 10z", "M3 20h18"],
+  /** Build: a hammer over a level. The module's own glyph, not a picture of a farm. */
+  build: ["M4 20h10", "M6 16l7-7", "M13 5l3-2 3 3-2 3z", "M11 8l3 3"]
 };
 
 /** Builds one icon as an SVG element the caller can drop into a button. */

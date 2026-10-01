@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
 import {
+  GetBuildCatalogResponseSchema,
   GetCropDefinitionsResponseSchema,
   GetFarmTilesResponseSchema,
   GetProgressionResponseSchema,
@@ -34,6 +35,9 @@ const TreeDefinitionsEnvelopeSchema = z
   .object({ ok: z.literal(true), data: GetTreeDefinitionsResponseSchema })
   .strict();
 const ProgressionEnvelopeSchema = z.object({ ok: z.literal(true), data: GetProgressionResponseSchema }).strict();
+const BuildCatalogEnvelopeSchema = z
+  .object({ ok: z.literal(true), data: GetBuildCatalogResponseSchema })
+  .strict();
 
 class FixedAuth implements AuthenticationPort<Request> {
   constructor(private actor: ActorContext | null) {}
@@ -403,6 +407,31 @@ describe("Worker API foundation", () => {
     expect(locked.status).toBe(403);
     expect(await locked.json()).toMatchObject({ ok: false, error: { code: "CROP_LEVEL_REQUIRED" } });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances").get()).toEqual({ count: 0 });
+
+    // The build catalogue is read-only reference data, on the same terms as the crop list: the player
+    // has to be authenticated, and what comes back is the deployment's own catalogue rather than
+    // anything about this player - no owned land, no inventory, no purchase.
+    const build = await handle(new Request("https://api.test/build-catalog"));
+    expect(build.status).toBe(200);
+    const buildBody = BuildCatalogEnvelopeSchema.parse(await build.json());
+    expect(buildBody.data.entries.length).toBeGreaterThan(20);
+    const roads = buildBody.data.entries.filter((entry) => entry.category === "ROAD");
+    expect(roads.map((entry) => [entry.entryId, entry.requiredLevel, entry.price])).toEqual([
+      ["place_road_dirt", 1, 100],
+      ["place_road_gravel", 2, 250],
+      ["place_road_stone", 3, 500],
+      ["place_road_paved", 4, 900]
+    ]);
+    // Every row carries a name the client can show before it has a translation, and no row claims a
+    // capability the island does not have.
+    for (const entry of buildBody.data.entries) {
+      expect(entry.label.length, entry.entryId).toBeGreaterThan(0);
+      expect(entry.requiredLevel, entry.entryId).toBeGreaterThanOrEqual(1);
+      expect(entry.price, entry.entryId).toBeGreaterThanOrEqual(0);
+    }
+    auth.setActor(null);
+    expect((await handle(new Request("https://api.test/build-catalog"))).status).toBe(401);
+    auth.setActor({ playerId: PLAYER_ONE_ID });
 
     // The catalogue is a promise the API keeps: a player who reached level 2 can plant the crop the
     // catalogue said level 2 unlocks.

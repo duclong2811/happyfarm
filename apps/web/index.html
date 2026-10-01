@@ -18,6 +18,7 @@
       <nav id="module-rail" class="module-rail" aria-label="Farm modules">
         <button id="inventory-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="inventory-panel" title="Inventory"><span data-icon="inventory" data-icon-size="22"></span></button>
         <button id="market-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="market-panel" title="Farm Market"><span data-icon="market" data-icon-size="22"></span></button>
+        <button id="build-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="build-panel" title="Build"><span data-icon="build" data-icon-size="22"></span></button>
       </nav>
 
       <aside id="inventory-panel" class="module-panel" aria-labelledby="inventory-title" hidden>
@@ -45,6 +46,15 @@
           <button id="market-tab-sell" class="market-tab" type="button" role="tab" aria-selected="false">Sell</button>
         </div>
         <div id="market-body" class="module-body"><div id="shop" class="shop-rows"></div></div>
+      </aside>
+
+      <aside id="build-panel" class="module-panel module-panel-right" aria-labelledby="build-title" hidden>
+        <header class="module-header">
+          <h2 id="build-title">Build</h2>
+          <button id="build-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
+        </header>
+        <div class="market-tabs" id="build-tabs" role="tablist" aria-label="Build categories"></div>
+        <div id="build-body" class="module-body"><div id="build-rows" class="shop-rows"></div></div>
       </aside>
 
       <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>

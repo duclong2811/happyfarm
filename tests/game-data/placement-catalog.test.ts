@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  CATALOGUE_MODEL_IDS,
   PLACEMENT_CAPABILITIES,
   PLACEMENT_CATEGORIES,
   PROCEDURAL_MODEL_IDS,
@@ -167,8 +168,9 @@ describe("the build catalogue", () => {
     ]);
   });
 
-  it("ships one entry per road tier, and nothing else yet", () => {
-    expect(placementEntries).toHaveLength(ROAD_TIERS.length);
+  it("ships one entry per road tier, and the players' own things beside them", () => {
+    const roadEntries = placementEntries.filter((entry) => entry.category === "ROAD");
+    expect(roadEntries).toHaveLength(ROAD_TIERS.length);
     for (const tierId of ROAD_TIERS) {
       const entry = placementEntries.find((candidate) => candidate.tier === tierId);
       expect(entry).toBeDefined();
@@ -180,11 +182,21 @@ describe("the build catalogue", () => {
       expect(entry?.rotatable).toBe(true);
       expect(entry?.decorative).toBe(false);
     }
+    // V12.3 filled the rest of the catalogue from the assets that actually ship: planting, fencing,
+    // decoration, lighting, a waterfront cage, and the working buildings a farm grows into.
+    const byCategory = new Map<string, number>();
+    for (const entry of placementEntries) {
+      byCategory.set(entry.category, (byCategory.get(entry.category) ?? 0) + 1);
+    }
+    for (const category of ["VEGETATION", "DECORATION", "FENCE", "LIGHTING", "WATERFRONT", "UTILITY", "BUILDING"]) {
+      expect(byCategory.get(category), category).toBeGreaterThan(0);
+    }
   });
 
   it("unlocks each tier at the level of its own rank, so the ladder is the progression", () => {
-    for (const entry of placementEntries) {
-      expect(entry.requiredLevel).toBe(roadTiers.get(entry.tier ?? "road.dirt.t1")?.rank);
+    for (const entry of placementEntries.filter((candidate) => candidate.category === "ROAD")) {
+      if (entry.tier === null) throw new Error(`${entry.id} is a road with no tier`);
+      expect(entry.requiredLevel).toBe(roadTiers.get(entry.tier)?.rank);
     }
   });
 
@@ -215,6 +227,43 @@ describe("the build catalogue", () => {
     for (const entry of placementEntries) {
       expect(entry.price).toBeGreaterThanOrEqual(0);
       expect(Number.isInteger(entry.price)).toBe(true);
+    }
+  });
+
+  it("unlocks everything at a level a player can actually reach", () => {
+    for (const entry of placementEntries) {
+      expect(entry.requiredLevel, entry.id).toBeGreaterThanOrEqual(1);
+      expect(entry.requiredLevel, entry.id).toBeLessThanOrEqual(1000);
+      expect(Number.isInteger(entry.requiredLevel), entry.id).toBe(true);
+    }
+    // An upgrade may never unlock before the thing it upgrades: a shop that offers a stone road to a
+    // player who cannot yet build a dirt one is a ladder with a rung missing.
+    for (const entry of placementEntries) {
+      if (entry.upgradeTo === null) continue;
+      const next = placementCatalog.get(entry.upgradeTo);
+      expect(next, entry.upgradeTo).toBeDefined();
+      expect(next?.requiredLevel ?? 0, `${entry.id} -> ${entry.upgradeTo}`).toBeGreaterThanOrEqual(
+        entry.requiredLevel
+      );
+    }
+  });
+
+  it("declares the assets it names, and every one of them ships", () => {
+    // The catalogue cannot read the client's asset folder, so it declares what it may name; this is
+    // what keeps the declaration honest in both directions.
+    const shipped = shippedAssetIds();
+    for (const id of CATALOGUE_MODEL_IDS) {
+      expect(shipped.has(id), `${id} is declared but not shipped`).toBe(true);
+    }
+    const named = new Set(placementEntries.map((entry) => entry.modelId).filter((id): id is string => id !== null));
+    for (const id of named) {
+      const procedural = (PROCEDURAL_MODEL_IDS as readonly string[]).includes(id);
+      expect(procedural || CATALOGUE_MODEL_IDS.includes(id as (typeof CATALOGUE_MODEL_IDS)[number]), id).toBe(true);
+    }
+    // …and nothing is declared that no entry uses: a dead declaration is a claim about the bundle
+    // that is not true.
+    for (const id of CATALOGUE_MODEL_IDS) {
+      expect(named.has(id), `${id} is declared but nothing places it`).toBe(true);
     }
   });
 

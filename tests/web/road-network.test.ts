@@ -67,10 +67,10 @@ describe("the road hierarchy", () => {
   it("is three widths, in the order the classes are drawn", () => {
     expect(ROAD_WIDTH_TILES.PRIMARY).toBeGreaterThan(ROAD_WIDTH_TILES.SECONDARY);
     expect(ROAD_WIDTH_TILES.SECONDARY).toBeGreaterThan(ROAD_WIDTH_TILES.PATH);
-    // V12.2 widened the middle class rather than the top one: the island's own road *is* a dirt road
-    // now, and it has to carry the eye from the harbour to the village from the estate camera. The top
-    // class stays for the player's stone and paved tiers.
-    expect(ROAD_WIDTH_TILES.SECONDARY).toBeGreaterThanOrEqual(2);
+    // V12.3's target for the island's road: wide enough for a cart to pass a walker, narrow enough
+    // that it does not read as a highway from the estate camera.
+    expect(ROAD_WIDTH_TILES.SECONDARY).toBeGreaterThanOrEqual(1.6);
+    expect(ROAD_WIDTH_TILES.SECONDARY).toBeLessThanOrEqual(1.9);
     expect(ROAD_WIDTH_TILES.PRIMARY).toBeGreaterThan(ROAD_WIDTH_TILES.SECONDARY * 1.2);
     // Every class keeps a shoulder, and the widest road keeps the widest one.
     expect(ROAD_SHOULDER_WORLD.PRIMARY).toBeGreaterThan(ROAD_SHOULDER_WORLD.SECONDARY);

@@ -1,4 +1,5 @@
 import type {
+  BuildCatalogEntryDTO,
   CropDefinitionDTO,
   CropStateDTO,
   FarmTileDTO,
@@ -33,6 +34,7 @@ import {
   crossesPanelBreakpoint,
   MODULES,
   defaultPanelState,
+  openPanel,
   togglePanel,
   type PanelState
 } from "./panels";
@@ -89,6 +91,13 @@ interface AppState {
   cropDefinitions: readonly CropDefinitionDTO[];
   /** The server's tree catalogue: the only list of trees this page offers to plant. */
   treeDefinitions: readonly TreeDefinitionDTO[];
+  /**
+   * What this deployment lets a player place.
+   *
+   * Read-only reference data, like the crop definitions: the panel that shows it is a *catalogue*,
+   * and nothing in it buys anything, because placing is a command the server does not accept yet.
+   */
+  buildCatalog: readonly BuildCatalogEntryDTO[];
   inventory: readonly InventoryEntryDTO[];
   shop: readonly ShopEntryDTO[];
   wallet: readonly WalletDTO[];
@@ -114,6 +123,7 @@ const state: AppState = {
   trees: [],
   cropDefinitions: [],
   treeDefinitions: [],
+  buildCatalog: [],
   inventory: [],
   shop: [],
   wallet: [],
@@ -938,10 +948,121 @@ function shopRow(entry: ShopEntryDTO, direction: MarketDirection): HTMLDivElemen
   return row;
 }
 
+/**
+ * Which build category the panel is showing.
+ *
+ * Presentation only, exactly like the market's direction tab: it filters rows the catalogue already
+ * labels, and it never changes what a row is or what it costs.
+ */
+const BUILD_CATEGORIES = [
+  "ROAD",
+  "VEGETATION",
+  "DECORATION",
+  "FENCE",
+  "LIGHTING",
+  "UTILITY",
+  "WATERFRONT",
+  "BUILDING",
+  "MONUMENT"
+] as const;
+type BuildCategory = (typeof BUILD_CATEGORIES)[number];
+
+let buildCategory: BuildCategory = "ROAD";
+
+/** The translation key for a category, spelled out so the translator stays total. */
+function buildCategoryKey(category: BuildCategory): MessageKey {
+  switch (category) {
+    case "ROAD":
+      return "build.category.road";
+    case "VEGETATION":
+      return "build.category.vegetation";
+    case "DECORATION":
+      return "build.category.decoration";
+    case "FENCE":
+      return "build.category.fence";
+    case "LIGHTING":
+      return "build.category.lighting";
+    case "UTILITY":
+      return "build.category.utility";
+    case "WATERFRONT":
+      return "build.category.waterfront";
+    case "BUILDING":
+      return "build.category.building";
+    case "MONUMENT":
+      return "build.category.monument";
+  }
+}
+
+/**
+ * The build panel: what the island lets a player place, and what the catalogue says it costs.
+ *
+ * A catalogue, not a shop. Every row is read from the server's own list, the level a row needs is
+ * compared against the player's progression, and a row the player cannot afford or has not unlocked
+ * says so - but *nothing here buys anything*. Placing an object is a command the server does not
+ * accept yet, so the panel says that plainly rather than pretending a click built something.
+ */
+function renderBuildPanel(): void {
+  const tabs = element<HTMLDivElement>("build-tabs");
+  tabs.replaceChildren();
+  for (const category of BUILD_CATEGORIES) {
+    const tab = make("button", "market-tab", t(buildCategoryKey(category)));
+    tab.type = "button";
+    const active = category === buildCategory;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+    tab.addEventListener("click", () => {
+      buildCategory = category;
+      renderBuildPanel();
+    });
+    tabs.appendChild(tab);
+  }
+
+  const container = element<HTMLDivElement>("build-rows");
+  container.replaceChildren();
+  const entries = state.buildCatalog.filter((entry) => entry.category === buildCategory);
+  if (entries.length === 0) {
+    container.appendChild(make("p", "muted", t("build.empty")));
+    return;
+  }
+  const level = state.progression?.level ?? 1;
+  for (const entry of entries) {
+    container.appendChild(buildRow(entry, level));
+  }
+  container.appendChild(make("p", "muted", t("build.catalogOnly")));
+}
+
+/** One catalogue row: what it is, when it unlocks, what it costs, and whether it is an upgrade. */
+function buildRow(entry: BuildCatalogEntryDTO, level: number): HTMLDivElement {
+  const row = make("div", "shop-row");
+  const product = make("div", "shop-product");
+  // The catalogue's own label is the fallback: the client translates the keys it ships, and an entry
+  // the server added after this build still reads sensibly.
+  product.appendChild(make("span", "shop-name", displayName(state.language, entry.displayNameKey, entry.label)));
+  const locked = level < entry.requiredLevel;
+  const footprint = `${String(entry.footprint.widthCells)}x${String(entry.footprint.depthCells)}`;
+  product.appendChild(
+    make(
+      "span",
+      "shop-price",
+      locked
+        ? t("build.requiresLevel", { level: entry.requiredLevel })
+        : `${String(entry.price)} gold · ${footprint} cells`
+    )
+  );
+  if (entry.tier !== null) product.appendChild(make("span", "shop-price", t("build.tier", { tier: entry.tier })));
+  row.appendChild(product);
+  const state_ = make("span", locked ? "muted" : "shop-name", locked ? t("build.locked") : t("build.available"));
+  row.appendChild(state_);
+  return row;
+}
+
 /** Every string the layout itself owns, so a language change reaches the panel headings too. */
 function renderChrome(): void {
   element<HTMLElement>("gold-label").textContent = t("hud.gold");
   element<HTMLElement>("inventory-title").textContent = t("panel.inventory");
+  element<HTMLElement>("build-title").textContent = t("panel.build");
+  element<HTMLElement>("build-tabs").setAttribute("aria-label", t("build.categories"));
   element<HTMLElement>("land-title").textContent = t("panel.land");
   element<HTMLElement>("market-title").textContent = t("panel.market");
   element<HTMLElement>("module-rail").setAttribute("aria-label", t("hud.modules"));
@@ -972,6 +1093,7 @@ function render(): void {
   renderGo();
   renderInventory();
   renderShop();
+  renderBuildPanel();
   renderStatus();
   renderSceneState();
   syncLayoutMetrics();
@@ -986,7 +1108,7 @@ function render(): void {
  * off-screen. A resize that stays inside a breakpoint leaves the player's own choice alone.
  */
 
-let panels: PanelState = defaultPanelState();
+let panels: PanelState = panelRequested();
 let lastViewportWidth = window.innerWidth;
 
 /**
@@ -1058,13 +1180,14 @@ function syncLayoutMetrics(): void {
 
 async function refreshAccount(): Promise<void> {
   const client = api();
-  const [inventory, wallet, shop, progression, cropDefinitions, treeDefinitions] = await Promise.all([
+  const [inventory, wallet, shop, progression, cropDefinitions, treeDefinitions, buildCatalog] = await Promise.all([
     client.getInventory(),
     client.getWallet(),
     client.getShop(),
     client.getProgression(),
     client.getCropDefinitions(),
-    client.getTreeDefinitions()
+    client.getTreeDefinitions(),
+    client.getBuildCatalog()
   ]);
   state.inventory = inventory.items;
   state.wallet = wallet.wallets;
@@ -1072,6 +1195,7 @@ async function refreshAccount(): Promise<void> {
   state.progression = progression.progression;
   state.cropDefinitions = cropDefinitions.definitions;
   state.treeDefinitions = treeDefinitions.definitions;
+  state.buildCatalog = buildCatalog.entries;
   ensurePlantableSelection();
 }
 
@@ -1172,6 +1296,24 @@ function debugRequested(): boolean {
     return new URLSearchParams(window.location.search).get("debug") === "1";
   } catch {
     return false;
+  }
+}
+
+/**
+ * A module named in the query string, so a screenshot can show a panel without a mouse.
+ *
+ * The same dev-facing mechanism as `?debug=1`: it opens a panel this session would otherwise have
+ * closed, and it changes nothing about the panel itself. Unknown names are ignored, so a stale link
+ * opens the world rather than breaking the page.
+ */
+function panelRequested(): PanelState {
+  try {
+    const name = new URLSearchParams(window.location.search).get("panel");
+    if (name === null) return defaultPanelState();
+    const match = MODULES.find((module) => module.id === name);
+    return match === undefined ? defaultPanelState() : openPanel(defaultPanelState(), match.id);
+  } catch {
+    return defaultPanelState();
   }
 }
 

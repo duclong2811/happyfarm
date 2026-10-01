@@ -75,8 +75,10 @@ import {
   ,type PlotDTO,
   type ExpandFarmResultDTO
   ,type TreeDefinitionDTO,
-  type TreeStateDTO
+  type TreeStateDTO,
+  type BuildCatalogEntryDTO
 } from "@happy-farm/contracts";
+import { listBuildCatalog } from "./build-catalog";
 import {
   parseCurrencyDefinitionId,
   parseFarmId,
@@ -513,6 +515,20 @@ export function createHandler(dependencies: HandlerDependencies) {
           ok: true,
           data: { definitions }
         };
+        return jsonResponse(body);
+      }
+
+      /**
+       * The build catalogue: what a player could place, and what the catalogue says it costs.
+       *
+       * Read-only, and deliberately *not* a purchase route. Placing something is a command the server
+       * does not accept yet; this only lets the client show the ladder the deployment ships rather than
+       * a list compiled into the bundle.
+       */
+      if (request.method === "GET" && url.pathname === "/build-catalog") {
+        if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
+        const entries: BuildCatalogEntryDTO[] = [...listBuildCatalog()];
+        const body: ApiSuccess<{ entries: BuildCatalogEntryDTO[] }> = { ok: true, data: { entries } };
         return jsonResponse(body);
       }
 

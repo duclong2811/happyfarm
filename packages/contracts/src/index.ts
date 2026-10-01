@@ -337,6 +337,67 @@ export const GetCropDefinitionsResponseSchema = z
 
 export const GetInventoryResponseSchema = z.object({ items: z.array(InventoryEntryDTOSchema) }).strict();
 
+/**
+ * One row of the build catalogue: something a player can place, and what it costs to place it.
+ *
+ * Read-only reference data, like a crop definition. It travels so the client renders the shop from
+ * what the deployment ships rather than from a compiled-in list, and so an entry this client has never
+ * heard of still appears with a translated or fallback name.
+ *
+ * What it is **not**: a purchase. There is no order, no quantity, and no settlement here - a player
+ * placing something is a command the server does not yet accept, and the panel that shows this list
+ * says so rather than pretending a click bought something.
+ */
+export const BuildCatalogEntryDTOSchema = z
+  .object({
+    entryId: z.string().regex(/^place_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    category: z.enum([
+      "ROAD",
+      "BUILDING",
+      "DECORATION",
+      "VEGETATION",
+      "UTILITY",
+      "MONUMENT",
+      "FENCE",
+      "LIGHTING",
+      "WATERFRONT"
+    ]),
+    displayNameKey: z.string().min(1).max(120),
+    /**
+     * A readable default, so an entry the client has no translation for still has a name. The client
+     * prefers a translation of `displayNameKey` when it has one.
+     */
+    label: z.string().min(1).max(80),
+    descriptionKey: z.string().min(1).max(120).nullable(),
+    /** The asset the client resolves, or null when the entry draws as a placeholder. */
+    modelId: z.string().min(1).max(120).nullable(),
+    /** The level a player must have reached before this may be placed. */
+    requiredLevel: z.number().int().min(1).max(1_000),
+    price: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    currencyDefinitionId: z.string().min(1).max(120),
+    footprint: z
+      .object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() })
+      .strict(),
+    /** The land capability the cell must offer. */
+    capability: z.string().min(1).max(40),
+    /** The tier within the entry's own ladder, or null when it has none. */
+    tier: z.string().min(1).max(40).nullable(),
+    /** The entry this one upgrades into, or null at the top of its ladder. */
+    upgradeTo: z.string().min(1).max(120).nullable(),
+    rotatable: z.boolean(),
+    decorative: z.boolean(),
+    tags: z.array(z.string().min(1).max(40)).max(8),
+    /** What must be true of the world before it may be placed. */
+    unlockCondition: z.enum(["NONE", "OWNED_LAND"])
+  })
+  .strict();
+
+export type BuildCatalogEntryDTO = z.infer<typeof BuildCatalogEntryDTOSchema>;
+
+export const GetBuildCatalogResponseSchema = z
+  .object({ entries: z.array(BuildCatalogEntryDTOSchema) })
+  .strict();
+
 export const MAX_SHOP_COMMAND_QUANTITY = 1_000_000;
 
 const ShopItemCommandSchema = z
