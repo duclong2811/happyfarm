@@ -28,12 +28,13 @@ import {
   type Translate
 } from "./i18n";
 import { progressionSummary } from "./progression";
-import { createIcon, renderIcons } from "./icons";
+import { createIcon, renderIcons, type IconName } from "./icons";
 import {
   closePanel,
   crossesPanelBreakpoint,
   MODULES,
   defaultPanelState,
+  NO_PANEL,
   openPanel,
   togglePanel,
   type PanelState
@@ -55,7 +56,13 @@ import {
   type RenderQualityName
 } from "./render";
 import { SPAWN_WORLD } from "./render/world-config";
-import { cellKey, type WorldCell } from "./render/world-cell";
+import { cellKey, EMPTY_WORLD_CELL_MAP, type CellCapability, type WorldCell, type WorldCellMap } from "./render/world-cell";
+import {
+  previewRejection,
+  rejectionMessageKey,
+  type PreviewRequirement
+} from "./render/placement-preview";
+import { createThumbnailRenderer, ROAD_PREVIEW_STYLES } from "./render/thumbnail";
 import { movementDestination } from "./render/world-cell-selection";
 import { cellActionKey, cellLandKey, getAvailableCellActions } from "./render/world-cell-actions";
 import { createPlayerCollisionWorld } from "./player/collision";
@@ -98,6 +105,23 @@ interface AppState {
    * and nothing in it buys anything, because placing is a command the server does not accept yet.
    */
   buildCatalog: readonly BuildCatalogEntryDTO[];
+  /**
+   * The catalogue entry the player is about to place, or null.
+   *
+   * UI state, and only UI state: it decides what the ghost draws and what the status line says. No
+   * gold is spent, nothing is persisted, and no server command exists to send - which is exactly why
+   * the shop's status says the placement pass has not arrived.
+   */
+  buildSelection: BuildCatalogEntryDTO | null;
+  /**
+   * The island, cell by cell, as the renderer last projected it.
+   *
+   * The shop's placement preview has to ask the same question the world answers - is this ground, has
+   * this player got it, may it be built on - and the answer is the WorldCell map. Keeping it here
+   * means the preview reads the *renderer's* own map rather than building a second opinion about the
+   * island, which is the mistake this codebase has already made once.
+   */
+  cellMap: WorldCellMap;
   inventory: readonly InventoryEntryDTO[];
   shop: readonly ShopEntryDTO[];
   wallet: readonly WalletDTO[];
@@ -124,6 +148,8 @@ const state: AppState = {
   cropDefinitions: [],
   treeDefinitions: [],
   buildCatalog: [],
+  buildSelection: null,
+  cellMap: EMPTY_WORLD_CELL_MAP,
   inventory: [],
   shop: [],
   wallet: [],
@@ -969,6 +995,31 @@ type BuildCategory = (typeof BUILD_CATEGORIES)[number];
 
 let buildCategory: BuildCategory = "ROAD";
 
+/**
+ * The shop's thumbnail renderer: one offscreen canvas for the whole catalogue.
+ *
+ * Created on first use rather than at startup, so a session that never opens the shop never pays for
+ * it, and never a *second* one - a renderer per card is the design this exists to avoid.
+ */
+let thumbnails: ReturnType<typeof createThumbnailRenderer> | null = null;
+
+function thumbnailRenderer(): ReturnType<typeof createThumbnailRenderer> {
+  thumbnails ??= createThumbnailRenderer({
+    onProblem: (modelId) => {
+      reportMissingThumbnail(modelId);
+    }
+  });
+  return thumbnails;
+}
+
+/** A thumbnail that could not be drawn is worth saying once, quietly, on the status line. */
+let reportedThumbnailProblem = false;
+function reportMissingThumbnail(modelId: string): void {
+  if (reportedThumbnailProblem) return;
+  reportedThumbnailProblem = true;
+  setStatus((translate) => translate("build.thumbnailProblem", { model: modelId }));
+}
+
 /** The translation key for a category, spelled out so the translator stays total. */
 function buildCategoryKey(category: BuildCategory): MessageKey {
   switch (category) {
@@ -993,6 +1044,30 @@ function buildCategoryKey(category: BuildCategory): MessageKey {
   }
 }
 
+/** The glyph a category tab wears, from the same icon set the rest of the HUD uses. */
+function buildCategoryIcon(category: BuildCategory): IconName {
+  switch (category) {
+    case "ROAD":
+      return "road";
+    case "BUILDING":
+      return "farm";
+    case "VEGETATION":
+      return "plant";
+    case "DECORATION":
+      return "star";
+    case "FENCE":
+      return "fence";
+    case "LIGHTING":
+      return "lamp";
+    case "UTILITY":
+      return "build";
+    case "WATERFRONT":
+      return "water";
+    case "MONUMENT":
+      return "monument";
+  }
+}
+
 /**
  * The build panel: what the island lets a player place, and what the catalogue says it costs.
  *
@@ -1005,12 +1080,18 @@ function renderBuildPanel(): void {
   const tabs = element<HTMLDivElement>("build-tabs");
   tabs.replaceChildren();
   for (const category of BUILD_CATEGORIES) {
-    const tab = make("button", "market-tab", t(buildCategoryKey(category)));
+    // A category with nothing in it is not a tab: an empty shelf is worse than no shelf, and the
+    // authoritative catalogue is what decides - MONUMENT has no asset, so it has no tab.
+    if (!state.buildCatalog.some((entry) => entry.category === category)) continue;
+    const tab = make("button", "build-category", t(buildCategoryKey(category)));
     tab.type = "button";
     const active = category === buildCategory;
     tab.classList.toggle("is-active", active);
     tab.setAttribute("role", "tab");
     tab.setAttribute("aria-selected", active ? "true" : "false");
+    // `insertBefore` rather than `prepend`: the Workers lib declares its own `prepend` for request
+    // bodies, and the two signatures do not agree.
+    tab.insertBefore(createIcon(buildCategoryIcon(category), 15), tab.firstChild);
     tab.addEventListener("click", () => {
       buildCategory = category;
       renderBuildPanel();
@@ -1022,39 +1103,233 @@ function renderBuildPanel(): void {
   container.replaceChildren();
   const entries = state.buildCatalog.filter((entry) => entry.category === buildCategory);
   if (entries.length === 0) {
-    container.appendChild(make("p", "muted", t("build.empty")));
+    container.appendChild(make("p", "muted build-empty", t("build.empty")));
+    renderBuildStatus();
     return;
   }
   const level = state.progression?.level ?? 1;
   for (const entry of entries) {
-    container.appendChild(buildRow(entry, level));
+    container.appendChild(buildCard(entry, level));
   }
-  container.appendChild(make("p", "muted", t("build.catalogOnly")));
+  renderBuildStatus();
 }
 
-/** One catalogue row: what it is, when it unlocks, what it costs, and whether it is an upgrade. */
-function buildRow(entry: BuildCatalogEntryDTO, level: number): HTMLDivElement {
-  const row = make("div", "shop-row");
-  const product = make("div", "shop-product");
-  // The catalogue's own label is the fallback: the client translates the keys it ships, and an entry
-  // the server added after this build still reads sensibly.
-  product.appendChild(make("span", "shop-name", displayName(state.language, entry.displayNameKey, entry.label)));
+/** The status line under the grid: what is selected, what it will cost, and where it may go. */
+function renderBuildStatus(): void {
+  const node = element<HTMLParagraphElement>("build-status");
+  const selected = state.buildSelection;
+  node.classList.remove("is-warning");
+  if (selected === null) {
+    node.textContent = t("build.catalogOnly");
+    return;
+  }
+  const rejection = placementRejectionFor(selected);
+  node.textContent =
+    rejection === null
+      ? t("build.status.ready", { item: buildEntryName(selected) })
+      : t("build.status.blocked", { item: buildEntryName(selected), reason: t(rejection) });
+  node.classList.toggle("is-warning", rejection !== null);
+}
+
+/** The shop's name for an entry: a translation when the client has one, else the catalogue's label. */
+function buildEntryName(entry: BuildCatalogEntryDTO): string {
+  return displayName(state.language, entry.displayNameKey, entry.label);
+}
+
+/**
+ * One card: the picture is the card, and the text is a caption under it.
+ *
+ * Everything the card says comes from the catalogue - price, level, tier, footprint - and nothing is
+ * restated here, so a rebalance on the server changes the shop without a client release. The
+ * thumbnail is asked for on demand and cached in the renderer, so a card that has been seen costs
+ * nothing the second time.
+ */
+function buildCard(entry: BuildCatalogEntryDTO, level: number): HTMLButtonElement {
   const locked = level < entry.requiredLevel;
-  const footprint = `${String(entry.footprint.widthCells)}x${String(entry.footprint.depthCells)}`;
-  product.appendChild(
-    make(
-      "span",
-      "shop-price",
-      locked
-        ? t("build.requiresLevel", { level: entry.requiredLevel })
-        : `${String(entry.price)} gold · ${footprint} cells`
-    )
+  const card = make("button", "build-card");
+  card.type = "button";
+  card.classList.toggle("is-locked", locked);
+  card.classList.toggle("is-selected", state.buildSelection?.entryId === entry.entryId);
+  card.disabled = locked;
+  card.setAttribute(
+    "aria-label",
+    locked
+      ? t("build.requiresLevel", { level: entry.requiredLevel })
+      : `${buildEntryName(entry)}, ${String(entry.price)}`
   );
-  if (entry.tier !== null) product.appendChild(make("span", "shop-price", t("build.tier", { tier: entry.tier })));
-  row.appendChild(product);
-  const state_ = make("span", locked ? "muted" : "shop-name", locked ? t("build.locked") : t("build.available"));
-  row.appendChild(state_);
-  return row;
+
+  const thumb = make("div", "build-thumb");
+  thumb.appendChild(buildSkeleton());
+  card.appendChild(thumb);
+  void loadThumbnail(entry, thumb);
+  if (locked) {
+    const lock = make("div", "build-lock");
+    lock.appendChild(createIcon("lock", 14));
+    lock.appendChild(make("span", undefined, t("build.levelShort", { level: entry.requiredLevel })));
+    thumb.appendChild(lock);
+  }
+
+  const meta = make("div", "build-meta");
+  meta.appendChild(make("span", "build-name", buildEntryName(entry)));
+  const line = make("div", "build-line");
+  const price = make("span", "build-price");
+  price.appendChild(createIcon("coin", 13));
+  price.appendChild(make("span", undefined, entry.price.toLocaleString(state.language)));
+  line.appendChild(price);
+  line.appendChild(make("span", "build-level", t("build.levelShort", { level: entry.requiredLevel })));
+  meta.appendChild(line);
+  if (entry.tierRank !== null) {
+    const tier = make("span", "build-tier", t("build.tier", { tier: entry.tierRank }));
+    // Gravel and paved have a thumbnail identity but no runtime surface yet, and the card says so
+    // rather than selling a picture of a road the island cannot build.
+    if (isProvisionalRoadTier(entry)) tier.appendChild(make("span", "build-preview", t("build.preview")));
+    meta.appendChild(tier);
+  }
+  card.appendChild(meta);
+
+  if (!locked) {
+    card.addEventListener("click", () => {
+      selectBuildEntry(entry);
+    });
+  }
+  return card;
+}
+
+/** A neutral placeholder while a thumbnail is being drawn or when nothing can be drawn. */
+function buildSkeleton(): HTMLElement {
+  const holder = make("div", "build-fallback");
+  holder.appendChild(createIcon("build", 34));
+  return holder;
+}
+
+/**
+ * Fills a card's thumbnail.
+ *
+ * The renderer owns the cache, so this is deliberately dumb: ask, and either swap in the picture or
+ * leave the silhouette. A model that fails to load is a silhouette on one card, never a broken image
+ * icon and never a crash.
+ */
+async function loadThumbnail(entry: BuildCatalogEntryDTO, holder: HTMLElement): Promise<void> {
+  const modelId = entry.modelId !== null && !isProceduralVisual(entry.modelId) ? entry.modelId : null;
+  const roadTierId = entry.category === "ROAD" ? entry.tier : null;
+  if (modelId === null && roadTierId === null) return;
+  try {
+    const result = await thumbnailRenderer().render({ modelId, roadTierId });
+    if (result.dataUrl === null) return;
+    const image = make("img");
+    image.src = result.dataUrl;
+    image.alt = "";
+    image.decoding = "async";
+    // Only the placeholder goes: a locked card's overlay is a sibling, and replacing *all* the
+    // children here is what used to wipe the lock badge the moment a picture arrived.
+    holder.querySelector(".build-fallback")?.remove();
+    holder.insertBefore(image, holder.firstChild);
+  } catch {
+    // A thumbnail is decoration: if it cannot be drawn, the silhouette stays and the shop works.
+  }
+}
+
+/** Road visuals are drawn by the client rather than loaded, so they are not GLB ids. */
+function isProceduralVisual(modelId: string): boolean {
+  return modelId.startsWith("road.");
+}
+
+/**
+ * Whether a road card is selling a tier the island can already draw.
+ *
+ * Dirt and stone have runtime surfaces; gravel and paved have a preview colour and nothing else. The
+ * flag lives with the preview styles - the same table the thumbnail and the ghost draw from - so the
+ * badge cannot drift away from what the picture shows.
+ */
+function isProvisionalRoadTier(entry: BuildCatalogEntryDTO): boolean {
+  if (entry.category !== "ROAD" || entry.tier === null) return false;
+  return ROAD_PREVIEW_STYLES[entry.tier as keyof typeof ROAD_PREVIEW_STYLES].provisional;
+}
+
+/** The capability a catalogue entry asks of a cell, as the world's own vocabulary spells it. */
+function capabilityOf(entry: BuildCatalogEntryDTO): CellCapability {
+  return entry.capability as CellCapability;
+}
+
+/** The requirement the preview rule reads, taken entirely from the catalogue entry. */
+function previewRequirement(entry: BuildCatalogEntryDTO): PreviewRequirement {
+  return {
+    capability: capabilityOf(entry),
+    footprint: entry.footprint,
+    isRoad: entry.category === "ROAD",
+    // Everything a player builds goes on land the player has. The catalogue says so per entry; today
+    // every entry says `OWNED_LAND`, and the field is what lets a later civic item say otherwise.
+    requiresOwnership: entry.unlockCondition === "OWNED_LAND"
+  };
+}
+
+/**
+ * Why the selected entry cannot go on the selected cell, or null when it can.
+ *
+ * The rule is the placement-preview module's; this only feeds it the two things it needs.
+ */
+function placementRejectionFor(entry: BuildCatalogEntryDTO): MessageKey | null {
+  if (scene === null) return null;
+  const rejection = previewRejection(state.cellMap, state.selected, previewRequirement(entry));
+  return rejection === null ? null : (rejectionMessageKey(rejection) as MessageKey);
+}
+
+/**
+ * Picks an entry up: the shop closes, the ghost appears on the selected cell, and the status line
+ * explains what the player is holding.
+ *
+ * Deliberately *not* a purchase. The card is a catalogue row, the ghost is a picture of an intention,
+ * and the moment this stops being true is the moment the server has a placement command to send.
+ */
+function selectBuildEntry(entry: BuildCatalogEntryDTO): void {
+  state.buildSelection = entry;
+  setActivePanel(NO_PANEL);
+  const rejection = placementRejectionFor(entry);
+  scene?.setPlacementPreview({
+    modelId: entry.modelId !== null && !isProceduralVisual(entry.modelId) ? entry.modelId : null,
+    roadTierId: entry.category === "ROAD" ? entry.tier : null,
+    widthCells: entry.footprint.widthCells,
+    depthCells: entry.footprint.depthCells,
+    valid: rejection === null,
+    // A road runs along the axis the camera is facing; everything else is placed square to the world,
+    // which is what the world's own buildings do.
+    rotationY: entry.category === "ROAD" ? roadPreviewYaw() : 0
+  });
+  setStatus(
+    (translate) =>
+      rejection === null
+        ? translate("status.placing", {
+            item: buildEntryName(entry),
+            at: state.selected === null ? translate("status.placingPickCell") : at(state.selected)
+          })
+        : translate("status.placingBlocked", {
+            item: buildEntryName(entry),
+            reason: translate(rejection)
+          })
+  );
+}
+
+/** Puts the entry down: no ghost, no footprint, no selection - and nothing was ever spent. */
+function cancelBuildSelection(): void {
+  if (state.buildSelection === null) return;
+  state.buildSelection = null;
+  scene?.setPlacementPreview(null);
+  setStatus(message("status.placementCancelled"));
+}
+
+/**
+ * The bearing a road preview runs along: whichever axis the camera is facing most squarely.
+ *
+ * Snapped to the lattice on purpose. The authoritative road command will take a cell and an
+ * orientation, so the preview snaps to the four the world actually has rather than to a free angle
+ * the server could not represent.
+ */
+function roadPreviewYaw(): number {
+  if (scene === null || state.selected === null) return 0;
+  const yaw = scene.cameraFrame().yaw;
+  const quarter = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2);
+  // The camera's yaw is where the *eye* sits; the road runs across the view, so it takes the normal.
+  return quarter - Math.PI / 2;
 }
 
 /** Every string the layout itself owns, so a language change reaches the panel headings too. */
@@ -1342,6 +1617,12 @@ function selectCell(x: number, y: number): void {
   renderGo();
   refreshScene();
   scene?.setSelection(state.selected);
+  // While an item is in hand, a click is also "put it here": the ghost follows the selection and the
+  // status line re-reads whether this cell would accept it.
+  if (state.buildSelection !== null) {
+    selectBuildEntry(state.buildSelection);
+    renderBuildPanel();
+  }
   // Clicking the ground is also how a player says "walk there". The destination is offered only for
   // a cell a character can actually stand on, and it is never an *action*: planting and harvesting
   // stay on the dock's own buttons, so a mis-click cannot change the farm.
@@ -1387,6 +1668,9 @@ function refreshScene(): void {
   const signature = farmPresentationSignature(state);
   if (signature === scenePushSignature) return;
   const input = sceneInput();
+  // The shop's preview asks the same map the renderer draws from, so the two cannot disagree about
+  // what ground is, what it can carry, or what stands on it.
+  state.cellMap = input.cells;
   // Movement is blocked by the same rows the renderer draws, so a crop that grows under the
   // character starts blocking the next step without a second refresh path. Rebuilding the collision
   // world never moves the character: it only changes where the next step may go.
@@ -1860,7 +2144,15 @@ function wire(): void {
     );
   }
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && panels.active !== null) setActivePanel(closePanel(panels));
+    if (event.key !== "Escape") return;
+    // Escape lets go of whatever the page is holding, innermost first: the item in hand, then the open
+    // panel. Cancelling a placement must leave nothing behind - no ghost, no footprint, no state.
+    if (state.buildSelection !== null) {
+      cancelBuildSelection();
+      renderBuildPanel();
+      return;
+    }
+    if (panels.active !== null) setActivePanel(closePanel(panels));
   });
   window.addEventListener("resize", () => {
     const width = window.innerWidth;

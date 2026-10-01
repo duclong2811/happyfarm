@@ -2,8 +2,11 @@
   ACESFilmicToneMapping,
   AmbientLight,
   BackSide,
+  Box3,
+  BufferAttribute,
   Color,
   DirectionalLight,
+  DoubleSide,
   Float32BufferAttribute,
   Fog,
   Group,
@@ -15,6 +18,7 @@
   MeshStandardMaterial,
   PCFShadowMap,
   PerspectiveCamera,
+  PlaneGeometry,
   Quaternion,
   Raycaster,
   Scene,
@@ -22,11 +26,10 @@
   Vector2,
   Vector3,
   WebGLRenderer,
-  type BufferGeometry,
+  BufferGeometry,
   type Material,
   type Object3D
 } from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { cropModelId, type CropModelId } from "./assets";
 import {
   createOrbitCamera,
@@ -43,11 +46,7 @@ import {
 import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials";
-import { CROP_MODEL_URLS } from "./model-urls";
 import { createPointerGesture } from "./pointer-gesture";
-import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
-import { PROP_MODEL_URL_BY_ID } from "./prop-model-urls";
-import { BUILDING_MODELS } from "./building-model-urls";
 import { buildScenery } from "./scenery";
 import { buildInteractionGrid } from "./interaction-grid";
 import { worldToCell } from "./world-cell";
@@ -64,6 +63,11 @@ import { buildFarmWorld } from "./world";
 import { EMPTY_WORLD_CELL_MAP } from "./world-cell";
 import { STATIC_OBSTACLES } from "./world-config";
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
+import { sharedModelLibrary } from "./model-library";
+import { ROAD_PREVIEW_STYLES } from "./thumbnail";
+import { buildRoadSpec, ROAD_LIFT_WORLD } from "./roads";
+import { ribbonSurface } from "./road-surface";
+import { tileToWorld } from "./layout";
 
 /**
  * Three.js view of the farm.
@@ -113,6 +117,26 @@ const PLAYER_HEIGHT = 1.6;
 const PLAYER_WALK_BOB = 0.035;
 /** Steps per second at full walking speed, used only to phase the bob. */
 const PLAYER_STEP_FREQUENCY = 9;
+/**
+ * What the build shop is about to place, as the renderer needs to hear it.
+ *
+ * The host page decides what is being previewed and whether it is allowed there - it has the
+ * catalogue, the player's level and the WorldCell map. The renderer is handed the answer and draws it:
+ * a footprint on the ground, tinted by validity, and a ghost of the model above it.
+ */
+export interface PlacementPreview {
+  /** The GLB to ghost, or null for a road - which is drawn as a segment of its own surface instead. */
+  readonly modelId: string | null;
+  /** The road tier to preview, or null for a model. */
+  readonly roadTierId: string | null;
+  readonly widthCells: number;
+  readonly depthCells: number;
+  /** Whether the cell the player has selected may hold this. Drives the footprint's colour only. */
+  readonly valid: boolean;
+  /** Which way the thing faces, in radians about Y. */
+  readonly rotationY: number;
+}
+
 /** Thrown when the browser cannot give the page a WebGL context. */
 export class FarmRendererUnavailableError extends Error {
   constructor(cause: unknown) {
@@ -184,6 +208,14 @@ export interface FarmSceneHandle {
    */
   setSelection(cell: TileCoordinate | null): void;
   /**
+   * What the player is about to place, drawn as a ghost on the selected cell.
+   *
+   * Null clears it. This is *preview only*: nothing here spends gold, persists anything, or tells the
+   * server anything. It exists so the build shop can answer "what would this look like here, and may
+   * it go here at all" before the authoritative placement command exists to accept a real one.
+   */
+  setPlacementPreview(preview: PlacementPreview | null): void;
+  /**
    * Turns the developer overlay on or off: every cell, colour-coded by land use.
    *
    * Off by default, and there is no gameplay path that turns it on - it is a development tool, and
@@ -245,6 +277,11 @@ function isMeshLike(object: Object3D): object is MeshLike {
   return object instanceof Mesh;
 }
 
+/** Whether a model id is one of the generated pipeline's, whose arrival fills `generatedModels`. */
+function isGeneratedModelId(modelId: string): modelId is GeneratedModelId {
+  return modelId in GENERATED_MODEL_URLS;
+}
+
 function toReadyMaterial(material: Material, cache: Map<Material, Material>): Material {
   const cached = cache.get(material);
   if (cached !== undefined) return cached;
@@ -258,15 +295,6 @@ function toReadyMaterials(material: Material | Material[], cache: Map<Material, 
   return Array.isArray(material)
     ? material.map((entry) => toReadyMaterial(entry, cache))
     : toReadyMaterial(material, cache);
-}
-
-function disposeModelResources(root: Object3D): void {
-  root.traverse((child) => {
-    if (!isMeshLike(child)) return;
-    child.geometry.dispose();
-    const materials = Array.isArray(child.material) ? child.material : [child.material];
-    for (const material of materials) material.dispose();
-  });
 }
 
 /**
@@ -483,8 +511,6 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // Generated models arrive from `tools/asset-pipeline`: the barn replaces the primitive building and
   // the farmer replaces the primitive avatar, each falling back to the primitive until it loads.
   const generatedModels: Partial<Record<GeneratedModelId, Object3D>> = {};
-  const loadingGenerated = new Set<GeneratedModelId>();
-  const unavailableGenerated = new Set<GeneratedModelId>();
   const playerGroup = new Group();
   playerGroup.visible = false;
   playerGroup.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
@@ -501,6 +527,14 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const interactionGroup = new Group();
   // The cell overlay: the island's own selection feedback, and the debug lattice when asked for.
   const cellOverlayGroup = new Group();
+  /**
+   * The placement ghost: what the build shop says the player is about to put down.
+   *
+   * Its own group because it is the one thing on screen that is neither world nor farm state: it is a
+   * picture of an intention, rebuilt when the intention or the selected cell changes and empty the
+   * rest of the time.
+   */
+  const previewGroup = new Group();
   scene.add(
     worldGroup,
     detailGroup,
@@ -511,6 +545,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     overlayDetailGroup,
     interactionGroup,
     cellOverlayGroup,
+    previewGroup,
     playerGroup
   );
 
@@ -619,38 +654,44 @@ let interactionMode: FarmInteractionMode = "NONE";
 /** The geometry of the current grid, kept so a rebuild can release the one it replaces. */
 let interactionGeometry: BufferGeometry | null = null;
 
-  const loader = new GLTFLoader();
+  /**
+   * One model library for the whole client.
+   *
+   * It used to live here: four caches, four loaders, and a URL table consulted in each of them. The
+   * shop needs to draw the *same* barns and trees as thumbnails, and a model must never be downloaded
+   * twice, so the cache moved to `model-library.ts` and this scene is now one of its three callers -
+   * the other two being the thumbnail renderer and the placement ghost.
+   */
+  const library = sharedModelLibrary({ onProblem: (modelId, error) => options.onAssetProblem?.(modelId, error) });
   const models = new Map<CropModelId, ModelVariants>();
-  const loadingModels = new Set<CropModelId>();
   const unavailableModels = new Set<CropModelId>();
   /**
-   * Loaded environment models, by provenance id.
+   * What to do when a model finally arrives.
    *
-   * The world model names an id and a tier; the manifest resolves the id to a file. Loading is lazy,
-   * so a world that places no flowers never downloads one - and when a model does arrive the static
-   * layer is rebuilt once, which is what turns the fallback primitives into a frame of scaffolding
-   * rather than a permanent look.
+   * The scene is one of three callers of the library, so the library cannot know that a barn landing
+   * means "rebuild the static layer once" and a farmer landing means "rebuild the avatar". It says
+   * what arrived; this decides what that means for the picture.
    */
-  const sceneryModels = new Map<string, Object3D>();
-  const loadingScenery = new Set<string>();
-  const unavailableScenery = new Set<string>();
-  /**
-   * Building models, loaded the same lazy way as scenery and keyed by the same kind of asset id.
-   *
-   * A building that has not arrived draws its primitive, and the static layer rebuilds once when the
-   * model lands - so the fallback is a frame of scaffolding rather than a second look.
-   */
-  const buildingModels = new Map<string, Object3D>();
-  const loadingBuildings = new Set<string>();
-  const unavailableBuildings = new Set<string>();
+  const stopListening = library.onArrive((modelId) => {
+    if (disposed) return;
+    if (isGeneratedModelId(modelId)) {
+      const model = library.get(modelId);
+      if (model !== undefined) generatedModels[modelId] = model;
+    }
+    if (modelId === "building_barn") {
+      // The static layer is cached behind the world signature; invalidating it once is what replaces
+      // the primitive fallback with the model - and never moves the camera.
+      worldSignature = "";
+    }
+    if (modelId === "character_farmer") rebuildAvatar();
+    applyState(state);
+    draw();
+  });
   let disposed = false;
 
   /** The loaded model for an id, starting its download the first time something asks for it. */
   function sceneryModel(id: string): Object3D | undefined {
-    const model = sceneryModels.get(id);
-    if (model !== undefined) return model;
-    requestSceneryModel(id);
-    return undefined;
+    return library.get(id);
   }
 
   /**
@@ -660,71 +701,12 @@ let interactionGeometry: BufferGeometry | null = null;
    * this scene may need", and a second cache would be a second place for a model to be loaded twice.
    */
   function propModel(id: string): Object3D | undefined {
-    const model = sceneryModels.get(id);
-    if (model !== undefined) return model;
-    requestSceneryModel(id);
-    return undefined;
-  }
-
-  function requestSceneryModel(id: string): void {
-    if (loadingScenery.has(id) || unavailableScenery.has(id)) return;
-    const url = ENVIRONMENT_MODEL_URL_BY_ID.get(id) ?? PROP_MODEL_URL_BY_ID.get(id);
-    if (url === undefined) return;
-    loadingScenery.add(id);
-    loader.load(
-      url,
-      (gltf) => {
-        loadingScenery.delete(id);
-        if (disposed) {
-          disposeModelResources(gltf.scene);
-          return;
-        }
-        sceneryModels.set(id, gltf.scene);
-        // Static scenery is cached behind the world signature. Invalidate that cache once when each
-        // asset arrives so primitive fallbacks are replaced without changing world state - and
-        // without touching the camera, because a download must never move where the player is looking.
-        worldSignature = "";
-        applyState(state);
-        draw();
-      },
-      undefined,
-      (error: unknown) => {
-        loadingScenery.delete(id);
-        unavailableScenery.add(id);
-        if (!disposed) options.onAssetProblem?.(id, error);
-      }
-    );
+    return library.get(id);
   }
 
   /** The loaded building model for an id, starting its download the first time one is asked for. */
   function buildingModel(id: string): Object3D | undefined {
-    const model = buildingModels.get(id);
-    if (model !== undefined) return model;
-    if (loadingBuildings.has(id) || unavailableBuildings.has(id)) return undefined;
-    const entry = BUILDING_MODELS.get(id);
-    if (entry === undefined) return undefined;
-    loadingBuildings.add(id);
-    loader.load(
-      entry.url,
-      (gltf) => {
-        loadingBuildings.delete(id);
-        if (disposed) {
-          disposeModelResources(gltf.scene);
-          return;
-        }
-        buildingModels.set(id, gltf.scene);
-        worldSignature = "";
-        applyState(state);
-        draw();
-      },
-      undefined,
-      (error: unknown) => {
-        loadingBuildings.delete(id);
-        unavailableBuildings.add(id);
-        if (!disposed) options.onAssetProblem?.(id, error);
-      }
-    );
-    return undefined;
+    return library.get(id);
   }
 
   /**
@@ -736,31 +718,8 @@ let interactionGeometry: BufferGeometry | null = null;
    */
   function requestGeneratedModels(): void {
     for (const id of Object.keys(GENERATED_MODEL_URLS) as GeneratedModelId[]) {
-      if (loadingGenerated.has(id) || unavailableGenerated.has(id) || generatedModels[id] !== undefined) continue;
-      loadingGenerated.add(id);
-      loader.load(
-        GENERATED_MODEL_URLS[id],
-        (gltf) => {
-          loadingGenerated.delete(id);
-          if (disposed) {
-            disposeModelResources(gltf.scene);
-            return;
-          }
-          generatedModels[id] = gltf.scene;
-          if (id === "building_barn") {
-            worldSignature = "";
-          }
-          if (id === "character_farmer") rebuildAvatar();
-          applyState(state);
-          draw();
-        },
-        undefined,
-        (error: unknown) => {
-          loadingGenerated.delete(id);
-          unavailableGenerated.add(id);
-          if (!disposed) options.onAssetProblem?.(id, error);
-        }
-      );
+      const model = library.get(id);
+      if (model !== undefined) generatedModels[id] = model;
     }
   }
 
@@ -781,28 +740,19 @@ let interactionGeometry: BufferGeometry | null = null;
   }
 
   function requestModel(modelId: CropModelId): void {
-    if (disposed || loadingModels.has(modelId) || unavailableModels.has(modelId)) return;
-    loadingModels.add(modelId);
-    loader.load(
-      CROP_MODEL_URLS[modelId],
-      (gltf) => {
-        loadingModels.delete(modelId);
-        if (disposed) {
-          disposeModelResources(gltf.scene);
-          return;
-        }
-        models.set(modelId, prepareVariants(gltf.scene));
-        applyState(state);
-        draw();
-      },
-      undefined,
-      (error: unknown) => {
-        loadingModels.delete(modelId);
+    if (disposed || unavailableModels.has(modelId)) return;
+    void library.load(modelId).then((model) => {
+      if (model === null) {
         unavailableModels.add(modelId);
-        if (disposed) return;
-        options.onAssetProblem?.(modelId, error);
+        return;
       }
-    );
+      if (disposed) return;
+      // A crop is the one family with *variants* - the same file drawn young and ripe - so the file
+      // comes from the shared library and the two looks are this scene's own business.
+      models.set(modelId, prepareVariants(model));
+      applyState(state);
+      draw();
+    });
   }
 
   function prepareVariants(source: Object3D): ModelVariants {
@@ -1232,9 +1182,180 @@ let interactionGeometry: BufferGeometry | null = null;
     updateMarkers();
     updateCamera();
     rebuildCellOverlay();
+    // The ground under a preview changes with the world - a plot bought, a model arriving - so the
+    // ghost is rebuilt with the layer it stands on rather than left where it was.
+    rebuildPreview();
   }
 
   let hoveredCoordinate: TileCoordinate | null = null;
+
+  /**
+   * The build shop's intention, and everything drawn for it.
+   *
+   * `previewDisposers` holds the release of whatever the last rebuild allocated - cloned ghost
+   * materials, the road preview's geometry - so replacing or cancelling a preview cannot leak them,
+   * and so a cached world model is never disposed along with its ghost.
+   */
+  let placementPreview: PlacementPreview | null = null;
+  let previewDisposers: (() => void)[] = [];
+  let previewLoadToken = 0;
+
+  function rebuildPreview(): void {
+    previewGroup.clear();
+    for (const dispose of previewDisposers) dispose();
+    previewDisposers = [];
+    const preview = placementPreview;
+    if (preview === null || selectedCell === null) {
+      draw();
+      return;
+    }
+
+    const pitch = state.layout.pitch;
+    const centre = tileToWorld(selectedCell, worldFrame(pitch));
+    const groundY = GROUND_SURFACE_Y + terrainHeightAt(centre.worldX, centre.worldZ, state.world.terrain);
+
+    // The footprint: a translucent patch of ground the size of the cells the thing would take, with a
+    // lip around it. The lip is what makes the answer visible at all: a ghost scaled to its own
+    // footprint hides the patch underneath it, and then the valid/invalid colour is a colour nobody
+    // can see.
+    const width = preview.widthCells * pitch;
+    const depth = preview.depthCells * pitch;
+    const footprintGeometry = new PlaneGeometry(width + pitch * 0.4, depth + pitch * 0.4);
+    const footprintMaterial = new MeshBasicMaterial({
+      color: preview.valid ? 0x63b354 : 0xc4553f,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+      side: DoubleSide
+    });
+    const footprint = new Mesh(footprintGeometry, footprintMaterial);
+    footprint.rotation.x = -Math.PI / 2;
+    footprint.rotation.z = -preview.rotationY;
+    footprint.position.set(centre.worldX, groundY + 0.03, centre.worldZ);
+    footprint.renderOrder = 2;
+    previewGroup.add(footprint);
+    previewDisposers.push(() => {
+      footprintGeometry.dispose();
+      footprintMaterial.dispose();
+    });
+
+    if (preview.roadTierId !== null) {
+      addRoadPreview(preview, selectedCell, groundY, pitch);
+      draw();
+      return;
+    }
+    if (preview.modelId === null) {
+      draw();
+      return;
+    }
+
+    // The ghost itself. The model is cached and shared, so it is cloned and given its own translucent
+    // materials; the clone's geometry belongs to the cache and is never disposed here.
+    const token = ++previewLoadToken;
+    void library.load(preview.modelId).then((loaded) => {
+      // A preview that has been replaced, cancelled or moved on while the model was downloading is
+      // dropped rather than drawn - which is also what stops a cancelled ghost appearing later.
+      if (disposed || token !== previewLoadToken || placementPreview !== preview) return;
+      if (loaded === null) return;
+      const model = loaded;
+      const ghost = model.clone(true);
+      const box = new Box3().setFromObject(ghost);
+      const size = box.getSize(new Vector3());
+      const cloneMaterials: Material[] = [];
+      ghost.traverse((child) => {
+        if (!(child instanceof Mesh)) return;
+        const source = child.material as Material | Material[];
+        const asGhost = (material: Material): MeshStandardMaterial => {
+          const copy = (material as MeshStandardMaterial).clone();
+          copy.transparent = true;
+          copy.opacity = 0.55;
+          copy.depthWrite = false;
+          cloneMaterials.push(copy);
+          return copy;
+        };
+        child.material = Array.isArray(source) ? source.map(asGhost) : asGhost(source);
+      });
+      // Fill the footprint the catalogue declares: the preview shows the ground it takes, not a guess
+      // at the art department's chosen scale.
+      const span = Math.max(size.x, size.z, 0.001);
+      const scale = Math.max(width, depth) / span;
+      ghost.scale.setScalar(scale);
+      ghost.position.set(
+        centre.worldX - ((box.min.x + box.max.x) / 2) * scale,
+        groundY - box.min.y * scale,
+        centre.worldZ - ((box.min.z + box.max.z) / 2) * scale
+      );
+      ghost.rotation.y = 0;
+      previewGroup.add(ghost);
+      previewDisposers.push(() => {
+        ghost.clear();
+        for (const material of cloneMaterials) material.dispose();
+      });
+      draw();
+    });
+  }
+
+  /**
+   * A four-cell road segment, in the tier's own surface.
+   *
+   * The geometry is the runtime one - the same centreline builder and the same ribbon - so a preview
+   * of a dirt road is a dirt road rather than a picture of one.
+   */
+  function addRoadPreview(
+    preview: PlacementPreview,
+    cell: TileCoordinate,
+    groundY: number,
+    pitch: number
+  ): void {
+    const tier = preview.roadTierId;
+    if (tier === null) return;
+    if (!(tier in ROAD_PREVIEW_STYLES)) return;
+    const style = ROAD_PREVIEW_STYLES[tier as keyof typeof ROAD_PREVIEW_STYLES];
+    const along = preview.rotationY;
+    const stepX = Math.cos(along);
+    const stepZ = Math.sin(along);
+    const start = tileToWorld(cell, worldFrame(pitch));
+    const span = 4 * pitch;
+    const spec = buildRoadSpec(
+      {
+        id: "preview",
+        kind: style.cobbled ? "PRIMARY" : "SECONDARY",
+        connects: [],
+        points: [
+          { x: cell.x, y: cell.y },
+          { x: cell.x + (stepX * span) / pitch, y: cell.y + (stepZ * span) / pitch }
+        ]
+      },
+      state.layout,
+      state.world.terrain
+    );
+    const material = new MeshStandardMaterial({
+      color: style.surface,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      vertexColors: true
+    });
+    const surface = ribbonSurface([spec], [style.cobbled ? "PRIMARY" : "SECONDARY"]);
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(surface.positions, 3));
+    if (surface.colors !== null) geometry.setAttribute("color", new BufferAttribute(surface.colors, 3));
+    geometry.setIndex(new BufferAttribute(surface.indices, 1));
+    geometry.computeVertexNormals();
+    const mesh = new Mesh(geometry, material);
+    const origin = spec.samples[0];
+    if (origin === undefined) return;
+    mesh.position.set(
+      start.worldX - origin.worldX,
+      groundY + 0.02 - origin.worldY + ROAD_LIFT_WORLD,
+      start.worldZ - origin.worldZ
+    );
+    previewGroup.add(mesh);
+    previewDisposers.push(() => {
+      geometry.dispose();
+      material.dispose();
+    });
+  }
 
   /**
    * The last hover position, and the frame that will act on it.
@@ -1573,6 +1694,13 @@ let interactionGeometry: BufferGeometry | null = null;
       if (same) return;
       selectedCell = cell === null ? null : { x: cell.x, y: cell.y };
       rebuildCellOverlay();
+      // A ghost follows the selection: moving the click moves what the player is about to place.
+      rebuildPreview();
+      draw();
+    },
+    setPlacementPreview(next: PlacementPreview | null): void {
+      placementPreview = next;
+      rebuildPreview();
       draw();
     },
     setDebugMode(on: boolean): void {
@@ -1620,13 +1748,18 @@ let interactionGeometry: BufferGeometry | null = null;
         skyMaterial.dispose();
       }
       for (const variants of models.values()) {
-        disposeModelResources(variants.growing);
-        disposeModelResources(variants.ready);
+        // The variants share geometry with the cached model, which the shared library owns and other
+        // callers (the shop's thumbnails) may still be using: dropping the references is this scene's
+        // business, disposing them is not.
+        variants.growing.clear();
+        variants.ready.clear();
       }
       models.clear();
-      for (const model of sceneryModels.values()) {
-        disposeModelResources(model);
-      }
+      stopListening();
+      previewGroup.clear();
+      for (const dispose of previewDisposers) dispose();
+      previewDisposers = [];
+      placementPreview = null;
       assets.dispose();
       renderer.dispose();
     }

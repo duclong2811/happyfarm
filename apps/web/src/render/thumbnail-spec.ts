@@ -1,0 +1,82 @@
+import type { RoadTierId } from "@happy-farm/game-data";
+
+/**
+ * The thumbnail rules that are not Three.js: what a thumbnail is asked for, what its cache key is,
+ * how a box is framed in the square, and what each road tier looks like.
+ *
+ * Split out from `thumbnail.ts` on purpose. The renderer half needs a WebGL context and a bundler
+ * (it loads the shipped GLBs), so a unit test cannot reach it; the *decisions* can and should be
+ * asserted, and this is where they live. `thumbnail.ts` draws from these numbers, so the picture and
+ * the test cannot drift apart.
+ */
+
+/** Thumbnail resolution. 256 is enough for a card at 2x and cheap enough to render dozens of. */
+export const THUMBNAIL_SIZE = 256;
+
+/** How much of the frame the object's longest side fills. */
+export const THUMBNAIL_FILL = 0.72;
+
+/** Where a thumbnail came from, so the panel can fall back cleanly. */
+export type ThumbnailSource = "MODEL" | "ROAD" | "FALLBACK";
+
+export interface ThumbnailRequest {
+  /** The GLB to draw, or null for a road preview. */
+  readonly modelId: string | null;
+  /** The road tier to draw, or null for a model. */
+  readonly roadTierId: string | null;
+}
+
+export interface ThumbnailResult {
+  /** A data URL, or null when nothing could be drawn for this request. */
+  readonly dataUrl: string | null;
+  readonly source: ThumbnailSource;
+}
+
+/**
+ * The cache key: the model, or the road tier, and nothing else.
+ *
+ * Pure and stable on purpose - the same asset asks for the same key on every render, so the cache
+ * hits, and a test can pin the behaviour without a WebGL context.
+ */
+export function thumbnailCacheKey(request: ThumbnailRequest): string {
+  if (request.roadTierId !== null) return `road:${request.roadTierId}`;
+  if (request.modelId !== null) return `model:${request.modelId}`;
+  return "fallback";
+}
+
+/**
+ * How to frame a box of a given size in a square thumbnail.
+ *
+ * Pure arithmetic, exported so the framing can be tested: the object is scaled so its longest side
+ * takes `THUMBNAIL_FILL` of the frame, centred on its own middle, and the camera sits back along the
+ * three-quarter bearing at a distance that is a small multiple of the scaled size.
+ */
+export function thumbnailFraming(
+  size: { readonly x: number; readonly y: number; readonly z: number }
+): { readonly scale: number; readonly centerY: number; readonly cameraDistance: number } {
+  // The island's own scale is metres; a thumbnail is framed in whatever units the model uses, and
+  // every curated model is normalised to about one unit, so no rescaling between families is needed.
+  const longest = Math.max(size.x, size.y, size.z, 0.001);
+  const halfFov = (32 * Math.PI) / 180 / 2;
+  // A perspective camera fills the frame with `2 * d * tan(fov/2)`, so the distance that makes the
+  // object fill `THUMBNAIL_FILL` of it is the object's size over that, and never closer than its own
+  // bounding sphere.
+  const cameraDistance = (longest / THUMBNAIL_FILL) / (2 * Math.tan(halfFov));
+  return { scale: 1, centerY: size.y / 2, cameraDistance: Math.max(cameraDistance, longest) };
+}
+
+/**
+ * What each road tier looks like in a thumbnail.
+ *
+ * Dirt and stone reuse the runtime colours exactly; gravel and paved have no runtime material yet and
+ * say so, which is why they are flagged - the shop can then label them as previews instead of
+ * pretending the island can already build them.
+ */
+export const ROAD_PREVIEW_STYLES: Readonly<
+  Record<RoadTierId, { readonly surface: number; readonly cobbled: boolean; readonly provisional: boolean }>
+> = {
+  "road.dirt.t1": { surface: 0x9c7748, cobbled: false, provisional: false },
+  "road.gravel.t2": { surface: 0xb0a698, cobbled: false, provisional: true },
+  "road.stone.t3": { surface: 0x9a9488, cobbled: true, provisional: false },
+  "road.paved.t4": { surface: 0xcac3b4, cobbled: false, provisional: true }
+};

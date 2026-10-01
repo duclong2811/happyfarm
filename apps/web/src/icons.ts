@@ -23,7 +23,13 @@ export type IconName =
   | "harvest"
   | "remove"
   | "land"
-  | "build";
+  | "build"
+  | "lock"
+  | "road"
+  | "fence"
+  | "lamp"
+  | "water"
+  | "monument";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -45,7 +51,18 @@ const PATHS: Readonly<Record<IconName, readonly string[]>> = {
   remove: ["M6 12h12", "M12 6v12"],
   land: ["M3 17l4-6 4 3 4-7 6 10z", "M3 20h18"],
   /** Build: a hammer over a level. The module's own glyph, not a picture of a farm. */
-  build: ["M4 20h10", "M6 16l7-7", "M13 5l3-2 3 3-2 3z", "M11 8l3 3"]
+  build: ["M4 20h10", "M6 16l7-7", "M13 5l3-2 3 3-2 3z", "M11 8l3 3"],
+  lock: ["M6 11h12v9H6z", "M8.5 11V8a3.5 3.5 0 0 1 7 0v3"],
+  /** Road: a strip receding to a vanishing point, which is what the shop is selling. */
+  road: ["M8 20L10.5 4", "M16 20L13.5 4", "M12 6v2", "M12 11v2", "M12 16v2"],
+  /** Fence: posts and two rails. */
+  fence: ["M6 20V7", "M12 20V6", "M18 20V7", "M4 11h16", "M4 15h16"],
+  /** Lamp: a post with a hooded light. */
+  lamp: ["M12 21v-8", "M8 13h8l-1.2-4h-5.6z", "M12 9V6", "M9 6h6"],
+  /** Waterfront: two waves over a jetty line. */
+  water: ["M3 15c2.2 0 2.2 2 4.4 2s2.2-2 4.4-2 2.2 2 4.4 2 2.2-2 4.4-2", "M3 19c2.2 0 2.2 2 4.4 2s2.2-2 4.4-2 2.2 2 4.4 2 2.2-2 4.4-2", "M12 4v9", "M9 7h6"],
+  /** Monument: a plinth and an obelisk. */
+  monument: ["M9 20h6", "M8 17h8l-1 3H9z", "M12 4l2.5 13h-5z"]
 };
 
 /** Builds one icon as an SVG element the caller can drop into a button. */

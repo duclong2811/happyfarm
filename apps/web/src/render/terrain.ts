@@ -24,6 +24,7 @@ import {
   junctionSurface,
   ribbonSurface,
   roadsideStones,
+  shoulderProfile,
   stonePlateSurface,
   type SurfaceData
 } from "./road-surface";
@@ -437,11 +438,19 @@ const ROAD_SHOULDER_LIFT = -0.006;
  * torn, jagged seam that the V12.2 close-up caught near the harbour. A few millimetres of separation
  * is invisible from any camera and makes the winner deterministic.
  */
-const ROAD_BED_LIFT = 0;
-const ROAD_PATH_LIFT = 0.004;
-const ROAD_STONE_BED_LIFT = 0.002;
-const ROAD_PLATE_LIFT = 0.01;
-const ROAD_JUNCTION_LIFT = 0.014;
+/**
+ * The dirt bed sits *above* the path bed, and that order is deliberate.
+ *
+ * A farm road and a footpath cross at the village gate, and the two ribbons overlap there. Whichever
+ * is higher wins the overlap, and the road should: at the village the pale path wedge over the dirt
+ * was the seam the V12.3 QA pass found. Ordering the beds by importance - dirt road, then stone road,
+ * then the field paths - makes the crossing read as a path meeting a road.
+ */
+const ROAD_PATH_LIFT = 0.002;
+const ROAD_STONE_BED_LIFT = 0.006;
+const ROAD_PLATE_LIFT = 0.012;
+const ROAD_JUNCTION_LIFT = 0.016;
+const ROAD_DIRT_LIFT = 0.008;
 /** The shoulder table lives with the road widths, because scenery clearance reads it too. */
 const ROAD_SHOULDER_WIDTHS = ROAD_SHOULDER_WORLD;
 
@@ -483,7 +492,8 @@ function addRoads(group: Group, assets: SharedAssets, world: FarmWorld): void {
     ribbonSurface(
       world.roads.map((road) => ({ ...road, widthWorld: road.widthWorld + ROAD_SHOULDER_WIDTHS[road.kind] })),
       ["PRIMARY", "SECONDARY", "PATH"],
-      roadHeightAt
+      roadHeightAt,
+      shoulderProfile
     ),
     assets.roadShoulder,
     ROAD_SHOULDER_LIFT,
@@ -494,7 +504,7 @@ function addRoads(group: Group, assets: SharedAssets, world: FarmWorld): void {
   const dirt = surfaceMesh(
     ribbonSurface(world.roads, ["SECONDARY"], roadHeightAt),
     assets.roadDirt,
-    ROAD_BED_LIFT,
+    ROAD_DIRT_LIFT,
     "road-dirt"
   );
   if (dirt !== null) group.add(dirt);

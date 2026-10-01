@@ -157,6 +157,16 @@ function standard(
     depthWrite?: boolean;
     vertexColors?: boolean;
     roughness?: number;
+    /**
+     * Pull this surface towards the camera in depth, so it wins against ground it lies on.
+     *
+     * This is what lets a road sit *in* the terrain rather than on top of it: the ground mesh is drawn
+     * from coarse rings and interpolates across them, so the drawn ground can stand a few centimetres
+     * above the analytic curve a road follows. Lifting the road is the other way to fix that, and it is
+     * the wrong one - it makes a kerb. A depth bias keeps the road where it belongs and still lets it
+     * win the depth test.
+     */
+    polygonOffset?: boolean;
   } = {}
 ): MeshStandardMaterial {
   return new MeshStandardMaterial({
@@ -166,7 +176,10 @@ function standard(
     ...(options.vertexColors === undefined ? {} : { vertexColors: options.vertexColors }),
     ...(options.transparent === undefined ? {} : { transparent: options.transparent }),
     ...(options.opacity === undefined ? {} : { opacity: options.opacity }),
-    ...(options.depthWrite === undefined ? {} : { depthWrite: options.depthWrite })
+    ...(options.depthWrite === undefined ? {} : { depthWrite: options.depthWrite }),
+    ...(options.polygonOffset === undefined
+      ? {}
+      : { polygonOffset: options.polygonOffset, polygonOffsetFactor: -2, polygonOffsetUnits: -4 })
   });
 }
 
@@ -230,13 +243,14 @@ export function createSharedAssets(): SharedAssets {
     dirtDark: material(standard(0xb0854f)),
     bareEarth: material(standard(0xc4a97b, { roughness: 0.94 })),
     // Grey and laid for the spine, warm earth for the working roads, paler worn ground for a track,
-    // and one darker fringe under all of them. Read together they are the hierarchy, before a single
-    // stone is drawn.
-    roadShoulder: material(standard(0x8a6940, { roughness: 0.97, vertexColors: true })),
-    roadStone: material(standard(0x9d998d, { roughness: 0.9, vertexColors: true })),
-    roadStoneBed: material(standard(0x817d72, { roughness: 0.94, vertexColors: true })),
-    roadDirt: material(standard(0x9a7444, { roughness: 0.96, vertexColors: true })),
-    roadPath: material(standard(0xac9068, { roughness: 0.97, vertexColors: true })),
+    // and one fringe under all of them that reads as *trodden grass* rather than as a dark outline -
+    // which is what makes a dirt road sit in a field instead of on it. Every one of them is depth
+    // biased, so the road wins against the ground without being lifted into a kerb.
+    roadShoulder: material(standard(0x7f8a52, { roughness: 0.98, vertexColors: true, polygonOffset: true })),
+    roadStone: material(standard(0x9d998d, { roughness: 0.9, vertexColors: true, polygonOffset: true })),
+    roadStoneBed: material(standard(0x817d72, { roughness: 0.94, vertexColors: true, polygonOffset: true })),
+    roadDirt: material(standard(0x9c7748, { roughness: 0.97, vertexColors: true, polygonOffset: true })),
+    roadPath: material(standard(0xac9068, { roughness: 0.97, vertexColors: true, polygonOffset: true })),
     roadsideStone: material(standard(0x9a958c, { roughness: 0.9 })),
     plaza: material(standard(0xcbb894, { roughness: 0.92 })),
     pasture: material(standard(0x8ec663, { roughness: 0.95 })),

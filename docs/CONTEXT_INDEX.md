@@ -467,6 +467,29 @@ Read `docs/decisions/0007-renderer-foundation-and-plain-typescript-client.md`, t
   the client, and do not let the renderer fetch or compute game state; new rendering rules belong in
   `view-model.ts`, where they can be tested without a WebGL context.
 
+### Build shop, thumbnails, placement preview, and road presentation (V12.4)
+
+Read `docs/design/V12_4_VISUAL_BUILD_SHOP.md` before changing the build panel, the thumbnail renderer,
+the placement preview, or the road's surface.
+
+- Shop UI: `apps/web/src/main.ts` (`renderBuildPanel`, `buildCard`, `selectBuildEntry`),
+  `apps/web/index.html`, `apps/web/src/styles.css`, `apps/web/src/icons.ts`, `apps/web/src/i18n.ts`.
+- Thumbnails: `apps/web/src/render/thumbnail.ts` (the one offscreen renderer) and
+  `apps/web/src/render/thumbnail-spec.ts` (the pure cache key, framing rule, and road tier previews).
+- Shared model cache: `apps/web/src/render/model-library.ts` - one `loadModel(modelId)` for the world,
+  the thumbnails, and the ghost. Do not add a second loader or a second URL table.
+- Placement preview: `apps/web/src/render/placement-preview.ts` (the pure validity rule over the
+  WorldCell map) and the `setPlacementPreview` half of `apps/web/src/render/scene.ts`.
+- Road presentation: `apps/web/src/render/road-surface.ts` (cross-section, edge wave, shoulder
+  profile), `apps/web/src/render/roads.ts` (`ROAD_LIFT_WORLD`), `apps/web/src/render/materials.ts`
+  (the road's polygon offset), and the bed heights in `apps/web/src/render/terrain.ts`.
+- Tests: `tests/web/build-thumbnails.test.ts`, `tests/web/build-placement-preview.test.ts`,
+  `tests/web/road-visual-quality.test.ts`.
+
+Placement is **preview only**. Price, level, footprint, tier, and unlock condition come from
+`GET /build-catalog` and must never be restated in the client, and no purchase or placement command
+exists yet.
+
 ## Game-data/content task
 - relevant schema/type in `packages/game-data`
 - validation tests
@@ -489,6 +512,10 @@ Read `docs/decisions/0018-game-hud-and-panel-architecture.md` before editing the
 - Tests: `tests/web/farm-panels.test.ts`, `tests/web/i18n.test.ts`.
 
 Panels are presentation: never store, send, or gate gameplay on panel state, and never render a second copy of inventory or market data.
+
+The Build module is a V12.4 card shop rather than a row list: read
+`docs/design/V12_4_VISUAL_BUILD_SHOP.md` before changing `renderBuildPanel`, the thumbnail renderer, or
+the placement preview.
 
 ## Staging deployment foundation
 

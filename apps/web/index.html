@@ -48,13 +48,16 @@
         <div id="market-body" class="module-body"><div id="shop" class="shop-rows"></div></div>
       </aside>
 
-      <aside id="build-panel" class="module-panel module-panel-right" aria-labelledby="build-title" hidden>
+      <aside id="build-panel" class="module-panel module-panel-wide" aria-labelledby="build-title" hidden>
         <header class="module-header">
           <h2 id="build-title">Build</h2>
           <button id="build-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
         </header>
-        <div class="market-tabs" id="build-tabs" role="tablist" aria-label="Build categories"></div>
-        <div id="build-body" class="module-body"><div id="build-rows" class="shop-rows"></div></div>
+        <div class="market-tabs build-categories" id="build-tabs" role="tablist" aria-label="Build categories"></div>
+        <div id="build-body" class="module-body">
+          <div id="build-rows" class="build-grid"></div>
+          <p id="build-status" class="build-status muted"></p>
+        </div>
       </aside>
 
       <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>

@@ -382,6 +382,13 @@ export const BuildCatalogEntryDTOSchema = z
     capability: z.string().min(1).max(40),
     /** The tier within the entry's own ladder, or null when it has none. */
     tier: z.string().min(1).max(40).nullable(),
+    /**
+     * Where that tier sits in its ladder, 1-based, or null when the entry has no ladder.
+     *
+     * Sent so a shop can say "Tier 3" instead of showing the id it happens to be keyed by: an id is
+     * data, and a player reading a card should be reading a name.
+     */
+    tierRank: z.number().int().min(1).max(8).nullable(),
     /** The entry this one upgrades into, or null at the top of its ladder. */
     upgradeTo: z.string().min(1).max(120).nullable(),
     rotatable: z.boolean(),

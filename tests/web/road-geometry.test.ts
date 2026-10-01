@@ -168,8 +168,10 @@ describe("one authoritative centreline", () => {
     // One geometry for every road's shoulder, one for the dirt, one for the paths: three meshes,
     // whatever the network's length.
     expect(shoulder.indices.length).toBeGreaterThan(0);
+    // Nine vertices across (V12.4's layered cross-section: edge, dusty, compacted, rut, crown, ...),
+    // so the vertex count is the samples times the columns and nothing else.
     expect(shoulder.positions.length / 3).toBe(
-      world.reduce((total, road) => total + road.samples.length * 5, 0)
+      world.reduce((total, road) => total + road.samples.length * 9, 0)
     );
   });
 });

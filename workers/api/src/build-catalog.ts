@@ -1,4 +1,4 @@
-import { catalogueLabel, placementEntries } from "@happy-farm/game-data";
+import { catalogueLabel, placementEntries, roadTiers } from "@happy-farm/game-data";
 import type { BuildCatalogEntryDTO } from "@happy-farm/contracts";
 
 /**
@@ -24,6 +24,7 @@ export function listBuildCatalog(): readonly BuildCatalogEntryDTO[] {
     footprint: { widthCells: entry.footprint.widthCells, depthCells: entry.footprint.depthCells },
     capability: entry.capability,
     tier: entry.tier,
+    tierRank: entry.tier === null ? null : (roadTiers.get(entry.tier)?.rank ?? null),
     upgradeTo: entry.upgradeTo,
     rotatable: entry.rotatable,
     decorative: entry.decorative,

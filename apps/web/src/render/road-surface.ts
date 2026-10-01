@@ -53,22 +53,71 @@ const TONE_RANGE = 0.16;
 /**
  * How many vertices the ribbon has across its width, and where they sit.
  *
- * Five, from one edge to the other through the centre. Two would be enough to draw a strip, but a
- * dirt road is not a flat colour: the brief asks for a compacted centre and slightly darker wheel
- * lanes, and both are *across* the road, so they need vertices to live on. Five columns across a road
- * is a few hundred vertices for the whole network, in geometry that is built once.
+ * Nine, from one edge to the other through the centre, and the positions are not evenly spaced: they
+ * mark the bands a real dirt road is made of, so each one can carry its own tone. A two-vertex strip
+ * is a painted ribbon; these nine are what let the surface read as
+ *
+ * ```text
+ * edge | dusty | compacted | rut | centre | rut | compacted | dusty | edge
+ * ```
+ *
+ * Nine columns over the whole network is a few thousand vertices, in geometry that is built once.
  */
-const RIBBON_COLUMNS: readonly number[] = [-1, -0.5, 0, 0.5, 1];
+const RIBBON_COLUMNS: readonly number[] = [-1, -0.78, -0.52, -0.26, 0, 0.26, 0.52, 0.78, 1];
 
 /**
- * The tone multiplier across the road: compacted in the middle, worn where the wheels run, dusty at
- * the edge. Nothing here changes the geometry - the road stays exactly as wide as it was measured to
- * be - and nothing here is a texture, so it costs no memory and no draw call.
+ * The tone multiplier across the road: dusty at the edge, compacted where the wheels have not been,
+ * worn *very slightly* darker where they have, and a shade lighter down the crown.
+ *
+ * The ruts are deliberately shallow - three per cent either way. A rut painted as a dark stripe is the
+ * single thing that turns a dirt road back into a graphic, and the brief asks for tracks you notice at
+ * a walk and not from the estate camera.
  */
 function dirtProfile(across: number): number {
-  const wheel = Math.abs(Math.abs(across) - 0.5);
-  const edge = Math.abs(across);
-  return 1 - 0.07 * Math.max(0, 1 - wheel * 4) - 0.1 * Math.max(0, edge - 0.85) * 6;
+  const distance = Math.abs(across);
+  // Centre crown, where the camber carries the water off.
+  if (distance < 0.15) return 1.05;
+  // The wheel ruts, either side of the crown. Deep enough to read at a walk, shallow enough that the
+  // road is still one surface rather than two painted stripes.
+  if (distance < 0.45) return 0.94;
+  // Compacted dirt the wheels missed, a shade lighter than the ruts.
+  if (distance < 0.7) return 1.01;
+  // The dusty shoulder of the surface, where traffic does not reach.
+  if (distance < 0.92) return 0.98;
+  // The very edge, against the grass.
+  return 0.9;
+}
+
+/**
+ * How much the *outer* edge of a road may wander, as a fraction of its half-width.
+ *
+ * The navigation shape stays exactly what `RoadSpec.widthWorld` says. This is the renderer's own
+ * cosmetic hand-drawn edge: a slow wave along the road, five per cent of half a width either way -
+ * a couple of centimetres on the island's road. It is a function of the distance travelled and the
+ * side, so it is the same on every client and after every refresh, and it has no high frequency in it,
+ * which is what keeps the edge organic instead of noisy.
+ */
+export const ROAD_EDGE_WAVE = 0.05;
+
+/** The cosmetic edge multiplier at a point along the road, per side. */
+export function roadEdgeWave(distanceWorld: number, side: number): number {
+  const slow = Math.sin(distanceWorld * 0.21 + side * 1.7);
+  const slower = Math.sin(distanceWorld * 0.083 + side * 4.1);
+  return 1 + ROAD_EDGE_WAVE * (slow * 0.6 + slower * 0.4);
+}
+
+/**
+ * The tone across a road's shoulder.
+ *
+ * Darkest at the outside, where the trodden ground meets unbroken grass, and lighter towards the road
+ * it borders. The centre of this ribbon is under the road and never seen, which is why the profile
+ * only has to be right at the fringe.
+ */
+export function shoulderProfile(across: number): number {
+  // Kept *below* the field: trodden ground is duller and a little darker than the grass it interrupts,
+  // so the band reads as wear. Lifting the inner edge above 1.0 put a pale halo around the road, which
+  // is the "brown ribbon with an outline" the V12.4 pass exists to remove.
+  return 0.72 + 0.22 * (1 - Math.abs(across));
 }
 /** Fraction of the outermost plates dropped, so grass shows through the edge of a stone road. */
 const EDGE_GAP_CHANCE = 0.07;
@@ -108,7 +157,13 @@ function toSurface(positions: number[], indices: number[], colors: number[] | nu
 export function ribbonSurface(
   roads: readonly RoadSpec[],
   kinds: readonly RoadKind[],
-  heightAt?: (worldX: number, worldZ: number) => number
+  heightAt?: (worldX: number, worldZ: number) => number,
+  /**
+   * The tone across the ribbon. The road's own surface uses `dirtProfile`; the shoulder it lies in is
+   * passed a different one, because a shoulder is not a narrower road - it is the *trodden grass* the
+   * road was cut through, and it has to be dark against the field and light against the road.
+   */
+  profile: (across: number) => number = dirtProfile
 ): SurfaceData {
   const positions: number[] = [];
   const indices: number[] = [];
@@ -133,8 +188,11 @@ export function ribbonSurface(
       const offsetX = sample.normalX * half * sample.miter;
       const offsetZ = sample.normalZ * half * sample.miter;
       for (const column of RIBBON_COLUMNS) {
-        const worldX = sample.worldX + offsetX * column;
-        const worldZ = sample.worldZ + offsetZ * column;
+        // The outermost band is the only one that wanders: the road's *shape* is what the navigation
+        // grid and the clearance rule measure, and only its drawn edge is allowed to look hand-cut.
+        const wobble = Math.abs(column) === 1 ? roadEdgeWave(sample.distance, column) : 1;
+        const worldX = sample.worldX + offsetX * column * wobble;
+        const worldZ = sample.worldZ + offsetZ * column * wobble;
         positions.push(worldX, heightAt === undefined ? sample.worldY : heightAt(worldX, worldZ), worldZ);
       }
     }
@@ -154,7 +212,7 @@ export function ribbonSurface(
     }
     for (let index = 0; index < count; index += 1) {
       for (const column of RIBBON_COLUMNS) {
-        const tone = (TONE_MIN + hash(base + index * columns + column) * TONE_RANGE) * dirtProfile(column);
+        const tone = (TONE_MIN + hash(base + index * columns + column) * TONE_RANGE) * profile(column);
         colors.push(tone, tone, tone);
       }
     }

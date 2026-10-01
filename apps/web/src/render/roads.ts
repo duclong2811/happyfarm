@@ -78,13 +78,13 @@ const MITER_LIMIT = 1.8;
  * is - and a road lifted by less than that disappears into the grass in patches, which is the "road
  * swallowed by a hill" the estate view kept showing.
  *
- * Raised again in V12.2, from five centimetres to sixteen. Five was enough on the inland relief but not
- * where the road runs down to the harbour: the shore fade is the steepest thing the terrain does, and
- * between two rings of the ground mesh the drawn surface can stand well above the analytic curve the
- * road is placed on. The result was green wedges cutting through the road near the quay, which the QA
- * pass caught and a lift experiment confirmed.
+ * V12.2 raised this to sixteen centimetres to stop the ground poking through near the shore, and paid
+ * for it with a visible kerb. V12.4 puts it back down to three and takes the depth problem to the
+ * material instead: every road surface is polygon-offset, so it wins the depth test against ground
+ * that is a few centimetres above the curve, and the road sits *in* the field rather than on it. The
+ * value is asserted by a test so it cannot quietly climb again.
  */
-export const ROAD_LIFT_WORLD = 0.16;
+export const ROAD_LIFT_WORLD = 0.03;
 
 function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
   const t2 = t * t;
