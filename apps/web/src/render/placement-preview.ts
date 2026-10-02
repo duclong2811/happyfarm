@@ -1,4 +1,4 @@
-import { cellKey, type CellCapability, type WorldCellMap } from "./world-cell";
+import { cellKey, type WorldCellMap } from "./world-cell";
 import type { TileCoordinate } from "./layout";
 
 /**
@@ -8,27 +8,49 @@ import type { TileCoordinate } from "./layout";
  * answer is not the server's yet - the placement command does not exist - but it must be the same
  * answer the command will give, or the preview teaches the player something false. So the rule is
  * written once, over the WorldCell map, and covers exactly what the cell already knows: the ground,
- * the capability, what stands there, and whether the footprint fits on the island at all.
+ * whose it is, what stands there, and whether the footprint fits on the island at all.
  *
  * Pure: no three, no DOM, no clock - so every reason a spot is refused can be asserted in a test.
+ *
+ * **Land use is not consulted.** There is no FARM, FORESTRY, BUILD or DECORATION requirement here any
+ * more: a normal owned cell takes a normal asset, and the only ground question is the *physical* one
+ * the asset itself declares - dry land, beach, the shallows. That is the whole of the freeform rule,
+ * and it is the same rule the server applies.
  */
 
+/** The ground an entry may stand on, as the catalogue declares it. */
+export type PreviewGround = "LAND" | "SHORE" | "SHALLOW_WATER" | "WATER";
+
+/**
+ * Why a spot was refused, in the vocabulary a player is shown.
+ *
+ * Deliberately smaller than the server's list: a preview only has to explain itself, and each of
+ * these maps to one translated sentence. The internal codes stay on the server, where they are useful.
+ */
 export type PreviewRejection =
   | "NO_CELL"
-  | "OUTSIDE_ISLAND"
-  | "NOT_WALKABLE_GROUND"
-  | "NEEDS_CAPABILITY"
+  | "OUT_OF_WORLD"
+  | "NOT_OWNED"
+  | "BLOCKED"
   | "OCCUPIED"
-  | "RESERVED";
+  | "INVALID_TERRAIN";
 
 export interface PreviewRequirement {
-  /** What the cell has to be able to do. */
-  readonly capability: CellCapability;
+  /** The ground the entry may stand on. */
+  readonly allowedTerrain: readonly PreviewGround[];
   readonly footprint: { readonly widthCells: number; readonly depthCells: number };
   /** True for a catalogue entry that is itself a road: a road lies on cells a building may not use. */
   readonly isRoad: boolean;
   /** True when the entry may only go on land the player owns. */
   readonly requiresOwnership: boolean;
+  /**
+   * Cells the check should treat as free, whatever stands on them.
+   *
+   * A move re-checks the ground around the object it is moving, and the object is not an obstacle to
+   * itself; without this the preview would refuse every spot a building already covers, including the
+   * one it is standing on. Every *other* occupant still counts.
+   */
+  readonly ignore?: readonly TileCoordinate[];
 }
 
 /**
@@ -53,31 +75,52 @@ export function footprintCells(
   return cells;
 }
 
-/** Why this entry could not go on this cell, or null when it could. */
+/**
+ * Why this entry could not go on this cell, or null when it could.
+ *
+ * The order is the server's order, because the *reason* is part of the answer: ownership first, then
+ * ground the island keeps, then what stands there, then the asset's own terrain. A player who is told
+ * "that is not your land" and a player who is told "something is already there" are being told two
+ * different things about their island.
+ */
 export function previewRejection(
   cells: WorldCellMap,
   origin: TileCoordinate | null,
   requirement: PreviewRequirement
 ): PreviewRejection | null {
   if (origin === null) return "NO_CELL";
+  const ignored = new Set((requirement.ignore ?? []).map((cell) => cellKey(cell.x, cell.y)));
   for (const cell of footprintCells(origin, requirement.footprint)) {
     const world = cells.cells.get(cellKey(cell.x, cell.y));
-    if (world === undefined) return "OUTSIDE_ISLAND";
-    if (world.terrain === "BLOCKED" || world.occupancy === "BUILDING") return "OCCUPIED";
-    if (world.terrain === "WATER" || world.terrain === "VOLCANO") {
-      // A cage may sit in water; nothing else may leave dry land.
-      if (!(requirement.capability === "AQUACULTURE" && world.terrain === "WATER")) {
-        return "NOT_WALKABLE_GROUND";
-      }
-    }
-    if (!world.capabilities.includes(requirement.capability)) return "NEEDS_CAPABILITY";
-    // A road lies on ground a building may not: it is the one thing that *changes* the cell it is on.
-    if (!requirement.isRoad && !world.buildable) {
-      return world.road !== null ? "RESERVED" : "NEEDS_CAPABILITY";
-    }
-    if (requirement.requiresOwnership && world.legacyFarmTile === null) return "RESERVED";
+    const self = ignored.has(cellKey(cell.x, cell.y));
+    if (world === undefined) return "OUT_OF_WORLD";
+    if (requirement.requiresOwnership && !world.owned) return "NOT_OWNED";
+    // Ground the island keeps, a building already standing there, or the island's authored road: all
+    // three are "not yours to change", which is what BLOCKED means.
+    if (world.reserved || world.terrain === "BLOCKED" || world.terrain === "VOLCANO") return "BLOCKED";
+    if (!self && !requirement.isRoad && world.road !== null) return "BLOCKED";
+    if (!self && world.occupancy !== "EMPTY") return "OCCUPIED";
+    if (!terrainAllows(requirement.allowedTerrain, world)) return "INVALID_TERRAIN";
   }
   return null;
+}
+
+/** Whether an asset that asks for these grounds may stand on this cell. */
+function terrainAllows(
+  allowed: readonly PreviewGround[],
+  cell: { readonly terrain: string; readonly shallowWater: boolean }
+): boolean {
+  switch (cell.terrain) {
+    case "LAND":
+      return allowed.includes("LAND");
+    case "SHORE":
+      return allowed.includes("SHORE");
+    case "WATER":
+      // A moored asset needs shallows it can be worked from; open water carries nothing today.
+      return cell.shallowWater ? allowed.includes("SHALLOW_WATER") : allowed.includes("WATER");
+    default:
+      return false;
+  }
 }
 
 /** A short human-readable reason, for the preview's status line. */
@@ -85,15 +128,15 @@ export function rejectionMessageKey(rejection: PreviewRejection): string {
   switch (rejection) {
     case "NO_CELL":
       return "build.reason.noCell";
-    case "OUTSIDE_ISLAND":
+    case "OUT_OF_WORLD":
       return "build.reason.outsideIsland";
-    case "NOT_WALKABLE_GROUND":
-      return "build.reason.wrongGround";
-    case "NEEDS_CAPABILITY":
-      return "build.reason.unsuitable";
+    case "NOT_OWNED":
+      return "build.reason.notOwned";
+    case "BLOCKED":
+      return "build.reason.blocked";
     case "OCCUPIED":
       return "build.reason.occupied";
-    case "RESERVED":
-      return "build.reason.reserved";
+    case "INVALID_TERRAIN":
+      return "build.reason.wrongGround";
   }
 }

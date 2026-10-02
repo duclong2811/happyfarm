@@ -22,7 +22,7 @@ import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurre
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -30,6 +30,14 @@ const ShopEnvelopeSchema = z.object({ ok: z.literal(true), data: GetShopResponse
 const FarmEnvelopeSchema = z.object({ ok: z.literal(true), data: z.object({ farm: z.looseObject({ id: z.string() }) }) });
 const ConstructionEnvelopeSchema = z.object({ ok: z.literal(true), data: z.object({ construction: ConstructionDTOSchema }) });
 const ConstructionsEnvelopeSchema = z.object({ ok: z.literal(true), data: z.object({ constructions: z.array(ConstructionDTOSchema) }) });
+const RemovedEnvelopeSchema = z.object({
+  ok: z.literal(true),
+  data: z.object({
+    constructionId: z.string(),
+    refundAmount: z.number().int().nonnegative(),
+    refundCurrencyDefinitionId: z.string()
+  })
+});
 const FailureEnvelopeSchema = z.object({ ok: z.literal(false), error: z.object({ code: z.string() }) });
 const WalletEnvelopeSchema = z.object({ ok: z.literal(true), data: GetWalletResponseSchema }).strict();
 const TilesEnvelopeSchema = z.object({ ok: z.literal(true), data: GetFarmTilesResponseSchema }).strict();
@@ -62,6 +70,12 @@ class FixedClock implements Clock {
 
 class FixedIds implements IdGenerator {
   private economySequence = 1;
+  /**
+   * A construction id per call, for the same reason the economy's ids count: a farm may hold more
+   * than one object now, and a generator that returned one id would make the *second* building
+   * collide with the first's primary key rather than testing what the test meant to test.
+   */
+  private constructionSequence = 1;
   newFarmId(): FarmId {
     return FARM_ONE_ID;
   }
@@ -75,7 +89,9 @@ class FixedIds implements IdGenerator {
     return parseEconomyTransactionId(`econ_eeeeeeee-eeee-4eee-8eee-${String(this.economySequence++).padStart(12, "0")}`);
   }
   newConstructionId(): ConstructionId {
-    return parseConstructionId("construct_11111111-1111-4111-8111-111111111111");
+    return parseConstructionId(
+      `construct_11111111-1111-4111-8111-${String(this.constructionSequence++).padStart(12, "0")}`
+    );
   }
 }
 
@@ -1397,6 +1413,295 @@ describe("Worker API foundation", () => {
       });
       expect(anonymous.status).toBe(401);
       expect(goldOf()).toBe(761);
+    });
+
+    /**
+     * The freeform rule, end to end: a tree goes on ordinary owned land, and nowhere else.
+     *
+     * This is the bug the pass opened with. The client used to call every cell inside the plot
+     * reservation "owned", so a tree placed at (20,20) - inside the 36x36 rectangle the catalogue can
+     * sell, and outside the twelve-tile square this farm actually has - previewed green and was then
+     * refused with CONSTRUCTION_NOT_OWNED. The server was right; the preview was wrong. Both now say
+     * the same thing, and this pins the server half: owned land takes the tree, and a cell nobody has
+     * bought does not.
+     */
+    it("places a tree on any owned cell, and refuses land the farm has not bought", async () => {
+      const farmId = await farmWithGold(400);
+      for (const [index, anchor] of [[0, 0], [11, 11]] .entries()) {
+        const built = await post(`/farms/${farmId}/constructions`, {
+          requestId: `build_owned_${String(index)}`,
+          entryId: "place_tree_broad",
+          anchorX: anchor[0] ?? 0,
+          anchorY: anchor[1] ?? 0,
+          rotation: 0
+        });
+        expect(built.status, `tree at ${String(anchor[0])},${String(anchor[1])}`).toBe(201);
+      }
+      // Inside the reservation, outside the farm's own rows: the same refusal the bug reported, and
+      // now the refusal the preview predicts rather than contradicts.
+      const reserved = await post(`/farms/${farmId}/constructions`, {
+        requestId: "build_reserved_001",
+        entryId: "place_tree_broad",
+        anchorX: 20,
+        anchorY: 20,
+        rotation: 0
+      });
+      expect(reserved.status).toBe(403);
+      expect(await codeOf(reserved)).toBe("CONSTRUCTION_NOT_OWNED");
+    });
+
+    describe("editing a built thing", () => {
+      /** Builds one thing and returns the row the server wrote. */
+      async function build(
+        farmId: string,
+        body: { readonly requestId: string; readonly entryId: string; readonly anchorX: number; readonly anchorY: number; readonly rotation: 0 | 1 | 2 | 3 }
+      ) {
+        const response = await post(`/farms/${farmId}/constructions`, body);
+        expect(response.status).toBe(201);
+        return constructionOf(response);
+      }
+
+      it("moves an object for free, releases the old cells, and persists the new place", async () => {
+        const farmId = await farmWithGold(2_000);
+        const tree = await build(farmId, {
+          requestId: "edit_move_001",
+          entryId: "place_tree_broad",
+          anchorX: 5,
+          anchorY: 5,
+          rotation: 0
+        });
+        const goldAfterBuild = goldOf();
+
+        const moved = await post(`/farms/${farmId}/constructions/${tree.constructionId}/move`, {
+          requestId: "edit_move_002",
+          anchorX: 7,
+          anchorY: 8,
+          rotation: 0,
+          expectedVersion: tree.version
+        });
+        expect(moved.status).toBe(200);
+        const after = await constructionOf(moved);
+        expect(after.constructionId).toBe(tree.constructionId);
+        expect(after.anchorX).toBe(7);
+        expect(after.anchorY).toBe(8);
+        // One version further on, and the move cost nothing: moving is not buying again.
+        expect(after.version).toBe(tree.version + 1);
+        expect(goldOf()).toBe(goldAfterBuild);
+
+        // The old ground is free again: another tree goes where the first one stood.
+        const replacement = await build(farmId, {
+          requestId: "edit_move_003",
+          entryId: "place_tree_pine",
+          anchorX: 5,
+          anchorY: 5,
+          rotation: 0
+        });
+        expect(replacement.anchorX).toBe(5);
+
+        // A reload reports one object at the new place and one at the old, and no ghost anywhere.
+        const reloaded = await handle(new Request(`https://api.test/farms/${farmId}/constructions`));
+        const list = ConstructionsEnvelopeSchema.parse(await reloaded.json()).data.constructions;
+        expect(list).toHaveLength(2);
+        expect(list.filter((entry) => entry.anchorX === 7 && entry.anchorY === 8)).toHaveLength(1);
+        expect(list.filter((entry) => entry.anchorX === 5 && entry.anchorY === 5)).toHaveLength(1);
+      });
+
+      it("refuses a move onto unowned land, into another object, or from a stale copy - and changes nothing", async () => {
+        const farmId = await farmWithGold(2_000);
+        const tree = await build(farmId, {
+          requestId: "edit_bad_001",
+          entryId: "place_tree_broad",
+          anchorX: 5,
+          anchorY: 5,
+          rotation: 0
+        });
+        await build(farmId, {
+          requestId: "edit_bad_002",
+          entryId: "place_tree_pine",
+          anchorX: 8,
+          anchorY: 8,
+          rotation: 0
+        });
+        const move = (body: Record<string, unknown>) =>
+          post(`/farms/${farmId}/constructions/${tree.constructionId}/move`, body);
+
+        const unowned = await move({ requestId: "edit_bad_003", anchorX: 20, anchorY: 20, rotation: 0, expectedVersion: tree.version });
+        expect(unowned.status).toBe(403);
+        expect(await codeOf(unowned)).toBe("CONSTRUCTION_NOT_OWNED");
+
+        const ontoAnother = await move({ requestId: "edit_bad_004", anchorX: 8, anchorY: 8, rotation: 0, expectedVersion: tree.version });
+        expect(ontoAnother.status).toBe(409);
+        expect(await codeOf(ontoAnother)).toBe("CONSTRUCTION_OCCUPIED");
+
+        const stale = await move({ requestId: "edit_bad_005", anchorX: 6, anchorY: 6, rotation: 0, expectedVersion: tree.version + 5 });
+        expect(stale.status).toBe(409);
+        expect(await codeOf(stale)).toBe("CONFLICT_STALE_STATE");
+
+        // Through all of it the object has not moved a cell, and no gold moved either.
+        const row = db.sqlite
+          .prepare("SELECT anchor_x, anchor_y, version FROM farm_constructions WHERE id = ?")
+          .get(tree.constructionId) as { anchor_x: number; anchor_y: number; version: number };
+        expect(row.anchor_x).toBe(5);
+        expect(row.anchor_y).toBe(5);
+        expect(row.version).toBe(tree.version);
+        expect(goldOf()).toBe(2_000 - 40 - 40);
+      });
+
+      it("turns an object, swapping the cells a rectangle covers", async () => {
+        const farmId = await farmWithGold(3_000);
+        const barn = await build(farmId, {
+          requestId: "edit_turn_001",
+          entryId: "place_barn_t1",
+          anchorX: 6,
+          anchorY: 6,
+          rotation: 0
+        });
+        expect(barn.footprint).toEqual({ widthCells: 4, depthCells: 3 });
+
+        const turned = await post(`/farms/${farmId}/constructions/${barn.constructionId}/rotate`, {
+          requestId: "edit_turn_002",
+          rotation: 1,
+          expectedVersion: barn.version
+        });
+        expect(turned.status).toBe(200);
+        const after = await constructionOf(turned);
+        // 4x3 becomes 3x4, and the anchor is the same cell it always was.
+        expect(after.footprint).toEqual({ widthCells: 3, depthCells: 4 });
+        expect(after.rotation).toBe(1);
+        expect(after.anchorX).toBe(6);
+        expect(after.anchorY).toBe(6);
+        expect(after.version).toBe(barn.version + 1);
+        expect(goldOf()).toBe(3_000 - 900);
+      });
+
+      it("refuses to turn something the catalogue says is fixed", async () => {
+        const farmId = await farmWithGold(3_000);
+        // A silo unlocks at level five, so the player is given the experience this test is about
+        // rather than the level gate it is not. The level is derived from xp by the one curve, which
+        // is why the row carries xp rather than a level somebody typed.
+        db.sqlite
+          .prepare("INSERT INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 5, 100000, 1, ?, ?)")
+          .run(PLAYER_ONE_ID, NOW, NOW);
+        // The silo is the one entry whose asset policy says it does not turn.
+        const silo = await build(farmId, {
+          requestId: "edit_fixed_001",
+          entryId: "place_silo",
+          anchorX: 6,
+          anchorY: 6,
+          rotation: 0
+        });
+        const turned = await post(`/farms/${farmId}/constructions/${silo.constructionId}/rotate`, {
+          requestId: "edit_fixed_002",
+          rotation: 1,
+          expectedVersion: silo.version
+        });
+        // 403, the same answer the catalogue gives for a thing that may not be built at all: the
+        // caller is allowed to edit their island, and this asset's own policy says not this.
+        expect(turned.status).toBe(403);
+        expect(await codeOf(turned)).toBe("CONSTRUCTION_NOT_ROTATABLE");
+      });
+
+      it("removes an object for the refund its asset declares, exactly once", async () => {
+        const farmId = await farmWithGold(3_000);
+        const barn = await build(farmId, {
+          requestId: "edit_remove_001",
+          entryId: "place_barn_t1",
+          anchorX: 6,
+          anchorY: 6,
+          rotation: 0
+        });
+        expect(goldOf()).toBe(2_100);
+
+        const removed = await post(`/farms/${farmId}/constructions/${barn.constructionId}/remove`, {
+          requestId: "edit_remove_002",
+          expectedVersion: barn.version
+        });
+        expect(removed.status).toBe(200);
+        const body = RemovedEnvelopeSchema.parse(await removed.json());
+        expect(body.data.constructionId).toBe(barn.constructionId);
+        // Half of 900, from the asset's own rate rather than from anything the client said.
+        expect(body.data.refundAmount).toBe(450);
+        expect(goldOf()).toBe(2_550);
+
+        const refundRow = db.sqlite
+          .prepare("SELECT delta, reason, reference_id FROM economy_ledger WHERE reason = 'CONSTRUCTION_REFUND'")
+          .get() as { delta: number; reason: string; reference_id: string };
+        expect(refundRow.delta).toBe(450);
+        expect(refundRow.reference_id).toBe(barn.constructionId);
+
+        // Repeating the same request is the same answer, not a second refund.
+        const again = await post(`/farms/${farmId}/constructions/${barn.constructionId}/remove`, {
+          requestId: "edit_remove_002",
+          expectedVersion: barn.version
+        });
+        expect(again.status).toBe(200);
+        expect(goldOf()).toBe(2_550);
+
+        // A new request for an object that no longer exists is a 404, and still no gold.
+        const missing = await post(`/farms/${farmId}/constructions/${barn.constructionId}/remove`, {
+          requestId: "edit_remove_003",
+          expectedVersion: barn.version + 1
+        });
+        expect(missing.status).toBe(404);
+        expect(goldOf()).toBe(2_550);
+
+        // The ground it stood on is free: something else may be built there now.
+        const replacement = await build(farmId, {
+          requestId: "edit_remove_004",
+          entryId: "place_tree_broad",
+          anchorX: 6,
+          anchorY: 6,
+          rotation: 0
+        });
+        expect(replacement.anchorX).toBe(6);
+      });
+
+      it("lets nobody else edit it: not another farm's owner, and not a colleague who did not build it", async () => {
+        const farmId = await farmWithGold(2_000);
+        const tree = await build(farmId, {
+          requestId: "edit_auth_001",
+          entryId: "place_tree_broad",
+          anchorX: 5,
+          anchorY: 5,
+          rotation: 0
+        });
+        db.sqlite
+          .prepare("INSERT INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'https://identity.test', 'subject-two', 'Player Two', 'ACTIVE', ?, ?)")
+          .run(PLAYER_TWO_ID, NOW, NOW);
+
+        // A stranger: not a member of this farm at all.
+        auth.setActor({ playerId: PLAYER_TWO_ID });
+        const foreign = await post(`/farms/${farmId}/constructions/${tree.constructionId}/move`, {
+          requestId: "edit_auth_002",
+          anchorX: 7,
+          anchorY: 7,
+          rotation: 0,
+          expectedVersion: tree.version
+        });
+        expect(foreign.status).toBe(403);
+        expect(await codeOf(foreign)).toBe("NOT_AUTHORIZED");
+
+        // A colleague with the editor role, who did not build this one: the farm's owner may
+        // administer it, but another editor may not quietly move somebody else's work.
+        db.sqlite
+          .prepare("INSERT INTO farm_members (farm_id, player_id, role, created_at) VALUES (?, ?, 'EDITOR', ?)")
+          .run(farmId, PLAYER_TWO_ID, NOW);
+        const colleague = await post(`/farms/${farmId}/constructions/${tree.constructionId}/move`, {
+          requestId: "edit_auth_003",
+          anchorX: 7,
+          anchorY: 7,
+          rotation: 0,
+          expectedVersion: tree.version
+        });
+        expect(colleague.status).toBe(403);
+        expect(await codeOf(colleague)).toBe("OBJECT_NOT_OWNED");
+
+        const row = db.sqlite
+          .prepare("SELECT anchor_x, anchor_y FROM farm_constructions WHERE id = ?")
+          .get(tree.constructionId) as { anchor_x: number; anchor_y: number };
+        expect(row.anchor_x).toBe(5);
+        expect(row.anchor_y).toBe(5);
+      });
     });
   });
 });

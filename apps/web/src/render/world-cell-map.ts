@@ -4,7 +4,6 @@ import type { TerrainShape } from "./terrain-height";
 import {
   COMPOSITION_PRESETS,
   DISTRICTS,
-  FARM_FIELD_BOUNDS,
   FARMSTEAD,
   HARBOUR,
   LANDMARKS_WORLD,
@@ -100,6 +99,20 @@ export interface WorldCellMapInput {
   readonly layout: FarmLayout;
   /** The land the server says the farm owns. */
   readonly tiles: readonly TileCoordinate[];
+  /**
+   * The cells the player's own built things occupy.
+   *
+   * Constructions are persistent rows, not scenery: a barn is an obstacle a walker goes around and a
+   * placement may not share, so the cells it covers are marked `BUILDING` exactly as a world landmark's
+   * are. Without this a second barn could be *previewed* on top of the first, which is the client
+   * teaching a rule the server then refuses.
+   */
+  readonly constructions: readonly {
+    readonly minX: number;
+    readonly maxX: number;
+    readonly minY: number;
+    readonly maxY: number;
+  }[];
   /** Cells the farm's own rows occupy: a crop or a tree standing on an owned tile. */
   readonly plantedTiles: readonly TileCoordinate[];
   readonly scenery: readonly CellScenerySource[];
@@ -222,6 +235,21 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
   const frame = worldFrame(input.layout.pitch);
   const buildings = buildingCells(frame);
   const planted = new Set(input.plantedTiles.map((tile) => cellKey(tile.x, tile.y)));
+  const owned = new Set(input.tiles.map((tile) => cellKey(tile.x, tile.y)));
+  const built = new Set<string>();
+  for (const construction of input.constructions) {
+    for (let y = construction.minY; y <= construction.maxY; y += 1) {
+      for (let x = construction.minX; x <= construction.maxX; x += 1) built.add(cellKey(x, y));
+    }
+  }
+  const decorated = new Set<string>();
+  for (const preset of COMPOSITION_PRESETS) {
+    for (let y = Math.floor(preset.anchor.y - preset.clearanceTiles); y <= Math.ceil(preset.anchor.y + preset.clearanceTiles); y += 1) {
+      for (let x = Math.floor(preset.anchor.x - preset.clearanceTiles); x <= Math.ceil(preset.anchor.x + preset.clearanceTiles); x += 1) {
+        if (Math.hypot(x - preset.anchor.x, y - preset.anchor.y) < preset.clearanceTiles) decorated.add(cellKey(x, y));
+      }
+    }
+  }
   const compositionClearings = COMPOSITION_PRESETS.map((preset) => ({
     x: preset.anchor.x,
     y: preset.anchor.y,
@@ -290,9 +318,6 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
       const terrain = classifyTerrain(tile, frame, position, buildings.occupied, island);
       const baseZone = zoneAt(tile);
       const key = cellKey(x, z);
-      const inReserve =
-        x >= FARM_FIELD_BOUNDS.minX && x <= FARM_FIELD_BOUNDS.maxX && z >= FARM_FIELD_BOUNDS.minY && z <= FARM_FIELD_BOUNDS.maxY;
-
       // Land use, most specific first. Three things the *island* decides, and nothing else: which band
       // of the volcano a cell is in, whether a water cell is shallow enough to be worked, and the
       // village square. There is no authored production area left - no crop blob, no orchard, no
@@ -326,8 +351,15 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
       const reserved = buildings.reserved.has(key);
       const plantedHere = planted.has(key);
       const sceneryKind = sceneryByCell.get(key);
+      const builtHere = built.has(key);
       const occupancy: CellOccupancy =
-        terrain === "BLOCKED" ? "BUILDING" : plantedHere ? "PRODUCTION" : sceneryKind === undefined ? "EMPTY" : "SCENERY";
+        terrain === "BLOCKED" || builtHere
+          ? "BUILDING"
+          : plantedHere
+            ? "PRODUCTION"
+            : sceneryKind === undefined
+              ? "EMPTY"
+              : "SCENERY";
 
       // What the ground may be used for, which is a question about the ground and not about the
       // district drawn over it, the reservation, or what happens to stand there now. A cell blocked by
@@ -338,14 +370,19 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
       // must not make walking annoying - and a tree's trunk is already a collision circle.
       const walkable = capabilities.includes("WALK");
       // The capability the land-use rule allows, narrowed to the land the server can actually grant:
-      // advertising a crop on ground the plot catalogue cannot sell would be a lie the client tells
-      // the player and the server then refuses.
+      // advertising a crop on ground the farm has no tile for would be a lie the client tells the
+      // player and the server then refuses. It is the *ownership* that narrows it, not the rectangle
+      // the catalogue could one day sell: locked plots are land nobody has yet.
       const allowed = productionCapabilityFor(terrain, zone);
       const capability: WorldCell["productionCapability"] =
-        allowed === "CROP" && !inReserve ? "NONE" : allowed;
+        allowed === "CROP" && !owned.has(key) ? "NONE" : allowed;
+      // What the island keeps for itself: a plot a later building is held for, and the furnished
+      // clearings the composition layer dresses. Not an economic district - these are places the
+      // island's own plan uses, and the player is not the one who decides them.
+      const protectedGround = reserved || decorated.has(key);
       const buildable =
         capabilities.includes("BUILD") &&
-        !reserved &&
+        !protectedGround &&
         occupancy === "EMPTY" &&
         road === null &&
         !compositionClearings.some((clearing) => Math.hypot(x - clearing.x, z - clearing.y) < clearing.r);
@@ -355,13 +392,18 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
         z,
         terrain,
         zone,
+        // Ownership is the server's own rows, exactly as planting reads them.
+        owned: owned.has(key),
+        shallowWater: terrain === "WATER" && zone === "AQUACULTURE",
+        reserved: protectedGround,
         walkable,
         buildable,
         occupancy,
         productionCapability: capability,
         capabilities,
         road,
-        legacyFarmTile: inReserve ? { x, y: z } : null
+        // The compatibility edge: a cell the farm owns *is* the farm tile the server can plant on.
+        legacyFarmTile: owned.has(key) ? { x, y: z } : null
       };
       cells.set(key, cell);
 

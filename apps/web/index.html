@@ -69,6 +69,12 @@
 
       <section id="placement-hud" class="placement-hud" aria-label="Placement" hidden></section>
 
+      <!--
+        The panel for the built thing the player has selected: what it is, and the actions its own
+        asset policy allows. Rendered by `renderObjectPanel`; hidden whenever nothing is selected.
+      -->
+      <section id="object-panel" class="placement-hud object-panel" aria-label="Selected object" hidden></section>
+
       <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>
         <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>
         <div class="action-buttons">

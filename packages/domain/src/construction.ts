@@ -12,6 +12,13 @@ import type { ConstructionId, FarmId, PlayerId } from "./ids";
  *
  * The rules here are pure and total: given the ground, the entry, and where the player pointed, either
  * every cell accepts it or the caller is told exactly which rule refused.
+ *
+ * **Land use is the player's.** A normal owned cell is ground a player may build on, whatever a
+ * landscape district happens to be drawn over it: there is no FARM, FORESTRY, BUILD or DECORATION
+ * capability to satisfy, and no economic zone to be inside. What remains is the short list of things
+ * that are physically or legally true - the ground the asset asks for, whose land it is, what is
+ * already standing there, and the ground the island keeps for itself. The *asset* says which terrain
+ * it can live on; the cell says what it is.
  */
 
 /** How far something has been turned, in quarter turns: 0, 1, 2 or 3. */
@@ -32,10 +39,35 @@ export interface ConstructionCell {
   /** Whether this cell is owned by the farm the player is building on. */
   readonly owned: boolean;
   readonly terrain: "LAND" | "SHORE" | "WATER" | "VOLCANO" | "BLOCKED";
-  readonly capabilities: readonly string[];
+  /**
+   * Whether this water is workable shallows rather than open sea.
+   *
+   * A moored asset - a fish cage, a jetty - needs water shallow enough to stand in and reach, and the
+   * island's shelf is a fact about its shape rather than a zone somebody drew. Dry cells are never
+   * shallow.
+   */
+  readonly shallowWater: boolean;
+  /**
+   * Whether the island keeps this cell for itself.
+   *
+   * The crater, the village's own buildings and their reserved ground, the harbour's approach and the
+   * island's authored infrastructure are places a player may not build over. This is a *protected
+   * area*, not an economic district: it says "not yours to change", never "not the right industry".
+   */
+  readonly protectedGround: boolean;
   /** True when a crop, a tree or another construction already stands here. */
   readonly occupied: boolean;
 }
+
+/**
+ * The ground an asset may stand on, as the asset itself declares it.
+ *
+ * `WATER` is open water, which nothing may use today; `SHALLOW_WATER` is the shelf a moored asset
+ * needs. The vocabulary is the physical one, so a future dock, cage or boat declares what it needs
+ * instead of the island declaring where it is allowed.
+ */
+export const CONSTRUCTION_GROUNDS = ["LAND", "SHORE", "SHALLOW_WATER", "WATER"] as const;
+export type ConstructionGround = (typeof CONSTRUCTION_GROUNDS)[number];
 
 /** The catalogue's own description of what may be built, as the domain needs it. */
 export interface ConstructionDefinition {
@@ -45,9 +77,15 @@ export interface ConstructionDefinition {
   readonly price: number;
   readonly currencyDefinitionId: string;
   readonly footprint: { readonly widthCells: number; readonly depthCells: number };
-  /** What the ground has to be able to do, in the cell vocabulary. */
-  readonly capability: string;
+  /** Every kind of ground this entry may stand on. At least one; the cell still has to agree. */
+  readonly allowedTerrain: readonly ConstructionGround[];
   readonly rotatable: boolean;
+  /** Whether the player may pick it up and put it down somewhere else. */
+  readonly movable: boolean;
+  /** Whether the player may remove it. */
+  readonly removable: boolean;
+  /** The share of its price a removal returns, 0..1. The server's number, never the client's. */
+  readonly removalRefundRate: number;
   /** How live the entry's effect is; a preview-only entry may not be built at all. */
   readonly status: "ACTIVE" | "FOUNDATION_ONLY" | "PREVIEW_ONLY";
   /** Whether the entry may only go on land the player owns. */
@@ -79,13 +117,16 @@ export interface ConstructionInstance {
 export type ConstructionRefusal =
   | "OUTSIDE_ISLAND"
   | "NOT_OWNED"
-  | "WRONG_GROUND"
-  | "NEEDS_CAPABILITY"
+  | "INVALID_TERRAIN"
   | "OCCUPIED"
-  | "VOLCANO"
+  | "BLOCKED"
   | "NOT_CONSTRUCTIBLE"
   | "LEVEL_REQUIRED"
-  | "INSUFFICIENT_FUNDS";
+  | "INSUFFICIENT_FUNDS"
+  /** The object exists and is the actor's; its asset policy forbids this edit. */
+  | "NOT_MOVABLE"
+  | "NOT_ROTATABLE"
+  | "NOT_REMOVABLE";
 
 /** Normalises any integer into one of the four quarter turns. */
 export function normaliseQuarterTurns(turns: number): QuarterTurns {
@@ -159,40 +200,144 @@ export interface PlacementCheck {
 }
 
 /**
- * Everything that has to be true before a construction may be created.
+ * The ground rules, shared by placing, moving and turning.
  *
- * Returns the first refusal rather than throwing so the caller can map it to a stable external code,
- * and so a test can assert the *reason* rather than only that something failed. `null` means the
- * placement is acceptable: the caller still has to win the race at the database.
+ * This is deliberately the whole of the "freeform" rule, and it is short: the asset's own terrain,
+ * whose land it is, what the island keeps for itself, and what already stands there. Nothing here
+ * asks what the land is *for*, because that is the player's decision and not the map's.
+ *
+ * `ignoreBounds` is the rectangle an object already covers - its own. A move re-checks the ground
+ * around the object it is moving, and the object is not an obstacle to itself; every *other*
+ * placement still is.
+ *
+ * Returns the first refusal rather than throwing, so the caller can map it to a stable external code
+ * and a test can assert the *reason* rather than only that something failed.
  */
-export function constructionRefusal(check: PlacementCheck): ConstructionRefusal | null {
-  const { definition, footprint, cells, occupied } = check;
-  if (definition.status === "PREVIEW_ONLY") return "NOT_CONSTRUCTIBLE";
-  if (check.playerLevel < definition.requiredLevel) return "LEVEL_REQUIRED";
-  if (check.balance < definition.price) return "INSUFFICIENT_FUNDS";
+export interface GroundCheck {
+  readonly definition: ConstructionDefinition;
+  readonly footprint: { readonly widthCells: number; readonly depthCells: number };
+  readonly cells: readonly ConstructionCell[];
+  readonly occupied: readonly CellBounds[];
+  readonly ignoreBounds?: CellBounds;
+}
+
+export function groundRefusal(check: GroundCheck): ConstructionRefusal | null {
+  const { definition, footprint, cells, occupied, ignoreBounds } = check;
   if (cells.length !== footprint.widthCells * footprint.depthCells) return "OUTSIDE_ISLAND";
 
   const bounds = boundsOf(cells);
   for (const existing of occupied) {
+    if (ignoreBounds !== undefined && sameBounds(existing, ignoreBounds)) continue;
     if (boundsIntersect(bounds, existing)) return "OCCUPIED";
   }
 
   for (const cell of cells) {
     // Ownership first: land the farm does not own is "not yours", whatever it happens to be made of.
     if (definition.requiresOwnership && !cell.owned) return "NOT_OWNED";
-    if (cell.terrain === "WATER") {
-      // Water may only carry something that asks for water capability, which the capability check
-      // below still has to pass.
-      if (definition.capability !== "AQUACULTURE") return "WRONG_GROUND";
-      continue;
-    }
-    if (cell.terrain === "VOLCANO") return "VOLCANO";
-    if (cell.terrain === "BLOCKED") return "OCCUPIED";
-    if (cell.terrain !== "LAND" && definition.capability !== "DOCK") return "WRONG_GROUND";
+    // Ground the island keeps for itself - the crater, the village's own buildings, the harbour's
+    // approach. Different from "somebody built here", which is `OCCUPIED`.
+    if (cell.protectedGround || cell.terrain === "VOLCANO" || cell.terrain === "BLOCKED") return "BLOCKED";
     if (cell.occupied) return "OCCUPIED";
-    if (!cell.capabilities.includes(definition.capability)) return "NEEDS_CAPABILITY";
+    if (!terrainAccepts(definition.allowedTerrain, cell)) return "INVALID_TERRAIN";
   }
   return null;
+}
+
+/** Whether an asset that asks for these grounds may stand on this cell. */
+export function terrainAccepts(allowed: readonly ConstructionGround[], cell: ConstructionCell): boolean {
+  switch (cell.terrain) {
+    case "LAND":
+      return allowed.includes("LAND");
+    case "SHORE":
+      return allowed.includes("SHORE");
+    case "WATER":
+      // A moored asset needs shallows it can be worked from; open water carries nothing today.
+      return cell.shallowWater ? allowed.includes("SHALLOW_WATER") : allowed.includes("WATER");
+    case "VOLCANO":
+    case "BLOCKED":
+      // Answered before this is asked: nothing may stand on either.
+      return false;
+  }
+}
+
+/**
+ * Everything that has to be true before a construction may be *created*: the ground, and the three
+ * things only a new placement has to pay for.
+ */
+export function constructionRefusal(check: PlacementCheck): ConstructionRefusal | null {
+  const { definition, footprint, cells, occupied } = check;
+  if (definition.status === "PREVIEW_ONLY") return "NOT_CONSTRUCTIBLE";
+  if (check.playerLevel < definition.requiredLevel) return "LEVEL_REQUIRED";
+  if (check.balance < definition.price) return "INSUFFICIENT_FUNDS";
+  return groundRefusal({ definition, footprint, cells, occupied });
+}
+
+/**
+ * What a move and a turn are checked against: the same ground rules, without the three questions only
+ * a *new* placement has to answer (a move does not re-check the level, and it costs nothing).
+ */
+export type EditCheck = GroundCheck;
+
+/** The refusals that only a *move* has to answer, on top of the same ground rules. */
+export function moveRefusal(check: EditCheck): ConstructionRefusal | null {
+  if (!check.definition.movable) return "NOT_MOVABLE";
+  return groundRefusal(check);
+}
+
+/** The refusals that only a *rotation* has to answer, on top of the same ground rules. */
+export function rotationRefusal(check: EditCheck): ConstructionRefusal | null {
+  if (!check.definition.rotatable) return "NOT_ROTATABLE";
+  return groundRefusal(check);
+}
+
+/** Whether a definition may be removed at all. The refund is the caller's other half. */
+export function removalRefusal(definition: ConstructionDefinition): ConstructionRefusal | null {
+  return definition.removable ? null : "NOT_REMOVABLE";
+}
+
+/**
+ * What a removal returns to the player, in the currency the object was bought with.
+ *
+ * The rate is the *asset's* own number, so a decoration may return nothing, a road a quarter of its
+ * gravel, and a building half of what it cost in materials. It is a definition, never a constant in
+ * the removal path, so rebalancing is a table edit rather than a rewrite.
+ */
+export function removalRefund(definition: ConstructionDefinition): number {
+  const rate = Math.min(1, Math.max(0, definition.removalRefundRate));
+  return Math.floor(definition.price * rate);
+}
+
+/**
+ * The object, moved and/or turned: the same identity, the same owner, the same ledger history, new
+ * ground and one version further on.
+ *
+ * `version` is what makes a move safe against a second player acting on a stale copy of the row: the
+ * repository writes only when the version it read is still the version in the database.
+ */
+export function moveConstruction(
+  instance: ConstructionInstance,
+  input: {
+    readonly anchor: { readonly x: number; readonly y: number };
+    readonly rotation: QuarterTurns;
+    readonly footprint: { readonly widthCells: number; readonly depthCells: number };
+    readonly updatedAt: string;
+  }
+): ConstructionInstance {
+  return {
+    ...instance,
+    anchorX: input.anchor.x,
+    anchorY: input.anchor.y,
+    rotation: input.rotation,
+    footprint: input.footprint,
+    bounds: constructionBounds(input.anchor, input.footprint),
+    updatedAt: input.updatedAt,
+    version: instance.version + 1
+  };
+}
+
+/** Whether two rectangles name the same ground. */
+function sameBounds(left: CellBounds, right: CellBounds): boolean {
+  return left.minX === right.minX && left.maxX === right.maxX && left.minY === right.minY && left.maxY === right.maxY;
 }
 
 /** The rectangle a set of cells covers. */

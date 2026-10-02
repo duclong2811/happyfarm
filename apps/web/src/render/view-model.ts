@@ -1,4 +1,4 @@
-import type { CropStateDTO, FarmTileDTO, PlotDTO, TreeStateDTO } from "@happy-farm/contracts";
+import type { ConstructionDTO, CropStateDTO, FarmTileDTO, PlotDTO, TreeStateDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type FarmLayout, type TilePlacement } from "./layout";
 import { buildFarmWorld, landFrame, type FarmWorld } from "./world";
 import { buildWorldCellMap } from "./world-cell-map";
@@ -72,11 +72,45 @@ export interface FarmViewState {
   readonly crops: readonly CropStateDTO[];
   readonly trees: readonly TreeStateDTO[];
   readonly plots: readonly PlotDTO[];
+  /**
+   * The player's own built things, when the caller has read them.
+   *
+   * Optional because the *farm* projection is a different read from the construction layer, and a
+   * caller that only wants the field (a test, a thumbnail, an early refresh) should not have to
+   * pretend it has them. Absent and empty mean the same thing here: nothing built is drawn, walked
+   * around or collided with, which is the honest state of a farm whose constructions have not been
+   * read yet.
+   */
+  readonly constructions?: readonly ConstructionDTO[];
   readonly selected: { readonly x: number; readonly y: number } | null;
 }
 
 function coordinateKey(x: number, y: number): string {
   return `${String(x)},${String(y)}`;
+}
+
+/**
+ * The rectangle a persisted construction covers.
+ *
+ * The anchor and the *already rotated* footprint are both in the DTO, so this is the same arithmetic
+ * the server's `constructionBounds` does rather than a second rule: the extra cell of an even side
+ * falls on the +x/+y side in both places, which is what keeps a preview, a saved row and an occupancy
+ * map naming the same ground.
+ */
+function constructionBoundsOf(construction: ConstructionDTO): {
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
+} {
+  const startX = construction.anchorX - Math.floor((construction.footprint.widthCells - 1) / 2);
+  const startY = construction.anchorY - Math.floor((construction.footprint.depthCells - 1) / 2);
+  return {
+    minX: startX,
+    maxX: startX + construction.footprint.widthCells - 1,
+    minY: startY,
+    maxY: startY + construction.footprint.depthCells - 1
+  };
 }
 
 /**
@@ -114,6 +148,15 @@ export function farmPresentationSignature(state: FarmViewState): string {
     parts.push(
       `r${tree.treeInstanceId}:${tree.definitionId}@${String(tree.tileX)},${String(tree.tileY)}` +
         `:${tree.phase}:${String(Math.round(tree.growthProgress * 100))}:${tree.ready ? "1" : "0"}:${String(tree.version)}`
+    );
+  }
+  // Built things belong in the presentation signature because they are *occupancy*: a barn the player
+  // puts down changes which cells may be built on, and the cell map has to be rebuilt for that.
+  for (const construction of state.constructions ?? []) {
+    parts.push(
+      `b${construction.constructionId}:${construction.entryId}` +
+        `@${String(construction.anchorX)},${String(construction.anchorY)}:${String(construction.rotation)}` +
+        `:${String(construction.version)}`
     );
   }
   return parts.join(";");
@@ -211,6 +254,7 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
   const cells = buildWorldCellMap({
     layout,
     tiles: uniqueTiles,
+    constructions: (state.constructions ?? []).map((construction) => constructionBoundsOf(construction)),
     plantedTiles: state.crops.map((crop) => ({ x: crop.tileX, y: crop.tileY })).concat(
       state.trees.map((tree) => ({ x: tree.tileX, y: tree.tileY }))
     ),

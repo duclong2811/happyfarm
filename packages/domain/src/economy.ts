@@ -43,7 +43,20 @@ export interface Wallet {
   readonly updatedAt: string;
 }
 
-export type EconomyReason = "SHOP_BUY" | "SHOP_SELL" | "FARM_EXPANSION" | "STARTER_GRANT" | "CONSTRUCTION";
+export type EconomyReason =
+  | "SHOP_BUY"
+  | "SHOP_SELL"
+  | "FARM_EXPANSION"
+  | "STARTER_GRANT"
+  | "CONSTRUCTION"
+  /**
+   * Money coming back when a player takes something down.
+   *
+   * Its own reason rather than a negative `CONSTRUCTION`: the ledger's whole job is to say *why* a
+   * balance moved, and "I built this" and "I dismantled this" are different facts about the same
+   * object. Both point at the construction, so the pair reads as the object's whole financial life.
+   */
+  | "CONSTRUCTION_REFUND";
 export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION";
 
 /**
@@ -65,7 +78,9 @@ const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   STARTER_GRANT: "PLAYER",
   // Construction money points at the thing that was built, so an audit can read the ledger row and
   // the construction row against each other.
-  CONSTRUCTION: "CONSTRUCTION"
+  CONSTRUCTION: "CONSTRUCTION",
+  // A refund points at the same object, from the other side: the ledger pair is the object's life.
+  CONSTRUCTION_REFUND: "CONSTRUCTION"
 };
 
 /** The one reference kind a reason may carry. The mapping is total, or the reason is not one. */

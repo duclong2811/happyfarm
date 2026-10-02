@@ -61,7 +61,6 @@ import {
   cellKey,
   EMPTY_WORLD_CELL_MAP,
   worldToCell,
-  type CellCapability,
   type WorldCell,
   type WorldCellMap
 } from "./render/world-cell";
@@ -146,6 +145,14 @@ interface AppState {
    */
   buildSelection: BuildCatalogEntryDTO | null;
   /**
+   * The player's own built thing the player is editing, or null.
+   *
+   * An *object*, not a cell: picking a barn selects the barn, and the panel offers what the asset's
+   * own policy allows - move it, turn it, take it down. The row is the server's; this only remembers
+   * which one the player clicked.
+   */
+  selectedObject: ConstructionDTO | null;
+  /**
    * Everything built on this farm, as the server last reported it.
    *
    * The world draws these; the shop's collision rule treats their footprints as taken. It is server
@@ -188,6 +195,7 @@ const state: AppState = {
   treeDefinitions: [],
   buildCatalog: [],
   buildSelection: null,
+  selectedObject: null,
   constructions: [],
   cellMap: EMPTY_WORLD_CELL_MAP,
   inventory: [],
@@ -404,7 +412,7 @@ function renderWallet(): void {
             (entry) =>
               `${String(entry.balance)} ${currencyLabel(entry.currencyId, entry.displayNameKey)}`
           )
-          .join(" · ");
+          .join(" Â· ");
 }
 
 function renderProgression(): void {
@@ -550,7 +558,7 @@ function renderCrops(): void {
   if (state.cropDefinitions.length === 0) {
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "—";
+    placeholder.textContent = "â€”";
     select.appendChild(placeholder);
     select.disabled = true;
     return;
@@ -573,7 +581,7 @@ function renderCrops(): void {
     }
     parts.push(t("dock.seedCount", { count: seedCount(definition) }));
     option.disabled = cropIsLocked(definition);
-    option.textContent = parts.join(" · ");
+    option.textContent = parts.join(" Â· ");
     cropGroup.appendChild(option);
   }
   const treeGroup = document.createElement("optgroup");
@@ -923,7 +931,7 @@ function renderInventory(): void {
     // One cell per stack: name and count, no card, so a growing inventory stays scannable.
     const cell = make("li", "inventory-cell");
     cell.appendChild(make("span", "inventory-name", itemName(entry.itemDefinitionId, entry.displayNameKey)));
-    cell.appendChild(make("span", "inventory-count", `×${String(entry.quantity)}`));
+    cell.appendChild(make("span", "inventory-count", `Ã—${String(entry.quantity)}`));
     list.appendChild(cell);
   }
 }
@@ -1268,6 +1276,8 @@ function toSceneConstruction(construction: ConstructionDTO): {
   readonly worldX: number;
   readonly worldZ: number;
   readonly rotationY: number;
+  readonly widthCells: number;
+  readonly depthCells: number;
 } {
   const entry = state.buildCatalog.find((candidate) => candidate.entryId === construction.entryId);
   const anchor = tileToWorld({ x: construction.anchorX, y: construction.anchorY }, worldFrame());
@@ -1277,7 +1287,9 @@ function toSceneConstruction(construction: ConstructionDTO): {
     modelId: modelId !== null && !modelId.startsWith("road.") ? modelId : null,
     worldX: anchor.worldX,
     worldZ: anchor.worldZ,
-    rotationY: (construction.rotation * Math.PI) / 2
+    rotationY: (construction.rotation * Math.PI) / 2,
+    widthCells: construction.footprint.widthCells,
+    depthCells: construction.footprint.depthCells
   };
 }
 
@@ -1339,18 +1351,15 @@ function goldText(): string {
   return (gold?.balance ?? 0).toLocaleString(state.language);
 }
 
-/** The capability a catalogue entry asks of a cell, as the world's own vocabulary spells it. */
-function capabilityOf(entry: BuildCatalogEntryDTO): CellCapability {
-  return entry.capability as CellCapability;
-}
-
 /** The requirement the preview rule reads, taken entirely from the catalogue entry and its rotation. */
 function previewRequirement(
   entry: BuildCatalogEntryDTO,
   footprint: { readonly widthCells: number; readonly depthCells: number }
 ): PreviewRequirement {
   return {
-    capability: capabilityOf(entry),
+    // The asset's own ground requirement, straight from the catalogue: dry land for almost everything,
+    // the shallows for a moored cage. No economic district is consulted, because none exists.
+    allowedTerrain: entry.allowedTerrain,
     footprint,
     isRoad: entry.category === "ROAD",
     // Everything a player builds goes on land the player has. The catalogue says so per entry; today
@@ -1404,6 +1413,10 @@ function previewRotationY(entry: BuildCatalogEntryDTO): number {
 function enterPlacement(entry: BuildCatalogEntryDTO): void {
   state.buildSelection = entry;
   placementTurns = 0;
+  // An object being edited and an item in hand are two different gestures: picking one up puts the
+  // other down.
+  clearObjectSelection();
+  scene?.setObjectPicking(false);
   setActivePanel(NO_PANEL);
   // Pick a cell to hold the item *before* the camera moves: the one the player selected, or the cell
   // the camera is already looking at. Placement always starts somewhere concrete, and the camera comes
@@ -1498,7 +1511,7 @@ function renderPlacementHud(): void {
   const meta = make("span", "placement-meta");
   meta.appendChild(createIcon("coin", 13));
   meta.appendChild(make("span", undefined, buildPriceText(entry)));
-  meta.appendChild(make("span", "placement-sep", "·"));
+  meta.appendChild(make("span", "placement-sep", "Â·"));
   meta.appendChild(
     make(
       "span",
@@ -1577,6 +1590,7 @@ async function confirmPlacement(): Promise<void> {
     state.buildSelection = null;
     placementTurns = 0;
     scene?.setPlacementPreview(null);
+    scene?.setObjectPicking(true);
     renderPlacementHud();
     refreshScene();
     await refreshAccount();
@@ -1601,8 +1615,394 @@ function cancelBuildSelection(): void {
   state.buildSelection = null;
   placementTurns = 0;
   scene?.setPlacementPreview(null);
+  scene?.setObjectPicking(true);
   renderPlacementHud();
   setStatus(message("status.placementCancelled"));
+}
+
+/*
+ * Editing what is already built: select an object, then move it, turn it, or take it down.
+ *
+ * The panel and the ghost are UI state. Every *rule* lives on the server: which objects may be moved
+ * or removed is the asset's own policy there, whether the destination is free is checked against the
+ * server's own rows, and the refund is the definition's number computed in the settlement. What this
+ * half does is describe the intention and show the server's answer.
+ */
+
+/** The move in progress, or null. `turns` is the orientation the ghost is currently drawn at. */
+let moveSession: { readonly construction: ConstructionDTO; turns: 0 | 1 | 2 | 3 } | null = null;
+/** True while an edit command is in flight, so a double click cannot send two. */
+let objectPending = false;
+/** True once the player has pressed Delete and is being asked to confirm it. */
+let deleteArmed = false;
+
+/** The catalogue entry a built thing came from: what it is called, and what may be done to it. */
+function constructionEntry(construction: ConstructionDTO): BuildCatalogEntryDTO | undefined {
+  return state.buildCatalog.find((candidate) => candidate.entryId === construction.entryId);
+}
+
+/** Every cell a construction covers, as the preview's "not an obstacle to itself" list. */
+function constructionCells(construction: ConstructionDTO): readonly { readonly x: number; readonly y: number }[] {
+  const startX = construction.anchorX - Math.floor((construction.footprint.widthCells - 1) / 2);
+  const startY = construction.anchorY - Math.floor((construction.footprint.depthCells - 1) / 2);
+  const cells: { x: number; y: number }[] = [];
+  for (let y = 0; y < construction.footprint.depthCells; y += 1) {
+    for (let x = 0; x < construction.footprint.widthCells; x += 1) cells.push({ x: startX + x, y: startY + y });
+  }
+  return cells;
+}
+
+/** Replaces one row in the client's copy of the server's list. The server's answer is the new truth. */
+function replaceConstruction(next: ConstructionDTO): void {
+  state.constructions = state.constructions.map((candidate) =>
+    candidate.constructionId === next.constructionId ? next : candidate
+  );
+  if (state.selectedObject?.constructionId === next.constructionId) state.selectedObject = next;
+}
+
+/** The player clicked one of their own objects: remember it and offer the asset's own actions. */
+function selectObject(constructionId: string): void {
+  const construction = state.constructions.find((candidate) => candidate.constructionId === constructionId);
+  if (construction === undefined) return;
+  // Picking a cell and picking an object are the same kind of act: only one of them is current.
+  state.buildSelection = null;
+  placementTurns = 0;
+  scene?.setPlacementPreview(null);
+  renderPlacementHud();
+  state.selectedObject = construction;
+  deleteArmed = false;
+  scene?.setObjectSelection(construction.constructionId);
+  renderObjectPanel();
+  renderField();
+}
+
+/** Drops the object selection: no mark, no panel, no armed delete. */
+function clearObjectSelection(): void {
+  if (state.selectedObject === null && moveSession === null) return;
+  state.selectedObject = null;
+  moveSession = null;
+  deleteArmed = false;
+  scene?.setObjectSelection(null);
+  scene?.setPlacementPreview(null);
+  scene?.setObjectPicking(true);
+  document.body.classList.remove("is-placing");
+  renderObjectPanel();
+}
+
+/**
+ * Picks the selected object up as a ghost.
+ *
+ * The original keeps its row, its cells and its rendering the whole time: the player is choosing a
+ * destination, not deleting and re-buying. Nothing is sent until the move is confirmed, so cancelling
+ * costs nothing at all and a failed move leaves the object exactly where it was.
+ */
+function beginMove(): void {
+  const construction = state.selectedObject;
+  if (construction === null || moveSession !== null) return;
+  const entry = constructionEntry(construction);
+  if (entry === undefined || !entry.movable) {
+    setStatus(message("object.notMovable"), true);
+    return;
+  }
+  moveSession = { construction, turns: construction.rotation };
+  deleteArmed = false;
+  // The ghost is drawn where the object already is, so the first thing the player sees is "this one".
+  selectCell(construction.anchorX, construction.anchorY);
+  state.selectedObject = construction;
+  scene?.setObjectPicking(false);
+  document.body.classList.add("is-placing");
+  scene?.focusOnCell({ x: construction.anchorX, y: construction.anchorY });
+  updateMovePreview();
+  renderObjectPanel();
+  setStatus(message("object.moveHint"));
+}
+
+/** Abandons the move: the ghost goes, the object was never touched. */
+function cancelMove(): void {
+  if (moveSession === null) return;
+  moveSession = null;
+  scene?.setPlacementPreview(null);
+  scene?.setObjectPicking(true);
+  document.body.classList.remove("is-placing");
+  renderObjectPanel();
+  setStatus(message("object.moveCancelled"));
+}
+
+/** Draws the ghost at the prospective destination, valid or not, exactly as placement does. */
+function updateMovePreview(): void {
+  const session = moveSession;
+  if (session === null) return;
+  const entry = constructionEntry(session.construction);
+  if (entry === undefined) return;
+  const footprint = rotatedFootprint(entry.footprint, session.turns);
+  scene?.setPlacementPreview({
+    modelId: entry.modelId !== null && !isProceduralVisual(entry.modelId) ? entry.modelId : null,
+    roadTierId: entry.category === "ROAD" ? entry.tier : null,
+    widthCells: footprint.widthCells,
+    depthCells: footprint.depthCells,
+    valid: moveRejectionFor(session) === null,
+    rotationY: quarterTurnYaw(session.turns)
+  });
+}
+
+/** Why the object cannot go where the selection currently is, or null when it can. */
+function moveRejectionFor(session: { readonly construction: ConstructionDTO; readonly turns: 0 | 1 | 2 | 3 }): MessageKey | null {
+  if (scene === null) return null;
+  const entry = constructionEntry(session.construction);
+  if (entry === undefined) return null;
+  const footprint = rotatedFootprint(entry.footprint, session.turns);
+  const rejection = previewRejection(state.cellMap, state.selected, {
+    ...previewRequirement(entry, footprint),
+    // The object is not an obstacle to itself; everything else on the island still is.
+    ignore: constructionCells(session.construction)
+  });
+  return rejection === null ? null : (rejectionMessageKey(rejection) as MessageKey);
+}
+
+/** Turns the ghost. Only the preview is rebuilt: no world rebuild, no command. */
+function rotateMovePreview(step: number): void {
+  const session = moveSession;
+  if (session === null) return;
+  const entry = constructionEntry(session.construction);
+  if (entry === undefined || !entry.rotatable) {
+    setStatus(message("build.notRotatable"));
+    return;
+  }
+  moveSession = { construction: session.construction, turns: normaliseQuarterTurns(session.turns + step) };
+  updateMovePreview();
+  renderObjectPanel();
+}
+
+/** Sends the move. The server decides whether the ground is free and writes one atomic row. */
+async function confirmMove(): Promise<void> {
+  const session = moveSession;
+  if (session === null || objectPending || state.farmId === null || state.selected === null) return;
+  const entry = constructionEntry(session.construction);
+  if (entry === undefined) return;
+  const rejection = moveRejectionFor(session);
+  if (rejection !== null) {
+    setStatus((translate) => translate("build.cannotPlace", { reason: translate(rejection) }), true);
+    return;
+  }
+  objectPending = true;
+  renderObjectPanel();
+  try {
+    const moved = await api().moveConstruction(state.farmId, session.construction.constructionId, {
+      requestId: newRequestId("move"),
+      anchorX: state.selected.x,
+      anchorY: state.selected.y,
+      rotation: session.turns,
+      // The version the client is looking at: the server refuses a move built on a stale copy.
+      expectedVersion: session.construction.version
+    });
+    replaceConstruction(moved.construction);
+    moveSession = null;
+    scene?.setPlacementPreview(null);
+    scene?.setObjectPicking(true);
+    document.body.classList.remove("is-placing");
+    scene?.setObjectSelection(moved.construction.constructionId);
+    refreshScene();
+    setStatus((translate) => translate("object.moved", { item: buildEntryName(entry) }));
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+  } finally {
+    objectPending = false;
+    renderObjectPanel();
+  }
+}
+
+/**
+ * Turns the selected object a quarter turn clockwise, in place.
+ *
+ * A turn is not a move: the anchor does not change, so the server re-checks only the footprint of the
+ * new orientation. One activation, one quarter turn - not a separate preview mode, because the shape
+ * of a barn is easy to predict and the server refuses an overlap either way.
+ */
+async function rotateSelectedObject(): Promise<void> {
+  const construction = state.selectedObject;
+  if (construction === null || objectPending || state.farmId === null || moveSession !== null) return;
+  const entry = constructionEntry(construction);
+  if (entry === undefined || !entry.rotatable) {
+    setStatus(message("build.notRotatable"), true);
+    return;
+  }
+  objectPending = true;
+  deleteArmed = false;
+  renderObjectPanel();
+  try {
+    const turned = await api().rotateConstruction(state.farmId, construction.constructionId, {
+      requestId: newRequestId("turn"),
+      rotation: normaliseQuarterTurns(construction.rotation + 1),
+      expectedVersion: construction.version
+    });
+    replaceConstruction(turned.construction);
+    scene?.setObjectSelection(turned.construction.constructionId);
+    refreshScene();
+    setStatus((translate) => translate("object.rotated", { item: buildEntryName(entry) }));
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+  } finally {
+    objectPending = false;
+    renderObjectPanel();
+  }
+}
+
+/** Takes the selected object down, once the player has confirmed it and the server has said so. */
+async function confirmDelete(): Promise<void> {
+  const construction = state.selectedObject;
+  if (construction === null || objectPending || !deleteArmed || state.farmId === null) return;
+  const entry = constructionEntry(construction);
+  if (entry === undefined) return;
+  objectPending = true;
+  renderObjectPanel();
+  try {
+    const removed = await api().removeConstruction(state.farmId, construction.constructionId, {
+      requestId: newRequestId("remove"),
+      expectedVersion: construction.version
+    });
+    state.constructions = state.constructions.filter(
+      (candidate) => candidate.constructionId !== removed.constructionId
+    );
+    state.selectedObject = null;
+    deleteArmed = false;
+    scene?.setObjectSelection(null);
+    refreshScene();
+    await refreshAccount();
+    setStatus(
+      removed.refundAmount > 0
+        ? (translate) => translate("object.removedRefund", { item: buildEntryName(entry), gold: removed.refundAmount.toLocaleString(state.language) })
+        : (translate) => translate("object.removed", { item: buildEntryName(entry) })
+    );
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+  } finally {
+    objectPending = false;
+    renderObjectPanel();
+  }
+}
+
+/**
+ * The compact panel for the selected object.
+ *
+ * Only the actions the asset allows are offered, and Delete is two presses rather than one: the first
+ * asks, the second does it. A refund is described as a *range of what the server will decide* only
+ * after the fact - the panel says what the asset's policy returns, and the status line reports what
+ * actually came back.
+ */
+function renderObjectPanel(): void {
+  const node = element<HTMLElement>("object-panel");
+  const construction = state.selectedObject;
+  if (construction === null) {
+    node.hidden = true;
+    node.replaceChildren();
+    return;
+  }
+  const entry = constructionEntry(construction);
+  if (entry === undefined) {
+    node.hidden = true;
+    node.replaceChildren();
+    return;
+  }
+  node.hidden = false;
+  node.replaceChildren();
+
+  const copy = make("div", "placement-copy");
+  copy.appendChild(make("strong", "placement-name", buildEntryName(entry)));
+  const meta = make("span", "placement-meta");
+  meta.appendChild(
+    make(
+      "span",
+      undefined,
+      t("build.inspector.cells", {
+        width: construction.footprint.widthCells,
+        depth: construction.footprint.depthCells
+      })
+    )
+  );
+  meta.appendChild(make("span", "placement-sep", "Â·"));
+  meta.appendChild(
+    make("span", undefined, t("object.info.level", { level: entry.requiredLevel }))
+  );
+  copy.appendChild(meta);
+  node.appendChild(copy);
+
+  if (moveSession !== null) {
+    const line = make("p", moveRejectionFor(moveSession) === null ? "placement-state is-valid" : "placement-state is-invalid");
+    const where = state.selected === null ? "" : ` ${at(state.selected)}`;
+    line.textContent =
+      (moveRejectionFor(moveSession) === null
+        ? t("object.moveValid")
+        : t("build.cannotPlace", { reason: t(moveRejectionFor(moveSession) as MessageKey) })) + where;
+    node.appendChild(line);
+    const keys = make("ul", "placement-keys");
+    const key = (keysText: string, label: string): HTMLLIElement => {
+      const item = make("li");
+      item.appendChild(make("kbd", undefined, keysText));
+      item.appendChild(make("span", undefined, label));
+      return item;
+    };
+    if (entry.rotatable) keys.appendChild(key("Q / E", t("build.hud.rotate")));
+    keys.appendChild(key(t("build.hud.clickKey"), t("object.move.pick")));
+    keys.appendChild(key("Enter", t("object.move.confirm")));
+    keys.appendChild(key("Esc", t("build.hud.cancel")));
+    node.appendChild(keys);
+  }
+
+  if (deleteArmed) {
+    const refund = Math.floor(entry.price * entry.removalRefundRate);
+    const line = make("p", "placement-state is-invalid");
+    line.textContent = t("object.delete.confirm", { item: buildEntryName(entry) });
+    node.appendChild(line);
+    if (refund > 0) {
+      const note = make("p", "placement-note");
+      note.textContent = t("object.delete.refund", { gold: refund.toLocaleString(state.language) });
+      node.appendChild(note);
+    }
+  }
+
+  const actions = make("div", "object-actions");
+  const action = (label: string, className: string, handler: () => void, disabled = false): HTMLButtonElement => {
+    const button = make("button", className);
+    button.type = "button";
+    button.textContent = label;
+    button.disabled = disabled || objectPending;
+    button.addEventListener("click", handler);
+    return button;
+  };
+  // Confirming a delete replaces the action row rather than joining it: the question is "delete
+  // this?", and offering Move and Rotate underneath it would be three answers to one question.
+  if (deleteArmed) {
+    actions.appendChild(action(t("object.delete.yes"), "object-action is-danger", () => void confirmDelete()));
+    actions.appendChild(
+      action(t("object.delete.no"), "object-action", () => {
+        deleteArmed = false;
+        renderObjectPanel();
+      })
+    );
+  } else if (moveSession === null) {
+    if (entry.movable) actions.appendChild(action(t("object.action.move"), "object-action", beginMove));
+    if (entry.rotatable) {
+      actions.appendChild(action(t("object.action.rotate"), "object-action", () => void rotateSelectedObject()));
+    }
+    if (entry.removable) {
+      actions.appendChild(
+        action(
+          t("object.action.delete"),
+          "object-action is-danger",
+          () => {
+            deleteArmed = true;
+            renderObjectPanel();
+          },
+          objectPending
+        )
+      );
+    }
+    actions.appendChild(action(t("object.action.close"), "object-action", clearObjectSelection));
+  } else {
+    actions.appendChild(action(t("object.move.confirm"), "placement-confirm", () => void confirmMove()));
+    actions.appendChild(action(t("object.move.cancel"), "object-action", cancelMove));
+  }
+  node.appendChild(actions);
 }
 
 /**
@@ -1659,6 +2059,7 @@ function render(): void {
   renderShop();
   // The shop's own render is driven by the panel: see `setActivePanel`.
   if (panels.active === "build") renderBuildPanel();
+  renderObjectPanel();
   renderStatus();
   renderSceneState();
   syncLayoutMetrics();
@@ -1923,11 +2324,24 @@ function selectCell(x: number, y: number): void {
         })
     );
   }
+  // While an object is being moved, the same click is the destination: the ghost follows the
+  // selection, the panel re-reads whether this cell accepts the object, and nothing is sent until the
+  // player confirms it.
+  if (moveSession !== null) {
+    updateMovePreview();
+    renderObjectPanel();
+  }
   // Clicking the ground is also how a player says "walk there". The destination is offered only for
   // a cell a character can actually stand on, and it is never an *action*: planting and harvesting
   // stay on the dock's own buttons, so a mis-click cannot change the farm.
-  const destination = walkDestinationFor(state.selected);
-  if (destination !== null) playerRuntime.setDestination(destination);
+  //
+  // While an object is being carried, the same clicks are *its* destination and nothing else: the
+  // player is choosing where a barn goes, and setting off on foot to every cell they hover over
+  // would be a second, unwanted answer to the same click.
+  if (moveSession === null) {
+    const destination = walkDestinationFor(state.selected);
+    if (destination !== null) playerRuntime.setDestination(destination);
+  }
 }
 
 /**
@@ -2006,6 +2420,11 @@ function enable3D(): void {
         quality: renderQualityRequested(),
         onCellSelected: (cell) => {
           selectCell(cell.x, cell.y);
+        },
+        onObjectSelected: (constructionId) => {
+          // While something is in hand or an object is being moved, a click belongs to that gesture -
+          // the renderer only reports objects when the host has said they are pickable.
+          selectObject(constructionId);
         },
         onAssetProblem: (assetId, error) => {
           // The crop keeps its placeholder art, so this is information rather than a failure the page
@@ -2468,11 +2887,33 @@ function wire(): void {
       void confirmPlacement();
       return;
     }
+    // The same keys drive a move: Q/E turn the ghost, Enter puts it down. A move owns the keyboard
+    // while it is in progress, exactly as an item in hand does.
+    if (!typing && moveSession !== null && (event.key === "q" || event.key === "Q")) {
+      rotateMovePreview(-1);
+      return;
+    }
+    if (!typing && moveSession !== null && (event.key === "e" || event.key === "E")) {
+      rotateMovePreview(1);
+      return;
+    }
+    if (moveSession !== null && event.key === "Enter") {
+      void confirmMove();
+      return;
+    }
     if (event.key !== "Escape") return;
     // Escape lets go of whatever the page is holding, innermost first: the item in hand, then the
     // panel. Cancelling a placement must leave nothing behind - no ghost, no footprint, no state.
     if (state.buildSelection !== null) {
       cancelBuildSelection();
+      return;
+    }
+    if (moveSession !== null) {
+      cancelMove();
+      return;
+    }
+    if (state.selectedObject !== null) {
+      clearObjectSelection();
       return;
     }
     if (panels.active !== null) setActivePanel(closePanel(panels));

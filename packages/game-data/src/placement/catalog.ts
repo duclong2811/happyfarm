@@ -6,7 +6,7 @@ import {
   roadTiers,
   type RoadTierId
 } from "../roads";
-import { createPlacementCatalog, type PlacementCatalogEntryData } from "./schema";
+import { createPlacementCatalog, type PlacementCatalogEntryData, type PlacementCategory } from "./schema";
 
 /**
  * The ship list: everything a player can build or plant, and nothing that does not exist.
@@ -77,6 +77,29 @@ export const PROVISIONAL_ASSET_PRICES = {
 } as const;
 
 /**
+ * What a removal returns, as a share of what the thing cost.
+ *
+ * **Provisional, and deliberately not one number.** The honest answer differs by what the thing is
+ * made of: a barn's timbers and stones are half its price again as materials, a road's gravel is
+ * partly recoverable, and a planting or a lantern comes back as nothing at all. These are balance
+ * numbers a later economy pass owns; what this pass establishes is that the rate belongs to the
+ * *asset*, so rebalancing is an edit to this table rather than a rewrite of the removal path.
+ *
+ * No tier of this table may exceed 1: a refund can never be a way to make gold.
+ */
+export const REMOVAL_REFUND_POLICY: Readonly<Record<PlacementCategory, number>> = {
+  BUILDING: 0.5,
+  UTILITY: 0.5,
+  MONUMENT: 0.5,
+  WATERFRONT: 0.5,
+  ROAD: 0.25,
+  FENCE: 0.25,
+  DECORATION: 0,
+  LIGHTING: 0,
+  VEGETATION: 0
+};
+
+/**
  * The road entries, built from the tier table so a price can never be restated.
  *
  * A road is the one category whose prices are decided elsewhere, and the one whose ids a test pins to
@@ -102,10 +125,16 @@ function roadEntries(): PlacementCatalogEntryData[] {
         widthCells: roadFootprintWidthCells(tier.renderKind),
         depthCells: ROAD_SEGMENT_CELLS
       },
-      capability: "ROAD" as const,
+      // A road is laid on owned ground, like everything else a player builds. The player's own asphalt
+      // is not the island's authored highway: that one is world infrastructure and this catalogue
+      // never names it.
+      allowedTerrain: ["LAND"] as const,
       tier: tierId,
       upgradeTo: next === undefined ? null : `place_road_${next.surface.toLowerCase()}`,
       rotatable: true,
+      movable: true,
+      removable: true,
+      removalRefundRate: REMOVAL_REFUND_POLICY.ROAD,
       decorative: false,
       tags: ["infrastructure"],
       descriptionKey: "place.road.description",
@@ -136,10 +165,14 @@ function assetEntries(): PlacementCatalogEntryData[] {
     currencyDefinitionId: gold,
     modelId,
     footprint: { widthCells: 1, depthCells: 1 },
-    capability: "DECORATION",
+    // An ordinary owned cell takes a planting, a rock or a bench: the ground only has to be dry land.
+    allowedTerrain: ["LAND"],
     tier: null,
     upgradeTo: null,
     rotatable: true,
+    movable: true,
+    removable: true,
+    removalRefundRate: REMOVAL_REFUND_POLICY.VEGETATION,
     decorative: true,
     tags: [...tags],
     descriptionKey: null,
@@ -153,7 +186,26 @@ function assetEntries(): PlacementCatalogEntryData[] {
     priceGold: number,
     requiredLevel: number,
     tags: readonly string[]
-  ): PlacementCatalogEntryData => ({ ...planting(id, modelId, labelKey, priceGold, requiredLevel, tags), category: "DECORATION" });
+  ): PlacementCatalogEntryData => ({
+    ...planting(id, modelId, labelKey, priceGold, requiredLevel, tags),
+    category: "DECORATION",
+    removalRefundRate: REMOVAL_REFUND_POLICY.DECORATION
+  });
+  /**
+   * The placement and editing fields for a thing that stands on dry land.
+   *
+   * Every building the catalogue sells is the player's own, so every one may be picked up and taken
+   * down, for the refund its category declares. A row that ever needs to differ states the field
+   * itself after the spread - which is what "the policy is data" has to mean in practice.
+   */
+  const onLand = (
+    category: PlacementCategory
+  ): Pick<PlacementCatalogEntryData, "allowedTerrain" | "movable" | "removable" | "removalRefundRate"> => ({
+    allowedTerrain: ["LAND"],
+    movable: true,
+    removable: true,
+    removalRefundRate: REMOVAL_REFUND_POLICY[category]
+  });
 
   return [
     // ---- Vegetation: what makes an empty island a place --------------------------------
@@ -172,12 +224,13 @@ function assetEntries(): PlacementCatalogEntryData[] {
     {
       ...decoration("place_fence_rail", "prop_fence_rail", "place.fence_rail.name", price.fenceLength, level.BASIC, ["fencing"]),
       category: "FENCE",
-      capability: "DECORATION",
+      removalRefundRate: REMOVAL_REFUND_POLICY.FENCE,
       rotatable: true
     },
     {
       ...decoration("place_fence_rail_long", "prop_fence_rail_long", "place.fence_rail_long.name", price.fenceLength * 2, level.BASIC, ["fencing"]),
-      category: "FENCE"
+      category: "FENCE",
+      removalRefundRate: REMOVAL_REFUND_POLICY.FENCE
     },
 
     // ---- Decoration: the things that make it somebody's farm ---------------------------
@@ -191,16 +244,20 @@ function assetEntries(): PlacementCatalogEntryData[] {
     decoration("place_well", "civic.well.t1", "place.well.name", price.well, level.ESTABLISHED, ["water"]),
     {
       ...decoration("place_lantern", "prop_lantern", "place.lantern.name", price.lantern, level.ESTABLISHED, ["light"]),
-      category: "LIGHTING"
+      category: "LIGHTING",
+      removalRefundRate: REMOVAL_REFUND_POLICY.LIGHTING
     },
     {
       ...decoration("place_workbench", "prop_workbench", "place.workbench.name", price.workbench, level.SETTLED, ["work"]),
-      category: "UTILITY"
+      category: "UTILITY",
+      removalRefundRate: REMOVAL_REFUND_POLICY.UTILITY
     },
     {
       ...decoration("place_fish_cage", "prop_cage_small", "place.fish_cage.name", price.fishCage, level.ESTABLISHED, ["water"]),
       category: "WATERFRONT",
-      capability: "AQUACULTURE"
+      removalRefundRate: REMOVAL_REFUND_POLICY.WATERFRONT,
+      // The one asset in the catalogue that may not stand on land: a cage is moored in the shallows.
+      allowedTerrain: ["SHALLOW_WATER"]
     },
 
     // ---- Buildings: the working farm the player grows into ----------------------------
@@ -213,7 +270,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.barn.t1",
       footprint: { widthCells: 4, depthCells: 3 },
-      capability: "BUILD",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: "place_barn_t2",
       rotatable: true,
@@ -231,7 +288,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.barn.t2",
       footprint: { widthCells: 5, depthCells: 4 },
-      capability: "BUILD",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: "place_barn_t3",
       rotatable: true,
@@ -249,7 +306,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.barn.t3",
       footprint: { widthCells: 6, depthCells: 5 },
-      capability: "BUILD",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: null,
       rotatable: true,
@@ -267,7 +324,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.coop.t1",
       footprint: { widthCells: 3, depthCells: 3 },
-      capability: "LIVESTOCK",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: "place_open_barn",
       rotatable: true,
@@ -285,7 +342,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.openbarn.t1",
       footprint: { widthCells: 4, depthCells: 3 },
-      capability: "LIVESTOCK",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: null,
       rotatable: true,
@@ -303,7 +360,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.silo.t1",
       footprint: { widthCells: 2, depthCells: 2 },
-      capability: "BUILD",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: "place_silo_house",
       rotatable: false,
@@ -321,7 +378,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.silo_house.t2",
       footprint: { widthCells: 3, depthCells: 3 },
-      capability: "BUILD",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: null,
       rotatable: true,
@@ -339,7 +396,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       currencyDefinitionId: gold,
       modelId: "farm.windmill.t2",
       footprint: { widthCells: 3, depthCells: 3 },
-      capability: "BUILD",
+      ...onLand("BUILDING"),
       tier: null,
       upgradeTo: null,
       rotatable: false,

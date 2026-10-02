@@ -194,18 +194,50 @@ export interface ConstructionPlacement {
 }
 
 /**
+ * An object being moved or turned, and the version the caller believes it is on.
+ *
+ * The version is not decoration: the repository writes only when the row still has it, so a move
+ * built on a stale read is refused rather than silently overwriting somebody else's change.
+ */
+export interface ConstructionRelocation {
+  readonly construction: ConstructionInstance;
+  readonly expectedVersion: number;
+}
+
+/**
+ * An object being taken down, and the money that comes back for it.
+ *
+ * `refund` is null when the asset's policy returns nothing - which is a real policy, not a missing
+ * value - and the removal then has no ledger row at all.
+ */
+export interface ConstructionRemoval {
+  /** The farm the object stands on: the delete is filtered by it as well as by the version. */
+  readonly farmId: FarmId;
+  readonly constructionId: ConstructionId;
+  readonly expectedVersion: number;
+  readonly refund: EconomyMutation | null;
+}
+
+/**
  * The one write boundary for player construction.
  *
  * `listBounds` is what the collision rule reads: the rectangles already covered on this farm, so a
  * new footprint can be refused before a row is written. `placeAtomically` writes the construction, the
  * wallet movement, its ledger row, and the idempotency receipt as one batch - and the database itself
  * refuses a second construction on the same ground, so two racing placements cannot both win.
+ *
+ * `relocateAtomically` and `removeAtomically` are the editing half, and they are guarded the same way:
+ * the object's own cells are excluded from the overlap rule, the destination cells are checked against
+ * ownership and the crop/tree cross-occupancy triggers, and the receipt is written only if the effect
+ * it names actually happened.
  */
 export interface ConstructionRepository {
   findById(id: ConstructionId): Promise<ConstructionInstance | null>;
   listByFarm(farmId: FarmId): Promise<readonly ConstructionInstance[]>;
   listBounds(farmId: FarmId): Promise<readonly CellBounds[]>;
   placeAtomically(placement: ConstructionPlacement, idempotency: IdempotencyRecord): Promise<void>;
+  relocateAtomically(relocation: ConstructionRelocation, idempotency: IdempotencyRecord): Promise<void>;
+  removeAtomically(removal: ConstructionRemoval, idempotency: IdempotencyRecord): Promise<void>;
 }
 
 /** The catalogue, as the placement rules need it: what may be built, and what it costs. */

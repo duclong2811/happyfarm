@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   roadFootprintWidthCells,
   CATALOGUE_MODEL_IDS,
-  PLACEMENT_CAPABILITIES,
+  PLACEMENT_GROUNDS,
   PLACEMENT_CATEGORIES,
   PROCEDURAL_MODEL_IDS,
   PROVISIONAL_ROAD_PRICES,
@@ -154,19 +154,10 @@ describe("the build catalogue", () => {
       "LIGHTING",
       "WATERFRONT"
     ]);
-    // The capability vocabulary is the island's own, and a catalogue entry may only ask for one of it.
-    expect([...PLACEMENT_CAPABILITIES]).toEqual([
-      "WALK",
-      "BUILD",
-      "FARM",
-      "FORESTRY",
-      "LIVESTOCK",
-      "ROAD",
-      "DECORATION",
-      "AQUACULTURE",
-      "DOCK",
-      "MINING"
-    ]);
+    // The ground vocabulary is *physical*: an entry asks for dry land, a beach, the shallows or open
+    // water, and nothing economic is in the list. There is deliberately no FARM, FORESTRY or BUILD
+    // district for a placement to require - the player's own land decides that.
+    expect([...PLACEMENT_GROUNDS]).toEqual(["LAND", "SHORE", "SHALLOW_WATER", "WATER"]);
   });
 
   it("ships one entry per road tier, and the players' own things beside them", () => {
@@ -176,7 +167,10 @@ describe("the build catalogue", () => {
       const entry = placementEntries.find((candidate) => candidate.tier === tierId);
       expect(entry).toBeDefined();
       expect(entry?.category).toBe("ROAD");
-      expect(entry?.capability).toBe("ROAD");
+      // A player's road is laid on their own land, like everything else they build.
+      expect(entry?.allowedTerrain).toEqual(["LAND"]);
+      expect(entry?.movable).toBe(true);
+      expect(entry?.removable).toBe(true);
       expect(entry?.price).toBe(roadTiers.get(tierId)?.pricePerSegment);
       // A road segment is four cells long and one wide, and it can be turned.
       // The footprint contains the ribbon the renderer draws: a 1.75-cell dirt road reserves two

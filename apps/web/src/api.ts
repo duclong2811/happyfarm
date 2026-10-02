@@ -18,6 +18,8 @@ import {
   PlantCropResponseSchema,
   PlaceConstructionResponseSchema,
   GetFarmConstructionsResponseSchema,
+  ConstructionEditResponseSchema,
+  RemoveConstructionResponseSchema,
   PlantTreeResponseSchema,
   RemoveTreeResponseSchema,
   UprootCropResponseSchema,
@@ -45,6 +47,7 @@ import type {
   TreeStateDTO,
   UprootCropResponse,
   RemoveTreeResponse,
+  RemoveConstructionResponse,
   XpAwardDTO,
   WalletDTO
 } from "@happy-farm/contracts";
@@ -285,6 +288,57 @@ export class ApiClient {
     return this.get(
       `/farms/${encodeURIComponent(farmId)}/constructions`,
       GetFarmConstructionsResponseSchema
+    );
+  }
+
+  /**
+   * Picks something up and puts it down somewhere else.
+   *
+   * `expectedVersion` is the row the client is looking at: the server refuses a move built on a stale
+   * copy rather than overwriting whatever changed it. Nothing about the object's price, refund or
+   * footprint travels - only where the player wants it.
+   */
+  moveConstruction(
+    farmId: string,
+    constructionId: string,
+    body: {
+      readonly requestId: string;
+      readonly anchorX: number;
+      readonly anchorY: number;
+      readonly rotation: 0 | 1 | 2 | 3;
+      readonly expectedVersion: number;
+    }
+  ): Promise<{ readonly construction: ConstructionDTO }> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/constructions/${encodeURIComponent(constructionId)}/move`,
+      body,
+      ConstructionEditResponseSchema
+    );
+  }
+
+  /** Turns something in place. The anchor does not change, so only the rotation travels. */
+  rotateConstruction(
+    farmId: string,
+    constructionId: string,
+    body: { readonly requestId: string; readonly rotation: 0 | 1 | 2 | 3; readonly expectedVersion: number }
+  ): Promise<{ readonly construction: ConstructionDTO }> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/constructions/${encodeURIComponent(constructionId)}/rotate`,
+      body,
+      ConstructionEditResponseSchema
+    );
+  }
+
+  /** Takes something down. The refund is the server's own number, returned rather than predicted. */
+  removeConstruction(
+    farmId: string,
+    constructionId: string,
+    body: { readonly requestId: string; readonly expectedVersion: number }
+  ): Promise<RemoveConstructionResponse> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/constructions/${encodeURIComponent(constructionId)}/remove`,
+      body,
+      RemoveConstructionResponseSchema
     );
   }
 

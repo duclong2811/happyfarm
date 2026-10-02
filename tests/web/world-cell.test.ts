@@ -99,11 +99,22 @@ describe("the cell grid is one coordinate system", () => {
     }
   });
 
-  it("agrees with the farm reservation about which land the catalogue can sell", () => {
+  it("distinguishes the land the farm owns from the land the catalogue could sell", () => {
     const input = starterInput();
+    let owned = 0;
+    let inReservation = 0;
     for (const cell of input.cells.cells.values()) {
-      expect(isFarmlandTile({ x: cell.x, y: cell.z })).toBe(cell.legacyFarmTile !== null);
+      // Ownership implies the reservation, never the other way round: the 36x36 rectangle the
+      // catalogue could sell is far larger than the twelve-tile square the farm starts with, and a
+      // preview that called the rest of it "owned" is exactly the bug this pins.
+      if (cell.legacyFarmTile !== null) {
+        owned += 1;
+        expect(isFarmlandTile({ x: cell.x, y: cell.z })).toBe(true);
+      }
+      if (isFarmlandTile({ x: cell.x, y: cell.z })) inReservation += 1;
     }
+    expect(owned).toBe(INITIAL_LAND_SIZE * INITIAL_LAND_SIZE);
+    expect(inReservation).toBeGreaterThan(owned);
     // The reserve is nine cohorts; the map has to cover all of them and more.
     expect(input.cells.cells.size).toBeGreaterThan(4000);
   });

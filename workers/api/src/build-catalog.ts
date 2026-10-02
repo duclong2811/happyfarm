@@ -22,13 +22,16 @@ export function listBuildCatalog(): readonly BuildCatalogEntryDTO[] {
     price: entry.price,
     currencyDefinitionId: entry.currencyDefinitionId,
     footprint: { widthCells: entry.footprint.widthCells, depthCells: entry.footprint.depthCells },
-    capability: entry.capability,
+    allowedTerrain: [...entry.allowedTerrain],
     tier: entry.tier,
     tierRank: entry.tier === null ? null : (roadTiers.get(entry.tier)?.rank ?? null),
     // The effect data the shop is allowed to describe, and the status it must be honest about.
     gameplay: essentialGameplay(entry.id),
     upgradeTo: entry.upgradeTo,
     rotatable: entry.rotatable,
+    movable: entry.movable,
+    removable: entry.removable,
+    removalRefundRate: entry.removalRefundRate,
     decorative: entry.decorative,
     tags: [...entry.tags],
     unlockCondition: entry.unlockCondition

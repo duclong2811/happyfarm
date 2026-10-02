@@ -18,25 +18,16 @@ import { ROAD_TIERS } from "../roads";
  */
 
 /**
- * The land-use capabilities a placed object can require.
+ * The ground a placed object can stand on.
  *
- * The same words the island's cells use. A cell that cannot do a thing cannot hold a thing that needs
- * it, and that is the whole placement rule - no district, no fixed production area, no authored zone.
- * `WALK` is the odd one: a capability a road *grants* rather than one it requires.
+ * This is the whole of an asset's placement requirement, and it is *physical*: land, beach, the
+ * shallows a moored thing needs, open water. It is deliberately not a land-use district - nothing
+ * says "a farm district", "a forestry district" or "a building district", because the player decides
+ * what their own land becomes. A normal owned cell carries every ordinary asset; what differs
+ * between two assets here is whether they need dry ground or water.
  */
-export const PLACEMENT_CAPABILITIES = [
-  "WALK",
-  "BUILD",
-  "FARM",
-  "FORESTRY",
-  "LIVESTOCK",
-  "ROAD",
-  "DECORATION",
-  "AQUACULTURE",
-  "DOCK",
-  "MINING"
-] as const;
-export type PlacementCapability = (typeof PLACEMENT_CAPABILITIES)[number];
+export const PLACEMENT_GROUNDS = ["LAND", "SHORE", "SHALLOW_WATER", "WATER"] as const;
+export type PlacementGround = (typeof PLACEMENT_GROUNDS)[number];
 
 /**
  * The shop's categories.
@@ -97,14 +88,33 @@ export const PlacementCatalogEntrySchema = z
      */
     modelId: z.string().regex(/^[a-z][a-z0-9]*(?:[._][a-z0-9]+)+$/).nullable(),
     footprint: FootprintSchema,
-    /** The land the entry needs. The cell decides whether it is there. */
-    capability: z.enum(PLACEMENT_CAPABILITIES),
+    /**
+     * The ground the entry needs, and the whole of its land requirement.
+     *
+     * An ordinary structure, planting or decoration asks for `LAND`; a moored asset asks for
+     * `SHALLOW_WATER`; a future dock asks for `SHORE`. The cell answers with what it physically is,
+     * and nothing else about the land is consulted.
+     */
+    allowedTerrain: z.array(z.enum(PLACEMENT_GROUNDS)).min(1).max(PLACEMENT_GROUNDS.length),
     /** A tier within the entry's own ladder, when it has one. */
     tier: z.enum(ROAD_TIERS).nullable(),
     /** The entry this one replaces when it is upgraded, or null at the top of its ladder. */
     upgradeTo: z.string().regex(/^place_[a-z0-9]+(?:_[a-z0-9]+)*$/).nullable(),
     /** Whether the player may turn it: a road runs along a cell edge, a monument does not. */
     rotatable: z.boolean(),
+    /** Whether the player may pick it up and place it somewhere else, for free. */
+    movable: z.boolean(),
+    /** Whether the player may remove it. */
+    removable: z.boolean(),
+    /**
+     * The share of the price a removal returns, 0..1.
+     *
+     * Per entry rather than one global constant, because the honest answer differs: a stack of planks
+     * comes back as half a barn, a road's gravel is partly recoverable, and pulling up a planting
+     * returns nothing at all. The value here is a *provisional* balance number - see
+     * `REMOVAL_REFUND_POLICY` in the catalogue - and the architecture is what must outlive it.
+     */
+    removalRefundRate: z.number().min(0).max(1),
     /** Decoration is placed for how it looks; everything else is placed for what it does. */
     decorative: z.boolean(),
     /**

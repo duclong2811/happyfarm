@@ -97,6 +97,30 @@ export interface WorldCell {
   readonly z: number;
   readonly terrain: CellTerrain;
   readonly zone: CellZone;
+  /**
+   * Whether the *server* says the farm owns this cell.
+   *
+   * Not "inside the rectangle the catalogue could sell one day" - an existing farm-tile row, which is
+   * the same answer planting gets and the same answer the placement command is checked against. The
+   * difference matters: a preview that calls a cell owned when the farm has no row for it teaches the
+   * player that a placement is legal and then has the server refuse it.
+   */
+  readonly owned: boolean;
+  /**
+   * Whether this is water shallow enough to work from - the shelf a moored asset needs.
+   *
+   * A fact about the island's shape, not a zone: the harbour's own approach is excluded, because a
+   * cage moored across the pier is a cage nobody can sail past.
+   */
+  readonly shallowWater: boolean;
+  /**
+   * Whether the island keeps this cell for itself.
+   *
+   * Reserved civic ground, a plot a later building is being held for, and the furnished clearings the
+   * composition layer dresses. A player may not build over them; this says "not yours to change",
+   * never "not the right industry".
+   */
+  readonly reserved: boolean;
   readonly walkable: boolean;
   readonly buildable: boolean;
   readonly occupancy: CellOccupancy;

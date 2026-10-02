@@ -331,6 +331,20 @@ body.is-placing .action-dock { display: none; }
 .placement-keys kbd { padding: 0 .28rem; border-radius: 3px; font: inherit; font-weight: 700; background: rgba(255, 255, 255, .16); }
 .placement-note { margin: 0; font-size: .7rem; color: rgba(247, 238, 218, .72); }
 
+/* The selected-object panel borrows the placement HUD's surface: one visual language for "the page is
+   holding something", whether the thing is a catalogue entry or a barn the player already owns. */
+.object-panel { z-index: 7; }
+.object-actions { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .1rem; }
+.object-action {
+  padding: .34rem .7rem; border-radius: var(--radius-control);
+  border: 1px solid rgba(255, 255, 255, .24); background: rgba(255, 255, 255, .1);
+  font-size: var(--text-item); font-weight: 700; color: var(--cream);
+}
+.object-action:hover:not(:disabled) { background: rgba(255, 255, 255, .18); }
+.object-action:disabled { color: var(--cream-dim); border-color: rgba(255, 255, 255, .12); }
+.object-action.is-danger { border-color: #9c4a35; color: #ffd9cf; }
+.object-action.is-danger:hover:not(:disabled) { background: rgba(156, 74, 53, .35); }
+
 @media (max-width: 1180px) {
   /* The rail keeps enough room for whole words: a truncated "Buil…" is not a category, it is a bug. */
   .build-body { grid-template-columns: 8rem minmax(0, 1fr) 12rem; }

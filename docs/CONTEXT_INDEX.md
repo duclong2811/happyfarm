@@ -515,15 +515,48 @@ Read `docs/design/V13_CONSTRUCTION_SYSTEM.md` before changing construction; `V13
 before changing a price, a yield or a capacity; `V13_FUNCTIONAL_ASSETS.md` before adding a catalogue
 entry; and `V13_ROAD_V2.md` before touching a road's width or footprint.
 
+### Freeform island building (V13.2)
+
+Read `docs/design/FREEFORM_ISLAND_BUILDING.md` before touching placement, ownership, footprints,
+occupancy, rotation, movement, removal or refunds. Its first principle is the one to keep:
+**land use is chosen by the player, not predetermined by the map.**
+
+- An ordinary owned cell takes an ordinary asset. Placement reads *ownership* (`farm_tiles`),
+  *terrain* (the asset's own `allowedTerrain`), *footprint* and *occupancy* - and nothing else. Never
+  reintroduce a FARM / FORESTRY / BUILD / DECORATION district or capability requirement for a normal
+  land asset, and never treat the plot reservation (`FARM_FIELD_BOUNDS`) as ownership: `owned` on a
+  `WorldCell` is the server's rows, and the reservation is only which land the catalogue could sell.
+- Editing: `RelocateConstruction` (move and rotate) and `RemoveConstruction` in
+  `packages/application/src/construction.ts`; routes
+  `POST /farms/:farmId/constructions/:id/{move,rotate,remove}`; persistence in
+  `D1ConstructionRepository.relocateAtomically`/`removeAtomically`; the update-time ground triggers
+  and the `CONSTRUCTION_REFUND` ledger reason in `database/migrations/0011_construction_editing.sql`.
+- The asset's own policy decides: `allowedTerrain`, `rotatable`, `movable`, `removable` and
+  `removalRefundRate` in `packages/game-data/src/placement/`. The refund is computed server-side from
+  the definition; a client may only preview the same arithmetic.
+- Client: the object panel and move ghost in `apps/web/src/main.ts` (`selectObject`, `beginMove`,
+  `confirmMove`, `rotateSelectedObject`, `confirmDelete`), object picking and the editing mark in
+  `apps/web/src/render/scene.ts`, and the preview rule in
+  `apps/web/src/render/placement-preview.ts`.
+- Tests: `tests/domain/construction.test.ts`, `tests/web/build-placement-preview.test.ts`,
+  `tests/web/world-cell.test.ts` (ownership vs reservation), and the construction describe blocks in
+  `tests/api/handler.test.ts` (placement, move, rotate, removal, refunds and cross-player checks
+  against a real database and its triggers).
+
 - Construction rules (pure): `packages/domain/src/construction.ts` - rotation, bounds, collisions,
-  every refusal - plus the id in `packages/domain/src/ids.ts`.
-- Use case: `packages/application/src/construction.ts` (`PlaceConstruction`, `ListFarmConstructions`)
-  and the `ConstructionRepository` port in `packages/application/src/ports.ts`.
+  every refusal - plus the id in `packages/domain/src/ids.ts`. The ground rule itself is
+  `groundRefusal`, shared by placing, moving and turning; read the freeform section below before
+  changing it.
+- Use case: `packages/application/src/construction.ts` (`PlaceConstruction`,
+  `ListFarmConstructions`, and - since V13.2 - `RelocateConstruction` and `RemoveConstruction`) and
+  the `ConstructionRepository` port in `packages/application/src/ports.ts`.
 - Persistence: `database/migrations/0010_farm_constructions.sql` (the table, its ownership and
   collision triggers, and the rebuilt ledger that admits the `CONSTRUCTION` reason) and
-  `D1ConstructionRepository` in `workers/api/src/d1-repositories.ts`.
-- API: `POST` and `GET /farms/:farmId/constructions` in `workers/api/src/handler.ts`; the DTOs and the
-  strict request schema are in `packages/contracts/src/index.ts`.
+  `0011_construction_editing.sql` (the same rules on UPDATE, and the `CONSTRUCTION_REFUND` reason),
+  with `D1ConstructionRepository` in `workers/api/src/d1-repositories.ts`.
+- API: `POST` and `GET /farms/:farmId/constructions`, plus `POST .../:id/move|rotate|remove`, in
+  `workers/api/src/handler.ts`; the DTOs and the strict request schemas are in
+  `packages/contracts/src/index.ts`.
 - Functional asset metadata: `packages/game-data/src/placement/gameplay.ts`; road width and the
   footprint contract: `packages/game-data/src/roads/index.ts`.
 - Client: `apps/web/src/api.ts`, the placement confirm flow in `apps/web/src/main.ts`, the

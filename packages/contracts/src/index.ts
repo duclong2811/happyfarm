@@ -378,8 +378,13 @@ export const BuildCatalogEntryDTOSchema = z
     footprint: z
       .object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() })
       .strict(),
-    /** The land capability the cell must offer. */
-    capability: z.string().min(1).max(40),
+    /**
+     * The ground this entry may stand on, and the whole of its land requirement.
+     *
+     * Physical terrain only: `LAND`, `SHORE`, the `SHALLOW_WATER` a moored asset needs, open `WATER`.
+     * There is deliberately no economic district here - normal owned land takes normal assets.
+     */
+    allowedTerrain: z.array(z.enum(["LAND", "SHORE", "SHALLOW_WATER", "WATER"])).min(1),
     /** The tier within the entry's own ladder, or null when it has none. */
     tier: z.string().min(1).max(40).nullable(),
     /**
@@ -443,6 +448,10 @@ export const BuildCatalogEntryDTOSchema = z
     /** The entry this one upgrades into, or null at the top of its ladder. */
     upgradeTo: z.string().min(1).max(120).nullable(),
     rotatable: z.boolean(),
+    /** Whether the player may move it, and remove it, and what a removal returns. */
+    movable: z.boolean(),
+    removable: z.boolean(),
+    removalRefundRate: z.number().min(0).max(1),
     decorative: z.boolean(),
     tags: z.array(z.string().min(1).max(40)).max(8),
     /** What must be true of the world before it may be placed. */
@@ -460,6 +469,14 @@ export const GetBuildCatalogResponseSchema = z
 export const ConstructionRotationSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
 
 /**
+ * A construction's id, in the one shape the server mints.
+ *
+ * Worth naming rather than repeating: it is what a *path* segment has to be before a route may hand
+ * it to the domain, so a malformed url is a 400 rather than an internal error.
+ */
+export const ConstructionIdSchema = z.string().regex(/^construct_[0-9a-f-]{36}$/i);
+
+/**
  * A construction the player has actually built.
  *
  * One shape for every buildable thing: the catalogue entry says what it is, this says where it is and
@@ -468,7 +485,7 @@ export const ConstructionRotationSchema = z.union([z.literal(0), z.literal(1), z
  */
 export const ConstructionDTOSchema = z
   .object({
-    constructionId: z.string().regex(/^construct_[0-9a-f-]{36}$/i),
+    constructionId: ConstructionIdSchema,
     farmId: FarmIdSchema,
     entryId: z.string().regex(/^place_[a-z0-9]+(?:_[a-z0-9]+)*$/),
     category: z.string().min(1).max(40),
@@ -481,7 +498,14 @@ export const ConstructionDTOSchema = z
     state: z.literal("BUILT"),
     costAmount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     costCurrencyDefinitionId: z.string().min(1).max(120),
-    createdAt: z.string().min(1).max(40)
+    createdAt: z.string().min(1).max(40),
+    /**
+     * The row's version, which every edit command echoes back.
+     *
+     * A move, a turn or a removal is applied only if the version the client is editing is still the
+     * version on the server, so two players (or two tabs) cannot both move the same barn.
+     */
+    version: z.number().int().min(1)
   })
   .strict();
 export type ConstructionDTO = z.infer<typeof ConstructionDTOSchema>;
@@ -510,6 +534,65 @@ export const PlaceConstructionResponseSchema = z
 export const GetFarmConstructionsResponseSchema = z
   .object({ constructions: z.array(ConstructionDTOSchema) })
   .strict();
+
+/** The version of the row an edit is acting on: the optimistic-concurrency token. */
+const ConstructionVersionSchema = z.number().int().min(1);
+
+/**
+ * Moving something the player already owns.
+ *
+ * `expectedVersion` is the version the client is looking at. It sends a destination and a rotation
+ * and nothing else - never a price, a refund, a footprint or an owner, all of which the server reads
+ * from its own catalogue and its own rows.
+ */
+export const MoveConstructionRequestSchema = z
+  .object({
+    requestId: z.string().min(8).max(100),
+    anchorX: z.number().int().min(-1_000_000).max(1_000_000),
+    anchorY: z.number().int().min(-1_000_000).max(1_000_000),
+    rotation: ConstructionRotationSchema,
+    expectedVersion: ConstructionVersionSchema
+  })
+  .strict();
+export type MoveConstructionRequest = z.infer<typeof MoveConstructionRequestSchema>;
+
+/** Turning something in place. The anchor is unchanged, so only the rotation travels. */
+export const RotateConstructionRequestSchema = z
+  .object({
+    requestId: z.string().min(8).max(100),
+    rotation: ConstructionRotationSchema,
+    expectedVersion: ConstructionVersionSchema
+  })
+  .strict();
+export type RotateConstructionRequest = z.infer<typeof RotateConstructionRequestSchema>;
+
+/** Removing something: the command carries the version and nothing else at all. */
+export const RemoveConstructionRequestSchema = z
+  .object({
+    requestId: z.string().min(8).max(100),
+    expectedVersion: ConstructionVersionSchema
+  })
+  .strict();
+export type RemoveConstructionRequest = z.infer<typeof RemoveConstructionRequestSchema>;
+
+export const ConstructionEditResponseSchema = z
+  .object({ construction: ConstructionDTOSchema })
+  .strict();
+
+/**
+ * What a removal returned, as the server computed it.
+ *
+ * The client shows this number *after* the fact rather than predicting it: the rate is the asset's
+ * own data, and a client that guessed it would be telling the player about gold it does not control.
+ */
+export const RemoveConstructionResponseSchema = z
+  .object({
+    constructionId: ConstructionIdSchema,
+    refundAmount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    refundCurrencyDefinitionId: z.string().min(1).max(120)
+  })
+  .strict();
+export type RemoveConstructionResponse = z.infer<typeof RemoveConstructionResponseSchema>;
 
 export const MAX_SHOP_COMMAND_QUANTITY = 1_000_000;
 
@@ -660,6 +743,13 @@ export const ErrorCodeSchema = z.enum([
   "CONSTRUCTION_OCCUPIED",
   "CONSTRUCTION_NOT_OWNED",
   "CONSTRUCTION_UNSUITABLE_GROUND",
+  "CONSTRUCTION_BLOCKED",
+  "CONSTRUCTION_OUTSIDE_WORLD",
+  "CONSTRUCTION_NOT_MOVABLE",
+  "CONSTRUCTION_NOT_ROTATABLE",
+  "CONSTRUCTION_NOT_REMOVABLE",
+  "CONSTRUCTION_CONFLICT",
+  "OBJECT_NOT_OWNED",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
   "REQUEST_ALREADY_PROCESSED",

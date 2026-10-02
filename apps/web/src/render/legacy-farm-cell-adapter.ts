@@ -12,8 +12,12 @@ import type { TileCoordinate } from "./layout";
  * same pitch and the same origin - so the adapter can prove the correspondence instead of computing
  * it, and a future change to one of them fails a test rather than drifting silently.
  *
- * It also owns the one asymmetry the two systems have: the plot catalogue sells land inside
- * `FARM_FIELD_BOUNDS`, and a cell outside that reservation is island scenery, not a farm tile.
+ * It also owns the two questions the two systems ask differently. `isFarmlandTile` is the
+ * **reservation**: the rectangle the plot catalogue could sell one day. `cellToFarmTile` is
+ * **ownership**: the rows this farm actually has, which is what planting, harvest, expansion and
+ * placement are all checked against. A cell inside the reservation that the farm has not bought is
+ * not a farm tile yet - saying otherwise is what made the placement preview promise land the server
+ * would refuse.
  */
 
 /** Whether a coordinate is one the plot catalogue could sell. */
@@ -37,10 +41,14 @@ export function farmTileToCell(tile: TileCoordinate): TileCoordinate {
   return { x: tile.x, y: tile.y };
 }
 
-/** The farm tile a cell stands for, or null when the cell is not land the catalogue can sell. */
+/**
+ * The farm tile a cell stands for, or null when the farm does not own that ground.
+ *
+ * Ownership, not the reservation: a locked plot is land the island *could* sell, and a placement
+ * there is refused by the server because there is no row behind it.
+ */
 export function cellToFarmTile(cell: WorldCell): TileCoordinate | null {
-  if (!isFarmlandTile({ x: cell.x, y: cell.z })) return null;
-  return { x: cell.x, y: cell.z };
+  return cell.owned ? { x: cell.x, y: cell.z } : null;
 }
 
 /** The cell a farm tile resolves to in a built map, or null when that cell is not on the island. */

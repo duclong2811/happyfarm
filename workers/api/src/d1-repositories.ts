@@ -48,6 +48,8 @@ import {
 import type {
   ConstructionPlacement,
   ConstructionRepository,
+  ConstructionRelocation,
+  ConstructionRemoval,
   CropInstanceRepository,
   FarmExpansionRepository,
   FarmMemberRepository,
@@ -772,6 +774,173 @@ export class D1ConstructionRepository implements ConstructionRepository {
       minY: Number(row.min_y),
       maxY: Number(row.max_y)
     }));
+  }
+
+  /**
+   * Moving or turning one object: the new rectangle, and the receipt that says it happened.
+   *
+   * The update is guarded by the version the use case read, so a stale move writes nothing at all.
+   * The database's own triggers do the rest: the destination must be owned, must not overlap another
+   * construction (the object's own row is excluded by its id), and must not hold a crop or a tree.
+   * The receipt is written only if the row it names carries the timestamp this batch produced, which
+   * is what makes "the receipt exists" and "the move happened" the same fact.
+   */
+  async relocateAtomically(relocation: ConstructionRelocation, idempotency: IdempotencyRecord): Promise<void> {
+    const { construction, expectedVersion } = relocation;
+    if (
+      construction.id !== idempotency.resourceId ||
+      construction.builtByPlayerId !== idempotency.actorPlayerId ||
+      construction.version !== expectedVersion + 1
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Construction relocation ownership does not match");
+    }
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "UPDATE farm_constructions SET anchor_x = ?, anchor_y = ?, rotation = ?, footprint_width = ?, footprint_depth = ?, min_x = ?, max_x = ?, min_y = ?, max_y = ?, cell_count = ?, updated_at = ?, version = version + 1 WHERE id = ? AND farm_id = ? AND version = ?"
+          )
+          .bind(
+            construction.anchorX,
+            construction.anchorY,
+            construction.rotation,
+            construction.footprint.widthCells,
+            construction.footprint.depthCells,
+            construction.bounds.minX,
+            construction.bounds.maxX,
+            construction.bounds.minY,
+            construction.bounds.maxY,
+            construction.footprint.widthCells * construction.footprint.depthCells,
+            construction.updatedAt,
+            construction.id,
+            construction.farmId,
+            expectedVersion
+          ),
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM farm_constructions WHERE id = ? AND farm_id = ? AND updated_at = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            construction.id,
+            construction.farmId,
+            construction.updatedAt,
+            construction.version,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 2 || results.some((result) => !result.success)) {
+        throw new Error("Atomic construction relocation failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && /construction cells|idempotency_keys\.actor_player_id/.test(error.message)) {
+        throw new ApplicationError("CONSTRUCTION_CONFLICT", "Construction state changed concurrently");
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Taking one object down, with its refund if its asset returns one.
+   *
+   * The delete is guarded by the version, exactly as a move is. The refund travels through
+   * `economy_ledger`'s own triggers, so the wallet moves the same way every other payment does; the
+   * receipt then points at that ledger row, and the ledger row is only written if the refund matched
+   * the balance the use case read.
+   */
+  async removeAtomically(removal: ConstructionRemoval, idempotency: IdempotencyRecord): Promise<void> {
+    const { farmId, constructionId, expectedVersion, refund } = removal;
+    if (refund !== null && (refund.playerId !== idempotency.actorPlayerId || refund.reason !== "CONSTRUCTION_REFUND")) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Construction refund ownership does not match");
+    }
+    if (refund === null && idempotency.resourceId !== constructionId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Construction removal receipt does not match");
+    }
+    const deleteRow = this.db
+      .prepare("DELETE FROM farm_constructions WHERE id = ? AND farm_id = ? AND version = ?")
+      .bind(constructionId, farmId, expectedVersion);
+    // The receipt is the last word: it is written only if the effect it claims is visible in this
+    // same batch - the object gone, and, when the asset returns money, the refund in the ledger.
+    const receipt =
+      refund === null
+        ? this.db
+            .prepare(
+              "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN NOT EXISTS (SELECT 1 FROM farm_constructions WHERE id = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+            )
+            .bind(
+              constructionId,
+              idempotency.actorPlayerId,
+              idempotency.operation,
+              idempotency.requestId,
+              idempotency.payloadFingerprint,
+              idempotency.status,
+              idempotency.resourceId,
+              idempotency.responseJson,
+              idempotency.createdAt
+            )
+        : this.db
+            .prepare(
+              "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ? AND reason = 'CONSTRUCTION_REFUND' AND reference_id = ?) AND NOT EXISTS (SELECT 1 FROM farm_constructions WHERE id = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+            )
+            .bind(
+              refund.transactionId,
+              idempotency.actorPlayerId,
+              constructionId,
+              constructionId,
+              idempotency.actorPlayerId,
+              idempotency.operation,
+              idempotency.requestId,
+              idempotency.payloadFingerprint,
+              idempotency.status,
+              idempotency.resourceId,
+              idempotency.responseJson,
+              idempotency.createdAt
+            );
+    const statements =
+      refund === null
+        ? [deleteRow, receipt]
+        : [
+            this.db
+              .prepare(
+                "INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)"
+              )
+              .bind(refund.playerId, refund.currencyDefinitionId, refund.createdAt, refund.createdAt),
+            this.db
+              .prepare(
+                "INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+              )
+              .bind(
+                refund.transactionId,
+                refund.playerId,
+                refund.currencyDefinitionId,
+                refund.delta,
+                refund.balanceBefore,
+                refund.balanceAfter,
+                refund.expectedWalletVersion,
+                refund.reason,
+                refund.referenceType,
+                refund.referenceId,
+                refund.requestId,
+                refund.createdAt
+              ),
+            deleteRow,
+            receipt
+          ];
+    try {
+      const results = await this.db.batch(statements);
+      if (results.some((result) => !result.success)) throw new Error("Atomic construction removal failed");
+    } catch (error: unknown) {
+      if (error instanceof Error && /economy conflict|idempotency_keys\.actor_player_id/.test(error.message)) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "Construction state changed concurrently");
+      }
+      throw error;
+    }
   }
 }
 

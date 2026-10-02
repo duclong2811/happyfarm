@@ -139,8 +139,13 @@ export class GameDataConstructionDefinitions implements ConstructionDefinitionRe
       price: entry.price,
       currencyDefinitionId: entry.currencyDefinitionId,
       footprint: { widthCells: entry.footprint.widthCells, depthCells: entry.footprint.depthCells },
-      capability: entry.capability,
+      // The asset's own ground requirement, copied as values: the domain never reads game data, and
+      // the catalogue never reaches the rules.
+      allowedTerrain: [...entry.allowedTerrain],
       rotatable: entry.rotatable,
+      movable: entry.movable,
+      removable: entry.removable,
+      removalRefundRate: entry.removalRefundRate,
       status: gameplay.status,
       requiresOwnership: entry.unlockCondition === "OWNED_LAND"
     };

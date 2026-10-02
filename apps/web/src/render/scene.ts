@@ -147,6 +147,9 @@ export interface SceneConstruction {
   readonly worldX: number;
   readonly worldZ: number;
   readonly rotationY: number;
+  /** The ground it covers, in cells: what the editing mark is scaled to. */
+  readonly widthCells: number;
+  readonly depthCells: number;
 }
 
 export interface PlacementPreview {
@@ -199,6 +202,15 @@ export interface FarmSceneOptions {
    * selecting it, walking to it, and what it means stay with the caller.
    */
   readonly onCellSelected?: (cell: TileCoordinate) => void;
+  /**
+   * Called when the player clicked one of their own built things, by that thing's id.
+   *
+   * Only fires while object picking is enabled (see `setObjectPicking`): while something is in hand
+   * for placement or a move, a click belongs to the placement, not to the thing under the pointer.
+   * The renderer reports the id and decides nothing - what may be done to an object is the server's
+   * rule, and the panel that offers it is the caller's.
+   */
+  readonly onObjectSelected?: (constructionId: string) => void;
   /**
    * Called when a crop model could not be loaded. The scene keeps drawing that crop's placeholder,
    * so this is a diagnosis for the caller to report, not a failure the caller has to recover from.
@@ -256,6 +268,16 @@ export interface FarmSceneHandle {
    * cadence. The models come from the shared library, so a farm with forty fences downloads one fence.
    */
   setConstructions(constructions: readonly SceneConstruction[]): void;
+  /**
+   * Whether a click on a built thing selects it.
+   *
+   * Off while the player is placing or moving something: in those modes a click means "put it here",
+   * and a click that quietly selected the barn under the pointer instead would make placement feel
+   * broken. The host owns the mode, so the host owns this switch.
+   */
+  setObjectPicking(enabled: boolean): void;
+  /** Marks one built thing as the object the player is editing, or clears the mark with null. */
+  setObjectSelection(constructionId: string | null): void;
   /**
    * Turns the developer overlay on or off: every cell, colour-coded by land use.
    *
@@ -630,6 +652,18 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const selectionMarker = new Mesh(assets.ring, assets.selection);
   selectionMarker.rotation.x = -Math.PI / 2;
   selectionMarker.visible = false;
+  /**
+   * The mark around the built thing the player is editing.
+   *
+   * Its own mesh rather than a recolour of the tile ring: an object is not a cell, and a player who
+   * has selected a barn should see the barn marked, at the barn's own size, while the cell under the
+   * pointer stays whatever it was. One mesh, hidden unless something is selected - the same cost as
+   * the tile marker.
+   */
+  const objectMarker = new Mesh(assets.ring, assets.selection);
+  objectMarker.rotation.x = -Math.PI / 2;
+  objectMarker.visible = false;
+  scene.add(objectMarker);
   let hoverMarker: Mesh | null = null;
 
   const pickTargets = new Map<Object3D, TileCoordinate>();
@@ -1258,13 +1292,19 @@ let interactionGeometry: BufferGeometry | null = null;
   let constructions: readonly SceneConstruction[] = [];
   let constructionSignature = "";
   let constructionToken = 0;
+  /** The built thing the player is editing, and whether a click may select one at all. */
+  let selectedObjectId: string | null = null;
+  let objectPickingEnabled = true;
+  /** Where each drawn construction stands, so the marker can be placed without touching the scene. */
+  const constructionSites = new Map<string, SceneConstruction>();
 
   /** A cheap identity for the construction layer: ids, models, places, and turns. */
   function constructionSignatureOf(list: readonly SceneConstruction[]): string {
     return list
       .map(
         (item) =>
-          `${item.id}:${item.modelId ?? "-"}:${item.worldX.toFixed(2)},${item.worldZ.toFixed(2)}:${item.rotationY.toFixed(3)}`
+          `${item.id}:${item.modelId ?? "-"}:${item.worldX.toFixed(2)},${item.worldZ.toFixed(2)}` +
+          `:${item.rotationY.toFixed(3)}:${String(item.widthCells)}x${String(item.depthCells)}`
       )
       .join("|");
   }
@@ -1281,6 +1321,9 @@ let interactionGeometry: BufferGeometry | null = null;
     if (signature === constructionSignature) return;
     constructionSignature = signature;
     constructionGroup.clear();
+    constructionSites.clear();
+    for (const item of constructions) constructionSites.set(item.id, item);
+    updateObjectMarker();
     if (constructions.length === 0) return;
     const token = ++constructionToken;
     for (const item of constructions) {
@@ -1291,10 +1334,34 @@ let interactionGeometry: BufferGeometry | null = null;
         const groundY = GROUND_SURFACE_Y + terrainHeightAt(item.worldX, item.worldZ, state.world.terrain);
         instance.position.set(item.worldX, groundY, item.worldZ);
         instance.rotation.y = item.rotationY;
+        // What a click on the model resolves to. The model is a clone with no identity of its own, so
+        // the row's id is written onto its root and read back by the picking raycast.
+        (instance.userData as { constructionId?: string }).constructionId = item.id;
         constructionGroup.add(instance);
         draw();
       });
     }
+  }
+
+  /** Puts the editing mark under the selected object, or hides it when nothing is selected. */
+  function updateObjectMarker(): void {
+    const item = selectedObjectId === null ? undefined : constructionSites.get(selectedObjectId);
+    if (item === undefined) {
+      objectMarker.visible = false;
+      return;
+    }
+    objectMarker.visible = true;
+    objectMarker.position.set(
+      item.worldX,
+      GROUND_SURFACE_Y + terrainHeightAt(item.worldX, item.worldZ, state.world.terrain) + 0.02,
+      item.worldZ
+    );
+    const pitch = state.layout.pitch;
+    objectMarker.scale.set(
+      Math.max(state.layout.tileSize, item.widthCells * pitch * 0.7),
+      Math.max(state.layout.tileSize, item.depthCells * pitch * 0.7),
+      1
+    );
   }
 
   function rebuildPreview(): void {
@@ -1555,6 +1622,33 @@ let interactionGeometry: BufferGeometry | null = null;
   }
 
   /**
+   * The id of the built thing under the pointer, or null.
+   *
+   * A separate raycast from the cell one, and only run when the host says objects are pickable: while
+   * something is in hand a click means "put it here", so the thing under the pointer must not swallow
+   * it. The nearest hit wins, in the same way the cell raycast takes the nearest intersection.
+   */
+  function raycastConstructionAt(clientX: number, clientY: number): string | null {
+    if (!objectPickingEnabled || constructionGroup.children.length === 0) return null;
+    const bounds = canvas.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) return null;
+    pointer.set(
+      ((clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((clientY - bounds.top) / bounds.height) * 2 + 1
+    );
+    raycaster.setFromCamera(pointer, camera);
+    for (const intersection of raycaster.intersectObjects(constructionGroup.children, true)) {
+      let node: Object3D | null = intersection.object;
+      while (node !== null) {
+        const id = (node.userData as { constructionId?: unknown }).constructionId;
+        if (typeof id === "string") return id;
+        node = node.parent;
+      }
+    }
+    return null;
+  }
+
+  /**
    * What the camera is doing while a pointer is down.
    *
    * Kept beside the rig rather than inside the gesture module: the gesture answers "was this a tap",
@@ -1695,6 +1789,12 @@ let interactionGeometry: BufferGeometry | null = null;
     const tap = wasDragging ? false : gesture.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!tap) return;
+    // A tap on one of the player's own objects selects the object; anything else selects the cell.
+    const pickedObject = raycastConstructionAt(event.clientX, event.clientY);
+    if (pickedObject !== null) {
+      options.onObjectSelected?.(pickedObject);
+      return;
+    }
     const coordinate = raycastTileAt(event.clientX, event.clientY);
     if (coordinate !== null) options.onCellSelected?.(coordinate);
   }
@@ -1829,6 +1929,15 @@ let interactionGeometry: BufferGeometry | null = null;
     setConstructions(next: readonly SceneConstruction[]): void {
       constructions = next;
       rebuildConstructions();
+      draw();
+    },
+    setObjectPicking(enabled: boolean): void {
+      objectPickingEnabled = enabled;
+    },
+    setObjectSelection(constructionId: string | null): void {
+      if (selectedObjectId === constructionId) return;
+      selectedObjectId = constructionId;
+      updateObjectMarker();
       draw();
     },
     focusOnCell(cell: TileCoordinate): void {

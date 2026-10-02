@@ -16,6 +16,8 @@ import {
   PlantTree,
   PlaceConstruction,
   ListFarmConstructions,
+  RelocateConstruction,
+  RemoveConstruction,
   HarvestTree,
   RemoveTree,
   TreeStateProjector,
@@ -57,6 +59,10 @@ import {
   SellItemRequestSchema,
   PlantCropRequestSchema,
   PlaceConstructionRequestSchema,
+  ConstructionIdSchema,
+  MoveConstructionRequestSchema,
+  RotateConstructionRequestSchema,
+  RemoveConstructionRequestSchema,
   UprootCropRequestSchema,
   type ApiFailure,
   type ApiSuccess,
@@ -83,6 +89,7 @@ import {
   type TreeStateDTO,
   type BuildCatalogEntryDTO
   ,type ConstructionDTO
+  ,type RemoveConstructionResponse
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
 import {
@@ -157,7 +164,8 @@ function toConstructionDTO(construction: ConstructionInstance): ConstructionDTO 
     state: construction.state,
     costAmount: construction.costAmount,
     costCurrencyDefinitionId: construction.costCurrencyDefinitionId,
-    createdAt: construction.createdAt
+    createdAt: construction.createdAt,
+    version: construction.version
   };
 }
 
@@ -288,6 +296,10 @@ function errorStatus(code: ErrorCode): number {
     case "CONSTRUCTION_LEVEL_REQUIRED":
     case "CONSTRUCTION_NOT_ALLOWED":
     case "CONSTRUCTION_NOT_OWNED":
+    case "OBJECT_NOT_OWNED":
+    case "CONSTRUCTION_NOT_MOVABLE":
+    case "CONSTRUCTION_NOT_ROTATABLE":
+    case "CONSTRUCTION_NOT_REMOVABLE":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -315,8 +327,11 @@ function errorStatus(code: ErrorCode): number {
     case "PLOT_LIMIT_REACHED":
     case "TREE_NOT_READY":
     case "CONSTRUCTION_OCCUPIED":
+    case "CONSTRUCTION_CONFLICT":
       return 409;
     case "CONSTRUCTION_UNSUITABLE_GROUND":
+    case "CONSTRUCTION_BLOCKED":
+    case "CONSTRUCTION_OUTSIDE_WORLD":
       return 400;
     case "RATE_LIMITED":
       return 429;
@@ -486,6 +501,34 @@ export function createHandler(dependencies: HandlerDependencies) {
     economyService: new EconomyService(dependencies.ids, dependencies.clock),
     idempotency: constructionIdempotency,
     ids: dependencies.ids,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
+  // Moving, turning and taking down share every dependency placing has, except the level and price
+  // checks - an edit is not a purchase.
+  const relocateConstruction = new RelocateConstruction({
+    farms,
+    members,
+    tiles,
+    constructions,
+    definitions: dependencies.constructionDefinitions,
+    wallets,
+    currencies: dependencies.currencyDefinitions,
+    economyService: new EconomyService(dependencies.ids, dependencies.clock),
+    idempotency: constructionIdempotency,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
+  const removeConstruction = new RemoveConstruction({
+    farms,
+    members,
+    tiles,
+    constructions,
+    definitions: dependencies.constructionDefinitions,
+    wallets,
+    currencies: dependencies.currencyDefinitions,
+    economyService: new EconomyService(dependencies.ids, dependencies.clock),
+    idempotency: constructionIdempotency,
     fingerprints: dependencies.fingerprints,
     clock: dependencies.clock
   });
@@ -792,6 +835,59 @@ export function createHandler(dependencies: HandlerDependencies) {
         }
       }
 
+      /**
+       * Editing one built thing: move it, turn it, take it down.
+       *
+       * The object is named by its own id and the command carries the version the client is looking
+       * at. Everything else - the footprint, the ground, the refund - is the server's to decide, so a
+       * request cannot name a price, a refund or an owner.
+       */
+      const constructionEditRoute =
+        /^\/farms\/([^/]+)\/constructions\/([^/]+)\/(move|rotate|remove)$/.exec(url.pathname);
+      if (constructionEditRoute?.[1] !== undefined && constructionEditRoute[2] !== undefined && constructionEditRoute[3] !== undefined) {
+        const decodedFarm = decodePathSegment(constructionEditRoute[1]);
+        const decodedObject = decodePathSegment(constructionEditRoute[2]);
+        // The id in the path is attacker-controlled like everything else: it is checked against the
+        // one shape the server mints *here*, so a malformed url is a 400 rather than a domain error
+        // that would surface as an internal one.
+        if (
+          decodedFarm === null ||
+          decodedObject === null ||
+          !FarmIdSchema.safeParse(decodedFarm).success ||
+          !ConstructionIdSchema.safeParse(decodedObject).success
+        ) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const farmId = parseFarmId(decodedFarm);
+        const operation = constructionEditRoute[3];
+        if (request.method !== "POST") return failure("INVALID_INPUT", requestId);
+        if (operation === "move") {
+          const parsed = MoveConstructionRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const moved = await relocateConstruction.move(actor, farmId, decodedObject, parsed.data);
+          const body: ApiSuccess<{ construction: ConstructionDTO }> = {
+            ok: true,
+            data: { construction: toConstructionDTO(moved) }
+          };
+          return jsonResponse(body);
+        }
+        if (operation === "rotate") {
+          const parsed = RotateConstructionRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const turned = await relocateConstruction.rotate(actor, farmId, decodedObject, parsed.data);
+          const body: ApiSuccess<{ construction: ConstructionDTO }> = {
+            ok: true,
+            data: { construction: toConstructionDTO(turned) }
+          };
+          return jsonResponse(body);
+        }
+        const parsed = RemoveConstructionRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const removed = await removeConstruction.execute(actor, farmId, decodedObject, parsed.data);
+        const body: ApiSuccess<RemoveConstructionResponse> = { ok: true, data: removed };
+        return jsonResponse(body);
+      }
+
       const plotsRoute = /^\/farms\/([^/]+)\/plots$/.exec(url.pathname);
       if (plotsRoute?.[1] !== undefined) {
         const decodedId = decodePathSegment(plotsRoute[1]);
@@ -841,6 +937,10 @@ export function createHandler(dependencies: HandlerDependencies) {
       if (error instanceof ApplicationError) {
         return failure(error.code, requestId);
       }
+      // An unexpected error is a bug, and the response deliberately says nothing about it. Without
+      // this line it would leave no trace anywhere at all. The error itself is logged, never the
+      // request: no body, no header, no token.
+      console.error("unexpected handler error", error);
       return failure("INTERNAL_ERROR", requestId);
     }
   };
