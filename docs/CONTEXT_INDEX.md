@@ -763,6 +763,34 @@ authorizes every command from the authenticated actor).
   `tests/web/interaction-input.test.ts`, plus the location-smuggling case in
   `tests/api/handler.test.ts`.
 
+### Visual items, inventory and the planting picker (V14.2)
+
+Read `docs/design/ITEM_PRESENTATION.md` before adding an item surface, changing what a card shows, or
+drawing an item picture anywhere. Its rules: **one picture pipeline** for the whole page, **no client
+item truth**, and **no surface offers an action the domain does not have**.
+
+- The one picture cache: `apps/web/src/items/thumbnails.ts` (`createItemThumbnails`), built on the
+  shop's V12.4 renderer (`apps/web/src/render/thumbnail.ts`). It is the only `createThumbnailRenderer`
+  caller in the app besides its own module; `apps/web/src/build-shop/shop-thumbnails.ts` is now just
+  the shop's wording of a request over the same cache.
+- Item visuals and fallbacks (pure): `apps/web/src/items/visuals.ts` (`itemVisualFor`, `cropVisualFor`,
+  `seedVisual`, `saplingVisual`). Produce draws the crop's model; seeds, saplings and unknown items use
+  sized icon fallbacks. The fallback table is documented in the design doc.
+- Inventory + planting decisions (pure): `apps/web/src/items/catalogue.ts` (`inventoryCards`,
+  `inventoryCategoryOf`, `inventoryTabs`, `plantOptions`, `rememberedPlantChoice`, `storedCounts`).
+- Cards (DOM): `apps/web/src/items/card.ts` (`renderItemCard`, four states, fixed-size thumb box).
+  Wired in `apps/web/src/main.ts` (`renderInventory`, `renderPlantPicker`, `plantOptionCard`,
+  `choosePlantOption`, `renderPlantAction`, `showRewardPop`), with markup in `apps/web/index.html`
+  (`#inventory-tabs`, `#inventory-grid`, `#plant-picker`, `#reward-pop`) and the V14.2 section of
+  `apps/web/src/styles.css`.
+- Harvest feel (pure): `apps/web/src/interaction/feedback.ts` (`harvestGestureBend`,
+  `REWARD_POP_DURATION_MS`); the bow is applied to the avatar's outer group in
+  `apps/web/src/render/scene.ts` (`playHarvestGesture`), and readiness is the world's own ring and
+  spark over every ripe crop and ready tree.
+- Tests: `tests/web/item-presentation.test.ts`, `tests/web/plant-picker.test.ts`,
+  `tests/web/harvest-feedback.test.ts`, and the `repeat` case in
+  `tests/web/interaction-input.test.ts`.
+
 ### The player character (V13.4.1)
 
 The avatar is presentation, and the authority is the player runtime - never the mesh.

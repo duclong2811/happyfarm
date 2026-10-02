@@ -77,7 +77,13 @@
           <button id="inventory-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
         </header>
         <div id="inventory-body" class="module-body">
-          <ul id="inventory" class="inventory-grid"></ul>
+          <!--
+            The inventory as a shelf, not a table: category tabs over a grid of visual item cards
+            (thumbnail, name, quantity). Land is deliberately *outside* the grid - it is not an item.
+          -->
+          <nav id="inventory-tabs" class="item-tabs" role="tablist" aria-label="Inventory categories"></nav>
+          <div id="inventory-grid" class="item-grid" role="list"></div>
+          <p id="inventory-empty" class="muted" hidden></p>
           <section class="land-strip">
             <h3 id="land-title">Land</h3>
             <div id="plots"></div>
@@ -135,7 +141,12 @@
         <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span><button id="dock-expand" class="dock-expand" type="button" hidden></button></div>
         <div class="action-buttons">
           <button id="go" class="go" type="button" hidden><span data-icon="walk" data-icon-size="18"></span><span class="label">Go</span></button>
-          <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled><span data-icon="plant" data-icon-size="18"></span><span class="label">Plant crop</span></button></div>
+          <!--
+            The planting choice is a row of visual crop cards, not a native select: the picture is what a
+            player recognises, and a dropdown is a web form. Rendered by `renderPlantPicker`, one card per
+            catalogue entry, with its own availability state.
+          -->
+          <div id="plant-controls" class="action-controls"><button id="plant" class="primary" type="button" disabled><span data-icon="plant" data-icon-size="18"></span><span class="label">Plant crop</span></button><div id="plant-picker" class="item-picker" role="group"></div></div>
           <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button"><span data-icon="harvest" data-icon-size="18"></span><span class="label">Harvest</span></button><button id="uproot" class="uproot" type="button"><span data-icon="remove" data-icon-size="18"></span><span class="label">Uproot</span></button></div>
           <div id="tree-controls" class="action-controls" hidden><span id="tree-state" class="muted"></span><button id="harvest-tree" class="primary harvest" type="button"><span data-icon="harvest" data-icon-size="18"></span><span class="label">Harvest</span></button><button id="remove-tree" class="uproot" type="button"><span data-icon="remove" data-icon-size="18"></span><span class="label">Remove tree</span></button></div>
         </div>
@@ -146,6 +157,8 @@
         <!-- Shown only when the boot could not establish a session; see renderBootRetry. -->
         <button id="boot-retry" class="ghost-button boot-retry" type="button" hidden>Retry</button>
       </div>
+      <!-- The number a harvest paid, rising from what paid it. One element, reused. -->
+      <div id="reward-pop" class="reward-pop" hidden aria-hidden="true"></div>
       <div class="renderer-state" id="render-3d-state">Preparing 3D world…</div>
       <button id="render-3d" type="button" hidden>Enable 3D</button><div id="field" class="debug-field" hidden></div>
     </section></main><script type="module" src="/src/main.ts"></script>

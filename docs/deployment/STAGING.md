@@ -21,9 +21,10 @@ custom domain is the one to hand to testers: it is easier to type, and it is ver
 is scoped to the hostname it was created on (the cookie carries no `Domain`), so pick one URL per
 playtest - see the last section.
 
-Current deployment: Worker `happy-farm-staging`, version `6d8b7e83-0b60-43ec-ac61-2ffd6d1a7031`,
-deployed 2026-10-02 from the V14.1 interaction-foundation commit, bundle
-`assets/index-D74U38T3.js`. (V13.6.3 was `784f4e7f-607f-4106-92e9-34126df471d2`, V13.6.2
+Current deployment: Worker `happy-farm-staging`, version `67678bb7-7dbd-4896-a343-34841cde3180`,
+deployed 2026-10-02 from the V14.2 farming-interaction and visual-inventory commit, bundles
+`assets/index-DK1VkPwN.js` and `assets/index-B_V0sNEq.css`. (V14.1 was `6d8b7e83-0b60-43ec-ac61-2ffd6d1a7031`,
+V13.6.3 `784f4e7f-607f-4106-92e9-34126df471d2`, V13.6.2
 `174b4e39-f0dd-46e6-84e3-de0b97c9ed01`, V13.6.1 `7df79218-2a86-4435-9cd9-a399f9415c93`.)
 
 ## Architecture

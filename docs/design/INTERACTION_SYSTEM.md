@@ -212,3 +212,29 @@ authorize on presence, zone rules and resource state, and the executor does not 
 4. Add the localized action word, and nothing else in the HUD changes.
 
 Do not: invent a client-side effect, add an action with no handler, or make discovery mutate anything.
+
+## The beat: what a harvest looks and feels like (V14.2)
+
+The interaction was already server-authoritative in V14.1; V14.2 gave it a shape a player can read.
+Four things happen, in this order, and the order is the rule:
+
+1. **The press is accepted locally** - the candidate is re-asked, and a stale one activates nothing.
+2. **The command goes out immediately.** Nothing waits for an animation: the gesture starts *with* the
+   press, and a failure simply pays nothing (no fake reward, no optimistic inventory).
+3. **The server answers**, and the page refreshes from it - inventory, crops and the interaction
+   registry all come from the same rows.
+4. **The feedback lands**: the character bows for 320 ms (`harvestGestureBend`, a procedural gesture
+   because this asset ships no harvest clip), the world loses the crop it settled, and the server's own
+   `quantityAdded` rises from the tile it came from as `+2 Carrot` with the item's cached thumbnail.
+
+Two rules keep it honest and cheap:
+
+* **One press is one command.** A held key is ignored (`repeat` in `interactionKeyRequested`) and a
+  second press while a command is in flight does nothing, so a player cannot machine-gun the server
+  from a keyboard or a thumb.
+* **The next target is discovered, not remembered.** Because the registry is rebuilt from the rows the
+  server sends back, the crop beside the one just harvested becomes the candidate for free - pressing
+  again picks it up. There is no field sweep, no auto-harvest and no queue: the player still walks.
+
+The presentation half of this - the card language, the reward pop, the ready mark - is
+`docs/design/ITEM_PRESENTATION.md`.

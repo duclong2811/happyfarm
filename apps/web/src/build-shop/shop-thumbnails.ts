@@ -1,17 +1,18 @@
 import type { BuildCatalogEntryDTO } from "@happy-farm/contracts";
-import { createThumbnailRenderer, thumbnailCacheKey, type ThumbnailResult } from "../render/thumbnail";
+import type { ThumbnailResult } from "../render/thumbnail";
+import { createItemThumbnails, type ItemThumbnails } from "../items/thumbnails";
 import { thumbnailRequestFor } from "./shop-state";
 
 /**
- * The shop's view of the thumbnail pipeline.
+ * The shop's view of the page's shared picture cache.
  *
- * One renderer for the whole page, created on the first ask and never again, plus the URLs it has
- * produced so far. The card grid and the inspector both come through here, which is what makes the
- * inspector's big picture free: the first ask draws the picture and every later ask - another card,
- * the same card after a search, the inspector - is the same cached string.
+ * The cache itself lives in `items/thumbnails.ts`, because the inventory grid and the planting picker
+ * need the same pictures: a carrot costs one draw per session, not one per panel. This file is only the
+ * shop's *wording* of a request - a catalogue entry rather than a model - so the card grid and the
+ * inspector keep asking in the vocabulary they already had.
  *
- * Failures are not remembered: a model that is still downloading when the shop opens must be able to
- * appear on the second look.
+ * A caller may hand in a cache to share; one that does not (a test, a one-off) gets its own and owns
+ * its disposal.
  */
 
 export interface ShopThumbnails {
@@ -25,38 +26,23 @@ export interface ShopThumbnails {
 }
 
 export function createShopThumbnails(
-  onProblem?: (modelId: string, error: unknown) => void
+  onProblem?: (modelId: string, error: unknown) => void,
+  shared?: ItemThumbnails
 ): ShopThumbnails {
-  const urls = new Map<string, string>();
-  let renderer: ReturnType<typeof createThumbnailRenderer> | null = null;
-
-  function rendererOnce(): ReturnType<typeof createThumbnailRenderer> {
-    // The one renderer, and never a second: a card must not be able to create its own.
-    renderer ??= createThumbnailRenderer(onProblem === undefined ? {} : { onProblem });
-    return renderer;
-  }
-
+  const thumbnails = shared ?? createItemThumbnails(onProblem);
   return {
     cached(entry: BuildCatalogEntryDTO): string | null {
-      const key = thumbnailCacheKey(thumbnailRequestFor(entry));
-      return urls.get(key) ?? null;
+      return thumbnails.cached(thumbnailRequestFor(entry));
     },
-    async request(entry: BuildCatalogEntryDTO): Promise<ThumbnailResult> {
-      const request = thumbnailRequestFor(entry);
-      const key = thumbnailCacheKey(request);
-      const known = urls.get(key);
-      if (known !== undefined) return { dataUrl: known, source: request.roadTierId === null ? "MODEL" : "ROAD" };
-      const result = await rendererOnce().render(request);
-      if (result.dataUrl !== null) urls.set(key, result.dataUrl);
-      return result;
+    request(entry: BuildCatalogEntryDTO): Promise<ThumbnailResult> {
+      return thumbnails.request(thumbnailRequestFor(entry));
     },
     stats(): { readonly drawn: number; readonly cached: number } {
-      return renderer?.stats() ?? { drawn: 0, cached: 0 };
+      return thumbnails.stats();
     },
     dispose(): void {
-      urls.clear();
-      renderer?.dispose();
-      renderer = null;
+      // Only dispose what this call created: a shared cache belongs to whoever built it.
+      if (shared === undefined) thumbnails.dispose();
     }
   };
 }

@@ -103,6 +103,7 @@ import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
 import { isTypingTarget } from "../player/input";
 import { createPlayerCharacterView } from "./player-character";
+import { HARVEST_GESTURE_DURATION_MS, harvestGestureBend } from "../interaction/feedback";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
 import { buildRoadSpec, ROAD_LIFT_WORLD } from "./roads";
 import { ROAD_SEGMENT_CELLS } from "@happy-farm/game-data";
@@ -283,7 +284,12 @@ export interface FarmSceneOptions {
    * renderer asks first and consumes the keystroke when the answer is yes; the host's rule is pure and
    * lives in `apps/web/src/interaction/selection.ts`.
    */
-  readonly onInteractionKeyRequested?: (event: { readonly key: string; readonly target: unknown }) => boolean;
+  readonly onInteractionKeyRequested?: (event: {
+    readonly key: string;
+    readonly target: unknown;
+    /** Whether the key is auto-repeating: a held `E` must not machine-gun the server. */
+    readonly repeat: boolean;
+  }) => boolean;
   /**
    * Called when the estate camera starts or stops following the player.
    *
@@ -329,6 +335,16 @@ export interface FarmSceneHandle {
   recenterEstateCamera(): void;
   /** Whether the estate camera is currently following the player or has been moved by hand. */
   estateFollowBehaviour(): EstateFollowBehaviour;
+  /** Marks the object the interaction prompt is offering, or clears the mark with null. */
+  setInteractionTarget(cell: TileCoordinate | null): void;
+  /** Plays the short harvest bow: a cosmetic beat, started when an interaction is accepted. */
+  playHarvestGesture(): void;
+  /** Where a cell's ground lands on the canvas, for HUD that belongs to a place. */
+  projectCellToScreen(cell: TileCoordinate): {
+    readonly x: number;
+    readonly y: number;
+    readonly visible: boolean;
+  };
   /**
    * Where the third-person camera is looking, in the estate camera's own convention.
    *
@@ -830,6 +846,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   objectMarker.visible = false;
   scene.add(objectFootprintMarker, objectMarker);
   let hoverMarker: Mesh | null = null;
+  /** The cell the interaction ring is under, so a repeated call with the same cell draws nothing. */
+  let interactionMarkerCell: TileCoordinate | null = null;
 
   const pickTargets = new Map<Object3D, TileCoordinate>();
   /**
@@ -1198,6 +1216,21 @@ let interactionGeometry: BufferGeometry | null = null;
    * whole pause as its delta and lurch both the walk cycle and the camera follow.
    */
   const MAX_POSE_DELTA_MS = 100;
+  /** Milliseconds into the harvest bow, or -1 when there is none. */
+  let gestureElapsedMs = -1;
+
+  function updateHarvestGesture(deltaMs: number): void {
+    if (gestureElapsedMs < 0) return;
+    gestureElapsedMs += Math.max(0, deltaMs);
+    if (gestureElapsedMs >= HARVEST_GESTURE_DURATION_MS) {
+      gestureElapsedMs = -1;
+      playerGroup.rotation.x = 0;
+      return;
+    }
+    // Applied to the avatar's outer group, so the character view keeps owning the model's own transform
+    // - and to nothing else, so the walk cycle and the mixer never learn about a harvest.
+    playerGroup.rotation.x = harvestGestureBend(gestureElapsedMs);
+  }
 
   /**
    * Draws the player at the pose the runtime produced.
@@ -1209,6 +1242,7 @@ let interactionGeometry: BufferGeometry | null = null;
   function updatePlayer(deltaMs: number): void {
     playerGroup.visible = playerPose !== null;
     characterView.update(playerPose, Number.isFinite(deltaMs) && deltaMs > 0 ? deltaMs / 1000 : 0);
+    updateHarvestGesture(deltaMs);
   }
 
   /**
@@ -1528,6 +1562,21 @@ let interactionGeometry: BufferGeometry | null = null;
         const treePlantNode = treePlant(tile, assets, sceneryModel("tree_broad_3"), tree);
         treeGroup.add(treePlantNode);
         pickTargets.set(treePlantNode, coordinate);
+        // A production tree whose cycle is ready says so the same way a mature crop does: the same ring
+        // and the same small spark, so "come back to this one" is one visual language across the farm
+        // rather than two. Still one mark per ready tile, and none at all on a growing field.
+        if (tree.ready) {
+          const ring = new Mesh(assets.ring, assets.ready);
+          ring.rotation.x = -Math.PI / 2;
+          ring.position.set(tile.worldX, TILE_THICKNESS + 0.03, tile.worldZ);
+          ring.scale.set(state.layout.tileSize * 0.46, state.layout.tileSize * 0.46, 1);
+          treeGroup.add(ring);
+          const spark = new Mesh(assets.octa, assets.ready);
+          spark.rotation.y = Math.PI / 4;
+          spark.position.set(tile.worldX, TILE_THICKNESS + 1.9, tile.worldZ);
+          spark.scale.setScalar(0.13);
+          treeGroup.add(spark);
+        }
       }
       if (crop === null) continue;
       const height = Math.max(crop.heightFraction * CROP_MAX_HEIGHT, MIN_CROP_HEIGHT);
@@ -2163,13 +2212,18 @@ let interactionGeometry: BufferGeometry | null = null;
     armEstateFollow(playerPose?.movementState === "WALKING");
     cameraRig.update(deltaMs);
     characterCamera.update(deltaMs);
+    // The bow is the one animation that needs frames while the character stands still; the same loop
+    // that carries the camera keeps it alive, and it ends with the gesture.
+    updateHarvestGesture(deltaMs);
     if (cameraTransition !== null) {
       cameraTransition.advance(deltaMs / 1000);
       if (!cameraTransition.isActive()) cameraTransition = null;
     }
     updateCamera();
     draw();
-    if (cameraTransition !== null || cameraRig.isSettling() || characterCamera.isSettling()) scheduleCameraFrame();
+    if (cameraTransition !== null || cameraRig.isSettling() || characterCamera.isSettling() || gestureElapsedMs >= 0) {
+      scheduleCameraFrame();
+    }
     else lastFrameTime = 0;
   }
 
@@ -2363,7 +2417,11 @@ let interactionGeometry: BufferGeometry | null = null;
     // that landed in a field, so "is the player typing" is answered in one place rather than two.
     if (
       (event.key === "e" || event.key === "E") &&
-      options.onInteractionKeyRequested?.({ key: event.key, target: event.target }) === true
+      options.onInteractionKeyRequested?.({
+        key: event.key,
+        target: event.target,
+        repeat: event.repeat
+      }) === true
     ) {
       event.preventDefault();
       return;
@@ -2386,7 +2444,13 @@ let interactionGeometry: BufferGeometry | null = null;
   hoverMarker = new Mesh(assets.ring, assets.hover);
   hoverMarker.rotation.x = -Math.PI / 2;
   hoverMarker.visible = false;
-  scene.add(selectionMarker, hoverMarker);
+  // The interaction mark: one ring under whatever the character view is offering, drawn from the
+  // candidate the HUD already computed. Separate from the estate selection and from the mouse hover,
+  // because it means something else again - "this is what E would do".
+  const interactionMarker = new Mesh(assets.ring, assets.selection);
+  interactionMarker.rotation.x = -Math.PI / 2;
+  interactionMarker.visible = false;
+  scene.add(selectionMarker, hoverMarker, interactionMarker);
 
   const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => { draw(); });
   observer?.observe(canvas);
@@ -2479,6 +2543,40 @@ let interactionGeometry: BufferGeometry | null = null;
     recenterEstateCamera,
     estateFollowBehaviour(): EstateFollowBehaviour {
       return estateFollow.behaviour;
+    },
+    setInteractionTarget(cell: TileCoordinate | null): void {
+      const marker = interactionMarker;
+      const same =
+        (cell === null && interactionMarkerCell === null) ||
+        (cell !== null && interactionMarkerCell !== null && cell.x === interactionMarkerCell.x && cell.y === interactionMarkerCell.y);
+      if (same) return;
+      interactionMarkerCell = cell === null ? null : { x: cell.x, y: cell.y };
+      marker.visible = interactionMarkerCell !== null;
+      if (interactionMarkerCell !== null) {
+        const position = tileToWorld(interactionMarkerCell, worldFrame(state.layout.pitch));
+        const ground = GROUND_SURFACE_Y + terrainHeightAt(position.worldX, position.worldZ, state.world.terrain);
+        marker.position.set(position.worldX, ground + 0.06, position.worldZ);
+        marker.scale.set(state.layout.tileSize * 0.52, state.layout.tileSize * 0.52, 1);
+      }
+      draw();
+    },
+    playHarvestGesture(): void {
+      gestureElapsedMs = 0;
+      scheduleCameraFrame();
+    },
+    projectCellToScreen(cell: TileCoordinate) {
+      const bounds = canvas.getBoundingClientRect();
+      const position = tileToWorld(cell, worldFrame(state.layout.pitch));
+      const ground = GROUND_SURFACE_Y + terrainHeightAt(position.worldX, position.worldZ, state.world.terrain);
+      // A little above the ground: the pop names the crop, not the soil it stands on.
+      const projected = new Vector3(position.worldX, ground + 0.7, position.worldZ).project(camera);
+      return {
+        x: (projected.x * 0.5 + 0.5) * bounds.width,
+        y: (-projected.y * 0.5 + 0.5) * bounds.height,
+        // Behind the camera is not "off screen", it is "you cannot see it", and the caller must not
+        // draw a label pinned to a place that is behind them.
+        visible: projected.z > -1 && projected.z < 1
+      };
     },
     cameraBearing(): number {
       return cameraMode === "CHARACTER" ? characterCamera.state.yaw : cameraRig.state.yaw;

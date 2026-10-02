@@ -35,7 +35,13 @@ export type IconName =
   /** The compact HUD's overflow control. */
   | "more"
   /** The bottom surface's expand/collapse affordance. */
-  | "chevron";
+  | "chevron"
+  /** A seed: the planting input, drawn as a pouch-shaped pip. */
+  | "seed"
+  /** A sprout: a sapling, and the tree half of the planting picker. */
+  | "sprout"
+  /** A tick, for the chosen card in a picker. */
+  | "check";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -88,6 +94,13 @@ const PATHS: Readonly<Record<IconName, readonly string[]>> = {
   ],
   /** Chevron: one stroke, rotated by CSS for expand and collapse. */
   chevron: ["M6 14.5l6-6 6 6"]
+  ,
+  /** Seed: a teardrop pip with its own little seam. */
+  seed: ["M12 4.5c3.4 3.2 4.6 6.4 4.6 9.2a4.6 4.6 0 0 1-9.2 0c0-2.8 1.2-6 4.6-9.2z", "M12 9v9"],
+  /** Sprout: a stem with one leaf each way. */
+  sprout: ["M12 20v-7", "M12 13.5c0-3 2.2-5.2 5.5-5.2 0 3-2.2 5.2-5.5 5.2", "M12 15.5c0-2.4-1.8-4.2-4.5-4.2 0 2.4 1.8 4.2 4.5 4.2"],
+  /** Check: the marker on the chosen card, never the only signal (the card also has a border). */
+  check: ["M5 12.5l4.5 4.5L19 7.5"]
 };
 
 /** Builds one icon as an SVG element the caller can drop into a button. */

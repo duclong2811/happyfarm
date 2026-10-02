@@ -133,6 +133,14 @@ export interface InteractionKeyInput {
   readonly key: string;
   /** Whether the keystroke landed in a text field, a select or anything else that owns the keyboard. */
   readonly typing: boolean;
+  /**
+   * Whether this is a held key repeating rather than a fresh press.
+   *
+   * Holding `E` must not machine-gun the server: the harvest is one press, one command. A repeat is
+   * ignored here rather than throttled later, so nothing is ever sent for a keystroke the player did
+   * not make.
+   */
+  readonly repeat: boolean;
   readonly cameraMode: CameraMode;
   readonly hasCandidate: boolean;
   /** Whether a panel, a placement or a move owns the pointer and keyboard right now. */
@@ -150,7 +158,7 @@ export interface InteractionKeyInput {
  */
 export function interactionKeyRequested(input: InteractionKeyInput): boolean {
   if (input.key !== "e" && input.key !== "E") return false;
-  if (input.typing || input.uiOpen) return false;
+  if (input.typing || input.repeat || input.uiOpen) return false;
   if (input.cameraMode !== "CHARACTER") return false;
   return input.hasCandidate;
 }

@@ -21,6 +21,7 @@ describe("the interaction key", () => {
   const base = {
     key: "e",
     typing: false,
+    repeat: false,
     cameraMode: "CHARACTER" as const,
     hasCandidate: true,
     uiOpen: false
@@ -41,6 +42,11 @@ describe("the interaction key", () => {
     expect(interactionKeyRequested({ ...base, typing: true })).toBe(false);
   });
 
+  it("ignores a held key repeating, so one press is one command", () => {
+    // Holding E must not machine-gun the server: the harvest is one press, one request, and the crop
+    // that has just been settled must not be asked for again by a key that has not been let go.
+    expect(interactionKeyRequested({ ...base, repeat: true })).toBe(false);
+  });
   it("never fires with nothing in reach, so the camera keeps the key", () => {
     // E is the character camera's orbit-right key, and it stays that key until something is in reach.
     expect(interactionKeyRequested({ ...base, hasCandidate: false })).toBe(false);

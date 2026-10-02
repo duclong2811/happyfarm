@@ -157,6 +157,22 @@ import {
   interactionKeyRequested,
   selectInteractionCandidate
 } from "./interaction/selection";
+import { REWARD_POP_DURATION_MS } from "./interaction/feedback";
+import { createItemThumbnails, type ItemThumbnails } from "./items/thumbnails";
+import { renderItemCard, type ItemCardState } from "./items/card";
+import { itemVisualFor } from "./items/visuals";
+import {
+  inventoryCards,
+  inventoryCategoryCounts,
+  inventoryTabs,
+  plantOptions,
+  rememberedPlantChoice,
+  storedCounts,
+  visibleInventoryCards,
+  type InventoryCard,
+  type InventoryCategory,
+  type PlantOption
+} from "./items/catalogue";
 import "./styles.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
@@ -165,9 +181,6 @@ const REFRESH_INTERVAL_MS = 2_000;
 // back. Errors are not on this clock - they stay until something replaces them, because they are
 // usually the only sign that an action the player asked for did not happen.
 const STATUS_TIMEOUT_MS = 6_000;
-/** The separator the planting choices use between a name, its level, and its count. */
-const OPTION_SEPARATOR = " \u00b7 ";
-
 interface SelectedTile {
   readonly x: number;
   readonly y: number;
@@ -333,6 +346,8 @@ let dock: DockState = COLLAPSED_DOCK;
 let estateFollow: EstateFollowBehaviour = "FOLLOW";
 /** Whether the phone's overflow menu is open. Presentation only. */
 let hudMenuOpen = false;
+/** Which inventory tab is open. A view, not a preference: it is not stored and it decides no rule. */
+let inventoryCategory: InventoryCategory = "ALL";
 /**
  * The island's interactables, bucketed by the cell they stand on, and what is in reach right now.
  *
@@ -344,6 +359,8 @@ let interactionIndex: InteractionIndex = EMPTY_INTERACTION_INDEX;
 let interactionCandidate: InteractionCandidate | null = null;
 /** The last thing the interaction surfaces were drawn from, so an unchanged frame writes no DOM. */
 let interactionSignature = "";
+/** Whether an interaction command is in flight, so one press cannot become two commands. */
+let interactionPending = false;
 /** The character's latest pose, kept so the interaction scan can ask where they are standing. */
 let characterPose: FarmScenePlayer | null = null;
 /** The pending clear for a transient success message, or null. */
@@ -771,110 +788,132 @@ function selectedCropDefinition(): CropDefinitionDTO | null {
  * catalogues, and the server checks the same preconditions again when the request arrives.
  */
 function ensurePlantableSelection(): void {
-  const cropPlantable = (definition: CropDefinitionDTO): boolean =>
-    definition.cropDefinitionId === state.selectedCrop &&
-    !cropIsLocked(definition) &&
-    seedCount(definition) > 0;
-  const treePlantable = (definition: TreeDefinitionDTO): boolean =>
-    definition.treeDefinitionId === state.selectedTree &&
-    !treeIsLocked(definition) &&
-    saplingCount(definition) > 0;
-  if (
-    (state.selectedCrop !== null && state.cropDefinitions.some(cropPlantable)) ||
-    (state.selectedTree !== null && state.treeDefinitions.some(treePlantable))
-  ) {
-    return;
-  }
-  const crop = state.cropDefinitions.find(
-    (definition) => !cropIsLocked(definition) && seedCount(definition) > 0
-  );
-  if (crop !== undefined) {
-    state.selectedCrop = crop.cropDefinitionId;
-    state.selectedTree = null;
-    return;
-  }
-  const tree = state.treeDefinitions.find(
-    (definition) => !treeIsLocked(definition) && saplingCount(definition) > 0
-  );
-  state.selectedTree = tree?.treeDefinitionId ?? null;
-  state.selectedCrop = null;
+  // The rule lives in `items/catalogue.ts`, where it is a test: keep the remembered choice while the
+  // player can still make it, otherwise take the first one they can. Called before the picker draws and
+  // after every account refresh, so the chosen crop is never one the player cannot plant.
+  const options = plantOptionModels();
+  const chosen = rememberedPlantChoice(selectedPlantOption(), options);
+  const option = options.find((candidate) => candidate.key === chosen) ?? null;
+  state.selectedCrop = option?.kind === "CROP" ? option.definitionId : null;
+  state.selectedTree = option?.kind === "TREE" ? option.definitionId : null;
 }
 
-// The planting control is this page's only <select>, and it is rebuilt from the server's catalogue.
-// Replacing its options while the list is open would collapse the dropdown, and this page re-renders
-// after every action and on every growth poll, so the options are only replaced when they differ.
-let renderedCropOptions: string | null = null;
+/**
+ * The planting picker: a row of visual crop cards, not a dropdown.
+ *
+ * A picture is what a player recognises, and a native select is a web form - the whole point of V14.2
+ * is that the farming loop reads like a game. Each card is the shared item card with this catalogue
+ * entry's own state on it: how many seeds are held, whether it is unlocked, and whether it is chosen.
+ * The list is sorted so the choices a player can actually use come first, and a level-locked crop says
+ * so rather than blaming an empty seed pouch.
+ *
+ * Rebuilt only when the signature changes, because this page re-renders after every action and on
+ * every growth poll, and a card row that rebuilt itself under a thumb would be unusable.
+ */
+let renderedPlantSignature: string | null = null;
 
-function renderCrops(): void {
-  const level = state.progression?.level ?? null;
+/** The options, straight from the catalogues and the inventory the server last sent. */
+function plantOptionModels(): PlantOption[] {
+  const counts = storedCounts(state.inventory);
+  return plantOptions({
+    cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions,
+    playerLevel: state.progression?.level ?? null,
+    // One map serves both families: an item id is unique, and a crop's seed and a tree's sapling are
+    // different items.
+    seedCounts: counts,
+    saplingCounts: counts
+  });
+}
+
+function renderPlantPicker(): void {
+  const options = plantOptionModels();
   const signature = JSON.stringify([
     state.language,
-    state.cropDefinitions.map((definition) => [
-      definition.cropDefinitionId,
-      definition.requiredLevel,
-      seedCount(definition)
-    ]),
-    state.treeDefinitions.map((definition) => [
-      definition.treeDefinitionId,
-      definition.requiredLevel,
-      saplingCount(definition)
-    ]),
-    level,
+    options.map((option) => [option.key, option.stored, option.group, option.requiredLevel]),
     state.selectedCrop,
     state.selectedTree
   ]);
-  if (signature === renderedCropOptions) return;
-  renderedCropOptions = signature;
+  if (signature === renderedPlantSignature) return;
+  renderedPlantSignature = signature;
 
-  const select = element<HTMLSelectElement>("crop-select");
-  select.replaceChildren();
-  if (state.cropDefinitions.length === 0) {
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "—";
-    select.appendChild(placeholder);
-    select.disabled = true;
-    return;
+  ensurePlantableSelection();
+  const chosenKey = selectedPlantOption();
+  const picker = element<HTMLElement>("plant-picker");
+  picker.replaceChildren();
+  picker.setAttribute("aria-label", t("plant.pick"));
+  for (const option of options) {
+    picker.appendChild(plantOptionCard(option, chosenKey));
   }
-  select.disabled = false;
-  // Crops and trees come from two catalogues and are grouped, because the player is choosing one
-  // thing to plant: the group labels are the only place the page distinguishes them.
-  const cropGroup = document.createElement("optgroup");
-  cropGroup.label = t("plant.crops");
-  select.appendChild(cropGroup);
-  for (const definition of state.cropDefinitions) {
-    const option = document.createElement("option");
-    option.value = definition.cropDefinitionId;
-    // Every option carries the crop's name and the seed count the player holds, so the cost of
-    // planting is visible before the button is pressed. A locked crop is offered with the level it
-    // needs rather than hidden, so the player can see what to work towards.
-    const parts = [cropName(definition.cropDefinitionId)];
-    if (definition.requiredLevel > 1) {
-      parts.push(`(${t("dock.locked", { level: definition.requiredLevel })})`);
-    }
-    parts.push(t("dock.seedCount", { count: seedCount(definition) }));
-    option.disabled = cropIsLocked(definition);
-    option.textContent = parts.join(" · ");
-    cropGroup.appendChild(option);
-  }
-  const treeGroup = document.createElement("optgroup");
-  treeGroup.label = t("plant.trees");
-  for (const definition of state.treeDefinitions) {
-    const option = document.createElement("option");
-    option.value = `tree:${definition.treeDefinitionId}`;
-    const parts = [treeName(definition.treeDefinitionId)];
-    if (definition.requiredLevel > 1) {
-      parts.push(`(${t("dock.locked", { level: definition.requiredLevel })})`);
-    }
-    parts.push(t("dock.saplingCount", { count: saplingCount(definition) }));
-    option.disabled = treeIsLocked(definition);
-    option.textContent = parts.join(OPTION_SEPARATOR);
-    treeGroup.appendChild(option);
-  }
-  if (state.treeDefinitions.length > 0) select.appendChild(treeGroup);
-  select.value = selectedPlantOption();
+  renderPlantAction(options.find((option) => option.key === chosenKey) ?? null);
 }
 
+/** One crop in the picker: the shared card, with this catalogue entry's own state. */
+function plantOptionCard(option: PlantOption, chosenKey: string): HTMLElement {
+  const name = option.kind === "CROP" ? cropName(option.definitionId) : treeName(option.definitionId);
+  const chosen = option.key === chosenKey;
+  const cardState: ItemCardState =
+    option.group === "LOCKED" ? "LOCKED" : option.group === "NO_SEEDS" ? "EMPTY" : chosen ? "SELECTED" : "NORMAL";
+  // The blocker in the order a player would fix it: the level first, because no amount of shopping
+  // fixes a locked crop, and only then the empty pouch.
+  const note =
+    option.blockedReason === "LEVEL"
+      ? t("plant.levelRequired", { level: option.requiredLevel })
+      : option.blockedReason === "NO_SEEDS"
+        ? t("plant.noSeeds")
+        : t("plant.growsIn", { time: durationText(option.growthSeconds) });
+  const quantityLabel = t(option.kind === "CROP" ? "plant.seedsHeld" : "plant.saplingsHeld", {
+    quantity: option.stored,
+    item: name
+  });
+  return renderItemCard(
+    {
+      key: option.key,
+      visual: option.visual,
+      name,
+      quantity: option.stored,
+      quantityLabel,
+      note,
+      state: cardState,
+      disabled: !option.selectable,
+      ariaLabel: `${name} — ${quantityLabel}, ${note}`
+    },
+    itemCardDeps(),
+    {
+      onSelect: () => {
+        choosePlantOption(option);
+      }
+    }
+  );
+}
+
+/** Choosing a crop or a tree is one choice: picking either clears the other. */
+function choosePlantOption(option: PlantOption): void {
+  if (!option.selectable) return;
+  const alreadyChosen =
+    (option.kind === "CROP" && state.selectedCrop === option.definitionId && state.selectedTree === null) ||
+    (option.kind === "TREE" && state.selectedTree === option.definitionId && state.selectedCrop === null);
+  if (alreadyChosen) return;
+  state.selectedCrop = option.kind === "CROP" ? option.definitionId : null;
+  state.selectedTree = option.kind === "TREE" ? option.definitionId : null;
+  renderedPlantSignature = null;
+  renderPlantPicker();
+  renderSelection();
+}
+
+/** The action's own words: "Plant Carrot", not "Plant crop". */
+function renderPlantAction(chosen: PlantOption | null): void {
+  const label =
+    chosen === null
+      ? t("dock.plant")
+      : t("dock.plantNamed", {
+          crop: chosen.kind === "CROP" ? cropName(chosen.definitionId) : treeName(chosen.definitionId)
+        });
+  setLabel("plant", label);
+  const button = element<HTMLButtonElement>("plant");
+  button.setAttribute("aria-label", label);
+  button.title = label;
+}
 /**
  * The single place the page turns authoritative rows into "what the dock offers" semantics.
  *
@@ -1219,19 +1258,101 @@ function renderField(): void {
 }
 
 function renderInventory(): void {
-  const list = element<HTMLUListElement>("inventory");
-  list.replaceChildren();
-  if (state.inventory.length === 0) {
-    list.appendChild(make("li", "muted", t("inventory.empty")));
-    return;
+  const cards = inventoryCards({
+    inventory: state.inventory,
+    cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions
+  });
+  const tabs = inventoryTabs(cards);
+  // A tab can empty out while it is open - the last seed spent on the last cell. Falling back to
+  // everything keeps the panel showing the farm rather than an empty shelf.
+  if (!tabs.includes(inventoryCategory)) inventoryCategory = "ALL";
+  const counts = inventoryCategoryCounts(cards);
+
+  const tabBar = element<HTMLElement>("inventory-tabs");
+  tabBar.replaceChildren();
+  tabBar.hidden = cards.length === 0;
+  for (const category of tabs) {
+    const tab = make("button", "item-tab");
+    tab.type = "button";
+    tab.setAttribute("role", "tab");
+    const active = category === inventoryCategory;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.textContent = `${t(inventoryCategoryKey(category))} (${String(counts[category])})`;
+    tab.addEventListener("click", () => {
+      inventoryCategory = category;
+      renderInventory();
+    });
+    tabBar.appendChild(tab);
   }
-  for (const entry of state.inventory) {
-    // One cell per stack: name and count, no card, so a growing inventory stays scannable.
-    const cell = make("li", "inventory-cell");
-    cell.appendChild(make("span", "inventory-name", itemName(entry.itemDefinitionId, entry.displayNameKey)));
-    cell.appendChild(make("span", "inventory-count", `×${String(entry.quantity)}`));
-    list.appendChild(cell);
+
+  const grid = element<HTMLElement>("inventory-grid");
+  grid.replaceChildren();
+  for (const card of visibleInventoryCards(cards, inventoryCategory)) {
+    grid.appendChild(inventoryCardNode(card));
   }
+  const empty = element<HTMLElement>("inventory-empty");
+  empty.hidden = cards.length > 0;
+  empty.textContent = t("inventory.empty");
+}
+
+/** The tab's own words, spelled out so the translator stays total. */
+function inventoryCategoryKey(category: InventoryCategory): MessageKey {
+  switch (category) {
+    case "ALL":
+      return "inventory.category.all";
+    case "PRODUCE":
+      return "inventory.category.produce";
+    case "SEEDS":
+      return "inventory.category.seeds";
+    case "SAPLINGS":
+      return "inventory.category.saplings";
+  }
+}
+
+/**
+ * One item on the shelf: a picture, a name, how many, and what the market pays for it if anything.
+ *
+ * No button and no action. The inventory answers "what do I own?"; using an item is either planting
+ * (cell-based, and the dock's job) or selling (the market's row). A card that looked pressable and did
+ * nothing would be the web-form problem in a new costume.
+ */
+function inventoryCardNode(card: InventoryCard): HTMLElement {
+  const name = itemName(card.itemDefinitionId, card.nameKey ?? card.itemDefinitionId);
+  const quantityLabel = t("inventory.quantityLabel", { quantity: card.quantity, item: name });
+  return renderItemCard(
+    {
+      key: card.key,
+      visual: card.visual,
+      name,
+      quantity: card.quantity,
+      quantityLabel,
+      note: inventoryNoteFor(card.itemDefinitionId),
+      state: "NORMAL",
+      disabled: false,
+      ariaLabel: `${name} — ${quantityLabel}`
+    },
+    itemCardDeps()
+  );
+}
+
+/** What the market pays for this item, when it buys it at all. Server data, never a client guess. */
+function inventoryNoteFor(itemDefinitionId: string): string | null {
+  const entry = state.shop.find((row) => row.itemDefinitionId === itemDefinitionId);
+  if (entry === undefined || entry.sellPrice === null) return null;
+  return t("inventory.sellsFor", {
+    price: entry.sellPrice,
+    currency: currencyLabel(entry.currencyId, entry.currencyDisplayNameKey)
+  });
+}
+
+/** What every visual item card needs: the shared picture cache and the icon set. */
+function itemCardDeps(): {
+  readonly thumbnails: ItemThumbnails;
+  readonly icon: (name: IconName, size?: number) => SVGElement;
+} {
+  return { thumbnails: itemThumbnails, icon: (name, size) => createIcon(name, size) };
 }
 
 /**
@@ -1350,9 +1471,20 @@ let placementPending = false;
  * A session that never opens the shop never creates one, and the card grid and the inspector share
  * everything it has already drawn - which is what makes inspecting an item free.
  */
-const shopThumbnails = createShopThumbnails((modelId) => {
+const itemThumbnails: ItemThumbnails = createItemThumbnails((modelId) => {
   reportMissingThumbnail(modelId);
 });
+
+/**
+ * The shop's view of the same cache.
+ *
+ * Four surfaces draw an item picture - the shop, the inventory, the planting picker and the reward pop
+ * - and they all come through *this* cache, so a carrot costs one draw per session and there is one
+ * WebGL context behind all of them. See `apps/web/src/items/thumbnails.ts`.
+ */
+const shopThumbnails = createShopThumbnails((modelId) => {
+  reportMissingThumbnail(modelId);
+}, itemThumbnails);
 
 /** A thumbnail that could not be drawn is worth saying once, quietly, on the status line. */
 let reportedThumbnailProblem = false;
@@ -2633,7 +2765,6 @@ function renderChrome(): void {
   element<HTMLElement>("market-title").textContent = t("panel.market");
   element<HTMLElement>("module-rail").setAttribute("aria-label", t("hud.modules"));
   renderMarketTabs();
-  element<HTMLElement>("crop-label").textContent = t("dock.crop");
   setLabel("plant", t("dock.plant"));
   setLabel("harvest", t("dock.harvest"));
   setLabel("uproot", t("dock.uproot"));
@@ -2659,7 +2790,7 @@ function render(): void {
   renderWallet();
   renderProgression();
   renderPlots();
-  renderCrops();
+  renderPlantPicker();
   renderField();
   renderSelection();
   renderGo();
@@ -3315,6 +3446,13 @@ function refreshInteractionCandidate(): void {
           worldZ: pose.worldZ,
           facingYaw: pose.facingYaw
         });
+  // The mark follows the same candidate the prompt does: one ring under the thing E would act on, so a
+  // field of ripe crops does not leave the player guessing which one is meant.
+  scene?.setInteractionTarget(
+    interactionCandidate === null
+      ? null
+      : { x: interactionCandidate.tileX, y: interactionCandidate.tileY }
+  );
   renderInteraction();
 }
 
@@ -3366,7 +3504,19 @@ function renderInteraction(): void {
  * anything.
  */
 async function runInteraction(): Promise<void> {
-  if (state.cameraMode !== "CHARACTER") return;
+  // One interaction at a time. A second press while the first command is still in flight would send a
+  // second harvest for a crop the server is already settling - the server refuses it, and the player
+  // sees a pointless error. The gesture and the prompt stay responsive either way.
+  if (state.cameraMode !== "CHARACTER" || interactionPending) return;
+  interactionPending = true;
+  try {
+    await activateInteraction();
+  } finally {
+    interactionPending = false;
+  }
+}
+
+async function activateInteraction(): Promise<void> {
   const selected = interactionCandidate;
   const pose = characterPose;
   const fresh =
@@ -3389,9 +3539,13 @@ async function runInteraction(): Promise<void> {
       inspectTarget(decision.target);
       return;
     case "HARVEST_CROP":
+      // The bow begins with the press, not with the answer: the request is already on its way, so
+      // nothing in the game waits for an animation event - and a failure never pays a reward.
+      scene?.playHarvestGesture();
       await harvestCrop(decision.cropInstanceId, decision.expectedCropVersion);
       return;
     case "HARVEST_TREE":
+      scene?.playHarvestGesture();
       await harvestTree(decision.treeInstanceId, decision.expectedTreeVersion);
       return;
   }
@@ -3404,6 +3558,59 @@ async function runInteraction(): Promise<void> {
 function inspectTarget(target: InteractionCandidate): void {
   if (target.kind === "WORLD_OBJECT") selectObject(target.targetId);
   else selectCell(target.tileX, target.tileY);
+}
+
+/**
+ * The number a harvest paid, rising from the crop that paid it.
+ *
+ * The quantity is the *server's* own `quantityAdded` - never a client estimate - and the picture is the
+ * item's thumbnail from the same shared cache every other surface uses. One element is reused, and the
+ * animation is CSS: this is feedback, not a second system.
+ */
+function showRewardPop(
+  itemDefinitionId: string,
+  quantity: number,
+  tile: { readonly x: number; readonly y: number } | null
+): void {
+  const node = element<HTMLElement>("reward-pop");
+  if (tile === null || scene === null) {
+    node.hidden = true;
+    return;
+  }
+  const at = scene.projectCellToScreen(tile);
+  if (!at.visible) {
+    // Somewhere behind the camera: the status line still says what happened, so nothing is lost.
+    node.hidden = true;
+    return;
+  }
+  const image = document.createElement("img");
+  image.alt = "";
+  const visual = itemVisualFor(itemDefinitionId, {
+    cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions
+  });
+  itemThumbnails.apply(visual.request, image, (result) => {
+    // No picture for this item: the words carry the whole message rather than a broken image.
+    if (result.dataUrl === null) image.remove();
+  });
+  const label = document.createElement("span");
+  label.textContent = t("interaction.reward", {
+    quantity,
+    item: itemLabel(itemDefinitionId)
+  });
+  node.replaceChildren(image, label);
+  node.style.left = `${String(Math.round(at.x))}px`;
+  node.style.top = `${String(Math.round(at.y))}px`;
+  node.hidden = false;
+  // Restart the CSS animation rather than trusting it to replay on a node that is already there: the
+  // layout read between removing and re-adding the class is what makes the browser start it again.
+  node.classList.remove("is-live");
+  node.getBoundingClientRect();
+  node.classList.add("is-live");
+  window.setTimeout(() => {
+    node.hidden = true;
+    node.classList.remove("is-live");
+  }, REWARD_POP_DURATION_MS);
 }
 
 function enable3D(): void {
@@ -3438,6 +3645,7 @@ function enable3D(): void {
           const requested = interactionKeyRequested({
             key: event.key,
             typing: isTypingTarget(event.target),
+            repeat: event.repeat,
             cameraMode: state.cameraMode,
             hasCandidate: interactionCandidate !== null,
             uiOpen: panels.active !== null || state.buildSelection !== null || moveSession !== null
@@ -3583,6 +3791,10 @@ async function plant(): Promise<void> {
 
 async function harvestCrop(cropInstanceId: string, expectedCropVersion: number): Promise<void> {
   if (state.farmId === null) return;
+  // Where the crop stands, read before the refresh removes it: the reward pop rises from the thing
+  // that paid it, and after the settle there is no row left to ask.
+  const standing = state.crops.find((row) => row.cropInstanceId === cropInstanceId);
+  const tile = standing === undefined ? null : { x: standing.tileX, y: standing.tileY };
   const client = api();
   const result = await client.harvestCrop(state.farmId, cropInstanceId, {
     requestId: newRequestId("harvest"),
@@ -3596,6 +3808,7 @@ async function harvestCrop(cropInstanceId: string, expectedCropVersion: number):
   // even if another harvest landed in between. The award is used for the message only.
   const awarded = result.progression;
   const harvested = result.harvest;
+  showRewardPop(harvested.itemDefinitionId, harvested.quantityAdded, tile);
   setStatus((translate) => {
     const base = translate("status.harvested", {
       quantity: harvested.quantityAdded,
@@ -3692,6 +3905,8 @@ async function plantTree(tile: FarmTileDTO): Promise<void> {
  */
 async function harvestTree(treeInstanceId: string, expectedTreeVersion: number): Promise<void> {
   if (state.farmId === null) return;
+  const standing = state.trees.find((row) => row.treeInstanceId === treeInstanceId);
+  const tile = standing === undefined ? null : { x: standing.tileX, y: standing.tileY };
   const result = await api().harvestTree(state.farmId, treeInstanceId, {
     requestId: newRequestId("harvest-tree"),
     expectedTreeVersion
@@ -3700,6 +3915,7 @@ async function harvestTree(treeInstanceId: string, expectedTreeVersion: number):
   await refreshAccount();
   const awarded = result.progression;
   const harvested = result.harvest;
+  showRewardPop(harvested.itemDefinitionId, harvested.quantityAdded, tile);
   setStatus((translate) => {
     const base = translate("status.harvested", {
       quantity: harvested.quantityAdded,
@@ -3823,28 +4039,11 @@ function setLanguage(language: Language): void {
   t = createTranslator(language);
   storeLanguage(localStorage, language);
   document.documentElement.lang = languageTag(language);
-  renderedCropOptions = null;
+  renderedPlantSignature = null;
   render();
 }
 
 function wire(): void {
-  // The options are built by renderCrops from the server's crop catalogue, not compiled in here.
-  const cropSelect = element<HTMLSelectElement>("crop-select");
-  cropSelect.addEventListener("change", () => {
-    // One control, two catalogues: a tree option is prefixed, and choosing either clears the other
-    // so exactly one plant intent is ever pending.
-    const chosen = cropSelect.value;
-    if (chosen.startsWith("tree:")) {
-      state.selectedTree = chosen.slice("tree:".length);
-      state.selectedCrop = null;
-    } else {
-      state.selectedCrop = chosen;
-      state.selectedTree = null;
-    }
-    renderSelection();
-    refreshScene();
-  });
-
   element<HTMLButtonElement>("language").addEventListener("click", () => {
     setLanguage(otherLanguage(state.language));
   });
