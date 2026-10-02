@@ -137,10 +137,17 @@ describe("responsive HUD contract", () => {
   });
 
   it("keeps the farming furniture out of character view, but not the contextual strip", () => {
-    // The module rail steps aside for the joystick; the dock does not, because the strip is how a
-    // player asks to plant something without the editor covering the island.
-    expect(css).toContain("body.is-character-mode .module-rail");
-    expect(css).not.toContain("body.is-character-mode .action-dock");
+    // The module rail steps aside for the joystick. The strip does not: it is how a player asks to
+    // plant something without the editor covering the island, so character mode may *position* it
+    // around the movement controls and must never hide it.
+    const rules = css.match(/body\.is-character-mode[^{]*\{[^}]*\}/g) ?? [];
+    const dockRules = rules.filter((rule) => rule.includes(".action-dock"));
+    const railRules = rules.filter((rule) => rule.includes(".module-rail"));
+    expect(railRules.some((rule) => rule.includes("display: none"))).toBe(true);
+    expect(dockRules.length).toBeGreaterThan(0);
+    for (const rule of dockRules) {
+      expect(rule, rule).not.toContain("display: none");
+    }
   });
 
   it("moves transient messages off the controls they would otherwise land on", () => {

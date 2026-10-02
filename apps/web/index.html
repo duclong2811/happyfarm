@@ -39,6 +39,17 @@
       <p id="camera-hint" class="camera-hint" hidden></p>
 
       <!--
+        The one contextual interaction prompt: what is in reach, and what using it would do. Drawn
+        only while something *is* in reach, and only for a keyboard - the touch button inside the
+        controls below says the same thing without a key hint. Rendered by `renderInteraction`.
+      -->
+      <div id="interaction-prompt" class="interaction-prompt" hidden>
+        <kbd class="interaction-key">E</kbd>
+        <span id="interaction-action" class="interaction-action"></span>
+        <span id="interaction-target" class="interaction-target"></span>
+      </div>
+
+      <!--
         Touch controls: character view only, and only for a finger (see `mobile/capability.ts`).
         The joystick is a pointer-only convenience that produces the same movement intent the
         keyboard does - it never replaces the keyboard, which remains the accessible path. The Run
@@ -49,6 +60,8 @@
         <div id="joystick" class="joystick" aria-hidden="true">
           <div id="joystick-thumb" class="joystick-thumb"></div>
         </div>
+        <!-- Shown only while something is in reach; it never reserves space for nothing. -->
+        <button id="interact-button" class="interact-button" type="button" hidden></button>
         <button id="run-button" class="run-button" type="button" aria-pressed="false">Run</button>
       </div>
 

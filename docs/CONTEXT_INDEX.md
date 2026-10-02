@@ -733,6 +733,36 @@ asked for from character view switches the view and aims it, rather than refusin
 - Tests: `tests/web/estate-follow.test.ts`, `tests/web/estate-follow-camera.test.ts`,
   `tests/web/precision-action.test.ts`, `tests/web/mobile-hud.test.ts`.
 
+### Character interaction + world contracts (V14.1)
+
+Read `docs/design/INTERACTION_SYSTEM.md` before adding an interaction, changing what counts as "in
+reach", or wiring a new kind of target into character view, and `docs/design/WORLD_ARCHITECTURE.md`
+before writing anything that assumes a player owns the place they are standing in. The governing
+decision is `docs/decisions/0027-zone-aware-interactions.md`. Two invariants:
+**discovery looks and execution acts** (nothing that finds a target may mutate anything), and
+**a location is not an authorization** (a zone reference describes where a player is; the server still
+authorizes every command from the authenticated actor).
+
+- Zone vocabulary (shared, in `packages/contracts`): `ZONE_KINDS`, `ZoneRefSchema`, `homeIslandZoneRef`,
+  `farmIdFromHomeIslandZone`. One farm *is* the current `HOME_ISLAND` zone; nothing is duplicated.
+- Client context: `apps/web/src/interaction/context.ts` (`GameplayContext`, `homeIslandContext`) keeps
+  the player and the place apart.
+- Interaction model (pure): `apps/web/src/interaction/model.ts` (actions, kinds, ranges, priorities,
+  `InteractionCandidate`, `interactionPromptFor`); adapters + cell-bucketed index in
+  `apps/web/src/interaction/registry.ts` (`buildInteractionIndex`, `targetsNear`,
+  `worldObjectIsInteractable`); choice, revalidation and the `E` rule in
+  `apps/web/src/interaction/selection.ts`.
+- HUD and execution: `apps/web/src/main.ts` (`rebuildInteractionIndex`,
+  `refreshInteractionCandidate`, `renderInteraction`, `runInteraction`, `inspectTarget`), markup in
+  `apps/web/index.html` (`#interaction-prompt`, `#interact-button`), CSS in the V14.1 section of
+  `apps/web/src/styles.css`. `E` is arbitrated by `onInteractionKeyRequested` in
+  `apps/web/src/render/scene.ts`, so the host decides whether the key interacts or orbits.
+- Harvest reuses the existing server-authoritative command; `INSPECT` sends nothing and reuses the
+  existing selection surface. Nothing in the interaction layer is authority.
+- Tests: `tests/web/interaction-context.test.ts`, `tests/web/interaction-discovery.test.ts`,
+  `tests/web/interaction-input.test.ts`, plus the location-smuggling case in
+  `tests/api/handler.test.ts`.
+
 ### The player character (V13.4.1)
 
 The avatar is presentation, and the authority is the player runtime - never the mesh.

@@ -1,6 +1,6 @@
 # Staging: the playtest environment
 
-Status: **deployed and smoke-tested** (V13.6.3, 2026-10-02). Staging is a **public guest alpha**: a
+Status: **deployed and smoke-tested** (V14.1, 2026-10-02). Staging is a **public guest alpha**: a
 visitor opens the link and plays, with no email, OTP, or Access login. **Both hostnames are public** -
 the Access gate that blocked the custom domain in V13.6.2 has since been lifted, and the canonical URL
 was re-verified end to end (200, guest cookie, 401 without a session). See "The URLs" below and
@@ -21,10 +21,10 @@ custom domain is the one to hand to testers: it is easier to type, and it is ver
 is scoped to the hostname it was created on (the cookie carries no `Domain`), so pick one URL per
 playtest - see the last section.
 
-Current deployment: Worker `happy-farm-staging`, version `784f4e7f-607f-4106-92e9-34126df471d2`,
-deployed 2026-10-02 from commit `4311611` (V13.6.3: estate follow camera and mobile HUD), bundle
-`assets/index-CQNhKXDm.js`. (V13.6.2 was `174b4e39-f0dd-46e6-84e3-de0b97c9ed01`, V13.6.1
-`7df79218-2a86-4435-9cd9-a399f9415c93`.)
+Current deployment: Worker `happy-farm-staging`, version `6d8b7e83-0b60-43ec-ac61-2ffd6d1a7031`,
+deployed 2026-10-02 from the V14.1 interaction-foundation commit, bundle
+`assets/index-D74U38T3.js`. (V13.6.3 was `784f4e7f-607f-4106-92e9-34126df471d2`, V13.6.2
+`174b4e39-f0dd-46e6-84e3-de0b97c9ed01`, V13.6.1 `7df79218-2a86-4435-9cd9-a399f9415c93`.)
 
 ## Architecture
 

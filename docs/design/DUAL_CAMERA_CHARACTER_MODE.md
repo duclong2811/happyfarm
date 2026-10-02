@@ -130,6 +130,11 @@ the obstruction shortens the *eye*, never the rig's own setting.
 
 Deliberately minimal, and documented rather than half-built:
 
+* **Character view is the gameplay view (V14.1).** Walking up to a mature crop or a built thing offers
+  one contextual action - Harvest or Inspect - and `E` (or the touch button) runs it. That framework
+  is `docs/design/INTERACTION_SYSTEM.md`, and it is deliberately *not* the estate editor: the tree you
+  Harvest from here is the tree you Move, Rotate and Store from Estate view, and the same object
+  supports both without either surface learning about the other.
 * **Opening the Build panel, picking an entry up, moving an object or restoring one from storage
   switches to the estate view.** Placing is cell-based, precise work; asking a player to do it from
   behind their own shoulder would be a worse tool, not a new one.

@@ -574,3 +574,32 @@ button.go { background: transparent; border-color: rgba(255, 255, 255, .22); fon
   /* The overflow button carries the language and refresh controls now, so only the wordmark goes. */
   .brand h1 { display: none; }
 }
+
+/* ------------------------------------------------------------------ character interaction (V14.1)
+
+   Character view is the gameplay view: walking up to something useful and using it. Two surfaces,
+   one rule - they are drawn only while something is actually in reach, because a permanent
+   interaction button is exactly the furniture the mobile pass removed.
+
+   * desktop gets the keyboard prompt (`[E] Harvest Spinach`);
+   * a finger gets a real button above Run, with the same action word on it.
+
+   Both say the same thing because the page hands both the same candidate; neither searches the world
+   itself. */
+
+.interaction-prompt { position: absolute; z-index: 6; left: 50%; bottom: calc(var(--space-3) + 6rem); transform: translateX(-50%); display: flex; align-items: center; gap: var(--space-2); padding: .3rem .6rem; border-radius: 999px; background: var(--hud-surface); box-shadow: var(--shadow-hud); backdrop-filter: blur(8px); pointer-events: none; max-width: calc(100% - var(--space-4)); }
+.interaction-prompt[hidden] { display: none; }
+.interaction-key { padding: 0 .35rem; border: 1px solid rgba(244, 242, 232, .4); border-radius: .35rem; color: var(--cream); font: inherit; font-size: .72rem; font-weight: 800; }
+.interaction-action { color: var(--cream); font-size: .8rem; font-weight: 700; }
+.interaction-target { color: var(--cream-dim); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Above Run, never over it: the right-hand column is Run, then Interact, then the strip. */
+.interact-button { position: absolute; right: max(var(--space-4), env(safe-area-inset-right)); bottom: calc(max(var(--space-4), env(safe-area-inset-bottom)) + var(--touch-target) + var(--space-3)); min-width: var(--touch-target); min-height: var(--touch-target); padding: 0 var(--space-3); border-radius: 999px; font-weight: 800; color: var(--cream); background: var(--hud-surface); border: 2px solid rgba(244, 242, 232, .28); box-shadow: var(--shadow-hud); pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.interact-button[hidden] { display: none; }
+
+@media (max-width: 900px), (max-height: 500px) {
+  /* The stick owns the bottom-left and the Run/Interact stack the bottom-right, so the character
+     view's selection strip sits above both rather than across them (the V13.5 layout hid the strip
+     here; V13.6.3 brought it back as a one-liner, and this keeps it out of the controls' way). */
+  body.is-character-mode .action-dock { bottom: calc(max(var(--space-3), env(safe-area-inset-bottom)) + var(--joystick-size) + var(--space-2)); }
+}

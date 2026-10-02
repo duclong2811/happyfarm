@@ -124,7 +124,14 @@ const NO_SELECTION: Omit<SelectionView, "kind" | "plantBlocked"> = {
   remainingSeconds: null
 };
 
-function remainingGrowthSeconds(
+/**
+ * Whole seconds until the server's own timing data says this crop matures.
+ *
+ * Exported because the interaction layer phrases the same countdown beside a growing crop; it is a
+ * display estimate built from `plantedAt` and the catalogue's duration, and asking twice in two places
+ * would be two answers to one question.
+ */
+export function remainingGrowthSeconds(
   crop: CropStateDTO,
   definition: CropDefinitionDTO | undefined,
   nowMs: number

@@ -49,7 +49,7 @@ import {
   composeCharacterInput,
   type CharacterMoveIntent
 } from "./player/character-input";
-import { createMovementInput, NEUTRAL_INPUT, type MovementInput } from "./player/input";
+import { createMovementInput, isTypingTarget, NEUTRAL_INPUT, type MovementInput } from "./player/input";
 import { createPlayerRuntime } from "./player/runtime";
 import {
   deviceCapability,
@@ -145,6 +145,18 @@ import {
 import { groundTapOpensContext, precisionFocusFor, type PrecisionActionKind } from "./render/precision-action";
 import type { EstateFollowBehaviour } from "./render/estate-follow";
 import type { EstateCameraFocus } from "./render";
+import { homeIslandContext, type GameplayContext } from "./interaction/context";
+import { interactionPromptFor, type InteractionCandidate } from "./interaction/model";
+import {
+  EMPTY_INTERACTION_INDEX,
+  buildInteractionIndex,
+  type InteractionIndex
+} from "./interaction/registry";
+import {
+  interactionActivation,
+  interactionKeyRequested,
+  selectInteractionCandidate
+} from "./interaction/selection";
 import "./styles.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
@@ -173,6 +185,14 @@ interface AppState {
   language: Language;
   farmId: string | null;
   farmName: string;
+  /**
+   * The authenticated player, as the session endpoint reported them, or null before a session.
+   *
+   * Read-only server state. It is *not* sent back anywhere (the server derives the actor from the
+   * session), and it exists so the client can say where a player is *and* who they are as two separate
+   * things - see `GameplayContext`.
+   */
+  playerId: string | null;
   tiles: readonly FarmTileDTO[];
   crops: readonly CropStateDTO[];
   trees: readonly TreeStateDTO[];
@@ -256,6 +276,7 @@ const state: AppState = {
   language: initialLanguage(),
   farmId: null,
   farmName: "",
+  playerId: null,
   tiles: [],
   crops: [],
   trees: [],
@@ -312,6 +333,19 @@ let dock: DockState = COLLAPSED_DOCK;
 let estateFollow: EstateFollowBehaviour = "FOLLOW";
 /** Whether the phone's overflow menu is open. Presentation only. */
 let hudMenuOpen = false;
+/**
+ * The island's interactables, bucketed by the cell they stand on, and what is in reach right now.
+ *
+ * The index is rebuilt when the read models change and never per frame; the candidate is re-decided
+ * from the index on the character's own pose stream, which is the only thing that can move the
+ * answer. One candidate calculation, one consumer pair (the keyboard prompt and the touch button).
+ */
+let interactionIndex: InteractionIndex = EMPTY_INTERACTION_INDEX;
+let interactionCandidate: InteractionCandidate | null = null;
+/** The last thing the interaction surfaces were drawn from, so an unchanged frame writes no DOM. */
+let interactionSignature = "";
+/** The character's latest pose, kept so the interaction scan can ask where they are standing. */
+let characterPose: FarmScenePlayer | null = null;
 /** The pending clear for a transient success message, or null. */
 let statusTimer: number | null = null;
 /** What an empty status line is: no message at all, in any language. */
@@ -2617,6 +2651,9 @@ function render(): void {
   renderChrome();
   renderHudMenu();
   renderCameraMode();
+  // The interaction surfaces follow the language, so they are re-decided with everything else; their
+  // own signature gate keeps a rewrite from costing anything when nothing changed.
+  renderInteraction();
   renderPanels();
   renderFarm();
   renderWallet();
@@ -2812,7 +2849,11 @@ const playerRuntime = createPlayerRuntime({
   readRun: () =>
     state.cameraMode === "CHARACTER" && ((movement?.isRunning() ?? false) || runHeld),
   onPose: (pose) => {
-    scene?.setPlayer(pose === null ? null : toScenePlayer(pose));
+    characterPose = pose === null ? null : toScenePlayer(pose);
+    scene?.setPlayer(characterPose);
+    // The character moved, so what is in reach may have changed. This is the pose stream, which only
+    // ticks while they are moving, so a standing character costs no scans at all.
+    refreshInteractionCandidate();
   },
   requestFrame: (tick) => {
     playerFrameHandle = window.requestAnimationFrame((timestampMs) => {
@@ -2865,6 +2906,9 @@ function setCameraMode(mode: CameraMode, focus?: EstateCameraFocus): void {
     hudMenuOpen = false;
   }
   scene?.setCameraMode(mode, focus);
+  // Leaving character view hides the interaction surfaces, and entering it decides what is in reach
+  // from wherever the character is standing. A stale prompt must never survive a mode switch.
+  refreshInteractionCandidate();
   // The touch controls exist only in character view: leaving it clears the stick and the Run button
   // before they can be forgotten about, which is the "no stuck movement across a mode switch" rule.
   syncTouchControls();
@@ -3163,6 +3207,11 @@ function refreshScene(): void {
   // rows themselves are one list - storage is a state, not a second inventory - so this filter is the
   // whole of "storage is a place objects are not drawn".
   scene.setConstructions(activeObjects(state.constructions).map(toSceneConstruction));
+  // The interaction registry is rebuilt here, before the refresh gate below: a stored or removed
+  // object has to leave it immediately, whatever else did or did not change. It is a few hundred map
+  // inserts on a poll that already rebuilt the cell map, and it is never rebuilt per frame.
+  rebuildInteractionIndex();
+  refreshInteractionCandidate();
   const signature = farmPresentationSignature(state);
   if (signature === scenePushSignature) return;
   const input = sceneInput();
@@ -3212,6 +3261,151 @@ function refreshScene(): void {
   );
 }
 
+/*
+ * Character interaction (V14.1).
+ *
+ * Character view is the gameplay view: walk up to something useful and use it. Everything below rests
+ * on three rules, and they are the reason this is a module rather than a click handler:
+ *
+ *  * **Discovery does not mutate.** The registry describes what is on the island and the candidate is
+ *    "what is in reach"; neither of them sends anything anywhere.
+ *  * **One calculation.** The keyboard prompt and the touch button render the same candidate, so the
+ *    two input methods cannot disagree about what the player would be acting on.
+ *  * **Location is not authority.** The gameplay context says where the player is; every command still
+ *    travels with the farm it means and is authorized server-side from the authenticated actor.
+ */
+
+/** Where the player is, and who they are: two facts the architecture keeps apart. */
+function gameplayContext(): GameplayContext | null {
+  const farmId = state.farmId;
+  return farmId === null ? null : homeIslandContext(state.playerId, farmId);
+}
+
+/** Rebuilds the island's interactable registry from the read models. Data change only. */
+function rebuildInteractionIndex(): void {
+  interactionIndex = buildInteractionIndex({
+    crops: state.crops,
+    trees: state.trees,
+    constructions: state.constructions,
+    cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions,
+    worldObjects: state.worldObjects,
+    buildCatalog: state.buildCatalog,
+    nowMs: Date.now()
+  });
+}
+
+/**
+ * Re-decides what is in reach, from where the character is standing right now.
+ *
+ * Cheap by construction: the index is a map of cells, so this walks the neighbourhood rather than the
+ * island, and it runs on the pose stream - which only ticks while the character moves - rather than
+ * once per frame.
+ */
+function refreshInteractionCandidate(): void {
+  const pose = characterPose;
+  // The context is the gate: with no farm there is no zone to be present in, and with no place there
+  // is nothing to interact with. It is asked rather than assumed, which is the point of having one.
+  const context = gameplayContext();
+  interactionCandidate =
+    pose === null || context === null || state.cameraMode !== "CHARACTER"
+      ? null
+      : selectInteractionCandidate(interactionIndex, {
+          worldX: pose.worldX,
+          worldZ: pose.worldZ,
+          facingYaw: pose.facingYaw
+        });
+  renderInteraction();
+}
+
+/**
+ * Draws the two interaction surfaces from the one candidate.
+ *
+ * The keyboard prompt belongs to a keyboard and the button inside the touch controls belongs to a
+ * finger, so exactly one of them is visible on any device - but both carry the same action word,
+ * because they are the same decision. The write is gated on a signature, so a walking character does
+ * not repaint the HUD sixty times a second.
+ */
+function renderInteraction(): void {
+  const candidate = interactionCandidate;
+  const signature =
+    candidate === null
+      ? ""
+      : `${String(capability.coarse)}|${state.language}|${candidate.key}|${candidate.action}|${String(candidate.version)}|${String(candidate.readyInSeconds ?? "")}`;
+  if (signature === interactionSignature) return;
+  interactionSignature = signature;
+
+  const prompt = element<HTMLElement>("interaction-prompt");
+  const button = element<HTMLButtonElement>("interact-button");
+  const shows = candidate !== null;
+  prompt.hidden = !(shows && !capability.coarse);
+  button.hidden = !shows;
+  if (candidate === null) return;
+
+  const text = interactionPromptFor(candidate);
+  const target = displayName(state.language, text.nameKey ?? "", text.nameFallback);
+  const action = t(text.actionKey);
+  element<HTMLElement>("interaction-action").textContent = action;
+  element<HTMLElement>("interaction-target").textContent =
+    candidate.readyInSeconds === null
+      ? target
+      : `${target} · ${t("interaction.readyIn", { time: formatRemainingGrowth(candidate.readyInSeconds, t) })}`;
+
+  button.textContent = action;
+  const label = t("interaction.button", { action, target });
+  button.setAttribute("aria-label", label);
+  button.title = label;
+}
+
+/**
+ * Activates the interaction the prompt is showing.
+ *
+ * The prompt may be a moment old, so this asks discovery again for where the player is *now* and
+ * refuses a candidate the world has moved past rather than acting on a stale one. The server decides
+ * actual legality either way - range, ownership, maturity, idempotency - so nothing here grants
+ * anything.
+ */
+async function runInteraction(): Promise<void> {
+  if (state.cameraMode !== "CHARACTER") return;
+  const selected = interactionCandidate;
+  const pose = characterPose;
+  const fresh =
+    pose === null
+      ? null
+      : selectInteractionCandidate(interactionIndex, {
+          worldX: pose.worldX,
+          worldZ: pose.worldZ,
+          facingYaw: pose.facingYaw
+        });
+  interactionCandidate = fresh;
+  renderInteraction();
+
+  const decision = interactionActivation(selected, fresh);
+  switch (decision.kind) {
+    case "STALE":
+      setStatus(message("interaction.tooFar"), true);
+      return;
+    case "INSPECT":
+      inspectTarget(decision.target);
+      return;
+    case "HARVEST_CROP":
+      await harvestCrop(decision.cropInstanceId, decision.expectedCropVersion);
+      return;
+    case "HARVEST_TREE":
+      await harvestTree(decision.treeInstanceId, decision.expectedTreeVersion);
+      return;
+  }
+}
+
+/**
+ * Looking at something: the same selection the rest of the page uses, so what the player reads comes
+ * from the authoritative rows rather than a second description written for this pass.
+ */
+function inspectTarget(target: InteractionCandidate): void {
+  if (target.kind === "WORLD_OBJECT") selectObject(target.targetId);
+  else selectCell(target.tileX, target.tileY);
+}
+
 function enable3D(): void {
   if (scene === null) {
     try {
@@ -3236,6 +3430,20 @@ function enable3D(): void {
           // The renderer reports the shortcut and decides nothing: which mode is active, and what
           // that means for the panels and the movement keys, is this page's business.
           toggleCameraMode();
+        },
+        onInteractionKeyRequested: (event) => {
+          // E is context-sensitive: with something in reach the host claims it, and with nothing in
+          // reach it stays the camera's orbit-right key. The rule is pure and lives in the interaction
+          // module; the scene only asks, so there is one arbitration rather than two.
+          const requested = interactionKeyRequested({
+            key: event.key,
+            typing: isTypingTarget(event.target),
+            cameraMode: state.cameraMode,
+            hasCandidate: interactionCandidate !== null,
+            uiOpen: panels.active !== null || state.buildSelection !== null || moveSession !== null
+          });
+          if (requested) void run(runInteraction);
+          return requested;
         },
         onAssetProblem: (assetId, error) => {
           // The crop keeps its placeholder art, so this is information rather than a failure the page
@@ -3264,6 +3472,10 @@ function enable3D(): void {
     // The renderer owns the follow state; this is the first read of it, so the recenter control shows
     // the right job from the moment the world exists.
     estateFollow = scene.estateFollowBehaviour();
+    // The interactable registry needs the 3D view to exist first only because the candidate drives
+    // HUD elements; the index itself is built from the read models, which are already here.
+    rebuildInteractionIndex();
+    refreshInteractionCandidate();
     // The cell grid is a development tool: it is on only when the page was opened with `?debug=1`,
     // so a normal session never sees the lattice the engine thinks in.
     scene.setDebugMode(debugRequested());
@@ -3694,6 +3906,12 @@ function wire(): void {
     }
   });
   runControl.attach();
+  // The interaction button is a real button inside the touch controls, so its tap belongs to it and
+  // never reaches the canvas - the camera cannot rotate and the ground cannot be selected from it.
+  // It runs exactly the intent the E key runs.
+  element<HTMLButtonElement>("interact-button").addEventListener("click", () => {
+    void run(runInteraction);
+  });
   syncTouchControls();
   // The retry control only exists when the boot session could not be established; clicking it runs
   // the same boot the page ran on load.
@@ -3879,11 +4097,15 @@ render();
  */
 async function startSession(): Promise<boolean> {
   try {
-    await api().getSession();
+    const session = await api().getSession();
+    // The server's own answer about who this browser is. It is recorded, never sent back: the actor
+    // every command is authorized against still comes from the session on the server.
+    state.playerId = session.player.playerId;
     return true;
   } catch (error: unknown) {
-    if (error instanceof ApiError && error.code === "RESOURCE_NOT_FOUND") return true;
-    return false;
+    // A host with no session endpoint - the development bridge - is not a failure: there the plain
+    // API is the whole story, and the page simply has no player id to record.
+    return error instanceof ApiError && error.code === "RESOURCE_NOT_FOUND";
   }
 }
 

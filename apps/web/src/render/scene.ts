@@ -276,6 +276,15 @@ export interface FarmSceneOptions {
    */
   readonly onCameraModeToggle?: () => void;
   /**
+   * Asked before `E` becomes a camera orbit, because the host may want it for an interaction.
+   *
+   * `E` is the character camera's orbit-right key and the natural interaction key, so the two claims
+   * are arbitrated by the host - which is the only thing that knows whether something is in reach. The
+   * renderer asks first and consumes the keystroke when the answer is yes; the host's rule is pure and
+   * lives in `apps/web/src/interaction/selection.ts`.
+   */
+  readonly onInteractionKeyRequested?: (event: { readonly key: string; readonly target: unknown }) => boolean;
+  /**
    * Called when the estate camera starts or stops following the player.
    *
    * The behaviour is the renderer's to decide - it is the one that sees the player move and the one
@@ -2347,6 +2356,16 @@ let interactionGeometry: BufferGeometry | null = null;
     if (cameraModeToggleRequested({ key: event.key, target: event.target })) {
       event.preventDefault();
       options.onCameraModeToggle?.();
+      return;
+    }
+    // `E` is claimed by an interaction when one is in reach, and stays the camera's own key when one
+    // is not. Asked before the typing guard on purpose: the host's rule already refuses a keystroke
+    // that landed in a field, so "is the player typing" is answered in one place rather than two.
+    if (
+      (event.key === "e" || event.key === "E") &&
+      options.onInteractionKeyRequested?.({ key: event.key, target: event.target }) === true
+    ) {
+      event.preventDefault();
       return;
     }
     if (isTypingTarget(event.target)) return;

@@ -88,6 +88,75 @@ export const SessionPlayerDTOSchema = z
   .strict();
 export const GetSessionResponseSchema = z.object({ player: SessionPlayerDTOSchema }).strict();
 
+/**
+ * Where gameplay happens.
+ *
+ * A player is not a farm and a farm is not the world: the long-term model is World -> Region -> Zone,
+ * and a player *is present in* a zone rather than *owning* it. Today there is exactly one kind of place
+ * - the player's own island, which is their farm - but interaction code must not be written in a way
+ * that cannot be moved to a fishing ground or a shared resource island later.
+ *
+ * The list is deliberately the full vocabulary rather than only what is used: it is a contract, and a
+ * reader of this file should be able to see the shape of the world that is coming. `SHARED_FISHING`,
+ * `SHARED_RESOURCE`, `CONTESTED`, `PORT` and `EVENT` are named here and implemented nowhere yet.
+ */
+export const ZONE_KINDS = [
+  "HOME_ISLAND",
+  "PLAYER_ISLAND",
+  "SHARED_FISHING",
+  "SHARED_RESOURCE",
+  "CONTESTED",
+  "PORT",
+  "EVENT"
+] as const;
+export const ZoneKindSchema = z.enum(ZONE_KINDS);
+
+/**
+ * A *reference* to a place: what kind of place it is, and which one.
+ *
+ * It is a location descriptor and nothing else. It carries no player, no owner, no role and no
+ * permission, and receiving one from a client must never be read as a claim of authority - see
+ * `docs/design/WORLD_ARCHITECTURE.md`. Authority is decided server-side from the authenticated actor
+ * and the resource, exactly as it was before this existed.
+ */
+export const ZoneRefSchema = z
+  .object({
+    kind: ZoneKindSchema,
+    // Segments joined by `_`, with hyphens allowed inside one so a zone derived from a `farm_<uuid>`
+    // stays readable rather than being hashed into something unparseable.
+    zoneId: z.string().regex(/^zone_[a-z0-9]+(?:[_-][a-z0-9]+)*$/)
+  })
+  .strict();
+
+/** The prefix a home island's zone id carries, so the farm it was derived from is readable. */
+export const HOME_ISLAND_ZONE_PREFIX = "zone_home_island_";
+
+/**
+ * The zone the current farm *is*, for as long as one farm is one island.
+ *
+ * Deriving the zone from the farm (and never the other way round) is what keeps this pass from
+ * duplicating persistent state: no island table, no coordinates, no second copy of the land. When the
+ * world map arrives, a farm's island becomes one zone among many and this function becomes the adapter
+ * that already exists rather than the assumption that has to be unpicked.
+ */
+export function homeIslandZoneRef(farmId: string): ZoneRef {
+  return { kind: "HOME_ISLAND", zoneId: `${HOME_ISLAND_ZONE_PREFIX}${farmId}` };
+}
+
+/**
+ * The farm a home-island zone was derived from, or null for any other kind of place.
+ *
+ * A *lookup*, never a permission: resolving a zone to a farm says which land was meant, and says
+ * nothing about who may act on it. Any future caller that is tempted to turn this into "so the caller
+ * owns it" is the exact mistake this architecture exists to prevent.
+ */
+export function farmIdFromHomeIslandZone(zone: ZoneRef): string | null {
+  if (zone.kind !== "HOME_ISLAND") return null;
+  if (!zone.zoneId.startsWith(HOME_ISLAND_ZONE_PREFIX)) return null;
+  const farmId = zone.zoneId.slice(HOME_ISLAND_ZONE_PREFIX.length);
+  return farmId.length === 0 ? null : farmId;
+}
+
 export const PlantCropRequestSchema = z
   .object({
     requestId: RequestIdSchema,
@@ -874,6 +943,8 @@ export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export type IdentityKindDTO = z.infer<typeof IdentityKindSchema>;
 export type SessionPlayerDTO = z.infer<typeof SessionPlayerDTOSchema>;
 export type GetSessionResponse = z.infer<typeof GetSessionResponseSchema>;
+export type ZoneKind = z.infer<typeof ZoneKindSchema>;
+export type ZoneRef = z.infer<typeof ZoneRefSchema>;
 export type PlantCropRequest = z.infer<typeof PlantCropRequestSchema>;
 export type CropStateDTO = z.infer<typeof CropStateDTOSchema>;
 export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;

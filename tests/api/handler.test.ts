@@ -219,6 +219,30 @@ describe("Worker API foundation", () => {
     expect(response.status).toBe(400);
   });
 
+  it("refuses a command that carries a client-supplied location", async () => {
+    // V14.1: where a player is standing is a *place*, never a permission. No command has a field for
+    // one, and the strict request schemas refuse the attempt rather than dropping it silently - so a
+    // client cannot name a zone (or an owner) to gain anything, and the actor still comes only from
+    // the authenticated session.
+    const response = await handle(
+      new Request(
+        `https://api.test/farms/${FARM_ONE_ID}/crops/cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc/harvest`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            requestId: "req_zone_smuggling_1",
+            expectedCropVersion: 1,
+            zoneId: `zone_home_island_${FARM_TWO_ID}`,
+            playerId: PLAYER_TWO_ID
+          })
+        }
+      )
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
+  });
+
   it("creates and reads a farm for the authenticated owner", async () => {
     const created = await handle(
       new Request("https://api.test/farms", {
