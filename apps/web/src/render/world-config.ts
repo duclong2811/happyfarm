@@ -926,24 +926,6 @@ export const STATIC_OBSTACLES: readonly WorldObstacle[] = [
 ];
 
 /**
- * The circles the *camera* must not sit inside: the buildings and the barn.
- *
- * Separate from `STATIC_OBSTACLES` because the two answer different questions. Walking reads the
- * rows, so a barn that moved takes its wall with it; the camera reads the place a building is
- * authored, and keeping the islands' silhouettes in its blocker list is what stops a pull-back from
- * ending up inside the farmhouse. The pond is in both, because it is geography either way.
- */
-export const CAMERA_BLOCKER_OBSTACLES: readonly WorldObstacle[] = [
-  { id: "barn", centerWorldX: FARMSTEAD_WORLD.worldX, centerWorldZ: FARMSTEAD_WORLD.worldZ, radiusWorld: 2.2 },
-  ...LANDMARKS_WORLD.map((landmark) => ({
-    id: landmark.id,
-    centerWorldX: landmark.worldX,
-    centerWorldZ: landmark.worldZ,
-    radiusWorld: landmark.blockingRadiusWorld
-  }))
-];
-
-/**
  * The island in world metres: the visual bounds plus a shore margin.
  *
  * The extra margin is what the beach and the shoreline scenery stand on. It does not change what the

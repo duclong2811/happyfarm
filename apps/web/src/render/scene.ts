@@ -72,9 +72,26 @@ import { GROUND_SURFACE_Y, terrainHeightAt } from "./terrain-height";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
 import { EMPTY_WORLD_CELL_MAP } from "./world-cell";
-import { CAMERA_BLOCKER_OBSTACLES, STATIC_OBSTACLES } from "./world-config";
+import { STATIC_OBSTACLES } from "./world-config";
+import {
+  CAMERA_TRANSITION_SECONDS,
+  cameraModeToggleRequested,
+  createCameraTransition,
+  type CameraMode,
+  type CameraPose,
+  type CameraTransition
+} from "./camera-mode";
+import {
+  CHARACTER_FOV_DEGREES,
+  DEFAULT_CHARACTER_DISTANCE,
+  DEFAULT_CHARACTER_PITCH,
+  ESTATE_FOV_DEGREES,
+  characterTarget,
+  createCharacterCameraRig
+} from "./character-camera";
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
+import { isTypingTarget } from "../player/input";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
 import { buildRoadSpec, ROAD_LIFT_WORLD } from "./roads";
 import { ROAD_SEGMENT_CELLS } from "@happy-farm/game-data";
@@ -125,6 +142,8 @@ const READY_EMISSIVE_COLOR = 0x4a3410;
  * follow distance rather than as another prop. Art replaces the look, not the scale contract.
  */
 const PLAYER_HEIGHT = 1.6;
+/** The same height, named for what the camera reads it for: where the shoulder is. */
+const PLAYER_HEIGHT_WORLD = PLAYER_HEIGHT;
 /** How far the avatar's shoulders rise on each step, for a walk that reads without an animation. */
 const PLAYER_WALK_BOB = 0.035;
 /** Steps per second at full walking speed, used only to phase the bob. */
@@ -230,6 +249,14 @@ export interface FarmSceneOptions {
    */
   readonly onObjectSelected?: (constructionId: string) => void;
   /**
+   * Called when the player pressed the camera-mode shortcut.
+   *
+   * The mode itself belongs to the host - it draws the switch and knows when a panel needs the
+   * estate view - so the renderer reports the keystroke and decides nothing. It is only reported
+   * while the player is not typing: a farm name is not a camera command.
+   */
+  readonly onCameraModeToggle?: () => void;
+  /**
    * Called when a crop model could not be loaded. The scene keeps drawing that crop's placeholder,
    * so this is a diagnosis for the caller to report, not a failure the caller has to recover from.
    */
@@ -245,6 +272,25 @@ export interface FarmSceneHandle {
    * never authoritative: the renderer copies the numbers it is given and decides nothing itself.
    */
   setPlayer(player: FarmScenePlayer | null): void;
+  /**
+   * Switches the camera between the estate and character viewpoints.
+   *
+   * One camera and two rigs: the estate orbit is left exactly as the player left it, the character
+   * camera takes over behind the player, and the camera *flies* between them rather than cutting.
+   * Nothing about the world, the objects or the character changes - which is the whole point of the
+   * two modes being two ways to look at one island.
+   */
+  setCameraMode(mode: CameraMode): void;
+  /** Which mode the camera is in. Read-only mirror of what the host last set. */
+  cameraMode(): CameraMode;
+  /**
+   * Where the third-person camera is looking, in the estate camera's own convention.
+   *
+   * The host needs this one number to make WASD camera-relative: forward is where the camera faces.
+   * It is the character rig's bearing while in character mode and the estate rig's otherwise, so the
+   * input rule and the camera can never disagree about which way is "away from the camera".
+   */
+  cameraBearing(): number;
   /**
    * Shows or hides the planting grid.
    *
@@ -759,8 +805,32 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
    * where the player put them, which is the whole point of the rig being created once.
    */
   let cameraFramed = false;
-  /** Circles the camera may not sit inside: the buildings the world config already declares. */
+  /**
+   * Circles the camera may not sit inside: the geography, plus the *buildings* the player has.
+   *
+   * Rebuilt with the rows rather than listed in the world config, because a building the player moved
+   * has to take its silhouette with it - and filtered to the multi-cell rows, so the several hundred
+   * trees, rocks and props the island owns are never tested: a bush is not an occluder, and a camera
+   * that pulled in for one would feel broken. See the performance rule in the design doc.
+   */
   let cameraBlockers: readonly { readonly centerWorldX: number; readonly centerWorldZ: number; readonly radiusWorld: number }[] = [];
+  /** Which way the island is looked at: the estate orbit, or the character follow. */
+  let cameraMode: CameraMode = "ESTATE";
+  /**
+   * The third-person rig.
+   *
+   * Created once, like the estate rig, and re-aimed rather than rebuilt: switching modes twenty times
+   * must not leave twenty cameras behind.
+   */
+  const characterCamera = createCharacterCameraRig({
+    yaw: options.initialCamera?.yaw ?? DEFAULT_CAMERA_YAW,
+    pitch: DEFAULT_CHARACTER_PITCH,
+    distance: DEFAULT_CHARACTER_DISTANCE
+  });
+  /** The flight between the two viewpoints, or null when the camera is settled where it belongs. */
+  let cameraTransition: CameraTransition | null = null;
+  /** The last field of view written to the camera, so a projection is rebuilt only when it changes. */
+  let appliedFov = ESTATE_FOV_DEGREES;
   let playerPose: FarmScenePlayer | null = null;
   /** The island's ground surface: what a click on open ground lands on. */
   let groundMesh: Object3D | null = null;
@@ -902,7 +972,10 @@ let interactionGeometry: BufferGeometry | null = null;
   const DETAIL_DISTANCE_LIMIT = 55;
 
   function updateDetailVisibility(): void {
-    const visible = cameraRig.state.distance <= DETAIL_DISTANCE_LIMIT;
+    // The active camera's own distance: the estate view switches the small scenery off as it pulls
+    // back, and the character view is always close enough to want it.
+    const distance = cameraMode === "CHARACTER" ? characterCamera.state.distance : cameraRig.state.distance;
+    const visible = distance <= DETAIL_DISTANCE_LIMIT;
     detailGroup.visible = visible;
     overlayDetailGroup.visible = visible;
   }
@@ -920,14 +993,96 @@ let interactionGeometry: BufferGeometry | null = null;
     );
   }
 
-  function updateCamera(): void {
-    // The camera is wherever the player put it: it orbits a target on the ground, and the target
-    // never moves on its own unless the player asked for a recenter. Looking is then a matter of
-    // placing the eye on the orbit and aiming it at the ground the target stands on.
+  /**
+   * The buildings the camera must not sit inside, from the rows the player owns.
+   *
+   * A row is a candidate when it covers more than one cell: the island's trees, rocks, bushes and
+   * props are all one cell, and testing them would be both expensive and wrong (a camera that jumps
+   * in behind every shrub). The nine-odd buildings are the occluders that matter, and the list is
+   * rebuilt with the rows so a barn that walked away takes its silhouette with it.
+   */
+  function rebuildCameraBlockers(): void {
+    const pitch = state.layout.pitch;
+    cameraBlockers = [
+      ...STATIC_OBSTACLES,
+      ...constructions
+        .filter((item) => item.widthCells >= 2 || item.depthCells >= 2)
+        .map((item) => ({
+          centerWorldX:
+            item.worldX + ((item.widthCells - 1) / 2 - Math.floor((item.widthCells - 1) / 2)) * pitch,
+          centerWorldZ:
+            item.worldZ + ((item.depthCells - 1) / 2 - Math.floor((item.depthCells - 1) / 2)) * pitch,
+          radiusWorld: (Math.min(item.widthCells, item.depthCells) / 2) * pitch + 0.25
+        }))
+    ];
+  }
+
+  /** The estate camera as a value: where its eye is and what it looks at. */
+  function estatePose(): CameraPose {
     const orbit = cameraRig.state;
     const eye = cameraRig.eye(groundHeightAt, cameraBlockedAt);
-    camera.position.set(eye.x, eye.y, eye.z);
-    camera.lookAt(orbit.targetX, groundHeightAt(orbit.targetX, orbit.targetZ) + 0.8, orbit.targetZ);
+    return {
+      eyeX: eye.x,
+      eyeY: eye.y,
+      eyeZ: eye.z,
+      targetX: orbit.targetX,
+      targetY: groundHeightAt(orbit.targetX, orbit.targetZ) + 0.8,
+      targetZ: orbit.targetZ,
+      fov: ESTATE_FOV_DEGREES
+    };
+  }
+
+  /** The third-person camera as a value, aimed at the character the world last drew. */
+  function characterPose(): CameraPose {
+    const player = playerPose;
+    if (player === null) {
+      // No character yet - a farm that has not finished starting. The camera stays where the estate
+      // left it rather than flying to the coordinate origin to look at nobody.
+      return estatePose();
+    }
+    const target = characterTarget(
+      { worldX: player.worldX, worldY: player.worldY, worldZ: player.worldZ },
+      PLAYER_HEIGHT_WORLD
+    );
+    const eye = characterCamera.eye(target, groundHeightAt, cameraBlockedAt);
+    return {
+      eyeX: eye.x,
+      eyeY: eye.y,
+      eyeZ: eye.z,
+      targetX: target.x,
+      targetY: target.y,
+      targetZ: target.z,
+      fov: CHARACTER_FOV_DEGREES
+    };
+  }
+
+  /** The pose the active mode wants right now. */
+  function activePose(): CameraPose {
+    return cameraMode === "CHARACTER" ? characterPose() : estatePose();
+  }
+
+  /** Points the one camera at a pose, rebuilding the projection only when the lens actually changed. */
+  function applyPose(pose: CameraPose): void {
+    camera.position.set(pose.eyeX, pose.eyeY, pose.eyeZ);
+    camera.lookAt(pose.targetX, pose.targetY, pose.targetZ);
+    if (Math.abs(pose.fov - appliedFov) > 0.01) {
+      appliedFov = pose.fov;
+      camera.fov = pose.fov;
+      camera.updateProjectionMatrix();
+    }
+  }
+
+  function updateCamera(): void {
+    // Three cases, in order: a flight between the two viewpoints, the character follow, and the
+    // estate orbit. The estate rig is never written to by the other two, which is what "the estate
+    // view is preserved exactly" means in practice.
+    if (cameraTransition !== null) {
+      // Re-aim at the live destination every frame: the player may be walking while the camera lands.
+      cameraTransition.retarget(activePose());
+      applyPose(cameraTransition.pose());
+    } else {
+      applyPose(activePose());
+    }
     updateDetailVisibility();
   }
 
@@ -1180,10 +1335,9 @@ let interactionGeometry: BufferGeometry | null = null;
       // dynamic layer cannot be considered up to date.
       dynamicWorldSignature = "";
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
-      // The camera keeps out of the geography and the authored buildings. The *walker* reads the rows
-      // (the construction layer's circles), which is why this is a separate list: a barn that moved
-      // takes its wall with it, while the camera still avoids where a building is authored.
-      cameraBlockers = [...STATIC_OBSTACLES, ...CAMERA_BLOCKER_OBSTACLES];
+      // The occluders are rebuilt with the rows (see `rebuildCameraBlockers`), so a newly framed world
+      // starts from the geography and fills in as the constructions arrive.
+      rebuildCameraBlockers();
       if (hasWorld && !cameraFramed) {
         // The very first world frames the island's middle. After that the camera is the player's:
         // buying land, or a model arriving, must never move where somebody is looking.
@@ -1369,6 +1523,10 @@ let interactionGeometry: BufferGeometry | null = null;
    * A model that is still arriving is drawn when it lands - see the library listener.
    */
   function rebuildConstructions(): void {
+    // The camera's occluders come from the same rows, so they are refreshed whenever the rows are -
+    // before the early return, because a *moved* building changes the occluders without changing the
+    // picture's signature in a way that matters here.
+    rebuildCameraBlockers();
     const signature = constructionSignatureOf(constructions);
     if (signature === constructionSignature) return;
     constructionSignature = signature;
@@ -1754,6 +1912,42 @@ let interactionGeometry: BufferGeometry | null = null;
   }
 
   /**
+   * Whether the player may steer the camera right now.
+   *
+   * Never during a mode flight: the two rigs are being interpolated, and a drag that moved one of them
+   * underneath the blend would fight it for the half-second it lasts. The flight is short, so
+   * suppressing input is honest rather than clever.
+   */
+  function cameraInputEnabled(): boolean {
+    return cameraTransition === null;
+  }
+
+  /** Orbits whichever camera is active. */
+  function orbitActive(deltaYaw: number, deltaPitch: number): void {
+    if (!cameraInputEnabled()) return;
+    if (cameraMode === "CHARACTER") characterCamera.rotate(deltaYaw, deltaPitch);
+    else cameraRig.rotate(deltaYaw, deltaPitch);
+    updateCamera();
+    draw();
+  }
+
+  /** One wheel event, on the active camera. */
+  function zoomActiveByWheel(deltaY: number): void {
+    if (!cameraInputEnabled()) return;
+    if (cameraMode === "CHARACTER") characterCamera.zoomByWheel(deltaY);
+    else cameraRig.zoomByWheel(deltaY);
+    scheduleCameraFrame();
+  }
+
+  /** A pinch, on the active camera. */
+  function zoomActiveByScale(scale: number): void {
+    if (!cameraInputEnabled()) return;
+    if (cameraMode === "CHARACTER") characterCamera.zoomByScale(scale);
+    else cameraRig.zoomByScale(scale);
+    scheduleCameraFrame();
+  }
+
+  /**
    * The camera's own animation: the glide between where it is and where it was asked to be.
    *
    * Nothing runs while nothing moves. A wheel step, a pinch or a recenter starts a short run of
@@ -1769,9 +1963,14 @@ let interactionGeometry: BufferGeometry | null = null;
     const deltaMs = lastFrameTime === 0 ? 16 : time - lastFrameTime;
     lastFrameTime = time;
     cameraRig.update(deltaMs);
+    characterCamera.update(deltaMs);
+    if (cameraTransition !== null) {
+      cameraTransition.advance(deltaMs / 1000);
+      if (!cameraTransition.isActive()) cameraTransition = null;
+    }
     updateCamera();
     draw();
-    if (cameraRig.isSettling()) scheduleCameraFrame();
+    if (cameraTransition !== null || cameraRig.isSettling() || characterCamera.isSettling()) scheduleCameraFrame();
     else lastFrameTime = 0;
   }
 
@@ -1834,10 +2033,22 @@ let interactionGeometry: BufferGeometry | null = null;
       dragX = event.clientX;
       dragY = event.clientY;
       if (viewDrag === "rotate") {
-        const turn = rotationForDrag(deltaX, deltaY);
-        cameraRig.rotate(turn.yaw, turn.pitch);
+        if (cameraMode === "CHARACTER") {
+          // A third-person camera is steered by a *drag*, not by two independent axes: right drags
+          // turn the view, and the pitch moves a little slower than the estate camera's so a short
+          // flick does not swing the camera from the ground to overhead.
+          if (cameraInputEnabled()) {
+            characterCamera.rotateByDrag(deltaX, deltaY);
+            updateCamera();
+          }
+        } else {
+          const turn = rotationForDrag(deltaX, deltaY);
+          orbitActive(turn.yaw, turn.pitch);
+        }
       } else {
-        panByScreen(deltaX, deltaY);
+        // Panning is the estate camera's: a third-person camera follows a character, and sliding the
+        // target away from them would mean looking at a place they are not standing.
+        if (cameraMode === "ESTATE" && cameraInputEnabled()) panByScreen(deltaX, deltaY);
       }
       scheduleDraw();
       return;
@@ -1847,14 +2058,13 @@ let interactionGeometry: BufferGeometry | null = null;
     switch (intent.kind) {
       case "pan":
         // A finger drag pans; a mouse's left drag belongs to selection, so it never moves the view.
-        if (event.pointerType !== "mouse") {
+        if (event.pointerType !== "mouse" && cameraMode === "ESTATE" && cameraInputEnabled()) {
           panByScreen(intent.deltaX, intent.deltaY);
           scheduleDraw();
         }
         return;
       case "pinch":
-        cameraRig.zoomByScale(intent.scale);
-        scheduleCameraFrame();
+        zoomActiveByScale(intent.scale);
         return;
       case "none":
         break;
@@ -1884,6 +2094,10 @@ let interactionGeometry: BufferGeometry | null = null;
       options.onObjectSelected?.(pickedObject as string);
       return;
     }
+    // Character view has no click-to-move: the character is steered with the movement keys, and a
+    // stray click on the ground setting up a walk would fight them (see the design doc, and V13.4's
+    // brief: ground click-to-move is estated-view behaviour).
+    if (cameraMode === "CHARACTER") return;
     const coordinate = raycastTileAt(event.clientX, event.clientY);
     if (coordinate !== null) options.onCellSelected?.(coordinate);
   }
@@ -1906,8 +2120,7 @@ let interactionGeometry: BufferGeometry | null = null;
 
   function onWheel(event: WheelEvent): void {
     event.preventDefault();
-    cameraRig.zoomByWheel(event.deltaY);
-    scheduleCameraFrame();
+    zoomActiveByWheel(event.deltaY);
   }
 
   /** The context menu belongs to the game's own right-drag, not to the browser's. */
@@ -1918,45 +2131,37 @@ let interactionGeometry: BufferGeometry | null = null;
   /** How far one press of Q or E turns the camera. */
   const KEY_ROTATION_STEP = Math.PI / 30;
 
-  /** Editors own the keyboard; a shortcut must not fire while somebody is typing. */
-  function isTypingTarget(target: EventTarget | null): boolean {
-    if (target === null || typeof target !== "object") return false;
-    const element = target as { tagName?: unknown; isContentEditable?: unknown };
-    if (element.isContentEditable === true) return true;
-    if (typeof element.tagName !== "string") return false;
-    const tag = element.tagName.toUpperCase();
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-  }
-
   /**
-   * Keyboard camera shortcuts: Q/E orbit, F recenters on the character.
+   * Keyboard camera shortcuts: Q/E orbit, F switches viewpoint.
    *
    * WASD is deliberately not among them. The brief allows WASD to pan the camera, but WASD already
    * walks the avatar in this client, and silently repurposing a shipped movement key would be exactly
-   * the kind of takeover the brief's left-click rule forbids. Panning is the middle button.
+   * the kind of takeover the brief's left-click rule forbids. Panning is the middle button, and F -
+   * which used to recenter the estate camera - now switches between the estate and character views,
+   * because the brief gives the mode switch the shortcut and the switch is the more useful of the
+   * two. Recentring is what entering the character view *does*.
    */
   function onKeyDown(event: KeyboardEvent): void {
+    // The mode shortcut is decided by the shared rule rather than by a second copy of it, so "a farm
+    // name is not a camera command" cannot drift between the two.
+    if (cameraModeToggleRequested({ key: event.key, target: event.target })) {
+      event.preventDefault();
+      options.onCameraModeToggle?.();
+      return;
+    }
     if (isTypingTarget(event.target)) return;
     switch (event.key) {
       case "q":
       case "Q":
-        cameraRig.rotate(-KEY_ROTATION_STEP, 0);
+        orbitActive(-KEY_ROTATION_STEP, 0);
         break;
       case "e":
       case "E":
-        cameraRig.rotate(KEY_ROTATION_STEP, 0);
+        orbitActive(KEY_ROTATION_STEP, 0);
         break;
-      case "f":
-      case "F":
-        // A glide, not a cut: the camera is never taken away from the player, only asked to move.
-        cameraRig.recenterTo(playerPose?.worldX ?? cameraHomeX, playerPose?.worldZ ?? cameraHomeZ);
-        scheduleCameraFrame();
-        return;
       default:
         return;
     }
-    updateCamera();
-    draw();
   }
 
   hoverMarker = new Mesh(assets.ring, assets.hover);
@@ -1992,6 +2197,28 @@ let interactionGeometry: BufferGeometry | null = null;
       updatePlayer();
       updateCamera();
       draw();
+    },
+    setCameraMode(mode: CameraMode): void {
+      if (mode === cameraMode) return;
+      // Where the camera is *now* - including part-way through an earlier flight, so pressing the
+      // switch twice in quick succession turns around from where the camera actually is.
+      const from = cameraTransition === null ? activePose() : cameraTransition.pose();
+      cameraMode = mode;
+      if (mode === "CHARACTER") {
+        // Take the estate camera's bearing and fly down behind the character: a descent, not a spin.
+        // The character camera keeps its own pitch and distance, which are shoulder-scale.
+        characterCamera.reset({ yaw: cameraRig.state.yaw });
+      }
+      cameraTransition = createCameraTransition(from, activePose(), CAMERA_TRANSITION_SECONDS);
+      scheduleCameraFrame();
+      updateCamera();
+      draw();
+    },
+    cameraMode(): CameraMode {
+      return cameraMode;
+    },
+    cameraBearing(): number {
+      return cameraMode === "CHARACTER" ? characterCamera.state.yaw : cameraRig.state.yaw;
     },
     setInteraction(mode: FarmInteractionMode): void {
       if (mode === interactionMode) return;

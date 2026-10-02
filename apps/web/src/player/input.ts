@@ -36,7 +36,14 @@ const MOVEMENT_KEY_NAMES: ReadonlySet<string> = new Set(Object.keys(MOVEMENT_KEY
 /** Editor-like targets that own the keyboard: while one has focus, movement must not react. */
 const EDITABLE_TAGS: ReadonlySet<string> = new Set(["INPUT", "TEXTAREA", "SELECT", "BUTTON"]);
 
-function isEditableTarget(target: EventTarget | null): boolean {
+/**
+ * Whether a target owns the keyboard.
+ *
+ * Exported because it is the *one* rule for "the player is typing, not playing": the movement keys
+ * use it, the camera-mode shortcut uses it, and a test can hold both to it rather than each carrying
+ * its own idea of what a text field is.
+ */
+export function isTypingTarget(target: unknown): boolean {
   if (target === null || typeof target !== "object") return false;
   const element = target as { tagName?: unknown; isContentEditable?: unknown };
   if (element.isContentEditable === true) return true;
@@ -52,6 +59,10 @@ export interface MovementInput {
   vector(): InputVector;
   /** True while any movement key is held. */
   isActive(): boolean;
+  /** True while a run key is held; the controller decides what that is worth. */
+  isRunning(): boolean;
+  /** Forgets every held key. Used when the world the keys were driving stops being the world. */
+  clear(): void;
   /** Registers every listener this input owns. */
   attach(): void;
   /** Releases every listener and clears the held keys. */
@@ -77,6 +88,7 @@ export interface MovementInputOptions {
 export function createMovementInput(options: MovementInputOptions = {}): MovementInput {
   const target = options.target ?? window;
   const held = new Set<string>();
+  let running = false;
   let active = false;
 
   function vector(): InputVector {
@@ -100,6 +112,7 @@ export function createMovementInput(options: MovementInputOptions = {}): Movemen
 
   function onKeyDown(event: KeyboardEvent): void {
     const key = keyName(event);
+    if (key === "shift") running = true;
     if (!MOVEMENT_KEY_NAMES.has(key)) return;
     if (maybeIgnored(event)) return;
     // Arrow keys would scroll the page, so they are only claimed while they mean movement.
@@ -110,12 +123,13 @@ export function createMovementInput(options: MovementInputOptions = {}): Movemen
   }
 
   function maybeIgnored(event: KeyboardEvent): boolean {
-    if (isEditableTarget(event.target)) return true;
+    if (isTypingTarget(event.target)) return true;
     return (options.ignoreTargets ?? []).some((ignored) => ignored === event.target);
   }
 
   function onKeyUp(event: KeyboardEvent): void {
     const key = keyName(event);
+    if (key === "shift") running = false;
     if (!MOVEMENT_KEY_NAMES.has(key)) return;
     held.delete(key);
     updateActivity();
@@ -123,6 +137,7 @@ export function createMovementInput(options: MovementInputOptions = {}): Movemen
 
   function clear(): void {
     held.clear();
+    running = false;
     updateActivity();
   }
 
@@ -133,6 +148,8 @@ export function createMovementInput(options: MovementInputOptions = {}): Movemen
   return {
     vector,
     isActive: () => active,
+    isRunning: () => running,
+    clear,
     attach(): void {
       target.addEventListener("keydown", onKeyDown);
       target.addEventListener("keyup", onKeyUp);

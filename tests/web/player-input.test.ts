@@ -69,6 +69,36 @@ function createFakeWindow() {
 }
 
 describe("movement input", () => {
+  it("forgets every held key when asked, so a mode switch cannot leave one stuck down", () => {
+    // V13.4's switch: a W held while the camera changes must not keep the character walking. The
+    // input module is *the* place the keys are held, so it is the place they are dropped.
+    const fake = createFakeWindow();
+    const input = createMovementInput({ target: fake.window });
+    input.attach();
+    fake.press("w");
+    fake.press("shift");
+    expect(input.vector()).toEqual({ x: 0, z: 1 });
+    expect(input.isRunning()).toBe(true);
+    input.clear();
+    expect(input.vector()).toEqual(NEUTRAL_INPUT);
+    expect(input.isActive()).toBe(false);
+    expect(input.isRunning()).toBe(false);
+  });
+
+  it("tracks the run key on its own, so a pace is never a direction", () => {
+    const fake = createFakeWindow();
+    const input = createMovementInput({ target: fake.window });
+    input.attach();
+    expect(input.isRunning()).toBe(false);
+    fake.press("shift");
+    // Shift alone is not movement: the character stands still and simply *could* run.
+    expect(input.vector()).toEqual(NEUTRAL_INPUT);
+    expect(input.isActive()).toBe(false);
+    expect(input.isRunning()).toBe(true);
+    fake.release("shift");
+    expect(input.isRunning()).toBe(false);
+  });
+
   it("starts neutral and tracks held keys", () => {
     const fake = createFakeWindow();
     const input = createMovementInput({ target: fake.window });

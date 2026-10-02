@@ -1,7 +1,8 @@
 import type { SceneTile } from "../render/view-model";
 import type { WorldObstacle } from "../render/world-config";
-import { createPlayerCollisionWorld } from "./collision";
-import { createPlayerState, stepPlayer, type CollisionWorld, type PlayerState } from "./controller";
+import { createPlayerCollisionWorld, type TerrainFollow } from "./collision";
+import { createPlayerState, PLAYER_SPEED, stepPlayer, type CollisionWorld, type PlayerState } from "./controller";
+import { RUN_SPEED_MULTIPLIER } from "./character-input";
 import { DESTINATION_PROGRESS_WORLD, DESTINATION_STALL_MS, intentFor, movementVector } from "./intent";
 import { NEUTRAL_INPUT, type InputVector } from "./input";
 
@@ -24,6 +25,14 @@ export interface PlayerRuntimeDeps {
   readonly feetY: number;
   /** The movement intent right now, un-normalised, exactly as the input module reports it. */
   readonly readInput: () => InputVector;
+  /**
+   * Whether the player is asking to run.
+   *
+   * Optional, and a separate question from the direction: a joystick and a keyboard both produce a
+   * direction, and only one of them has a shift key. The host answers it, so the runtime never
+   * learns what a keyboard is.
+   */
+  readonly readRun?: () => boolean;
   /** Called with the new pose whenever it changes, and with null once the character is gone. */
   readonly onPose: (pose: PlayerState | null) => void;
   /** Schedules one frame and calls back with its timestamp. */
@@ -61,6 +70,14 @@ export interface PlayerRuntime {
    * without any tile changing - and both go into the one collision world the controller asks about.
    */
   setObstacles(obstacles: readonly WorldObstacle[]): void;
+  /**
+   * Replaces the island's own surface: what the character stands on, and what they cannot climb.
+   *
+   * Separate from the tiles and the obstacles because it is a fact about the *terrain* - it changes
+   * when the world does, not when a row is moved - and because a caller that has no terrain (a unit
+   * test, a flat test world) may leave it out and keep the flat-plane behaviour.
+   */
+  setTerrain(terrain: TerrainFollow | null): void;
   /** Asks for a frame, for when movement keys go down. Extra calls while one is pending do nothing. */
   wake(): void;
   /**
@@ -83,6 +100,7 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
   let collision: CollisionWorld = createPlayerCollisionWorld([]);
   let tiles: readonly SceneTile[] = [];
   let obstacles: readonly WorldObstacle[] = [];
+  let terrain: TerrainFollow | null = null;
   let pose: PlayerState | null = null;
   let destination: { readonly worldX: number; readonly worldZ: number } | null = null;
   // Progress bookkeeping for a queued walk: the closest the character has been, and how long it has
@@ -96,6 +114,19 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
     destination = null;
     destinationClosest = Number.POSITIVE_INFINITY;
     destinationStalledMs = 0;
+  }
+
+  /**
+   * Where the character's feet are, given the ground they stand on.
+   *
+   * The island has hills and the character has to stand on them: the height comes from the same
+   * function the ground mesh, the props and the camera use, so a character on a slope is on the
+   * slope rather than floating above the flat plane the alpha shipped. `feetY` stays what it always
+   * was - how far the model's origin sits above that surface - so the picture does not move by a
+   * hair.
+   */
+  function groundY(x: number, z: number): number {
+    return terrain === null ? deps.feetY : terrain.heightAt(x, z) + deps.feetY;
   }
 
   function publish(next: PlayerState | null): void {
@@ -122,7 +153,16 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
     if (manual.x !== 0 || manual.z !== 0) clearDestination();
     const vector = movementVector(intentFor(manual, destination), pose);
     const before = pose;
-    pose = stepPlayer(pose, vector ?? NEUTRAL_INPUT, deltaSeconds, collision);
+    const speed =
+      (deps.readRun?.() ?? false) && (manual.x !== 0 || manual.z !== 0)
+        ? PLAYER_SPEED * RUN_SPEED_MULTIPLIER
+        : PLAYER_SPEED;
+    pose = stepPlayer(pose, vector ?? NEUTRAL_INPUT, deltaSeconds, collision, speed);
+    // The ground under the character's new position: one height lookup per frame, and only when they
+    // actually moved - standing still on a hill does not re-read it sixty times a second.
+    if (pose.x !== before.x || pose.z !== before.z) {
+      pose = { ...pose, y: groundY(pose.x, pose.z) };
+    }
     deps.onPose(pose);
 
     if (destination !== null) {
@@ -171,7 +211,7 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
     },
     start(): void {
       lastFrameMs = null;
-      publish(createPlayerState(deps.spawn, deps.feetY));
+      publish(createPlayerState(deps.spawn, groundY(deps.spawn.worldX, deps.spawn.worldZ)));
     },
     stop(): void {
       if (framePending) {
@@ -186,7 +226,7 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
       if (pose === null) return;
       lastFrameMs = null;
       clearDestination();
-      publish(createPlayerState(deps.spawn, deps.feetY));
+      publish(createPlayerState(deps.spawn, groundY(deps.spawn.worldX, deps.spawn.worldZ)));
     },
     setTiles(next: readonly SceneTile[]): void {
       tiles = next;
@@ -195,6 +235,17 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
     setObstacles(next: readonly WorldObstacle[]): void {
       obstacles = next;
       collision = createPlayerCollisionWorld(tiles, obstacles);
+    },
+    setTerrain(next: TerrainFollow | null): void {
+      terrain = next;
+      collision = createPlayerCollisionWorld(tiles, obstacles, terrain);
+      // A character already standing somewhere is put on the new ground rather than left hovering
+      // where the flat plane used to be.
+      if (pose !== null) {
+        const grounded = { ...pose, y: groundY(pose.x, pose.z) };
+        pose = grounded;
+        deps.onPose(grounded);
+      }
     },
     wake(): void {
       schedule();

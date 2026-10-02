@@ -91,6 +91,20 @@ button svg { display: block; }
 button .label { margin-left: .3rem; }
 .ghost-button .label, .module-launcher .label { margin-left: 0; }
 
+/*
+ * The camera switch, and the one-time hint that explains the character view.
+ *
+ * The switch is a small segmented control in the top HUD: two named buttons, the active one lit, so
+ * the player can always see which of the two cameras they are holding. The hint is one short line
+ * under the HUD that fades itself out - the brief asks for four facts, not a tutorial modal.
+ */
+.camera-mode { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 999px; background: var(--hud-surface); }
+.camera-mode-button { padding: .28rem .6rem; border: none; border-radius: 999px; font-size: .72rem; font-weight: 700; color: var(--cream-dim); background: transparent; cursor: pointer; }
+.camera-mode-button:hover { color: var(--cream); }
+.camera-mode-button.is-active { color: #f4fff1; background: var(--leaf-strong); }
+.camera-hint { position: absolute; z-index: 4; top: calc(var(--hud-height) + var(--space-2)); left: 50%; transform: translateX(-50%); margin: 0; padding: .4rem .85rem; border-radius: 999px; font-size: .78rem; font-weight: 600; color: var(--cream); background: var(--hud-surface); box-shadow: var(--shadow-hud); opacity: 0; transition: opacity .5s ease; pointer-events: none; }
+.camera-hint.is-visible { opacity: 1; }
+
 .module-rail { position: absolute; z-index: 5; left: max(var(--space-3), env(safe-area-inset-left)); top: calc(var(--hud-height) + var(--space-3)); display: flex; flex-direction: column; gap: var(--space-2); }
 .module-rail { padding: var(--space-1); border-radius: var(--radius-panel); background: var(--hud-surface); box-shadow: var(--shadow-hud); gap: var(--space-1); }
 .module-launcher { width: var(--rail-size); height: var(--rail-size); padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--cream); background: transparent; }

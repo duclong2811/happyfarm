@@ -12,8 +12,20 @@
           <div class="hud-stat hud-stat-level"><span class="hud-stat-icon" data-icon="star" data-icon-size="18"></span><div id="progression"><strong class="level-value">1</strong></div></div>
           <button id="language" class="ghost-button" type="button" title="Language"><span data-icon="language" data-icon-size="18"></span></button>
           <button id="refresh" class="ghost-button" type="button" title="Refresh farm"><span data-icon="refresh" data-icon-size="18"></span></button>
+          <!--
+            The camera switch: the estate view designs the island, the character view lives in it.
+            Two named buttons rather than one toggle, and always visible, because the player should
+            never have to guess which of two very different cameras they are holding.
+          -->
+          <div id="camera-mode" class="camera-mode" role="group" aria-label="Camera">
+            <button id="camera-estate" class="camera-mode-button is-active" type="button" aria-pressed="true">Estate</button>
+            <button id="camera-character" class="camera-mode-button" type="button" aria-pressed="false">Character</button>
+          </div>
         </div>
       </header>
+
+      <!-- The one-time character-view hint: four lines, fades itself out. -->
+      <p id="camera-hint" class="camera-hint" hidden></p>
 
       <nav id="module-rail" class="module-rail" aria-label="Farm modules">
         <button id="inventory-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="inventory-panel" title="Inventory"><span data-icon="inventory" data-icon-size="22"></span></button>

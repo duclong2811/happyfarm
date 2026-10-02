@@ -41,8 +41,12 @@ import {
   type PanelState
 } from "./panels";
 import type { PlayerState } from "./player/controller";
+import { PLAYER_MAX_SLOPE, PLAYER_MAX_STEP_WORLD } from "./player/controller";
+import { cameraRelativeMovement, characterIntentFromInput } from "./player/character-input";
 import { createMovementInput, NEUTRAL_INPUT, type MovementInput } from "./player/input";
 import { createPlayerRuntime } from "./player/runtime";
+import { DEFAULT_CAMERA_MODE, otherCameraMode, type CameraMode } from "./render/camera-mode";
+import { GROUND_SURFACE_Y, terrainHeightAt } from "./render/terrain-height";
 import { describeSelection, formatRemainingGrowth, type SelectionView } from "./selection";
 import { tileToWorld, worldFrame } from "./render/layout";
 import {
@@ -169,6 +173,15 @@ interface AppState {
    */
   buildSelection: BuildCatalogEntryDTO | null;
   /**
+   * Which way the island is being looked at: the estate camera, or behind the character.
+   *
+   * One piece of client state over one world. The estate view designs the island, the character view
+   * lives in it, and nothing else differs - the terrain, the objects, the collision and the character
+   * are the same in both. It lives here rather than inside the renderer because the HUD shows it, the
+   * panels depend on it, and the movement keys are routed by it.
+   */
+  cameraMode: CameraMode;
+  /**
    * The id of the built thing the player is editing, or null.
    *
    * An *id*, not a row and not an object reference: every poll replaces the list with fresh rows, so a
@@ -221,6 +234,14 @@ const state: AppState = {
   buildCatalog: [],
   worldObjects: indexWorldObjects([]),
   buildSelection: null,
+  /**
+   * Which way the island is being looked at.
+   *
+   * One piece of client state over one world: the estate view designs it, the character view lives in
+   * it, and nothing else differs between them. Owned here rather than in the renderer because the HUD
+   * shows it, the panels depend on it, and the movement keys are routed by it.
+   */
+  cameraMode: DEFAULT_CAMERA_MODE,
   selectedObjectId: null,
   constructions: [],
   cellMap: EMPTY_WORLD_CELL_MAP,
@@ -296,6 +317,54 @@ function renderStatus(): void {
   const node = element<HTMLParagraphElement>("status");
   node.textContent = statusText(t, state.language);
   node.classList.toggle("error", statusIsError);
+}
+
+/**
+ * The camera-mode control: which view is active, and what the two are called.
+ *
+ * Always visible, because the player should never have to guess which of two very different cameras
+ * they are holding. Two buttons rather than one toggle: "Estate" and "Character" say what the modes
+ * are, where a switch would only say "not this one".
+ */
+function renderCameraMode(): void {
+  const group = element<HTMLElement>("camera-mode");
+  group.setAttribute("aria-label", t("camera.mode.aria"));
+  const estate = element<HTMLButtonElement>("camera-estate");
+  const character = element<HTMLButtonElement>("camera-character");
+  const inEstate = state.cameraMode === "ESTATE";
+  estate.textContent = t("camera.mode.estate");
+  character.textContent = t("camera.mode.character");
+  estate.classList.toggle("is-active", inEstate);
+  character.classList.toggle("is-active", !inEstate);
+  estate.setAttribute("aria-pressed", String(inEstate));
+  character.setAttribute("aria-pressed", String(!inEstate));
+  estate.title = t("camera.mode.estateHint");
+  character.title = t("camera.mode.characterHint");
+}
+
+/** Whether the one-time "how to walk about" hint has been shown this session. */
+let characterHintShown = false;
+
+/**
+ * The first-time hint for the character view.
+ *
+ * Shown once per session, on the first entry, and it fades itself out: the brief asks for four lines
+ * that explain the controls, not a tutorial modal, and a player who already knows them should never
+ * see it a second time in the same sitting.
+ */
+function showCharacterHint(): void {
+  if (characterHintShown) return;
+  characterHintShown = true;
+  const hint = element<HTMLElement>("camera-hint");
+  hint.textContent = t("camera.hint");
+  hint.hidden = false;
+  // A frame after unhiding, so the fade-in actually transitions rather than appearing at full opacity.
+  window.requestAnimationFrame(() => {
+    hint.classList.add("is-visible");
+  });
+  window.setTimeout(() => {
+    hint.classList.remove("is-visible");
+  }, 6500);
 }
 
 function api(): ApiClient {
@@ -851,8 +920,11 @@ function renderActionControls(selection: SelectionView): void {
 function renderGo(): void {
   const button = element<HTMLButtonElement>("go");
   const selected = state.selected;
-  button.hidden = selected === null;
-  button.disabled = scene === null || selected === null;
+  // Character view has no click-to-move - the character is steered with the movement keys - so the
+  // button is not offered there even if a cell was selected before the camera changed.
+  const walkable = state.cameraMode === "ESTATE" && selected !== null;
+  button.hidden = !walkable;
+  button.disabled = scene === null || !walkable;
   setLabel("go", t("dock.go"));
   button.title = t("dock.goTitle");
   button.setAttribute("aria-label", t("dock.goTitle"));
@@ -1452,6 +1524,10 @@ function previewRotationY(entry: BuildCatalogEntryDTO): number {
 function enterPlacement(entry: BuildCatalogEntryDTO): void {
   state.buildSelection = entry;
   placementTurns = 0;
+  // Placing is precise work and belongs to the estate view: the brief's rule is that entering the
+  // build flow brings the camera back up rather than asking the player to place a barn from behind
+  // their own shoulder.
+  setCameraMode("ESTATE");
   // An object being edited and an item in hand are two different gestures: picking one up puts the
   // other down.
   clearObjectSelection();
@@ -1868,6 +1944,9 @@ function beginMove(): void {
   }
   moveSession = { kind: "MOVE", construction, turns: construction.rotation };
   deleteArmed = false;
+  // Moving an object is estate work: the same reason placing is. The brief's rule, and the reason the
+  // ghost, the ownership wash and the destination cells all belong to the high view.
+  setCameraMode("ESTATE");
   // The ghost is drawn where the object already is, so the first thing the player sees is "this one".
   selectCell(construction.anchorX, construction.anchorY);
   scene?.setObjectPicking(false);
@@ -1896,6 +1975,7 @@ function beginRestore(construction: ConstructionDTO): void {
   state.selectedObjectId = construction.constructionId;
   deleteArmed = false;
   moveSession = { kind: "RESTORE", construction, turns: construction.rotation };
+  setCameraMode("ESTATE");
   setActivePanel(NO_PANEL);
   const focus = state.selected ?? worldToCell({ worldX: scene?.cameraFrame().targetX ?? 0, worldZ: scene?.cameraFrame().targetZ ?? 0 });
   selectCell(focus.x, focus.y);
@@ -2347,6 +2427,7 @@ function renderChrome(): void {
 
 function render(): void {
   renderChrome();
+  renderCameraMode();
   renderPanels();
   renderFarm();
   renderWallet();
@@ -2428,6 +2509,10 @@ function renderPanels(): void {
 
 function setActivePanel(next: PanelState): void {
   panels = next;
+  // Building is precise, cell-based work and belongs to the estate view: opening the Build panel
+  // brings the camera back up rather than asking a player to place a barn from behind their own
+  // shoulder (the brief's rule, and the reason the shop's ghost and ownership wash make sense there).
+  if (panels.active === "build") setCameraMode("ESTATE");
   renderPanels();
   syncLayoutMetrics();
   // The shop draws itself when it is opened, and only then: a session that never opens it never asks
@@ -2513,7 +2598,21 @@ function toScenePlayer(current: PlayerState): FarmScenePlayer {
 const playerRuntime = createPlayerRuntime({
   spawn: SPAWN_WORLD,
   feetY: PLAYER_FEET_Y,
-  readInput: () => movement?.vector() ?? NEUTRAL_INPUT,
+  /**
+   * The movement the character should make this frame.
+   *
+   * The keys are read once, and which *frame* they mean depends on the camera: in the estate view the
+   * character walks the world's own axes, and in character view the same keys walk relative to where
+   * the camera is looking - which is what makes W mean "away from the camera" rather than "south".
+   */
+  readInput: () => {
+    const held = movement?.vector() ?? NEUTRAL_INPUT;
+    if (state.cameraMode !== "CHARACTER") return held;
+    return cameraRelativeMovement(characterIntentFromInput(held), scene?.cameraBearing() ?? 0);
+  },
+  // Running is the character view's: in the estate view the character is a marker being moved between
+  // places, and a sprint there would be a silent behaviour change to shipped movement.
+  readRun: () => state.cameraMode === "CHARACTER" && (movement?.isRunning() ?? false),
   onPose: (pose) => {
     scene?.setPlayer(pose === null ? null : toScenePlayer(pose));
   },
@@ -2538,6 +2637,36 @@ const playerRuntime = createPlayerRuntime({
  * destination the walker then refuses to reach.
  */
 let selectionCollision: CollisionWorld = createPlayerCollisionWorld([]);
+
+/**
+ * Switches the way the island is looked at.
+ *
+ * One world, two viewpoints: nothing is reloaded, no state is duplicated, and the character stays
+ * exactly where they were standing. What does change is who is driving - the camera, and the hands on
+ * the movement keys - so the switch also settles the two things that could be left running: a walk
+ * queued in the estate view, and a key held down across the change.
+ */
+function setCameraMode(mode: CameraMode): void {
+  if (state.cameraMode === mode) return;
+  state.cameraMode = mode;
+  // A key held across the switch must not keep driving the character: the same W that walked them in
+  // the character view would otherwise carry straight on in the estate view the instant the camera
+  // moved. Clearing the held keys is what "no stuck W key" means in practice.
+  movement?.clear();
+  if (mode === "CHARACTER") {
+    // The player's own hand takes over: a walk queued with "Go" is cancelled rather than left to
+    // fight the movement keys, which is the behaviour the brief asks for.
+    playerRuntime.clearDestination();
+    showCharacterHint();
+  }
+  scene?.setCameraMode(mode);
+  render();
+}
+
+/** Estate to character and back, for the F key and the HUD control. */
+function toggleCameraMode(): void {
+  setCameraMode(otherCameraMode(state.cameraMode));
+}
 
 /**
  * The circles the player's own objects put in the way.
@@ -2715,9 +2844,18 @@ function refreshScene(): void {
   // walks around, and because the circles come from the rows, moving or storing one takes it away.
   const objectCircles = objectObstacles(state.constructions, worldFrame(), state.worldObjects);
   playerRuntime.setObstacles(objectCircles);
+  // The island's own surface, so the character stands on the hills instead of the flat plane the
+  // grid is laid out on - and so a cliff is something they cannot walk up.
+  const terrain = {
+    heightAt: (worldX: number, worldZ: number) =>
+      GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, input.world.terrain),
+    maxSlope: PLAYER_MAX_SLOPE,
+    maxStepWorld: PLAYER_MAX_STEP_WORLD
+  };
+  playerRuntime.setTerrain(terrain);
   // The selection asks the same world whether a cell can be walked to, so a destination can never be
   // offered for ground the character would refuse.
-  selectionCollision = createPlayerCollisionWorld(input.tiles, objectCircles);
+  selectionCollision = createPlayerCollisionWorld(input.tiles, objectCircles, terrain);
   try {
     scene.setState(input);
   } catch (error: unknown) {
@@ -2748,6 +2886,11 @@ function enable3D(): void {
           // While something is in hand or an object is being moved, a click belongs to that gesture -
           // the renderer only reports objects when the host has said they are pickable.
           selectObject(constructionId);
+        },
+        onCameraModeToggle: () => {
+          // The renderer reports the shortcut and decides nothing: which mode is active, and what
+          // that means for the panels and the movement keys, is this page's business.
+          toggleCameraMode();
         },
         onAssetProblem: (assetId, error) => {
           // The crop keeps its placeholder art, so this is information rather than a failure the page
@@ -3138,6 +3281,13 @@ function wire(): void {
 
   element<HTMLButtonElement>("language").addEventListener("click", () => {
     setLanguage(otherLanguage(state.language));
+  });
+  // The two camera buttons: named, so the mode is a choice rather than a mysterious switch.
+  element<HTMLButtonElement>("camera-estate").addEventListener("click", () => {
+    setCameraMode("ESTATE");
+  });
+  element<HTMLButtonElement>("camera-character").addEventListener("click", () => {
+    setCameraMode("CHARACTER");
   });
   element<HTMLButtonElement>("refresh").addEventListener("click", () => {
     void run(async () => {

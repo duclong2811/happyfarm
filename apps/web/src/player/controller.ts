@@ -29,10 +29,31 @@ export interface PlayerState {
 export interface CollisionWorld {
   /** 0 when the point is free, > 0 when the player circle overlaps something at that point. */
   depth(x: number, z: number): number;
+  /**
+   * Whether a step is refused outright, whatever the circles say.
+   *
+   * The hole in a circle-vs-circle world is terrain: a shore cliff has no obstacle on it, and walking
+   * from the beach onto a two-metre ledge is a step the collision world would happily allow. The
+   * optional guard is how the world says "not that way" - V13.4 uses it for a slope the character
+   * cannot climb - and it is optional so every existing world (and every existing test) still means
+   * exactly what it meant.
+   */
+  blocked?(fromX: number, fromZ: number, toX: number, toZ: number): boolean;
 }
 
 export const PLAYER_RADIUS = 0.28;
 export const PLAYER_SPEED = 2.6;
+/**
+ * The steepest rise the character may walk up, as height per metre travelled.
+ *
+ * 1 is 45 degrees: the island's ordinary hills are well under it, and the sharp faces - the volcano's
+ * flanks, the shore's ledges - are over it. Deliberately a slope rather than a physics contact, and
+ * deliberately only a *climb* rule: walking down a steep face is never refused, because refusing it
+ * would strand anyone who walked out onto a ridge.
+ */
+export const PLAYER_MAX_SLOPE = 1;
+/** A rise at or below this is always walkable whatever the ratio: a kerb, a lip in the ground. */
+export const PLAYER_MAX_STEP_WORLD = 0.35;
 export const MAX_FRAME_DELTA_SECONDS = 0.05;
 export const MAX_SUBSTEPS = 8;
 export const TURN_SPEED_RADIANS_PER_SECOND = 12;
@@ -80,7 +101,15 @@ export function stepPlayer(
   state: PlayerState,
   input: InputVector,
   deltaSeconds: number,
-  world: CollisionWorld
+  world: CollisionWorld,
+  /**
+   * How fast to walk, in world metres per second.
+   *
+   * A parameter rather than a constant because a pace is a property of the *mode*: the estate view
+   * walks a character between places, and character view walks a person, and V13.5's joystick may
+   * want a third. The default is the one the game has always used.
+   */
+  speedWorldPerSecond: number = PLAYER_SPEED
 ): PlayerState {
   const dt = Number.isFinite(deltaSeconds) ? Math.min(Math.max(deltaSeconds, 0), MAX_FRAME_DELTA_SECONDS) : 0;
   const direction = normalizeInput(input);
@@ -90,7 +119,8 @@ export function stepPlayer(
 
   const targetYaw = Math.atan2(direction.x, direction.z);
   const facingYaw = turnToward(state.facingYaw, targetYaw, TURN_SPEED_RADIANS_PER_SECOND * dt);
-  const distance = PLAYER_SPEED * dt;
+  const speed = Number.isFinite(speedWorldPerSecond) ? Math.max(speedWorldPerSecond, 0) : PLAYER_SPEED;
+  const distance = speed * dt;
   const steps = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(distance / (PLAYER_RADIUS * 0.5))));
   const stepX = (direction.x * distance) / steps;
   const stepZ = (direction.z * distance) / steps;
@@ -130,6 +160,9 @@ function resolveStep(
 ): { readonly x: number; readonly z: number } {
   const currentDepth = world.depth(x, z);
   const allow = (candidateX: number, candidateZ: number): boolean => {
+    // The world's own veto first: a slope the character cannot climb is refused whatever the circles
+    // would have said, and the axis-by-axis retry below lets them slide along the foot of it.
+    if (world.blocked?.(x, z, candidateX, candidateZ) === true) return false;
     const depth = world.depth(candidateX, candidateZ);
     return currentDepth > 0 ? depth < currentDepth : depth <= 0;
   };

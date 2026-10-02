@@ -119,6 +119,44 @@ interface BlockBox {
   readonly halfExtentZWorld: number;
 }
 
+/**
+ * The terrain a walker has to climb, as the collision world needs it.
+ *
+ * Circles describe what stands *on* the island; this describes the island. A shore ledge is not an
+ * obstacle - there is nothing there - so without this the character would stroll up a cliff face.
+ */
+export interface TerrainFollow {
+  /** The walkable surface at a world position: the same function the mesh and the props stand on. */
+  readonly heightAt: (worldX: number, worldZ: number) => number;
+  /** The steepest rise a step may climb, in metres of height per metre travelled. */
+  readonly maxSlope: number;
+  /** A rise at or below this is always walkable, whatever the ratio: a curb, a small bump. */
+  readonly maxStepWorld: number;
+}
+
+/**
+ * Whether a step is up a slope nobody could walk.
+ *
+ * Deliberately a *rise* rule and not a physics one. A small rise is always allowed - a lip in the
+ * ground, a kerb by the quay - and a larger one is allowed while it stays within `maxSlope`, so the
+ * island's ordinary hills are walkable and its cliffs are not. Descending is never blocked: the brief
+ * asks that a character cannot climb an impossible face, not that they can never step down one, and
+ * blocking descents would strand anyone who walked out along a ridge.
+ */
+export function slopeBlocks(
+  terrain: TerrainFollow,
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number
+): boolean {
+  const run = Math.hypot(toX - fromX, toZ - fromZ);
+  if (!Number.isFinite(run) || run <= 0) return false;
+  const rise = terrain.heightAt(toX, toZ) - terrain.heightAt(fromX, fromZ);
+  if (!Number.isFinite(rise) || rise <= terrain.maxStepWorld) return false;
+  return rise > terrain.maxSlope * run;
+}
+
 /** What one farm row contributes to the world: occupancy as circles, terrain as whole tiles. */
 function farmBlocks(tiles: readonly SceneTile[]): { readonly circles: readonly BlockCircle[]; readonly boxes: readonly BlockBox[] } {
   const circles: BlockCircle[] = [];
@@ -157,7 +195,15 @@ export function createPlayerCollisionWorld(
    * stored or removed its circle has to come from its row rather than from a list compiled into the
    * world config. That is what stops a collision circle from staying behind when its barn walks away.
    */
-  extraObstacles: readonly WorldObstacle[] = []
+  extraObstacles: readonly WorldObstacle[] = [],
+  /**
+   * The island's own surface, when the caller has it.
+   *
+   * Optional, and the world is exactly what it was without it: a caller that only wants "may I stand
+   * here" (the selection ghost, a test of the circles) leaves it out, and the walking character hands
+   * it in so a cliff is a cliff.
+   */
+  terrain: TerrainFollow | null = null
 ): CollisionWorld {
   const farm = farmBlocks(tiles);
 
@@ -177,6 +223,8 @@ export function createPlayerCollisionWorld(
         );
       }
       return depth;
-    }
+    },
+    blocked: (fromX: number, fromZ: number, toX: number, toZ: number): boolean =>
+      terrain !== null && slopeBlocks(terrain, fromX, fromZ, toX, toZ)
   };
 }

@@ -668,6 +668,31 @@ The Build module is a V12.4 card shop rather than a row list: read
 `docs/design/V12_4_VISUAL_BUILD_SHOP.md` before changing `renderBuildPanel`, the thumbnail renderer, or
 the placement preview.
 
+## Dual camera and character view (V13.4)
+
+Read `docs/design/DUAL_CAMERA_CHARACTER_MODE.md` before touching the camera, the movement input, or
+the mode switch. Its invariant is the one to keep: **Estate View and Character View are two ways to
+control the same world, not separate game states.**
+
+- Mode state: owned by `apps/web/src/main.ts` (`state.cameraMode`, `setCameraMode`), with the pure
+  parts in `apps/web/src/render/camera-mode.ts` (the toggle, the `F` shortcut guard, and the eased
+  flight between the two poses). The HUD control is `#camera-mode` in `apps/web/index.html`.
+- Two rigs, one camera: the estate rig (`apps/web/src/render/camera.ts`, unchanged) and the character
+  rig (`apps/web/src/render/character-camera.ts`). `scene.setCameraMode` never writes to the rig it is
+  leaving, which is what preserves the estate viewpoint exactly.
+- Movement is an intent, never a keystroke: `apps/web/src/player/character-input.ts` turns the shared
+  key state into `CharacterMoveIntent` and then, with the camera's bearing
+  (`scene.cameraBearing()`), into a world direction. `stepPlayer` is unchanged apart from an optional
+  speed; V13.5's joystick must feed the same intent.
+- The ground is `terrainHeightAt`, handed to the runtime through `PlayerRuntime.setTerrain`;
+  `slopeBlocks` in `apps/web/src/player/collision.ts` refuses a climb steeper than 45 degrees (a step
+  rule, not a physics engine). Walking and looking both read the *rows*; the camera's occluders are
+  only the geography and the multi-cell buildings, never the scatter.
+- Build/edit integration: opening the Build panel, placing, moving or restoring switches to the estate
+  view. Ground click-to-move is off in character view; object selection stays on.
+- Tests: `tests/web/camera-mode.test.ts`, `tests/web/character-camera.test.ts`,
+  `tests/web/character-movement.test.ts`, and the clear/run cases in `tests/web/player-input.test.ts`.
+
 ## Staging deployment foundation
 
 Read `docs/deployment.md` before touching the deployed entrypoint, the Access authenticator, the staging config, or static asset routing.
