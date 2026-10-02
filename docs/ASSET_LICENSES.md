@@ -18,6 +18,7 @@ alternative is not "assume CC0"; it is to stop and ask.
 | Medieval Village MegaKit | Quaternius | https://quaternius.com/packs/medievalvillagemegakit.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | glTF → GLB | props: crate, wagon, fence rails | Yes - see "Normalization" |
 | Lowpoly Farm Buildings | Quaternius | https://quaternius.com/packs/farmbuildings.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | FBX → GLB | buildings: barn (three tiers), open barn, silo, silo house, tower windmill, well, coop | Yes - see "Normalization" |
 | Fantasy Props MegaKit (Standard) | Quaternius | https://quaternius.com/packs/fantasypropsmegakit.html | CC0 1.0 (stated in the pack's own `License_Standard.txt`, published inside the download, and on the pack page) | 2026-10-01 | glTF → GLB | props: barrels, crates, sacks, bucket, bench, market stall and cart, rope, lantern, planter, axe, chopping block, workbench, chest, cage, whetstone | Yes - see "Normalization" |
+| Mini Characters | Kenney | https://kenney.nl/assets/mini-characters | CC0 1.0 (stated on the pack page - "Download this package (25 assets) for free, CC0 licensed!" - and in the pack's own `License.txt`) | 2026-10-02 | GLB with the palette embedded | the player character (`character-male-a`); see `docs/assets/PLAYER_CHARACTER_ASSET.md` | Yes - palette embedded, geometry untouched |
 | ~~Kenney Nature Kit~~ | Kenney | https://kenney.nl/assets/nature-kit | CC0 1.0 | shipped 2026-09-2x, **removed in V5** | - | - | - |
 
 **Removed in V5.** The Kenney Nature Kit was the project's first scenery family and its licence was
@@ -35,6 +36,16 @@ links to as the official source:
 - https://quaternius.itch.io/medieval-village-megakit
 - https://quaternius.itch.io/lowpoly-farm-buildings (the Farm Buildings pack; the creator's site links
   to it as the official download)
+
+**The player character** was downloaded from Kenney's own page as a zip, unpacked in a temporary
+directory outside the repository, and imported by
+`tools/asset-pipeline/node/import-kenney-character.mjs`. One model of the pack's twelve characters
+ships; the accessibility aids and the wheelchairs are for a game about mobility rather than farming,
+and the FBX folder is not used at all. The importer's job is small - Kenney ships the palette as a
+sibling file, so it is embedded into the model's binary chunk - and it deliberately leaves the
+geometry alone, because this model is skinned: normalising it the way the static packs are normalised
+would tear the skin from its skeleton. Its size is a presentation concern instead. The measurements,
+the clip list and the replacement steps are in `docs/assets/PLAYER_CHARACTER_ASSET.md`.
 
 ## What was selected, and what was left out
 

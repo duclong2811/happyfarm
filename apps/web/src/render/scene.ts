@@ -92,6 +92,7 @@ import {
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
 import { isTypingTarget } from "../player/input";
+import { createPlayerCharacterView } from "./player-character";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
 import { buildRoadSpec, ROAD_LIFT_WORLD } from "./roads";
 import { ROAD_SEGMENT_CELLS } from "@happy-farm/game-data";
@@ -144,10 +145,6 @@ const READY_EMISSIVE_COLOR = 0x4a3410;
 const PLAYER_HEIGHT = 1.6;
 /** The same height, named for what the camera reads it for: where the shoulder is. */
 const PLAYER_HEIGHT_WORLD = PLAYER_HEIGHT;
-/** How far the avatar's shoulders rise on each step, for a walk that reads without an animation. */
-const PLAYER_WALK_BOB = 0.035;
-/** Steps per second at full walking speed, used only to phase the bob. */
-const PLAYER_STEP_FREQUENCY = 9;
 /**
  * How far the camera stands when placement mode frames a cell.
  *
@@ -393,6 +390,14 @@ export interface FarmScenePlayer {
   readonly movementState: "IDLE" | "WALKING";
   /** Seconds spent walking, for the step bob. Never a gameplay quantity. */
   readonly elapsedWalk: number;
+  /**
+   * Whether the player is holding the run key.
+   *
+   * Presentation only, and optional because it is: the runtime has already applied the run speed by
+   * the time a pose is published, so this only tells the character which clip to play. A view that
+   * ignores it still draws the right position; a character with no run clip borrows the walk one.
+   */
+  readonly running?: boolean;
 }
 
 /** Whether the scene is showing the planting grid. Presentation only; the server owns the rules. */
@@ -648,7 +653,33 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const generatedModels: Partial<Record<GeneratedModelId, Object3D>> = {};
   const playerGroup = new Group();
   playerGroup.visible = false;
-  playerGroup.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
+  /**
+   * The avatar the island draws until the imported character arrives - and whenever it cannot.
+   *
+   * Its own group so the character view can point at it for the life of the scene while the *scene*
+   * stays free to rebuild its contents (the generated model replacing the primitives, say) without
+   * the view having to know.
+   */
+  const fallbackAvatar = new Group();
+  fallbackAvatar.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
+  /**
+   * The player, as presentation: a replaceable model, its animation, and the fallback rule.
+   *
+   * Gameplay knows nothing about any of it. The pose this draws is the one the player runtime
+   * produced - position, facing and movement state are all *read* here, never written back - so a
+   * different character model changes how the player looks and nothing about how they work.
+   */
+  const characterView = createPlayerCharacterView({
+    fallback: fallbackAvatar,
+    loadModel: (modelId) => library.load(modelId),
+    animationsOf: (modelId) => library.animations(modelId),
+    onProblem: (assetId, message) => {
+      // A failed model is a report, not a failure: the fallback is already on screen, and the console
+      // says which asset failed and what is being used instead.
+      options.onAssetProblem?.(assetId, new Error(message));
+    }
+  });
+  playerGroup.add(characterView.root);
   /**
    * Small scenery - flowers, tufts of grass - lives in its own pair of groups.
    *
@@ -908,10 +939,16 @@ let interactionGeometry: BufferGeometry | null = null;
     }
   }
 
-  /** Rebuilds the avatar group from whatever models are available now. */
+  /**
+   * Rebuilds the *fallback* avatar from whatever models are available now.
+   *
+   * Only the placeholder is rebuilt: the imported character is loaded once by the character view and
+   * is never re-fetched, re-cloned or re-instantiated - not on a farm refresh, and not when the
+   * camera changes between estate and character view.
+   */
   function rebuildAvatar(): void {
-    playerGroup.clear();
-    playerGroup.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
+    fallbackAvatar.clear();
+    fallbackAvatar.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
     updatePlayer();
   }
 
@@ -1086,18 +1123,30 @@ let interactionGeometry: BufferGeometry | null = null;
     updateDetailVisibility();
   }
 
+  /**
+   * How long the last character frame took, in milliseconds.
+   *
+   * The character is animated against the same wall clock the player runtime uses, but it is drawn on
+   * the pose events rather than on its own frame loop: a character who is standing still costs no
+   * frames at all, and one who is walking gets one update per pose - which is exactly the rate at
+   * which its position can have changed.
+   */
+  let lastPlayerFrameMs = 0;
+
+  /**
+   * Draws the player at the pose the runtime produced.
+   *
+   * Everything gameplay owns - where the character is, which way they face, whether they are walking
+   * - arrives in `playerPose`; this function only tells the presentation layer about it. The model is
+   * never asked where it is, and nothing here can move the player.
+   */
   function updatePlayer(): void {
-    if (playerPose === null) {
-      playerGroup.visible = false;
-      return;
-    }
-    playerGroup.visible = true;
-    const bob =
-      playerPose.movementState === "WALKING"
-        ? Math.abs(Math.sin(playerPose.elapsedWalk * PLAYER_STEP_FREQUENCY)) * PLAYER_WALK_BOB
-        : 0;
-    playerGroup.position.set(playerPose.worldX, playerPose.worldY + bob, playerPose.worldZ);
-    playerGroup.rotation.y = playerPose.facingYaw;
+    const pose = playerPose;
+    const now = typeof performance === "undefined" ? 0 : performance.now();
+    const deltaSeconds = lastPlayerFrameMs === 0 ? 0 : (now - lastPlayerFrameMs) / 1000;
+    lastPlayerFrameMs = pose === null ? 0 : now;
+    playerGroup.visible = pose !== null;
+    characterView.update(pose, deltaSeconds);
   }
 
   /**
@@ -2293,6 +2342,7 @@ let interactionGeometry: BufferGeometry | null = null;
       drawHandle = null;
       pendingHover = null;
       observer?.disconnect();
+      characterView.dispose();
       worldGroup.clear();
       tileGroup.clear();
       cropGroup.clear();

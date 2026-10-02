@@ -2591,7 +2591,10 @@ function toScenePlayer(current: PlayerState): FarmScenePlayer {
     worldZ: current.z,
     facingYaw: current.facingYaw,
     movementState: current.movementState,
-    elapsedWalk: current.elapsedWalk
+    elapsedWalk: current.elapsedWalk,
+    // The character's clip is chosen from this, and from nothing else: the runtime has already
+    // applied the pace, so the presentation layer only has to know which of the three states to show.
+    running: current.movementState === "WALKING" && (movement?.isRunning() ?? false)
   };
 }
 

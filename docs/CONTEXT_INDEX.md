@@ -670,6 +670,32 @@ the placement preview.
 
 ## Dual camera and character view (V13.4)
 
+Read `docs/design/PLAYER_CHARACTER.md` **and** `docs/design/DUAL_CAMERA_CHARACTER_MODE.md` before
+touching the avatar, its animation, or the camera that follows it.
+
+### The player character (V13.4.1)
+
+The avatar is presentation, and the authority is the player runtime - never the mesh.
+
+- Asset: `apps/web/src/assets/models/player/player-farmer.glb` (Kenney Mini Characters, CC0; licence,
+  measurements and replacement steps in `docs/assets/PLAYER_CHARACTER_ASSET.md`). Imported by
+  `tools/asset-pipeline/node/import-kenney-character.mjs`, which embeds the pack's sibling palette and
+  **does not** normalise the geometry - this model is skinned, so its size is a presentation concern.
+- The one place asset values live: `PLAYER_CHARACTER_ASSET` in `apps/web/src/render/player-character.ts`
+  (model id, target height, facing correction, ground offset, animation names, cross-fade). The model
+  id resolves through `apps/web/src/render/character-model-urls.ts` and the shared model library.
+- Drawing, scale, grounding and animation: `createPlayerCharacterView` - measured bounding box to the
+  world's 1.6 m, feet on the ground, one `AnimationMixer`, lazy actions, and a cross-fade only when the
+  semantic state changes. State is derived from the pose (`characterAnimationStateFor`), the clip from
+  the config (`resolveCharacterClip`), and a missing clip falls back rather than failing.
+- The old procedural avatar stays as the fallback, shown (with a console report) when the model cannot
+  load. Gameplay must never know which file is drawn: no controller, camera, collision or scene code
+  changes when the character is replaced.
+- Tests: `tests/web/player-character.test.ts` (pure mapping, scale, orientation, no-mutation),
+  `tests/web/player-character-view.test.ts` (the view against a synthetic model, including fallback),
+  and `tests/integration/player-character-asset.test.ts` (the shipped file is self-contained, skinned,
+  carries the configured clips, and fits its budget).
+
 Read `docs/design/DUAL_CAMERA_CHARACTER_MODE.md` before touching the camera, the movement input, or
 the mode switch. Its invariant is the one to keep: **Estate View and Character View are two ways to
 control the same world, not separate game states.**

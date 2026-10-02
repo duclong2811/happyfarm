@@ -1,0 +1,69 @@
+{
+  "source": {
+    "pack": "Kenney Mini Characters",
+    "model": "character-male-a.glb",
+    "uri": "Models/GLB format/character-male-a.glb"
+  },
+  "out": "player-farmer.glb",
+  "bytes": 253400,
+  "triangles": 723,
+  "materials": 1,
+  "textures": 1,
+  "images": 1,
+  "meshes": 2,
+  "skins": [
+    {
+      "joints": 7
+    },
+    {
+      "joints": 7
+    }
+  ],
+  "animations": [
+    "static",
+    "idle",
+    "walk",
+    "sprint",
+    "jump",
+    "fall",
+    "crouch",
+    "sit",
+    "drive",
+    "die",
+    "pick-up",
+    "emote-yes",
+    "emote-no",
+    "holding-right",
+    "holding-left",
+    "holding-both",
+    "holding-right-shoot",
+    "holding-left-shoot",
+    "holding-both-shoot",
+    "attack-melee-right",
+    "attack-melee-left",
+    "attack-kick-right",
+    "attack-kick-left",
+    "interact-right",
+    "interact-left",
+    "wheelchair-sit",
+    "wheelchair-look-left",
+    "wheelchair-look-right",
+    "wheelchair-move-forward",
+    "wheelchair-move-back",
+    "wheelchair-move-left",
+    "wheelchair-move-right"
+  ],
+  "extents": {
+    "min": [
+      -0.3836,
+      0,
+      -0.1724
+    ],
+    "max": [
+      0.3836,
+      0.6713,
+      0.1676
+    ],
+    "height": 0.6713
+  }
+}

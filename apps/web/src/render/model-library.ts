@@ -1,9 +1,10 @@
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { Mesh, type BufferGeometry, type Material, type Object3D } from "three";
+import { Mesh, type AnimationClip, type BufferGeometry, type Material, type Object3D } from "three";
 import { CROP_MODEL_URLS } from "./model-urls";
 import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
 import { PROP_MODEL_URL_BY_ID } from "./prop-model-urls";
 import { BUILDING_MODELS } from "./building-model-urls";
+import { CHARACTER_MODEL_URL_BY_ID } from "./character-model-urls";
 import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { cropModelId } from "./assets";
 
@@ -31,6 +32,14 @@ export interface ModelLibrary {
   get(modelId: string): Object3D | undefined;
   /** The model, waiting for it if it has not arrived. Null when nothing can draw this id. */
   load(modelId: string): Promise<Object3D | null>;
+  /**
+   * The animation clips that arrived with a model, or an empty list.
+   *
+   * A GLTF's animations belong to the *file*, not to its scene graph, so a caller that wants to
+   * animate what it loaded has to ask for them here rather than reaching into the model. Empty for
+   * everything that is not animated - which is every other family this library serves.
+   */
+  animations(modelId: string): readonly AnimationClip[];
   /** Called once per model that arrives, so a caller can redraw what was waiting for it. */
   onArrive(listener: (modelId: string) => void): () => void;
   /** Whether anything is still downloading. */
@@ -42,6 +51,8 @@ export interface ModelLibrary {
 export function modelUrlFor(modelId: string): string | undefined {
   const crop = cropModelId(modelId);
   if (crop !== null) return CROP_MODEL_URLS[crop];
+  const character = CHARACTER_MODEL_URL_BY_ID.get(modelId);
+  if (character !== undefined) return character;
   const environment = ENVIRONMENT_MODEL_URL_BY_ID.get(modelId);
   if (environment !== undefined) return environment;
   const prop = PROP_MODEL_URL_BY_ID.get(modelId);
@@ -75,6 +86,7 @@ export interface ModelLibraryOptions {
 export function createModelLibrary(options: ModelLibraryOptions = {}): ModelLibrary {
   const loader = new GLTFLoader();
   const models = new Map<string, Object3D>();
+  const clips = new Map<string, readonly AnimationClip[]>();
   const inFlight = new Map<string, Promise<Object3D | null>>();
   const unavailable = new Set<string>();
   const listeners = new Set<(modelId: string) => void>();
@@ -101,6 +113,7 @@ export function createModelLibrary(options: ModelLibraryOptions = {}): ModelLibr
           return null;
         }
         models.set(modelId, gltf.scene);
+        clips.set(modelId, gltf.animations);
         announce(modelId);
         return gltf.scene;
       })
@@ -127,6 +140,9 @@ export function createModelLibrary(options: ModelLibraryOptions = {}): ModelLibr
       if (unavailable.has(modelId)) return Promise.resolve(null);
       return start(modelId);
     },
+    animations(modelId: string): readonly AnimationClip[] {
+      return clips.get(modelId) ?? [];
+    },
     onArrive(listener: (modelId: string) => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -138,6 +154,7 @@ export function createModelLibrary(options: ModelLibraryOptions = {}): ModelLibr
       disposed = true;
       for (const model of models.values()) disposeModelResources(model);
       models.clear();
+      clips.clear();
       inFlight.clear();
       listeners.clear();
     }
