@@ -90,6 +90,25 @@ gate, the crop catalogue, or the client's planting control.
 Never gate a read: `CropStateProjector` and `GetFarmCrops` keep reporting crops a player could not
 plant today, and no route accepts a level, an experience total, or a crop requirement from a client.
 
+## Farming progression (V14.4)
+
+Read `docs/design/FARMING_PROGRESSION.md` before changing an experience value, the level curve, a
+catalogue `requiredLevel`, the harvest settlement, or the level-up feedback. The mechanics are
+ADR 0008 (experience and levels) and ADR 0009 (crop unlocks); V14.4 adds discovery, and ADR 0028
+records why it is a diff over the served catalogue rather than a table or a new DTO field.
+
+- Unlock diff (pure, presentation): `apps/web/src/unlocks.ts` (`unlockNotices`, `levelUpFeedback`,
+  `LEVEL_UP_DURATION_MS`), tested by `tests/web/unlock-discovery.test.ts`.
+- Feedback wiring: `showLevelUp` and the two harvest paths in `apps/web/src/main.ts`, the `#level-up`
+  element in `apps/web/index.html`, and the V14.4 section of `apps/web/src/styles.css`. Strings:
+  `levelUp.title`, `levelUp.unlocked`, `levelUp.separator` in `apps/web/src/i18n.ts`.
+- The loop and its thresholds: the progression case in `tests/api/farming-loop.test.ts` proves
+  buy-ahead -> harvest -> experience -> exact-threshold level-up -> plant the newly unlocked crop
+  through the real API, and `tests/domain/progression.test.ts` covers a multi-threshold award.
+
+Never add a hardcoded level-to-content table: a notice is a diff of the catalogue the server sent,
+and the planting gate (`PlantCrop` / `PlantTree`) stays the only thing that decides eligibility.
+
 ## Farm expansion (Phase 4C)
 
 ## Trees and repeating harvests (Phase 6)

@@ -191,6 +191,26 @@ describe("the market shelf", () => {
     expect(plantingLevelFor("item_unknown", { cropDefinitions: CROPS, treeDefinitions: TREES })).toBeNull();
   });
 
+  it("reorders the same shelf when the level arrives, with nothing bought", () => {
+    // The level-up case: the catalogue, the inventory and the gold are all unchanged; only the level
+    // moved. The shelf is rebuilt from it, so corn is no longer sorted as a seed the player cannot
+    // plant yet. The note the card shows follows the same comparison, from the same level.
+    const before = marketCards(input({ direction: "buy", playerLevel: 1 }));
+    const after = marketCards(input({ direction: "buy", playerLevel: 3 }));
+    expect(before.map((card) => card.itemDefinitionId)).toEqual([
+      "item_carrot_seed",
+      "item_apple_sapling",
+      "item_corn_seed"
+    ]);
+    expect(after.map((card) => card.itemDefinitionId)).toEqual([
+      "item_carrot_seed",
+      "item_corn_seed",
+      "item_apple_sapling"
+    ]);
+    // The requirement itself is a catalogue fact and does not move; only whether it is met does.
+    expect(marketCardFor(after, "shop_corn_seed")?.plantingLevel).toBe(3);
+  });
+
   it("opens on sell when there is something to sell, and on buy when there is not", () => {
     expect(defaultMarketDirection(input({ direction: "sell" }))).toBe("sell");
     expect(defaultMarketDirection(input({ direction: "sell", inventory: [row("item_carrot_seed", 5)] }))).toBe("buy");

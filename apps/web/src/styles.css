@@ -655,6 +655,23 @@ button.item-card:disabled { cursor: not-allowed; }
   100% { opacity: 0; transform: translate(-50%, -180%) scale(1); }
 }
 
+/* --------------------------------------------------- level-up feedback (V14.4)
+   The level a harvest reached, and what it opened: one element, reused, and it never catches the
+   pointer. It sits below the measured HUD band (so it cannot land on a control) and above the reward
+   pop, because it is the rarer, bigger news. */
+.level-up { position: absolute; z-index: 9; left: 50%; top: calc(var(--hud-height, 0px) + 3.25rem); display: flex; flex-direction: column; align-items: center; gap: .15rem; max-width: min(86vw, 22rem); padding: .5rem .9rem; border-radius: 12px; background: rgba(12, 32, 24, .94); color: var(--cream); text-align: center; box-shadow: var(--shadow-hud); pointer-events: none; transform: translateX(-50%); }
+.level-up.is-live { animation: level-up-rise 2.4s ease-out forwards; }
+.level-up[hidden] { display: none; }
+.level-up strong { font-size: 1.05rem; font-weight: 900; letter-spacing: .02em; }
+.level-up span { font-size: .82rem; font-weight: 700; opacity: .92; }
+.level-up span[hidden] { display: none; }
+@keyframes level-up-rise {
+  0% { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(.92); }
+  12% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  80% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-14px) scale(1); }
+}
+
 @media (max-width: 900px), (max-height: 500px) {
   /* Two columns on a phone: recognisable art, several choices visible, and no card as wide as the
      screen. Opening the inventory is an intentional act, so its grid may use the room. */

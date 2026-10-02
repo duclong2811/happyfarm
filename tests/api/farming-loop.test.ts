@@ -171,6 +171,26 @@ describe("the first complete farm economy loop", () => {
     return row?.quantity ?? 0;
   }
 
+  /** The first soil tile the server reports, as the client reads it before planting. */
+  async function soilTile(): Promise<{ readonly x: number; readonly y: number; readonly version: number }> {
+    const body: unknown = await (
+      await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/tiles`))
+    ).json();
+    const response = body as {
+      readonly data: {
+        readonly tiles: readonly {
+          readonly x: number;
+          readonly y: number;
+          readonly version: number;
+          readonly terrainType: string;
+        }[];
+      };
+    };
+    const tile = response.data.tiles.find((row) => row.terrainType === "SOIL");
+    if (tile === undefined) throw new Error("the farm has no soil tile");
+    return { x: tile.x, y: tile.y, version: tile.version };
+  }
+
   it("buys a seed, plants it, grows it, harvests it, sells the produce, and can pay for the next seed", async () => {
     // 1. The farm exists: a retry-safe create, exactly what the client does at boot.
     const created = await post("/farms", { name: "Starter Farm" });
@@ -305,5 +325,154 @@ describe("the first complete farm economy loop", () => {
     // Nothing moved: no gold, no items.
     expect(balance()).toBe(STARTING_GOLD);
     expect(held("item_carrot")).toBe(0);
+  });
+
+  it("turns harvested crops into experience, a level, and the next crop's unlock", async () => {
+    await post("/farms", { name: "Starter Farm" });
+
+    // The catalogue's own numbers: a carrot pays 4 experience, so level 2 (120) is thirty harvests.
+    const CARROT_XP = 4;
+    const LEVEL_TWO_XP = 120;
+    const harvests = LEVEL_TWO_XP / CARROT_XP;
+
+    // A player opens at level 1 with no experience: reads are side-effect free.
+    const startBody: unknown = await (await handle(new Request("https://api.test/progression"))).json();
+    const start = startBody as {
+      readonly data: { readonly progression: { readonly level: number; readonly xp: number } };
+    };
+    expect(start.data.progression).toMatchObject({ level: 1, xp: 0 });
+
+    // Gold buys seeds ahead of the level that plants them. The market has no purchase gate; only the
+    // planting gate does, which is exactly the rule the next assertion proves.
+    expect(
+      (
+        await post("/shop/buy", {
+          requestId: "progress_buy_carrot",
+          shopEntryId: "shop_carrot_seed",
+          quantity: harvests
+        })
+      ).status
+    ).toBe(200);
+    expect(
+      (
+        await post("/shop/buy", {
+          requestId: "progress_buy_wheat",
+          shopEntryId: "shop_wheat_seed",
+          quantity: 1
+        })
+      ).status
+    ).toBe(200);
+    expect(held("item_wheat_seed")).toBe(1);
+
+    const tile = await soilTile();
+    const refusedWheat = await post(`/farms/${FARM_ONE_ID}/crops`, {
+      requestId: "progress_plant_wheat_locked",
+      cropDefinitionId: "crop_wheat",
+      x: tile.x,
+      y: tile.y,
+      expectedTileVersion: tile.version
+    });
+    expect(refusedWheat.status).toBe(403);
+    await expect(refusedWheat.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "CROP_LEVEL_REQUIRED" }
+    });
+    // The refusal wrote nothing: the seed the player owns is still owned and unplanted.
+    expect(held("item_wheat_seed")).toBe(1);
+
+    // Harvest carrots until the threshold. A crop's planting does not move the tile's revision, so
+    // one read serves every cycle; each plant still spends exactly one seed.
+    const awards: { readonly leveledUp: boolean; readonly level: number; readonly xp: number }[] = [];
+    for (let cycle = 0; cycle < harvests; cycle += 1) {
+      const planted = await post(`/farms/${FARM_ONE_ID}/crops`, {
+        requestId: `progress_plant_${String(cycle)}`,
+        cropDefinitionId: "crop_carrot",
+        x: tile.x,
+        y: tile.y,
+        expectedTileVersion: tile.version
+      });
+      expect(planted.status).toBe(201);
+      const plantedBody: unknown = await planted.json();
+      const crop = (
+        plantedBody as {
+          readonly data: {
+            readonly crop: { readonly cropInstanceId: string; readonly version: number };
+          };
+        }
+      ).data.crop;
+
+      clock.advanceSeconds(GROWTH_SECONDS + 5);
+      const harvested = await post(`/farms/${FARM_ONE_ID}/crops/${crop.cropInstanceId}/harvest`, {
+        requestId: `progress_harvest_${String(cycle)}`,
+        expectedCropVersion: crop.version
+      });
+      expect(harvested.status).toBe(200);
+      const harvestedBody: unknown = await harvested.json();
+      const award = (
+        harvestedBody as {
+          readonly data: {
+            readonly progression: {
+              readonly leveledUp: boolean;
+              readonly progression: { readonly level: number; readonly xp: number };
+            };
+          };
+        }
+      ).data.progression;
+      awards.push({
+        leveledUp: award.leveledUp,
+        level: award.progression.level,
+        xp: award.progression.xp
+      });
+    }
+
+    // The threshold is exact: the harvest one below it is still level 1, and the harvest that reaches
+    // it is level 2. The page never sees a level the award and the read disagree about.
+    expect(awards[harvests - 2]).toMatchObject({
+      leveledUp: false,
+      level: 1,
+      xp: LEVEL_TWO_XP - CARROT_XP
+    });
+    expect(awards[harvests - 1]).toMatchObject({ leveledUp: true, level: 2, xp: LEVEL_TWO_XP });
+    expect(held("item_carrot")).toBe(CARROTS_PER_PLANTING * harvests);
+
+    // The read route reports the level the harvest paid, with no client input and no recalculation.
+    const reachedBody: unknown = await (await handle(new Request("https://api.test/progression"))).json();
+    const reached = reachedBody as {
+      readonly data: {
+        readonly progression: {
+          readonly level: number;
+          readonly xp: number;
+          readonly xpForNextLevel: number;
+        };
+      };
+    };
+    expect(reached.data.progression).toMatchObject({
+      level: 2,
+      xp: LEVEL_TWO_XP,
+      xpForNextLevel: 240
+    });
+
+    // The crop that was locked one level ago now plants, with the same seed the shop sold ahead of time.
+    const wheat = await post(`/farms/${FARM_ONE_ID}/crops`, {
+      requestId: "progress_plant_wheat_unlocked",
+      cropDefinitionId: "crop_wheat",
+      x: tile.x,
+      y: tile.y,
+      expectedTileVersion: tile.version
+    });
+    expect(wheat.status).toBe(201);
+    expect(held("item_wheat_seed")).toBe(0);
+
+    // Selling the carrots turns the whole loop positive, exactly as the economy-only loop does.
+    const sold = await post("/shop/sell", {
+      requestId: "progress_sell_carrot",
+      shopEntryId: "shop_carrot",
+      quantity: CARROTS_PER_PLANTING * harvests
+    });
+    expect(sold.status).toBe(200);
+    const expectedGold =
+      STARTING_GOLD - SEED_PRICE * harvests - 3 + CARROT_PRICE * CARROTS_PER_PLANTING * harvests;
+    expect(balance()).toBe(expectedGold);
+    expect(balance()).toBeGreaterThan(STARTING_GOLD);
   });
 });

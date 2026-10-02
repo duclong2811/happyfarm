@@ -29,6 +29,7 @@ import {
   type Translate
 } from "./i18n";
 import { progressionSummary } from "./progression";
+import { LEVEL_UP_DURATION_MS, levelUpFeedback, unlockNotices } from "./unlocks";
 import { createIcon, renderIcons, type IconName } from "./icons";
 import {
   closePanel,
@@ -3874,6 +3875,44 @@ function showRewardPop(
   }, REWARD_POP_DURATION_MS);
 }
 
+let levelUpTimer: number | null = null;
+
+/**
+ * Announces a level the server reported, and the catalogue content it opened.
+ *
+ * The level is the award's own, and the newly unlocked list is a diff of the catalogue the server
+ * sent, between the level shown before the action and the level the award reports. Nothing here
+ * decides what is unlocked: the planting picker and the market read the same level, so this can only
+ * describe a state the server already enforces.
+ */
+function showLevelUp(previousLevel: number | null, level: number): void {
+  const notices = unlockNotices({
+    cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions,
+    buildCatalog: state.buildCatalog,
+    previousLevel,
+    level
+  });
+  const names = notices.map((notice) => displayName(state.language, notice.labelKey, notice.fallback));
+  const feedback = levelUpFeedback(level, names, t);
+  const node = element<HTMLElement>("level-up");
+  element<HTMLElement>("level-up-title").textContent = feedback.title;
+  const detail = element<HTMLElement>("level-up-detail");
+  detail.textContent = feedback.detail ?? "";
+  detail.hidden = feedback.detail === null;
+  node.hidden = false;
+  // Restart the animation rather than trusting it to replay on a node that is already there.
+  node.classList.remove("is-live");
+  node.getBoundingClientRect();
+  node.classList.add("is-live");
+  if (levelUpTimer !== null) window.clearTimeout(levelUpTimer);
+  levelUpTimer = window.setTimeout(() => {
+    node.hidden = true;
+    node.classList.remove("is-live");
+    levelUpTimer = null;
+  }, LEVEL_UP_DURATION_MS);
+}
+
 function enable3D(): void {
   if (scene === null) {
     try {
@@ -4052,6 +4091,9 @@ async function plant(): Promise<void> {
 
 async function harvestCrop(cropInstanceId: string, expectedCropVersion: number): Promise<void> {
   if (state.farmId === null) return;
+  // The level to diff unlocks against: the page's authoritative read *before* the harvest, since the
+  // refresh below replaces it with the level the award reached.
+  const previousLevel = state.progression?.level ?? null;
   // Where the crop stands, read before the refresh removes it: the reward pop rises from the thing
   // that paid it, and after the settle there is no row left to ask.
   const standing = state.crops.find((row) => row.cropInstanceId === cropInstanceId);
@@ -4080,6 +4122,7 @@ async function harvestCrop(cropInstanceId: string, expectedCropVersion: number):
       ? `${base}${translate("status.levelUp", { level: awarded.progression.level })}`
       : base;
   });
+  if (awarded.leveledUp) showLevelUp(previousLevel, awarded.progression.level);
 }
 
 /** Harvests whatever the dock is currently showing; only a server-mature crop can reach this. */
@@ -4166,6 +4209,8 @@ async function plantTree(tile: FarmTileDTO): Promise<void> {
  */
 async function harvestTree(treeInstanceId: string, expectedTreeVersion: number): Promise<void> {
   if (state.farmId === null) return;
+  // Same diff base as a crop harvest: the level read before the award replaced it.
+  const previousLevel = state.progression?.level ?? null;
   const standing = state.trees.find((row) => row.treeInstanceId === treeInstanceId);
   const tile = standing === undefined ? null : { x: standing.tileX, y: standing.tileY };
   const result = await api().harvestTree(state.farmId, treeInstanceId, {
@@ -4187,6 +4232,7 @@ async function harvestTree(treeInstanceId: string, expectedTreeVersion: number):
       ? `${base}${translate("status.levelUp", { level: awarded.progression.level })}`
       : base;
   });
+  if (awarded.leveledUp) showLevelUp(previousLevel, awarded.progression.level);
 }
 
 /** Harvests the selected tree; only a cycle the server reported ready can reach this. */

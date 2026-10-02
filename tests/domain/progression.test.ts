@@ -103,6 +103,16 @@ describe("experience awards", () => {
     expect(createXpAward(definition, progression(120), 4, NOW).leveledUp).toBe(false);
   });
 
+  it("can cross several thresholds in one award", () => {
+    // No shipped crop pays enough for this today, but a settlement must be safe if a reward ever is:
+    // the level is derived from the after-total, not incremented once.
+    const award = createXpAward(definition, progression(0), 400, NOW);
+    expect(award.levelAfter).toBe(3);
+    expect(award.leveledUp).toBe(true);
+    expect(cumulativeXpForLevel(definition, award.levelAfter)).toBeLessThanOrEqual(award.xpAfter);
+    expect(cumulativeXpForLevel(definition, award.levelAfter + 1)).toBeGreaterThan(award.xpAfter);
+  });
+
   it("refuses a stored row this curve could not have produced", () => {
     // A stored level that disagrees with the stored experience is corruption, not staleness.
     expect(() => createXpAward(definition, progression(100, 7), 4, NOW)).toThrow(DomainError);

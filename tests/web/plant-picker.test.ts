@@ -136,6 +136,21 @@ describe("planting choices", () => {
     const list = options({ level: null, seeds: {} });
     expect(list.every((option) => option.group !== "LOCKED")).toBe(true);
   });
+
+  it("moves a locked crop to plantable on the same seeds the moment the level arrives", () => {
+    // The state a level-up leaves: nothing bought and nothing changed but the level. The picker is
+    // rebuilt from the catalogue and the new level, so wheat goes LOCKED -> AVAILABLE with no reload.
+    const seeds = { item_wheat_seed: 2 };
+    expect(find(options({ level: 2, seeds }), "crop:crop_wheat")?.group).toBe("LOCKED");
+    const unlocked = find(options({ level: 3, seeds }), "crop:crop_wheat");
+    expect(unlocked?.group).toBe("AVAILABLE");
+    expect(unlocked?.selectable).toBe(true);
+    // With no seed in hand the same level change lands on NO_SEEDS instead - still unlockable news,
+    // but the pocket is what is missing.
+    const empty = find(options({ level: 3, seeds: {} }), "crop:crop_wheat");
+    expect(empty?.group).toBe("NO_SEEDS");
+    expect(empty?.blockedReason).toBe("NO_SEEDS");
+  });
 });
 
 describe("the remembered planting choice", () => {
