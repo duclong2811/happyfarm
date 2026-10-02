@@ -9,7 +9,7 @@ import type {
   PlayerRepository
 } from "@happy-farm/application";
 import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
-import type { Farm, FarmId, FarmMember, FarmTile, Player } from "@happy-farm/domain";
+import type { Farm, FarmId, FarmMember, FarmTile, Player, PlayerId } from "@happy-farm/domain";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
 const player: Player = {
@@ -62,6 +62,10 @@ class MemoryFarms implements FarmRepository, FarmMemberRepository {
     return Promise.resolve(this.farm?.id === id ? this.farm : null);
   }
 
+  findByOwner(playerId: PlayerId): Promise<Farm | null> {
+    return Promise.resolve(this.farm?.ownerPlayerId === playerId ? this.farm : null);
+  }
+
   /** No starter arrangement in this fixture: the seeder is not part of these use cases. */
   starterWorldState(): Promise<{ readonly ownerPlayerId: typeof PLAYER_ONE_ID; readonly version: number } | null> {
     return Promise.resolve(this.farm === null ? null : { ownerPlayerId: this.farm.ownerPlayerId, version: 0 });
@@ -75,7 +79,7 @@ class MemoryFarms implements FarmRepository, FarmMemberRepository {
 describe("farm application use cases", () => {
   it("creates a farm for the authenticated actor with one owner membership", async () => {
     const storage = new MemoryFarms();
-    const result = await new CreateFarm(new MemoryPlayers(), storage, new FixedIds(), new FixedClock()).execute(
+    const result = await new CreateFarm(new MemoryPlayers(), storage, storage, new FixedIds(), new FixedClock()).execute(
       { playerId: PLAYER_ONE_ID },
       { name: "Starter Farm" }
     );
@@ -86,7 +90,7 @@ describe("farm application use cases", () => {
 
   it("persists starter land with the farm so planting has unlocked tiles", async () => {
     const storage = new MemoryFarms();
-    await new CreateFarm(new MemoryPlayers(), storage, new FixedIds(), new FixedClock()).execute(
+    await new CreateFarm(new MemoryPlayers(), storage, storage, new FixedIds(), new FixedClock()).execute(
       { playerId: PLAYER_ONE_ID },
       { name: "Starter Farm" }
     );
@@ -99,7 +103,7 @@ describe("farm application use cases", () => {
     const storage = new MemoryFarms();
     storage.failMembership = true;
     await expect(
-      new CreateFarm(new MemoryPlayers(), storage, new FixedIds(), new FixedClock()).execute(
+      new CreateFarm(new MemoryPlayers(), storage, storage, new FixedIds(), new FixedClock()).execute(
         { playerId: PLAYER_ONE_ID },
         { name: "Starter Farm" }
       )
@@ -110,7 +114,7 @@ describe("farm application use cases", () => {
 
   it("never accepts a requested owner and always uses the actor", async () => {
     const storage = new MemoryFarms();
-    const result = await new CreateFarm(new MemoryPlayers(), storage, new FixedIds(), new FixedClock()).execute(
+    const result = await new CreateFarm(new MemoryPlayers(), storage, storage, new FixedIds(), new FixedClock()).execute(
       { playerId: PLAYER_ONE_ID },
       { name: "Starter Farm" }
     );
@@ -119,7 +123,7 @@ describe("farm application use cases", () => {
 
   it("rejects cross-player farm access", async () => {
     const storage = new MemoryFarms();
-    await new CreateFarm(new MemoryPlayers(), storage, new FixedIds(), new FixedClock()).execute(
+    await new CreateFarm(new MemoryPlayers(), storage, storage, new FixedIds(), new FixedClock()).execute(
       { playerId: PLAYER_ONE_ID },
       { name: "Starter Farm" }
     );

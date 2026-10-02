@@ -384,7 +384,7 @@ export function createHandler(dependencies: HandlerDependencies) {
       return (await tiles.find(farmId, coordinate.x, coordinate.y)) !== null;
     }
   };
-  const createFarm = new CreateFarm(players, farms, dependencies.ids, dependencies.clock);
+  const createFarm = new CreateFarm(players, farms, members, dependencies.ids, dependencies.clock);
   const getFarm = new GetFarm(farms, members);
   const projector = new CropStateProjector(dependencies.cropDefinitions, dependencies.clock);
   const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
@@ -629,7 +629,9 @@ export function createHandler(dependencies: HandlerDependencies) {
           ok: true,
           data: { farm: toFarmDTO(result.farm), membership: toMemberDTO(result.ownerMembership) }
         };
-        return jsonResponse(body, 201);
+        // 201 the first time, 200 when the player already had their farm: a retry from a phone on a
+        // flaky connection gets their farm back rather than a second, empty one.
+        return jsonResponse(body, result.created ? 201 : 200);
       }
 
       if (request.method === "GET" && url.pathname === "/inventory") {

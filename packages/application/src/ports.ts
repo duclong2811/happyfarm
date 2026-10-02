@@ -81,6 +81,14 @@ export interface FarmRepository {
   ): Promise<void>;
   findById(id: FarmId): Promise<Farm | null>;
   /**
+   * The farm a player owns, or null.
+   *
+   * The player's own farm, by ownership rather than by an id the client sent. It exists so the
+   * first-login path can answer "do they already have one?" - which is what makes creating a farm
+   * safe to retry from a phone on a flaky connection.
+   */
+  findByOwner(playerId: PlayerId): Promise<Farm | null>;
+  /**
    * The farm's owner and how much of the starter arrangement it has been given.
    *
    * Separate from `findById` on purpose: this is bookkeeping for the seeding pass alone, and every

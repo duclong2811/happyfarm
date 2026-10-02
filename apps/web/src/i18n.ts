@@ -478,7 +478,10 @@ const EN_MESSAGES = {
   "error.REQUEST_ALREADY_PROCESSED": "That request was already processed.",
   "error.INVENTORY_LIMIT_EXCEEDED": "Inventory limit reached.",
   "error.SHOP_ENTRY_NOT_ALLOWED": "The shop does not trade that item that way.",
-  "error.NOT_AUTHENTICATED": "Not authenticated: check the development token.",
+  // Said in the browser, where the player is: a 401 on staging means the Cloudflare Access session is
+  // missing or has expired, and on the development host it means the dev token is not set. Either way
+  // the answer is a reload, not a debugging session.
+  "error.NOT_AUTHENTICATED": "Not signed in. Reload the page, or sign in again.",
   "error.NOT_AUTHORIZED": "Not allowed for this farm.",
   "error.RESOURCE_NOT_FOUND": "Not found on the server.",
   "error.INTERNAL_ERROR": "Server error.",
@@ -897,7 +900,7 @@ const VI_MESSAGES: Record<MessageKey, string> = {
   "error.REQUEST_ALREADY_PROCESSED": "Yêu cầu này đã được xử lý.",
   "error.INVENTORY_LIMIT_EXCEEDED": "Túi đồ đã đầy.",
   "error.SHOP_ENTRY_NOT_ALLOWED": "Chợ không giao dịch vật phẩm này theo cách đó.",
-  "error.NOT_AUTHENTICATED": "Chưa xác thực: kiểm tra mã phát triển.",
+  "error.NOT_AUTHENTICATED": "Chưa đăng nhập. Hãy tải lại trang hoặc đăng nhập lại.",
   "error.NOT_AUTHORIZED": "Bạn không có quyền với nông trại này.",
   "error.RESOURCE_NOT_FOUND": "Máy chủ không tìm thấy.",
   "error.INTERNAL_ERROR": "Lỗi máy chủ.",

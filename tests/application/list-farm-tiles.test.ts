@@ -31,6 +31,10 @@ class MemoryFarms implements FarmRepository, FarmMemberRepository {
     return Promise.resolve(this.farm.id === id ? this.farm : null);
   }
 
+  findByOwner(playerId: PlayerId): Promise<Farm | null> {
+    return Promise.resolve(this.farm.ownerPlayerId === playerId ? this.farm : null);
+  }
+
   findByFarmAndPlayer(farmId: FarmId, playerId: PlayerId): Promise<FarmMember | null> {
     return Promise.resolve(
       farmId === this.farm.id && playerId === this.farm.ownerPlayerId

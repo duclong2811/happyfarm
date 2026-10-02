@@ -1,7 +1,8 @@
 # Staging: the playtest environment
 
-Status: **deployed and smoke-tested** (V13.6), with one step still to do before a phone can play -
-the Cloudflare Access application for the staging hostname. See "The one remaining step" below.
+Status: **deployed and smoke-tested** (V13.6, redeployed for V13.6.1), with one step still to do
+before a phone can play - the Cloudflare Access application for the staging hostname. See "The one
+remaining step" below, and `docs/qa/MULTI_USER_ALPHA.md` for the tester-facing version of it.
 
 This is a mobile playtest environment, not a launch. `docs/deployment.md` is the older, wider
 checklist; this file is the current state of the deployment and how to operate it.
@@ -91,6 +92,12 @@ type and to hand to a tester.
 | Id | `acc598c9-e726-46c8-b1a3-23e5b6a42d52` (committed in `wrangler.staging.toml`; not a secret) |
 | Migrations | **0001 - 0013 applied** (V13.6) |
 | Data at deploy time | 5 players, 4 farms, 80 tiles - preserved, not reset |
+
+V13.6.1 added `0014_one_farm_per_player.sql`: a unique index on `farms(owner_player_id)`, so a phone
+that retries "create my farm" cannot end up with two farms - and with its gold and crops on the one it
+cannot see. The index was safe to add because no staging player owned more than one farm (4 farms, 4
+owner memberships, 0 duplicates). `CreateFarm` also looks for the player's farm before creating one,
+and answers `200` (rather than `201`) when it finds it.
 
 The database existed from the earlier alpha and was at `0009`. V13.6 applied `0010`, `0011`, `0012`
 and `0013` through the repository's own workflow; nothing was altered by hand, and no data was

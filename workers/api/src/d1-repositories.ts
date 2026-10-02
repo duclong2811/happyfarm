@@ -255,6 +255,30 @@ export class D1FarmRepository implements FarmRepository {
   }
 
   /**
+   * The farm a player owns.
+   *
+   * `0014` makes this at most one row per player, so no ordering is needed; the LIMIT is there to say
+   * so rather than to pick a favourite.
+   */
+  async findByOwner(playerId: PlayerId): Promise<Farm | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, owner_player_id, name, created_at, updated_at FROM farms WHERE owner_player_id = ? LIMIT 1"
+      )
+      .bind(playerId)
+      .first<FarmRow>();
+    return row === null
+      ? null
+      : {
+          id: parseFarmId(row.id),
+          ownerPlayerId: parsePlayerId(row.owner_player_id),
+          name: row.name,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        };
+  }
+
+  /**
    * What seeding needs to know about a farm, and nothing else.
    *
    * Its own read rather than a field on `Farm`: the version is bookkeeping for the one pass that

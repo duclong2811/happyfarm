@@ -1,0 +1,21 @@
+-- V13.6.1: one farm per player.
+--
+-- The alpha is a handful of real testers on real phones, and the first thing a phone does is ask the
+-- API for its farm - possibly twice, if the connection drops between the request and the response. The
+-- first-login path already refuses to build a second farm for a player who has one (see `CreateFarm`),
+-- and this unique index is what makes that true even when two requests race: the loser's insert fails,
+-- and it re-reads the winner's farm instead of inventing a world of its own.
+--
+-- Why a database constraint rather than only a check in the use case: a check is a race two requests
+-- can slip through, and the cost of losing that race is a tester whose gold and fields are on a farm
+-- they can no longer see. The index makes the invariant, not a hope.
+--
+-- Existing data: the staging database had no player owning more than one farm when this was written
+-- (4 farms, 4 owner memberships, 0 duplicates), so the index applies without a repair step. A future
+-- pass that wants several farms per player drops this index in its own migration; until then, one
+-- player is one farm.
+--
+-- Note for anyone editing this file: comments are line comments (`--`), never block comments, and no
+-- comment contains a semicolon. Wrangler's statement splitter does not understand a block comment, and
+-- a semicolon inside one splits the statement - see docs/deployment/STAGING.md.
+CREATE UNIQUE INDEX idx_farms_owner_player ON farms(owner_player_id);

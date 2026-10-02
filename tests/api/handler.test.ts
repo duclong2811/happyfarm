@@ -20,9 +20,9 @@ import { itemRegistry, shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
 import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataProgressionDefinition, gameDataStarterWorld, gameDataTileTerrain } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
-import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
+import { FARM_ONE_ID, FARM_TWO_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql", "0012_world_objects.sql", "0013_world_objects_v2.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql", "0012_world_objects.sql", "0013_world_objects_v2.sql", "0014_one_farm_per_player.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -76,8 +76,16 @@ class FixedIds implements IdGenerator {
    * collide with the first's primary key rather than testing what the test meant to test.
    */
   private constructionSequence = 1;
+  /**
+   * A farm id per call, for the same reason the others count.
+   *
+   * V13.6.1 opens the alpha to several testers, so a test has to be able to create *two* farms through
+   * the API and see them be different; a generator that returned one id would collide on the primary
+   * key and prove nothing about multi-user isolation.
+   */
+  private farmSequence = 1;
   newFarmId(): FarmId {
-    return FARM_ONE_ID;
+    return this.farmSequence++ === 1 ? FARM_ONE_ID : FARM_TWO_ID;
   }
   newCropInstanceId(): CropInstanceId {
     return parseCropInstanceId("cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc");
@@ -2052,6 +2060,157 @@ describe("Worker API foundation", () => {
           .get(myTree.constructionId) as { total: number };
         expect(stillThere.total).toBe(1);
       });
+    });
+
+    /**
+     * The alpha's own acceptance test: two testers, two worlds, no shared authority.
+     *
+     * V13.6.1 opens staging to a handful of real people, and the risk that matters is not a missing
+     * feature - it is one tester's command reaching another tester's farm. Each of the brief's checks
+     * is here against the *authenticated* actor: distinct players and farms, a purchase that moves only
+     * the buyer's gold, an edit that leaves the other island byte-identical, and a cross-farm request
+     * that is refused without leaking whether the thing exists.
+     */
+    it("gives two testers their own world, and lets neither touch the other's", async () => {
+      db.sqlite
+        .prepare("INSERT INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'issuer', 'subject-two', 'Tester Two', 'ACTIVE', ?, ?)")
+        .run(PLAYER_TWO_ID, NOW, NOW);
+      for (const player of [PLAYER_ONE_ID, PLAYER_TWO_ID]) {
+        db.sqlite
+          .prepare("INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', 100, 1, ?, ?)")
+          .run(player, NOW, NOW);
+      }
+
+      // Each tester creates their own farm; the harness mints a fresh id for each.
+      const createdA = await handle(
+        new Request("https://api.test/farms", {
+          method: "POST",
+          body: JSON.stringify({ name: "Farm A" }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+      expect(createdA.status).toBe(201);
+      const farmA = FarmEnvelopeSchema.parse(await createdA.json()).data.farm.id;
+
+      auth.setActor({ playerId: PLAYER_TWO_ID });
+      const createdB = await handle(
+        new Request("https://api.test/farms", {
+          method: "POST",
+          body: JSON.stringify({ name: "Farm B" }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+      expect(createdB.status).toBe(201);
+      const farmB = FarmEnvelopeSchema.parse(await createdB.json()).data.farm.id;
+      expect(farmB).not.toBe(farmA);
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farms").get()).toEqual({ count: 2 });
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_members WHERE role = 'OWNER'").get()).toEqual({
+        count: 2
+      });
+
+      // Both islands seed their own starter arrangement, on their own first read.
+      auth.setActor({ playerId: PLAYER_ONE_ID });
+      const islandA = await handle(new Request(`https://api.test/farms/${farmA}/constructions`));
+      expect(islandA.status).toBe(200);
+      const rowsA = ConstructionsEnvelopeSchema.parse(await islandA.json()).data.constructions;
+      const treeA = rowsA.find((row) => row.constructionId.length > 0);
+      expect(rowsA.length).toBeGreaterThan(20);
+
+      auth.setActor({ playerId: PLAYER_TWO_ID });
+      const islandB = await handle(new Request(`https://api.test/farms/${farmB}/constructions`));
+      const rowsBBefore = ConstructionsEnvelopeSchema.parse(await islandB.json()).data.constructions;
+      expect(rowsBBefore.length).toBeGreaterThan(20);
+      expect(rowsBBefore.map((row) => row.constructionId)).not.toContain(treeA?.constructionId);
+
+      // Tester A buys seeds: A's gold moves, B's does not, and only A gets a ledger row.
+      auth.setActor({ playerId: PLAYER_ONE_ID });
+      const bought = await handle(
+        new Request("https://api.test/shop/buy", {
+          method: "POST",
+          body: JSON.stringify({ requestId: "alpha_buy_a_001", shopEntryId: "shop_carrot_seed", quantity: 2 }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+      expect(bought.status).toBe(200);
+      expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID)).toEqual({
+        balance: 96
+      });
+      expect(db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ?").get(PLAYER_TWO_ID)).toEqual({
+        balance: 100
+      });
+      expect(
+        db.sqlite.prepare("SELECT player_id, COUNT(*) AS count FROM economy_ledger GROUP BY player_id").all()
+      ).toEqual([{ player_id: PLAYER_ONE_ID, count: 1 }]);
+
+      // Tester A edits their own island: B's rows are untouched, anchor for anchor.
+      const own = rowsA.find((row) => row.anchorX !== 0 || row.anchorY !== 0);
+      expect(own).toBeDefined();
+      if (own === undefined) return;
+      const moved = await handle(
+        new Request(`https://api.test/farms/${farmA}/constructions/${own.constructionId}/store`, {
+          method: "POST",
+          body: JSON.stringify({ requestId: "alpha_store_a_001", expectedVersion: 1 }),
+          headers: { "content-type": "application/json" }
+        })
+      );
+      // Storing a starter object is free and legal; the point here is that it changed nothing on B.
+      expect([200, 409]).toContain(moved.status);
+
+      auth.setActor({ playerId: PLAYER_TWO_ID });
+      const islandBAfter = await handle(new Request(`https://api.test/farms/${farmB}/constructions`));
+      const rowsBAfter = ConstructionsEnvelopeSchema.parse(await islandBAfter.json()).data.constructions;
+      expect(rowsBAfter).toEqual(rowsBBefore);
+
+      // And A cannot reach into B's world at all - by farm id, or by naming B's farm with A's identity.
+      auth.setActor({ playerId: PLAYER_ONE_ID });
+      const foreignFarm = await handle(new Request(`https://api.test/farms/${farmB}/tiles`));
+      expect(foreignFarm.status).toBe(403);
+      const foreignObjects = await handle(new Request(`https://api.test/farms/${farmB}/constructions`));
+      expect(foreignObjects.status).toBe(403);
+      // B's island is still exactly as it was.
+      expect(
+        db.sqlite
+          .prepare("SELECT COUNT(*) AS count FROM farm_constructions WHERE farm_id = ?")
+          .get(farmB)
+      ).toEqual({ count: rowsBBefore.length });
+    });
+
+    it("gives a player one farm, however many times they ask for one", async () => {
+      // A phone that loses the response to "create my farm" asks again. It must be given the world it
+      // already has - not a second, empty one while its gold and fields sit on the first.
+      const ask = (): Promise<Response> =>
+        handle(
+          new Request("https://api.test/farms", {
+            method: "POST",
+            body: JSON.stringify({ name: "Starter Farm" }),
+            headers: { "content-type": "application/json" }
+          })
+        );
+
+      const first = await ask();
+      expect(first.status).toBe(201);
+      const firstFarm = FarmEnvelopeSchema.parse(await first.json()).data.farm.id;
+
+      const second = await ask();
+      expect(second.status).toBe(200);
+      expect(FarmEnvelopeSchema.parse(await second.json()).data.farm.id).toBe(firstFarm);
+
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farms").get()).toEqual({ count: 1 });
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_members WHERE role = 'OWNER'").get()).toEqual({
+        count: 1
+      });
+      // The starter land is seeded once with the farm, not once per request.
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ?").get(firstFarm)).toEqual({
+        count: INITIAL_LAND_SIZE * INITIAL_LAND_SIZE
+      });
+      // The database itself is the last line of defence, not the use case.
+      expect(() =>
+        db.sqlite
+          .prepare(
+            "INSERT INTO farms (id, owner_player_id, name, created_at, updated_at) VALUES ('farm_ffffffff-ffff-4fff-8fff-ffffffffffff', ?, 'Second Farm', ?, ?)"
+          )
+          .run(PLAYER_ONE_ID, NOW, NOW)
+      ).toThrow();
     });
   });
 });

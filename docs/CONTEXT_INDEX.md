@@ -760,6 +760,24 @@ control the same world, not separate game states.**
 
 ### Staging playtest deployment (V13.6)
 
+Read `docs/qa/MULTI_USER_ALPHA.md` before inviting testers. Its invariant is non-negotiable:
+**multiple testers does not mean shared authority** - every player-owned read and mutation is
+authorized from the authenticated server-side actor, never from an id the browser supplied.
+
+- Identity is Cloudflare Access, and the API trusts only the `Cf-Access-Jwt-Assertion` header Access
+  injects; the browser sends no credential of its own. The staging hostname still has **no Access
+  application**, so `/api/*` answers 401 and testers cannot sign in until an operator creates it - the
+  exact dashboard steps are in both documents. Access applications cannot be created with the
+  deployment environment's credentials (Workers scopes, not Access scopes).
+- **One player owns one farm** (V13.6.1). `CreateFarm` resolves a player's existing farm before
+  creating anything, and a unique index on `farms(owner_player_id)`
+  (`0014_one_farm_per_player.sql`) makes that true under concurrency; a repeat request answers `200`
+  instead of `201`. A phone that loses the response to "create my farm" gets the world it already has.
+  A future pass that wants several farms per player drops that index in its own migration.
+- Tests: the alpha's own two-tester case in `tests/api/handler.test.ts` (distinct players, farms and
+  islands; A buys and only A's gold and ledger move; A edits and B's rows are compared row for row; A
+  is refused B's farm with 403) plus "gives a player one farm, however many times they ask for one".
+
 The current build is deployed for real-device testing; read `docs/deployment/STAGING.md` for the URL,
 the architecture, the database state and how to deploy or roll back. Two facts to carry forward:
 
