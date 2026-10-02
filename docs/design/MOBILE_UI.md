@@ -22,11 +22,15 @@ Status: how the phone layout is arranged, and what it is allowed to change. Read
 
 * The **joystick** sits bottom-left and the **Run** button bottom-right, both clear of
   `env(safe-area-inset-*)`. The world's middle is never covered.
-* In **character view** the bottom of the screen belongs to movement: the module rail and the action
-  dock step aside (`body.is-character-mode`), and the status line moves above the joystick. Leaving
-  character view brings them straight back.
+* In **character view** the bottom of the screen belongs to movement: the module rail steps aside
+  (`body.is-character-mode`). The selection surface does *not* - character view keeps a one-line
+  strip, which is how a player can ask to plant something without the farming editor covering the
+  island they are walking on. See "The selection surface" below.
 * In **estate view** there is no joystick - estate view is for selecting, building and editing - so the
-  bottom belongs to the action dock and the selected-object panel.
+  bottom belongs to the selection surface and the selected-object panel.
+* **Transient messages sit under the top bar on a compact layout**, never at the bottom: the bottom of
+  a phone screen is the joystick, the Run button and the strip, and a toast landing on one of them is
+  a control the player cannot press.
 
 ## Breakpoints
 
@@ -128,3 +132,57 @@ touches the world, the objects, or anything the server has an opinion about, and
 
 No PWA installation, no offline mode, no haptics, no gamepad, no mobile-specific gameplay, no second
 shop or object editor, and no phone-only map or economy. V13.5 is mobile *playability*.
+
+## V13.6.3: the world is the UI
+
+The first real-device test after V13.5 made one thing clear: the controls were mobile *sized* but not
+mobile *designed*. A top bar with four controls, and a selection panel that could take a third of the
+screen, read as a desktop layout squeezed onto a handset. The pass that fixed it kept the two rules
+above and added a third: **the 3D world is the primary surface, and everything else is either
+transient or folded.**
+
+### The top bar
+
+Only three things are permanent: the brand (the wordmark drops below 600 px), gold and level, and the
+camera switch. The recenter control joins them in estate view only, as an icon-sized target.
+
+Language and refresh moved behind `#hud-menu-toggle` - the `more` icon - which is `display: none` on a
+wide screen, so the desktop bar is unchanged, and a 44 px button on a compact one. The menu is a real
+element with `aria-expanded`, closes when a control inside it is used, and closes on any click
+outside. It is never the only way to do something: refresh is still a real reload of the farm, and the
+language switch is still one tap away.
+
+### The selection surface
+
+`apps/web/src/dock.ts` owns the decision, and it has four answers rather than two - see
+`dockPresentationFor`:
+
+| Presentation | When | What is on screen |
+| --- | --- | --- |
+| `HIDDEN` | nothing selected | nothing: the world keeps the space |
+| `STRIP` | compact, collapsed (the default) | one line: what is selected, its primary action, a chevron |
+| `SHEET` | compact, expanded by the chevron | the whole dock, on top of the world |
+| `FULL` | desktop | the dock exactly as it has always been |
+
+The same buttons exist in all four: nothing is hidden by gameplay, only by layout. In the strip the
+detail line, the crop chooser, the tree state and the destructive actions wait behind the chevron;
+the primary action stays out. A growing crop whose only action *is* destructive therefore shows the
+chevron and its own title, which is honest about where "uproot" went.
+
+Character view can only ever reach `STRIP`. That is the compromise the brief asks for: the farming
+editor never appears while the player is running around, and a tap on the player's own soil still
+opens a strip with **Plant** on it - which switches to estate view (see
+`docs/design/DUAL_CAMERA_CHARACTER_MODE.md`).
+
+### Transient messages
+
+A success message now clears itself after six seconds and the status element is hidden while it is
+empty, so a completed action gives the screen back. Errors are deliberately not on that clock: a
+refusal the player asked for stays until something replaces it. Routine polling still says nothing at
+all - it never did - and the refresh button's own message is now transient like the rest.
+
+### What did not change
+
+Every action, price, lock, validation rule and server call is the one that was there before. The
+joystick and Run button are character-view-only, exactly as V13.5 left them. Desktop keeps its dock,
+its hover, its right-drag orbit and its middle-drag pan.

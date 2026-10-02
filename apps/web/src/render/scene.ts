@@ -82,6 +82,16 @@ import {
   type CameraTransition
 } from "./camera-mode";
 import {
+  INITIAL_ESTATE_FOLLOW,
+  estateFollowAfterFocus,
+  estateFollowAfterManualInput,
+  estateFollowForMovement,
+  estateFollowRecenter,
+  estateFollowsPlayer,
+  type EstateFollowBehaviour,
+  type EstateFollowState
+} from "./estate-follow";
+import {
   CHARACTER_FOV_DEGREES,
   DEFAULT_CHARACTER_DISTANCE,
   DEFAULT_CHARACTER_PITCH,
@@ -199,6 +209,18 @@ export interface PlacementPreview {
   readonly rotationY: number;
 }
 
+/**
+ * Where the estate camera should look when the host switches to it.
+ *
+ * The plain switch (`Estate` on the HUD, or the F key) passes no focus: the estate view returns to
+ * whatever the player left, which is the "two ways to look at one island" rule. A *precision* action
+ * passes one, because a player who asked to plant something should be looking at the thing they
+ * asked to plant - not at a corner of the map they were inspecting ten minutes ago.
+ */
+export type EstateCameraFocus =
+  | { readonly kind: "PLAYER" }
+  | { readonly kind: "CELL"; readonly cell: TileCoordinate };
+
 /** Thrown when the browser cannot give the page a WebGL context. */
 export class FarmRendererUnavailableError extends Error {
   constructor(cause: unknown) {
@@ -254,6 +276,15 @@ export interface FarmSceneOptions {
    */
   readonly onCameraModeToggle?: () => void;
   /**
+   * Called when the estate camera starts or stops following the player.
+   *
+   * The behaviour is the renderer's to decide - it is the one that sees the player move and the one
+   * that knows whether the player has just taken the camera by hand - but it is the *host* that draws
+   * the recenter control, so the host has to be told when it would do something. Reported only when
+   * the behaviour actually changes.
+   */
+  readonly onEstateFollowChange?: (behaviour: EstateFollowBehaviour) => void;
+  /**
    * Called when a crop model could not be loaded. The scene keeps drawing that crop's placeholder,
    * so this is a diagnosis for the caller to report, not a failure the caller has to recover from.
    */
@@ -277,9 +308,18 @@ export interface FarmSceneHandle {
    * Nothing about the world, the objects or the character changes - which is the whole point of the
    * two modes being two ways to look at one island.
    */
-  setCameraMode(mode: CameraMode): void;
+  setCameraMode(mode: CameraMode, focus?: EstateCameraFocus): void;
   /** Which mode the camera is in. Read-only mirror of what the host last set. */
   cameraMode(): CameraMode;
+  /**
+   * Puts the estate camera back on the player and resumes following them.
+   *
+   * The recenter control. A glide, never a cut, and a no-op when the camera is already following: it
+   * is the one control that must never make the view worse for being pressed.
+   */
+  recenterEstateCamera(): void;
+  /** Whether the estate camera is currently following the player or has been moved by hand. */
+  estateFollowBehaviour(): EstateFollowBehaviour;
   /**
    * Where the third-person camera is looking, in the estate camera's own convention.
    *
@@ -850,6 +890,13 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   /** Which way the island is looked at: the estate orbit, or the character follow. */
   let cameraMode: CameraMode = "ESTATE";
   /**
+   * Whether the estate camera is attached to the player or has been left where the player put it.
+   *
+   * The rule lives in `estate-follow.ts`; this is only where it is kept. It is read and written by
+   * the estate camera paths alone, so the character rig can never be pulled along by it.
+   */
+  let estateFollow: EstateFollowState = INITIAL_ESTATE_FOLLOW;
+  /**
    * The third-person rig.
    *
    * Created once, like the estate rig, and re-aimed rather than rebuilt: switching modes twenty times
@@ -951,7 +998,7 @@ let interactionGeometry: BufferGeometry | null = null;
   function rebuildAvatar(): void {
     fallbackAvatar.clear();
     fallbackAvatar.add(buildPlayerAvatar(assets, generatedModels.character_farmer));
-    updatePlayer();
+    updatePlayer(0);
   }
 
   function modelVariants(definitionId: string): ModelVariants | undefined {
@@ -1134,6 +1181,14 @@ let interactionGeometry: BufferGeometry | null = null;
    * which its position can have changed.
    */
   let lastPlayerFrameMs = 0;
+  /**
+   * The longest gap between poses a frame will believe in.
+   *
+   * Poses arrive at frame rate while the character moves and stop when they stop, so the first pose
+   * after a pause - a tab left in the background, a long conversation - would otherwise carry the
+   * whole pause as its delta and lurch both the walk cycle and the camera follow.
+   */
+  const MAX_POSE_DELTA_MS = 100;
 
   /**
    * Draws the player at the pose the runtime produced.
@@ -1142,13 +1197,9 @@ let interactionGeometry: BufferGeometry | null = null;
    * - arrives in `playerPose`; this function only tells the presentation layer about it. The model is
    * never asked where it is, and nothing here can move the player.
    */
-  function updatePlayer(): void {
-    const pose = playerPose;
-    const now = typeof performance === "undefined" ? 0 : performance.now();
-    const deltaSeconds = lastPlayerFrameMs === 0 ? 0 : (now - lastPlayerFrameMs) / 1000;
-    lastPlayerFrameMs = pose === null ? 0 : now;
-    playerGroup.visible = pose !== null;
-    characterView.update(pose, deltaSeconds);
+  function updatePlayer(deltaMs: number): void {
+    playerGroup.visible = playerPose !== null;
+    characterView.update(playerPose, Number.isFinite(deltaMs) && deltaMs > 0 ? deltaMs / 1000 : 0);
   }
 
   /**
@@ -1959,7 +2010,87 @@ let interactionGeometry: BufferGeometry | null = null;
   /** Middle-drag: the target moves across the ground, in the camera's own frame rather than north. */
   function panByScreen(deltaX: number, deltaY: number): void {
     cameraRig.panByScreen(deltaX, deltaY, canvas.clientHeight);
+    noteManualEstateInput();
     updateCamera();
+  }
+
+  /** A monotonic clock for the follow state. `performance` is absent in some embedders. */
+  function clockNow(): number {
+    return typeof performance === "undefined" ? 0 : performance.now();
+  }
+
+  /**
+   * Records a change of estate-follow behaviour, and tells the host when it actually changed.
+   *
+   * The state machine hands back its own argument when nothing changed, so this is free in the common
+   * case and the HUD is written only when the recenter control's meaning changes.
+   */
+  function setEstateFollow(next: EstateFollowState): void {
+    if (next === estateFollow) return;
+    const changed = next.behaviour !== estateFollow.behaviour;
+    estateFollow = next;
+    if (changed) options.onEstateFollowChange?.(next.behaviour);
+  }
+
+  /**
+   * The player has taken the estate camera by hand: it stays where they put it.
+   *
+   * Zoom is deliberately not routed through here - see `estate-follow.ts`.
+   */
+  function noteManualEstateInput(): void {
+    if (cameraMode !== "ESTATE") return;
+    setEstateFollow(estateFollowAfterManualInput(estateFollow, clockNow()));
+  }
+
+  /**
+   * Re-arms the estate camera on the player for this frame.
+   *
+   * Called from a player pose and from a camera frame, and it only *aims* the rig: the caller steps it
+   * with the frame's own delta, so the follow costs one vector subtraction per frame and never a
+   * second animation loop.
+   */
+  function armEstateFollow(playerMoving: boolean): void {
+    if (cameraMode !== "ESTATE") return;
+    setEstateFollow(estateFollowForMovement(estateFollow, clockNow(), playerMoving));
+    const player = playerPose;
+    if (player === null || !estateFollowsPlayer(estateFollow)) return;
+    cameraRig.followTo(player.worldX, player.worldZ);
+  }
+
+  /**
+   * Aims the estate camera at one cell, close enough that a single cell reads as an object.
+   *
+   * Shared by the two ways the game places the camera - entering placement, and a precision action
+   * pulling the player out of character view - so both land the same way. It is a deliberate
+   * placement, so it also leaves the camera FREE: the player's next step must not drag the view off
+   * the cell they are working on.
+   */
+  function aimEstateAtCell(cell: TileCoordinate): void {
+    const centre = tileToWorld(cell, worldFrame(state.layout.pitch));
+    cameraRig.recenterTo(centre.worldX, centre.worldZ);
+    const wanted = Math.min(PLACEMENT_CAMERA_DISTANCE, cameraRig.distanceRange.max);
+    const current = Math.max(cameraRig.requestedDistance, 0.001);
+    cameraRig.zoomByScale(wanted / current);
+    setEstateFollow(estateFollowAfterFocus(estateFollow, clockNow()));
+    scheduleCameraFrame();
+  }
+
+  /**
+   * The recenter control: back on the player, and following again.
+   *
+   * A session with no character yet - a farm that has not finished starting - recentres on the
+   * island's own home rather than aiming the camera at the coordinate origin.
+   */
+  function recenterEstateCamera(): void {
+    setEstateFollow(estateFollowRecenter(estateFollow));
+    const player = playerPose;
+    cameraRig.recenterTo(
+      player === null ? cameraHomeX : player.worldX,
+      player === null ? cameraHomeZ : player.worldZ
+    );
+    scheduleCameraFrame();
+    updateCamera();
+    draw();
   }
 
   /**
@@ -1977,7 +2108,12 @@ let interactionGeometry: BufferGeometry | null = null;
   function orbitActive(deltaYaw: number, deltaPitch: number): void {
     if (!cameraInputEnabled()) return;
     if (cameraMode === "CHARACTER") characterCamera.rotate(deltaYaw, deltaPitch);
-    else cameraRig.rotate(deltaYaw, deltaPitch);
+    else {
+      cameraRig.rotate(deltaYaw, deltaPitch);
+      // Turning the estate camera by hand is the player taking control: the view stays where they
+      // leave it instead of being pulled back to the character on the next step.
+      noteManualEstateInput();
+    }
     updateCamera();
     draw();
   }
@@ -2013,6 +2149,9 @@ let interactionGeometry: BufferGeometry | null = null;
     if (disposed) return;
     const deltaMs = lastFrameTime === 0 ? 16 : time - lastFrameTime;
     lastFrameTime = time;
+    // Re-armed every frame: a follow that is still closing on a moving player keeps its aim current,
+    // and a follow aimed at a player who has stopped settles, which lets this loop end.
+    armEstateFollow(playerPose?.movementState === "WALKING");
     cameraRig.update(deltaMs);
     characterCamera.update(deltaMs);
     if (cameraTransition !== null) {
@@ -2118,6 +2257,7 @@ let interactionGeometry: BufferGeometry | null = null;
           else {
             const turn = rotationForDrag(intent.deltaX, intent.deltaY);
             cameraRig.rotate(turn.yaw, turn.pitch);
+            noteManualEstateInput();
           }
           updateCamera();
           scheduleDraw();
@@ -2154,10 +2294,10 @@ let interactionGeometry: BufferGeometry | null = null;
       options.onObjectSelected?.(pickedObject as string);
       return;
     }
-    // Character view has no click-to-move: the character is steered with the movement keys, and a
-    // stray click on the ground setting up a walk would fight them (see the design doc, and V13.4's
-    // brief: ground click-to-move is estated-view behaviour).
-    if (cameraMode === "CHARACTER") return;
+    // Both views report the cell that was tapped, and the host decides what it means: estate view
+    // selects whatever is pointed at, while character view is usually just pointing at the world and
+    // only opens the contextual surface for a cell that offers something (see
+    // `groundTapOpensContext`). Neither is click-to-move - walking to a cell is the Go control's job.
     const coordinate = raycastTileAt(event.clientX, event.clientY);
     if (coordinate !== null) options.onCellSelected?.(coordinate);
   }
@@ -2265,13 +2405,31 @@ let interactionGeometry: BufferGeometry | null = null;
       draw();
     },
     setPlayer(next: FarmScenePlayer | null): void {
+      const now = clockNow();
+      const deltaMs = lastPlayerFrameMs === 0 ? 16 : Math.min(now - lastPlayerFrameMs, MAX_POSE_DELTA_MS);
+      lastPlayerFrameMs = next === null ? 0 : now;
       playerPose = next;
-      updatePlayer();
+      // Following is driven by the pose stream, which is exactly the set of frames on which the
+      // camera can have something new to chase - so a walking player costs no extra frames at all.
+      armEstateFollow(next !== null && next.movementState === "WALKING");
+      cameraRig.update(deltaMs);
+      updatePlayer(deltaMs);
       updateCamera();
       draw();
+      // The pose stream stops the moment the player does, so the last stretch of the approach is
+      // finished by the camera's own short frame run - which ends as soon as it has arrived.
+      if ((next === null || next.movementState !== "WALKING") && cameraRig.isSettling()) {
+        scheduleCameraFrame();
+      }
     },
-    setCameraMode(mode: CameraMode): void {
-      if (mode === cameraMode) return;
+    setCameraMode(mode: CameraMode, focus?: EstateCameraFocus): void {
+      if (mode === cameraMode) {
+        // A precision action can ask for the view the session is already in; the camera still has to
+        // go to the thing that was asked for.
+        if (focus?.kind === "CELL") aimEstateAtCell(focus.cell);
+        else if (focus?.kind === "PLAYER") recenterEstateCamera();
+        return;
+      }
       // Where the camera is *now* - including part-way through an earlier flight, so pressing the
       // switch twice in quick succession turns around from where the camera actually is.
       const from = cameraTransition === null ? activePose() : cameraTransition.pose();
@@ -2280,6 +2438,16 @@ let interactionGeometry: BufferGeometry | null = null;
         // Take the estate camera's bearing and fly down behind the character: a descent, not a spin.
         // The character camera keeps its own pitch and distance, which are shoulder-scale.
         characterCamera.reset({ yaw: cameraRig.state.yaw });
+      } else if (focus?.kind === "CELL") {
+        // A precision action asked for a particular cell: land on it rather than on wherever the map
+        // was last being inspected.
+        aimEstateAtCell(focus.cell);
+      } else if (focus?.kind === "PLAYER" || estateFollowsPlayer(estateFollow)) {
+        // Coming back up while following: the player has been walking where this camera could not
+        // see, so it attaches to them again. A camera the player had placed by hand is restored
+        // exactly where they left it, which is the other half of the same rule.
+        setEstateFollow(estateFollowRecenter(estateFollow));
+        if (playerPose !== null) cameraRig.recenterTo(playerPose.worldX, playerPose.worldZ);
       }
       cameraTransition = createCameraTransition(from, activePose(), CAMERA_TRANSITION_SECONDS);
       scheduleCameraFrame();
@@ -2288,6 +2456,10 @@ let interactionGeometry: BufferGeometry | null = null;
     },
     cameraMode(): CameraMode {
       return cameraMode;
+    },
+    recenterEstateCamera,
+    estateFollowBehaviour(): EstateFollowBehaviour {
+      return estateFollow.behaviour;
     },
     cameraBearing(): number {
       return cameraMode === "CHARACTER" ? characterCamera.state.yaw : cameraRig.state.yaw;
@@ -2332,12 +2504,7 @@ let interactionGeometry: BufferGeometry | null = null;
       rebuildOwnership(cells);
     },
     focusOnCell(cell: TileCoordinate): void {
-      const centre = tileToWorld(cell, worldFrame(state.layout.pitch));
-      cameraRig.recenterTo(centre.worldX, centre.worldZ);
-      const wanted = Math.min(PLACEMENT_CAMERA_DISTANCE, cameraRig.distanceRange.max);
-      const current = Math.max(cameraRig.requestedDistance, 0.001);
-      cameraRig.zoomByScale(wanted / current);
-      scheduleCameraFrame();
+      aimEstateAtCell(cell);
     },
     setDebugMode(on: boolean): void {
       if (on === debugMode) return;

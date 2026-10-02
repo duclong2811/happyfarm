@@ -17,7 +17,8 @@ export {
   TILE_THICKNESS,
   type FarmInteractionMode,
   type FarmScenePlayer,
-  type FarmSceneHandle
+  type FarmSceneHandle,
+  type EstateCameraFocus
 } from "./scene";
 export {
   buildFarmSceneInput,

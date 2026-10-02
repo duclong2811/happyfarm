@@ -10,8 +10,17 @@
         <div class="hud-status">
           <div class="hud-stat hud-stat-gold"><span class="hud-stat-icon" data-icon="coin" data-icon-size="18"></span><strong id="wallet">0 gold</strong><span id="gold-label" class="visually-hidden">Gold</span></div>
           <div class="hud-stat hud-stat-level"><span class="hud-stat-icon" data-icon="star" data-icon-size="18"></span><div id="progression"><strong class="level-value">1</strong></div></div>
-          <button id="language" class="ghost-button" type="button" title="Language"><span data-icon="language" data-icon-size="18"></span></button>
-          <button id="refresh" class="ghost-button" type="button" title="Refresh farm"><span data-icon="refresh" data-icon-size="18"></span></button>
+          <!--
+            Secondary controls, folded behind one overflow button on a phone: the stylesheet keeps them
+            in the bar on a wide screen (so the desktop HUD is unchanged) and hides them on a compact
+            one until the player asks for them, which is what keeps gold, level and the camera switch
+            the only permanent occupants of prime space.
+          -->
+          <button id="hud-menu-toggle" class="ghost-button hud-menu-toggle" type="button" aria-expanded="false" aria-controls="hud-menu"><span data-icon="more" data-icon-size="18"></span></button>
+          <div id="hud-menu" class="hud-menu">
+            <button id="language" class="ghost-button" type="button" title="Language"><span data-icon="language" data-icon-size="18"></span></button>
+            <button id="refresh" class="ghost-button" type="button" title="Refresh farm"><span data-icon="refresh" data-icon-size="18"></span></button>
+          </div>
           <!--
             The camera switch: the estate view designs the island, the character view lives in it.
             Two named buttons rather than one toggle, and always visible, because the player should
@@ -21,6 +30,8 @@
             <button id="camera-estate" class="camera-mode-button is-active" type="button" aria-pressed="true">Estate</button>
             <button id="camera-character" class="camera-mode-button" type="button" aria-pressed="false">Character</button>
           </div>
+          <!-- Estate view only: put the camera back on the player and follow again. Icon-sized. -->
+          <button id="camera-recenter" class="ghost-button camera-recenter" type="button" hidden><span data-icon="target" data-icon-size="18"></span></button>
         </div>
       </header>
 
@@ -108,7 +119,7 @@
       <section id="object-panel" class="placement-hud object-panel" aria-label="Selected object" hidden></section>
 
       <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>
-        <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span></div>
+        <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span><button id="dock-expand" class="dock-expand" type="button" hidden></button></div>
         <div class="action-buttons">
           <button id="go" class="go" type="button" hidden><span data-icon="walk" data-icon-size="18"></span><span class="label">Go</span></button>
           <div id="plant-controls" class="action-controls"><label id="crop-label" for="crop-select">Crop</label><select id="crop-select"></select><button id="plant" class="primary" type="button" disabled><span data-icon="plant" data-icon-size="18"></span><span class="label">Plant crop</span></button></div>

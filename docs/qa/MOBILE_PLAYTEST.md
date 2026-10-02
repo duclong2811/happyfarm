@@ -103,6 +103,44 @@ Once Access is on, this is the test to run. Fill it in on the device.
 
 `____________________________________________________________________________`
 
+## V13.6.3 - estate follow camera and the compact HUD
+
+Everything above still applies. This is the pass that followed the *first* real-device test: the estate
+camera did not follow the character, and the selection panel took too much of the screen. Add these to
+the worksheet, in both orientations.
+
+### H. Estate camera
+
+- [ ] in Estate view, walk with WASD / Go: the camera glides along with the character
+- [ ] it feels smooth, with no snap and no vibration
+- [ ] drag the camera to look elsewhere: it stays there (the view is "free")
+- [ ] keep walking: the camera does **not** immediately snap back
+- [ ] keep walking for ~2 s after the pan: the camera comes back to the character on its own
+- [ ] press the target (recenter) icon: the camera returns to the character at once
+- [ ] the target icon is highlighted while the camera is free
+- [ ] zoom out, then walk: the camera keeps following and the zoom stays where it was set
+- [ ] switch to Character, walk a long way, switch back to Estate: the camera is on the character
+
+### I. Character -> precision action
+
+- [ ] in Character view, tap your own empty soil: a one-line strip appears with **Plant**
+- [ ] tap **Plant**: the view switches to Estate, centred on that cell, with the planting controls
+- [ ] plant the crop: it works exactly as it does from Estate
+- [ ] the strip explains why the view changed
+
+### J. Compact HUD (portrait, then landscape)
+
+- [ ] top bar shows only the brand, gold, level and the camera switch
+- [ ] the `...` (more) button opens language and refresh, and closes on an outside tap
+- [ ] with nothing selected, the bottom of the screen is the world (and, in Character view, the stick)
+- [ ] tapping a cell shows a one-line strip, **not** a large panel
+- [ ] the chevron opens the full surface, and closing it gives the world straight back
+- [ ] in Character view the farming editor never appears while simply running around
+- [ ] the strip and the joystick do not overlap or fight for a touch
+- [ ] a transient message (e.g. after Refresh) sits under the top bar and disappears on its own
+- [ ] no control is under the notch, the home indicator, or an Android gesture bar
+- [ ] every button is comfortably tappable with a thumb (nothing microscopic)
+
 ## Before starting
 
 - [ ] Build and serve the current commit (`npm run build`, or `npm run dev` for a hot session).

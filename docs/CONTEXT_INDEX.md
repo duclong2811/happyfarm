@@ -704,6 +704,35 @@ is: **one world, one gameplay controller; mobile is another input and presentati
 Read `docs/design/PLAYER_CHARACTER.md` **and** `docs/design/DUAL_CAMERA_CHARACTER_MODE.md` before
 touching the avatar, its animation, or the camera that follows it.
 
+### Estate follow camera + compact selection surface (V13.6.3)
+
+Read the "V13.6.3" section of `docs/design/DUAL_CAMERA_CHARACTER_MODE.md` and the V13.6.3 section of
+`docs/design/MOBILE_UI.md` before touching the estate camera's target, the recenter control, the
+selection surface, the top bar, or the mode-transition rules. Two invariants:
+**the estate camera either follows the player or stays where the player put it**, and
+**character view is movement/interaction while estate view is precise work** - so a precision action
+asked for from character view switches the view and aims it, rather than refusing.
+
+- Follow/free state machine (pure): `apps/web/src/render/estate-follow.ts`
+  (`estateFollowAfterManualInput`, `estateFollowForMovement` with its 2 s quiet period,
+  `estateFollowRecenter`, `estateFollowAfterFocus`). A manual orbit or pan enters FREE; zoom
+  deliberately does not.
+- Motion: `createOrbitCamera(...).followTo` / `recenterTo` in `apps/web/src/render/camera.ts`, with
+  `smoothingFactor` (delta-time-independent, 250 ms frame clamp) and a distance-based `isSettling()`
+  so a camera following a standing player runs no frames.
+- Scene wiring: `setCameraMode(mode, focus?)`, `recenterEstateCamera()`, `estateFollowBehaviour()` and
+  the `onEstateFollowChange` callback in `apps/web/src/render/scene.ts`; the host mirrors the state in
+  `apps/web/src/main.ts` (`recenterCamera`, the `R` key, `beginPrecisionAction`).
+- Precision rules (pure): `apps/web/src/render/precision-action.ts` (`precisionFocusFor`,
+  `groundTapOpensContext`).
+- Selection surface state (pure): `apps/web/src/dock.ts` (`dockPresentationFor` ->
+  `HIDDEN` | `STRIP` | `SHEET` | `FULL`); markup and layout in `apps/web/index.html`
+  (`#dock-expand`, `#hud-menu`, `#hud-menu-toggle`, `#camera-recenter`) and the V13.6.3 section of
+  `apps/web/src/styles.css`. The status line auto-clears and moves under the top bar on a compact
+  layout.
+- Tests: `tests/web/estate-follow.test.ts`, `tests/web/estate-follow-camera.test.ts`,
+  `tests/web/precision-action.test.ts`, `tests/web/mobile-hud.test.ts`.
+
 ### The player character (V13.4.1)
 
 The avatar is presentation, and the authority is the player runtime - never the mesh.

@@ -135,8 +135,12 @@ Deliberately minimal, and documented rather than half-built:
   behind their own shoulder would be a worse tool, not a new one.
 * **Clicking an object in character view still selects it** and opens the object panel. Move then
   hands over to the estate workflow.
-* **Ground click-to-move is off in character view.** The character is steered with the movement keys,
-  and a stray click setting up a walk would fight them.
+* **A ground tap in character view selects only when the cell offers something** - the player's own
+  soil to plant, a crop or a tree to inspect - and opens the one-line context strip (V13.6.3). Wild
+  land, water and anybody else's ground are ignored, so the joystick keeps the screen.
+* **Ground click-to-move is still off in character view.** The character is steered with the movement
+  keys, and a stray tap setting up a walk would fight them. Walking to a selected cell is the Go
+  control, and it is estate view's.
 
 ## Input priority
 
@@ -163,8 +167,62 @@ The character's position is **client-local**, exactly as it was before V13.4: no
 anywhere, and there is no persistence to throttle because there is no traffic. Camera state is not
 persisted either.
 
+## V13.6.3: the estate camera follows, and precision work owns the view
+
+Two rules were added after the first real-device test, and they are the ones to keep.
+
+### 1. The estate camera follows the player, without losing map inspection
+
+Before this pass the estate camera stayed wherever it was put - which was right when the farm *was*
+the game, and wrong the moment a character could walk off the edge of the frame. It now has two
+behaviours, and `apps/web/src/render/estate-follow.ts` is the whole of the rule:
+
+| Behaviour | Meaning |
+| --- | --- |
+| `FOLLOW` | the camera's target glides to the player's ground position (a damped glide, never a cut) |
+| `FREE` | the camera stays exactly where the player left it |
+
+* Touching the estate camera - orbiting with a drag, Q/E, or a middle-drag pan - enters `FREE` and
+  stamps the time. Zooming deliberately does **not**: pulling the lens back does not mean "stop
+  looking at my farmer", which is also why `Estate zoom preserved while following` is a test.
+* A camera the *game* aimed (`focusOnCell`: entering placement, picking an object up) is `FREE` too:
+  a step must not drag the view off the cell being edited.
+* Movement re-attaches a `FREE` camera once the player has left it alone for
+  `FOLLOW_RESUME_DELAY_MS` (2 s). That is the brief's "preserve FREE briefly", expressed as one
+  timestamp rather than a timer per input, and it is what stops a pan-then-walk from being a
+  tug-of-war.
+* The recenter control (target icon in the top HUD, and `R` on a keyboard, estate view only) restores
+  `FOLLOW` immediately and glides back to the player. It glows while the camera is free, so the one
+  control that would bring it back is the one that says so.
+* Coming back from character view: a `FOLLOW` camera re-attaches to the player where they now are,
+  and a `FREE` camera is restored exactly as the player left it.
+
+The motion itself is the estate rig's existing damped glide, re-armed every frame by
+`followTo` - one vector subtraction and one exponential step per frame, driven by the pose stream the
+character already produces, so a following camera costs no extra frames and a standing player costs
+none at all (`isSettling()` only reports work when there is a real gap).
+
+### 2. Precision work owns the estate view; asking for it from character view helps
+
+The product rule: **character view is for movement and interaction, estate view is for precise
+farming, building and editing.** Planting, placing, moving and turning are cell work, and the estate
+camera is the only one of the two that can see a cell, its neighbours and the ownership wash at once.
+
+So a precision action asked for from character view does not answer "not available". It changes the
+viewpoint and takes the camera to the thing the player was working on:
+
+```text
+character view -> player selects their own soil -> taps Plant
+  -> estate view, camera gliding to that cell, planting controls available
+```
+
+`apps/web/src/render/precision-action.ts` decides *where* to look (the selected cell, the object's own
+anchor, or the player as a fallback), and the status line says what happened. No page reload, no
+duplicated state, and the action itself never moves: it is still the dock's Plant and the Build
+shop's Place.
+
 ## What is not implemented
 
-Mobile input (a joystick and a touch camera, which will feed the same intent and the same rig),
-first-person view, jumping, swimming, vehicles, combat, stamina, NPCs, and multiplayer avatar sync.
-The character model is unchanged: this pass is camera and controller, not art.
+First-person view, jumping, swimming, vehicles, combat, stamina, NPCs, a character gather/interact
+button, and multiplayer avatar sync. The character model is unchanged: this pass is camera and
+controller, not art.

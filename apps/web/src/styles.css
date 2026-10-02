@@ -497,15 +497,80 @@ button.go { background: transparent; border-color: rgba(255, 255, 255, .22); fon
   .shop-grid { grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); }
   /* Every action a finger has to hit is at least a finger wide. */
   .action-dock button, .object-panel button, .placement-hud button, .module-panel button { min-height: var(--touch-target); }
-  /* In character view the bottom of the screen belongs to the movement controls, so the estate-only
-     surfaces step aside. Leaving character view brings them straight back. */
-  body.is-character-mode .module-rail,
-  body.is-character-mode .action-dock { display: none; }
-  body.is-character-mode .status-wrap { bottom: calc(var(--joystick-size) + var(--space-2)); }
+  /* In character view the bottom of the screen belongs to the movement controls, so the estate's
+     furniture steps aside. Leaving character view brings it straight back. The selection surface is
+     deliberately *not* in this list: character view keeps a one-line strip, which is how a player can
+     ask to plant something without the farming editor covering the island they are walking on. */
+  body.is-character-mode .module-rail { display: none; }
 }
 
 @media (max-width: 600px) {
   /* A narrow phone keeps the band short: the mark stays, the wordmark and the language toggle go. */
   .brand h1, #language { display: none; }
   .camera-mode-button { padding: .34rem .55rem; }
+}
+
+/* ------------------------------------------------------------------ estate follow + compact selection (V13.6.3)
+
+   The real-device pass after V13.5 found the world buried under its own furniture: a top bar with four
+   controls, and a selection panel that could take a third of a phone screen. This section is the fix,
+   and it keeps to the same two rules the rest of the sheet follows:
+
+   * **Presentation only.** Nothing here decides an action: the strip shows the controls the dock was
+     always going to show, and the chevron only changes how much of them is on screen at once.
+   * **The world is the primary surface.** A collapsed strip is one row; the expanded one is allowed to
+     be big, because the player asked for it and can close it again in the same place.
+
+   Desktop is untouched: the overflow button is hidden, the dock renders exactly as it always has, and
+   the recenter control merely joins the camera switch. */
+
+/* The recenter control: a target, not a camera - it names where the view goes, not what it is. */
+.camera-recenter[hidden] { display: none; }
+.camera-recenter { display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; }
+/* Lit while the estate camera is free: the one control that would bring it back is the one that
+   says so, without a sentence anywhere on the screen. */
+.camera-recenter.is-free { color: var(--cream); background: var(--raised-surface); border-color: rgba(244, 242, 232, .28); }
+
+/* Secondary top-bar controls, folded. On a wide screen the wrapper is just a row again. */
+.hud-menu { display: flex; align-items: center; gap: var(--space-2); }
+.hud-menu-toggle { display: none; }
+
+/* The bottom surface's own affordance; shown only where the compact rules apply (see `dock.ts`). */
+.dock-expand { display: none; align-items: center; justify-content: center; width: var(--touch-target); height: var(--touch-target); padding: 0; margin-left: auto; flex: 0 0 auto; background: transparent; border-color: rgba(244, 242, 232, .2); color: var(--cream-dim); }
+.dock-expand[hidden] { display: none; }
+.dock-expand svg { transition: transform .15s ease; }
+
+@media (max-width: 900px), (max-height: 500px) {
+  /* The overflow control takes the place of the two secondary buttons, and holds them itself. */
+  .hud-menu-toggle { display: inline-flex; align-items: center; justify-content: center; min-width: var(--touch-target); min-height: var(--touch-target); padding: 0; }
+  .hud-menu { position: absolute; top: calc(100% + var(--space-1)); right: max(var(--space-4), env(safe-area-inset-right)); display: none; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-panel); background: var(--hud-surface); box-shadow: var(--shadow-hud); backdrop-filter: blur(8px); }
+  .hud-menu.is-open { display: flex; }
+  .hud-menu button { display: inline-flex; align-items: center; justify-content: center; min-width: var(--touch-target); min-height: var(--touch-target); padding: 0; }
+
+  /* The selection surface, compact: one row, the primary action, and a way to open the rest. */
+  .action-dock { width: calc(100% - 2 * var(--space-2)); padding: var(--space-1) var(--space-2); }
+  .action-dock .action-copy { align-items: center; gap: var(--space-1); }
+  .action-dock.is-compact .action-copy strong { font-size: .82rem; overflow: hidden; text-overflow: ellipsis; }
+  .action-dock.is-compact #selection-detail,
+  .action-dock.is-compact #crop-label,
+  .action-dock.is-compact #crop-select,
+  .action-dock.is-compact #tree-state,
+  .action-dock.is-compact .uproot { display: none; }
+  .action-dock.is-compact .action-buttons { margin-top: 0; }
+  .action-dock.is-compact .dock-expand { display: inline-flex; }
+  /* Anchored to the bottom of the screen, so "more" is a pull upwards; opened, it points back down. */
+  .action-dock.is-expanded .dock-expand svg { transform: rotate(180deg); }
+  /* An opened sheet may cover more, and it scrolls itself rather than the page. */
+  .action-dock.is-expanded { max-height: min(52dvh, 22rem); overflow-y: auto; overscroll-behavior: contain; }
+  /* The world's own share of the screen is the point of the pass: with nothing selected, or with the
+     strip collapsed, the 3D view keeps the overwhelming majority of a phone. */
+  /* Transient messages belong under the top bar on a phone: the bottom of the screen is the joystick,
+     the Run button and the selection strip, and a toast there would land on one of them. */
+  .status-wrap,
+  body.is-character-mode .status-wrap { top: calc(var(--hud-height) + var(--space-1)); bottom: auto; }
+}
+
+@media (max-width: 600px) {
+  /* The overflow button carries the language and refresh controls now, so only the wordmark goes. */
+  .brand h1 { display: none; }
 }

@@ -132,10 +132,27 @@ import { movementDestination } from "./render/world-cell-selection";
 import { cellActionKey, cellLandKey, getAvailableCellActions } from "./render/world-cell-actions";
 import { createPlayerCollisionWorld } from "./player/collision";
 import type { CollisionWorld } from "./player/controller";
+import {
+  COLLAPSED_DOCK,
+  collapseDock,
+  dockIsCompact,
+  dockIsExpanded,
+  dockPresentationFor,
+  dockShowsExpand,
+  toggleDockExpansion,
+  type DockState
+} from "./dock";
+import { groundTapOpensContext, precisionFocusFor, type PrecisionActionKind } from "./render/precision-action";
+import type { EstateFollowBehaviour } from "./render/estate-follow";
+import type { EstateCameraFocus } from "./render";
 import "./styles.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
 const REFRESH_INTERVAL_MS = 2_000;
+// A success message is transient: it says what just happened and then gives the world its screen
+// back. Errors are not on this clock - they stay until something replaces them, because they are
+// usually the only sign that an action the player asked for did not happen.
+const STATUS_TIMEOUT_MS = 6_000;
 /** The separator the planting choices use between a name, its level, and its count. */
 const OPTION_SEPARATOR = " \u00b7 ";
 
@@ -278,6 +295,27 @@ let statusIsError = false;
  * with it and the message survives a language switch.
  */
 let bootFailed = false;
+/**
+ * How much of the selection surface is on screen.
+ *
+ * One boolean - is the compact strip open - and every decision about it belongs to `dock.ts`. Kept
+ * here because the page owns what is selected; nothing about it reaches the server.
+ */
+let dock: DockState = COLLAPSED_DOCK;
+/**
+ * Whether the estate camera is following the player.
+ *
+ * A mirror of the renderer's own state, which is the only thing that can see the player move and the
+ * only thing that knows whether the camera was just taken by hand. This copy exists so the recenter
+ * control can say which of the two it would do.
+ */
+let estateFollow: EstateFollowBehaviour = "FOLLOW";
+/** Whether the phone's overflow menu is open. Presentation only. */
+let hudMenuOpen = false;
+/** The pending clear for a transient success message, or null. */
+let statusTimer: number | null = null;
+/** What an empty status line is: no message at all, in any language. */
+const NO_STATUS: StatusText = () => "";
 
 // The 3D view is opt-in. Creating a WebGL context is the one thing this page cannot take back, so
 // it happens on an explicit click instead of during load.
@@ -321,6 +359,19 @@ function setStatus(text: StatusText, isError = false): void {
   statusText = text;
   statusIsError = isError;
   renderStatus();
+  if (statusTimer !== null) {
+    window.clearTimeout(statusTimer);
+    statusTimer = null;
+  }
+  // A success message is transient, and errors are not: a refusal the player asked for has to stay
+  // on screen until they can read it, while "Camera is following you" has said all it has to say.
+  if (!isError) {
+    statusTimer = window.setTimeout(() => {
+      statusTimer = null;
+      statusText = NO_STATUS;
+      renderStatus();
+    }, STATUS_TIMEOUT_MS);
+  }
 }
 
 /** A short status for a message key, with its placeholders resolved in the current language. */
@@ -337,6 +388,9 @@ function renderStatus(): void {
   const node = element<HTMLParagraphElement>("status");
   node.textContent = statusText(t, state.language);
   node.classList.toggle("error", statusIsError);
+  // An empty status is no status: the world gets the space back rather than a blank pill hanging
+  // over it. This is also what keeps routine polling silent - the poll never sets one.
+  node.hidden = node.textContent.length === 0;
 }
 
 /**
@@ -350,6 +404,50 @@ function renderBootRetry(): void {
   const button = element<HTMLButtonElement>("boot-retry");
   button.hidden = !bootFailed;
   button.textContent = t("boot.retry");
+}
+
+/**
+ * The overflow control, and the two secondary buttons it holds on a phone.
+ *
+ * On a wide screen the stylesheet keeps the wrapper as an ordinary row, so the desktop top bar is
+ * exactly what it was; on a compact one it is a menu with a toggle. Only the class and the
+ * `aria-expanded` state are decided here - which is where it appears is the stylesheet's business.
+ */
+function renderHudMenu(): void {
+  const toggle = element<HTMLButtonElement>("hud-menu-toggle");
+  const open = hudMenuOpen;
+  element<HTMLElement>("hud-menu").classList.toggle("is-open", open);
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.setAttribute("aria-label", t("hud.menu"));
+  toggle.title = t("hud.menu");
+}
+
+/**
+ * How much of the selection surface is on screen.
+ *
+ * The decision is `dockPresentationFor`, so the four states - hidden, strip, sheet, full dock - are
+ * one rule with a test rather than a class name written out in three places. Character view can only
+ * ever get the strip, which is what keeps walking around free of the farming editor.
+ */
+function renderDock(): void {
+  const presentation = dockPresentationFor({
+    hasSelection: state.selected !== null,
+    compact: capability.compact,
+    cameraMode: state.cameraMode,
+    state: dock
+  });
+  const node = element<HTMLElement>("action-dock");
+  node.hidden = presentation === "HIDDEN";
+  node.classList.toggle("is-compact", dockIsCompact(presentation));
+  node.classList.toggle("is-expanded", dockIsExpanded(presentation) && dockIsCompact(presentation));
+  const expand = element<HTMLButtonElement>("dock-expand");
+  expand.hidden = !dockShowsExpand(presentation);
+  const label = dockIsExpanded(presentation) && dockIsCompact(presentation)
+    ? t("dock.collapse")
+    : t("dock.expand");
+  expand.setAttribute("aria-label", label);
+  expand.setAttribute("aria-expanded", String(dockIsCompact(presentation) && dockIsExpanded(presentation)));
+  expand.title = label;
 }
 
 /**
@@ -373,6 +471,15 @@ function renderCameraMode(): void {
   character.setAttribute("aria-pressed", String(!inEstate));
   estate.title = t("camera.mode.estateHint");
   character.title = t("camera.mode.characterHint");
+  // The recenter control belongs to the estate view, which is the only view it can move, and it says
+  // which of its two jobs it would do: bring the camera back, or nothing at all.
+  const recenter = element<HTMLButtonElement>("camera-recenter");
+  const free = estateFollow === "FREE";
+  recenter.hidden = !inEstate;
+  recenter.classList.toggle("is-free", free);
+  const recenterLabel = t(free ? "camera.recenterFree" : "camera.recenter");
+  recenter.title = recenterLabel;
+  recenter.setAttribute("aria-label", recenterLabel);
   // The Run button's own words, so the touch control is translated like every other one.
   const run = element<HTMLButtonElement>("run-button");
   run.textContent = t("mobile.run");
@@ -734,8 +841,14 @@ function renderCrops(): void {
   select.value = selectedPlantOption();
 }
 
-/** The single place the page turns authoritative rows into "what the dock offers" semantics. */
-function currentSelection(): SelectionView {
+/**
+ * The single place the page turns authoritative rows into "what the dock offers" semantics.
+ *
+ * Takes the coordinate rather than reading `state.selected`, so a cell can be *asked about* before it
+ * is selected: that is what lets a tap in character view decide whether it is worth opening the
+ * context strip at all.
+ */
+function selectionAt(selected: SelectedTile | null): SelectionView {
   const definition = selectedCropDefinition();
   const treeDefinition = selectedTreeDefinition();
   return describeSelection({
@@ -744,7 +857,7 @@ function currentSelection(): SelectionView {
     trees: state.trees,
     cropDefinitions: state.cropDefinitions,
     treeDefinitions: state.treeDefinitions,
-    selected: state.selected,
+    selected,
     selectedCrop:
       definition === null
         ? null
@@ -763,6 +876,10 @@ function currentSelection(): SelectionView {
           },
     nowMs: Date.now()
   });
+}
+
+function currentSelection(): SelectionView {
+  return selectionAt(state.selected);
 }
 
 function at(coordinate: { readonly x: number; readonly y: number } | null): string {
@@ -902,15 +1019,26 @@ function selectionCell(coordinate: SelectedTile | null): WorldCell | null {
  * `selection.canPlant` and friends are the server-derived preconditions the dock already honours, so
  * the resolver reports what *would* be offered rather than a second opinion about what is allowed.
  */
-function availableActionNames(cell: WorldCell, selection: SelectionView): string {
+/**
+ * What may actually be done on a cell right now, as names in the current language.
+ *
+ * One resolver for both readers: the dock's detail line lists them, and a character-view tap asks
+ * whether the list is empty before it opens the surface.
+ */
+function availableActions(cell: WorldCell | null, selection: SelectionView): string[] {
+  if (cell === null) return [];
   const actions = getAvailableCellActions(cell, {
     canPlant: selection.canPlant,
     crop: selection.crop === null ? null : { mature: selection.canHarvest },
     tree: selection.tree === null ? null : { ready: selection.canHarvestTree }
   });
-  const names = actions
+  return actions
     .filter((action) => action.enabled)
     .map((action) => t(cellActionKey(action.id) as MessageKey));
+}
+
+function availableActionNames(cell: WorldCell, selection: SelectionView): string {
+  const names = availableActions(cell, selection);
   return names.length === 0 ? t("selection.none.detail") : names.join(", ");
 }
 
@@ -940,8 +1068,9 @@ function renderActionControls(selection: SelectionView): void {
     selection.tree === null
       ? ""
       : t(`tree.state.${selection.tree.phase}` as MessageKey);
-  // No selection, no surface: the world keeps the space instead of an empty bar.
-  element<HTMLElement>("action-dock").hidden = state.selected === null;
+  // No selection, no surface: the world keeps the space instead of an empty bar. How much of it is
+  // on screen is the dock's own rule, which is what the compact strip and the chevron come from.
+  renderDock();
   // The planting grid follows the same state the dock does: it appears exactly when the planting
   // control is offered, so a player can see where a seed may go. It names no tile and sends nothing.
   scene?.setInteraction(selection.canPlant ? "PLANT" : "NONE");
@@ -2486,6 +2615,7 @@ function renderChrome(): void {
 
 function render(): void {
   renderChrome();
+  renderHudMenu();
   renderCameraMode();
   renderPanels();
   renderFarm();
@@ -2714,8 +2844,9 @@ let selectionCollision: CollisionWorld = createPlayerCollisionWorld([]);
  * the movement keys - so the switch also settles the two things that could be left running: a walk
  * queued in the estate view, and a key held down across the change.
  */
-function setCameraMode(mode: CameraMode): void {
-  if (state.cameraMode === mode) return;
+function setCameraMode(mode: CameraMode, focus?: EstateCameraFocus): void {
+  if (state.cameraMode === mode && focus === undefined) return;
+  const changed = state.cameraMode !== mode;
   state.cameraMode = mode;
   // A key held across the switch must not keep driving the character: the same W that walked them in
   // the character view would otherwise carry straight on in the estate view the instant the camera
@@ -2727,11 +2858,51 @@ function setCameraMode(mode: CameraMode): void {
     playerRuntime.clearDestination();
     showCharacterHint();
   }
-  scene?.setCameraMode(mode);
+  if (changed) {
+    // A different view is a different screen: the surface returns to its strip rather than leaving a
+    // sheet open over a camera it is no longer describing, and the overflow menu closes with it.
+    dock = collapseDock();
+    hudMenuOpen = false;
+  }
+  scene?.setCameraMode(mode, focus);
   // The touch controls exist only in character view: leaving it clears the stick and the Run button
   // before they can be forgotten about, which is the "no stuck movement across a mode switch" rule.
   syncTouchControls();
   render();
+}
+
+/**
+ * Puts the estate camera back on the player and resumes following them.
+ *
+ * The target in the top bar and the R key are the same action: one camera, one rule, two ways to ask
+ * for it. Nothing is sent anywhere - the camera is client-local, like the character.
+ */
+function recenterCamera(): void {
+  estateFollow = "FOLLOW";
+  scene?.recenterEstateCamera();
+  renderCameraMode();
+  setStatus(message("camera.following"));
+}
+
+/**
+ * Performs a precision action, in the view that can actually do it.
+ *
+ * Planting a seed and placing a barn are cell work, and cell work is the estate camera's: from
+ * character view the game changes viewpoint and takes the camera to the cell the player was working
+ * on, rather than answering "not available" and leaving them to find the switch. Nothing is sent here
+ * and nothing is disabled - the action itself stays where it always was.
+ */
+function beginPrecisionAction(kind: PrecisionActionKind): void {
+  setCameraMode("ESTATE", precisionFocusFor(kind, { selected: state.selected, anchor: null }));
+  if (kind === "PLANT") {
+    // The compact surface opens on the control the player just asked for, so "Plant" does not land on
+    // a strip whose crop chooser is one more tap away.
+    dock = { expanded: true };
+    renderDock();
+    setStatus(message("status.precisionPlant"));
+    return;
+  }
+  setStatus(message("status.precisionBuild"));
 }
 
 /** Estate to character and back, for the F key and the HUD control. */
@@ -2874,6 +3045,41 @@ function syncTouchControls(): void {
   element<HTMLButtonElement>("run-button").setAttribute("aria-pressed", "false");
 }
 
+/**
+ * A tap on the ground.
+ *
+ * Estate view selects whatever the player points at, exactly as it always has. Character view is
+ * mostly *pointing at the world*, so a tap there only opens the context strip when the cell actually
+ * offers something - the player's own soil to plant, a crop or a tree to inspect. Anywhere else the
+ * tap clears the selection and the joystick keeps the screen to itself.
+ */
+function onGroundTap(cell: SelectedTile): void {
+  const same = state.selected !== null && state.selected.x === cell.x && state.selected.y === cell.y;
+  if (same) return;
+  if (!groundTapOpensContext({ mode: state.cameraMode, hasContextAction: cellOffersContext(cell) })) {
+    clearSelection();
+    return;
+  }
+  selectCell(cell.x, cell.y);
+}
+
+/** Whether this cell has anything a player could do or inspect on it. */
+function cellOffersContext(cell: SelectedTile): boolean {
+  return availableActions(selectionCell(cell), selectionAt(cell)).length > 0;
+}
+
+/** Drops the selection and everything that hangs off it. */
+function clearSelection(): void {
+  if (state.selected === null) return;
+  state.selected = null;
+  dock = collapseDock();
+  scene?.setSelection(null);
+  renderField();
+  renderSelection();
+  renderGo();
+  refreshScene();
+}
+
 /** Applies a selection from either the 2D field or the 3D view; both read and write this one state. */
 function selectCell(x: number, y: number): void {
   state.selected = { x, y };
@@ -3014,8 +3220,12 @@ function enable3D(): void {
         // device gets a conservative pixel ratio, a smaller shadow map and no micro-scenery. An
         // explicit `?quality=low` still wins, because that is a developer asking by name.
         quality: deviceQualityProfile(renderQualityRequested(), capability),
-        onCellSelected: (cell) => {
-          selectCell(cell.x, cell.y);
+        onCellSelected: onGroundTap,
+        onEstateFollowChange: (behaviour) => {
+          // The renderer decides whether the estate camera is following; this is only how the
+          // recenter control learns whether it would do anything.
+          estateFollow = behaviour;
+          renderCameraMode();
         },
         onObjectSelected: (constructionId) => {
           // While something is in hand or an object is being moved, a click belongs to that gesture -
@@ -3051,6 +3261,9 @@ function enable3D(): void {
     // The character exists exactly as long as the 3D view does: it listens for movement keys and
     // wakes the render loop while a key is held.
     startPlayer();
+    // The renderer owns the follow state; this is the first read of it, so the recenter control shows
+    // the right job from the moment the world exists.
+    estateFollow = scene.estateFollowBehaviour();
     // The cell grid is a development tool: it is on only when the page was opened with `?debug=1`,
     // so a normal session never sees the lattice the engine thinks in.
     scene.setDebugMode(debugRequested());
@@ -3112,6 +3325,12 @@ async function plant(): Promise<void> {
   const tile = selectedTile();
   if (state.farmId === null || tile === null) {
     setStatus(message("status.selectTile"), true);
+    return;
+  }
+  // Planting is cell work. Asked for from character view, the answer is the estate view - focused on
+  // the cell the player chose - rather than a refusal (see `beginPrecisionAction`).
+  if (state.cameraMode !== "ESTATE") {
+    beginPrecisionAction("PLANT");
     return;
   }
   const selection = currentSelection();
@@ -3424,6 +3643,34 @@ function wire(): void {
   element<HTMLButtonElement>("camera-character").addEventListener("click", () => {
     setCameraMode("CHARACTER");
   });
+  // The recenter control: the same action as the R key, and estate view only.
+  element<HTMLButtonElement>("camera-recenter").addEventListener("click", () => {
+    recenterCamera();
+  });
+  // The overflow menu, and the two secondary controls inside it. A click anywhere else closes it,
+  // which is what makes it feel like a menu rather than a mode.
+  element<HTMLButtonElement>("hud-menu-toggle").addEventListener("click", () => {
+    hudMenuOpen = !hudMenuOpen;
+    renderHudMenu();
+  });
+  element<HTMLElement>("hud-menu").addEventListener("click", () => {
+    hudMenuOpen = false;
+    renderHudMenu();
+  });
+  document.addEventListener("click", (event) => {
+    if (!hudMenuOpen) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (element<HTMLElement>("hud-menu").contains(target)) return;
+    if (element<HTMLElement>("hud-menu-toggle").contains(target)) return;
+    hudMenuOpen = false;
+    renderHudMenu();
+  });
+  // The bottom surface's chevron: opens the full dock on a compact screen, closes it again.
+  element<HTMLButtonElement>("dock-expand").addEventListener("click", () => {
+    dock = toggleDockExpansion(dock);
+    renderDock();
+  });
   // The touch controls: a fixed joystick that produces the same movement intent the keyboard does,
   // and a press-and-hold Run button. Both are bound once and shown only where the brief wants them.
   joystick = createJoystickControl({
@@ -3538,6 +3785,13 @@ function wire(): void {
       void confirmMove();
       return;
     }
+    // R recentres the estate camera, next to F for the mode switch: the two controls a player reaches
+    // for while looking at the island. Only in estate view - character view is read-only about where
+    // the camera points, and its camera is already on the player.
+    if (!typing && state.cameraMode === "ESTATE" && (event.key === "r" || event.key === "R")) {
+      recenterCamera();
+      return;
+    }
     if (event.key !== "Escape") return;
     // Escape lets go of whatever the page is holding, innermost first: the item in hand, then the
     // panel. Cancelling a placement must leave nothing behind - no ghost, no footprint, no state.
@@ -3562,6 +3816,9 @@ function wire(): void {
     // player's position are untouched.
     capability = readDeviceCapability();
     syncTouchControls();
+    // A rotation can change whether the desktop dock fits at all, so the surface is re-decided with
+    // the same rule rather than left in the shape the previous orientation chose.
+    renderDock();
     const width = window.innerWidth;
     if (crossesPanelBreakpoint(lastViewportWidth, width)) {
       // The panel's presentation changed underneath it, so it closes rather than half-adapting.

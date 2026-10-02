@@ -78,6 +78,14 @@ const ZOOM_PER_WHEEL_UNIT = 0.0016;
 /** How fast the camera catches up with what it was asked for, per second. */
 const ZOOM_DAMPING_PER_SECOND = 9;
 const TARGET_DAMPING_PER_SECOND = 7;
+/**
+ * The longest frame a glide will believe in, in milliseconds.
+ *
+ * A restored tab, a stalled frame, a breakpoint on a debugger - all of them hand in an enormous delta,
+ * and a glide that trusted it would close its whole gap in one visible jump. Clamping the step keeps
+ * a smooth camera smooth even when the clock is not.
+ */
+export const MAX_SMOOTHING_FRAME_MS = 250;
 /** How much of a pixel drag turns into rotation, in radians. */
 const ROTATION_PER_PIXEL = 0.006;
 /** The camera's own height above the ground it must never sink below. */
@@ -126,6 +134,14 @@ export interface OrbitCameraRig {
   /** Starts a glide toward a point, used by the recenter control. */
   recenterTo(worldX: number, worldZ: number): void;
   /**
+   * Re-arms the glide toward a point that keeps moving: how the camera follows the player.
+   *
+   * The same damped approach as a recenter, asked for again every frame the player moves. Calling it
+   * with a point the camera has already reached costs nothing and leaves `isSettling()` false, so a
+   * following camera that is standing still is not a camera that is drawing.
+   */
+  followTo(worldX: number, worldZ: number): void;
+  /**
    * Sets how close and how far the camera may be.
    *
    * A property of the world rather than of the rig: a bigger island needs a wider view, and the
@@ -144,6 +160,20 @@ export interface OrbitCameraRig {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * The fraction of a remaining gap to close this frame, for delta-time-independent smoothing.
+ *
+ * The exponential form matters: half the frame time closes the square root of the gap rather than
+ * half of it, so a camera that follows at 60 frames per second and one that follows at 30 arrive by
+ * the same route. A `lerp(current, target, 0.1)` would not: it would move twice as fast on the faster
+ * machine, which is exactly the frame-rate dependence the brief forbids.
+ */
+export function smoothingFactor(deltaMs: number, perSecond: number): number {
+  if (!Number.isFinite(deltaMs) || !Number.isFinite(perSecond) || perSecond <= 0) return 0;
+  const seconds = clamp(deltaMs, 0, MAX_SMOOTHING_FRAME_MS) / 1000;
+  return 1 - Math.exp(-perSecond * seconds);
 }
 
 /** Keeps a yaw inside one turn, so a long drag cannot grow the number without bound. */
@@ -283,6 +313,13 @@ export function createOrbitCamera(options: OrbitCameraOptions): OrbitCameraRig {
   let recenterX: number | null = null;
   let recenterZ: number | null = null;
 
+  /** Where a glide is heading: the recenter clamp is measured from the island's own home point. */
+  function armGlide(worldX: number, worldZ: number): void {
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldZ)) return;
+    recenterX = clamp(worldX, homeX - options.panLimit, homeX + options.panLimit);
+    recenterZ = clamp(worldZ, homeZ - options.panLimit, homeZ + options.panLimit);
+  }
+
   return {
     get state(): OrbitCameraState {
       return { yaw, pitch, distance, targetX, targetZ };
@@ -294,7 +331,14 @@ export function createOrbitCamera(options: OrbitCameraOptions): OrbitCameraRig {
       return { min: minDistance, max: maxDistance };
     },
     isSettling(): boolean {
-      return Math.abs(requestedDistance - distance) > 0.01 || recenterX !== null || recenterZ !== null;
+      if (Math.abs(requestedDistance - distance) > 0.01) return true;
+      // A glide aimed at where the target already is has nothing to do. That is the normal state of a
+      // camera following a player who is standing still, and it must not keep the frame loop alive.
+      return (
+        recenterX !== null &&
+        recenterZ !== null &&
+        Math.hypot(recenterX - targetX, recenterZ - targetZ) > 0.05
+      );
     },
     rotate(deltaYaw: number, deltaPitch: number): void {
       if (!Number.isFinite(deltaYaw) || !Number.isFinite(deltaPitch)) return;
@@ -331,11 +375,8 @@ export function createOrbitCamera(options: OrbitCameraOptions): OrbitCameraRig {
       recenterX = null;
       recenterZ = null;
     },
-    recenterTo(worldX: number, worldZ: number): void {
-      if (!Number.isFinite(worldX) || !Number.isFinite(worldZ)) return;
-      recenterX = clamp(worldX, homeX - options.panLimit, homeX + options.panLimit);
-      recenterZ = clamp(worldZ, homeZ - options.panLimit, homeZ + options.panLimit);
-    },
+    recenterTo: armGlide,
+    followTo: armGlide,
     setDistanceRange(min: number, max: number): void {
       if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max < min) return;
       minDistance = min;
@@ -365,12 +406,11 @@ export function createOrbitCamera(options: OrbitCameraOptions): OrbitCameraRig {
       return { x: position.x, y: Math.max(position.y, ground + CAMERA_GROUND_CLEARANCE), z: position.z };
     },
     update(deltaMs: number): void {
-      const seconds = clamp(deltaMs, 0, 250) / 1000;
-      const zoomStep = 1 - Math.exp(-ZOOM_DAMPING_PER_SECOND * seconds);
+      const zoomStep = smoothingFactor(deltaMs, ZOOM_DAMPING_PER_SECOND);
       distance += (requestedDistance - distance) * zoomStep;
       if (Math.abs(requestedDistance - distance) < 0.01) distance = requestedDistance;
       if (recenterX !== null && recenterZ !== null) {
-        const step = 1 - Math.exp(-TARGET_DAMPING_PER_SECOND * seconds);
+        const step = smoothingFactor(deltaMs, TARGET_DAMPING_PER_SECOND);
         targetX += (recenterX - targetX) * step;
         targetZ += (recenterZ - targetZ) * step;
         if (Math.hypot(recenterX - targetX, recenterZ - targetZ) < 0.05) {

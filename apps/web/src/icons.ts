@@ -29,7 +29,13 @@ export type IconName =
   | "fence"
   | "lamp"
   | "water"
-  | "monument";
+  | "monument"
+  /** Recentre the estate camera on the player. A crosshair with a centre dot. */
+  | "target"
+  /** The compact HUD's overflow control. */
+  | "more"
+  /** The bottom surface's expand/collapse affordance. */
+  | "chevron";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -63,6 +69,25 @@ const PATHS: Readonly<Record<IconName, readonly string[]>> = {
   water: ["M3 15c2.2 0 2.2 2 4.4 2s2.2-2 4.4-2 2.2 2 4.4 2 2.2-2 4.4-2", "M3 19c2.2 0 2.2 2 4.4 2s2.2-2 4.4-2 2.2 2 4.4 2 2.2-2 4.4-2", "M12 4v9", "M9 7h6"],
   /** Monument: a plinth and an obelisk. */
   monument: ["M9 20h6", "M8 17h8l-1 3H9z", "M12 4l2.5 13h-5z"]
+  ,
+  /**
+   * Target: a ring with four ticks and a centre mark. The universal "put the view back on me"
+   * control, and deliberately not a camera glyph - it names the *player*, which is where the estate
+   * camera goes when a player asks to be followed again.
+   */
+  target: [
+    "M12 3v3", "M12 18v3", "M3 12h3", "M18 12h3",
+    "M12 7.4a4.6 4.6 0 1 0 0 9.2 4.6 4.6 0 0 0 0-9.2z",
+    "M12 11.4a.6.6 0 1 0 0 1.2.6.6 0 0 0 0-1.2z"
+  ],
+  /** More: three round dots, the standard overflow affordance. */
+  more: [
+    "M5.4 12a1.1 1.1 0 1 0 2.2 0 1.1 1.1 0 1 0-2.2 0",
+    "M10.9 12a1.1 1.1 0 1 0 2.2 0 1.1 1.1 0 1 0-2.2 0",
+    "M16.4 12a1.1 1.1 0 1 0 2.2 0 1.1 1.1 0 1 0-2.2 0"
+  ],
+  /** Chevron: one stroke, rotated by CSS for expand and collapse. */
+  chevron: ["M6 14.5l6-6 6 6"]
 };
 
 /** Builds one icon as an SVG element the caller can drop into a button. */

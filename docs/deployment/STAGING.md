@@ -1,9 +1,9 @@
 # Staging: the playtest environment
 
-Status: **deployed and smoke-tested** (V13.6.2, 2026-10-02). Staging is a **public guest alpha**: a
-visitor opens the link and plays, with no email, OTP, or Access login. One operator step remains - the
-custom domain is still behind a Cloudflare Access application - and the `workers.dev` hostname is the
-public URL until it is done. See "The URLs" and "Making the custom domain public" below, and
+Status: **deployed and smoke-tested** (V13.6.3, 2026-10-02). Staging is a **public guest alpha**: a
+visitor opens the link and plays, with no email, OTP, or Access login. **Both hostnames are public** -
+the Access gate that blocked the custom domain in V13.6.2 has since been lifted, and the canonical URL
+was re-verified end to end (200, guest cookie, 401 without a session). See "The URLs" below and
 `docs/qa/MULTI_USER_ALPHA.md` for the tester-facing version.
 
 This is a mobile playtest environment, not a launch. `docs/deployment.md` is the older, wider
@@ -12,17 +12,18 @@ checklist; this file is the current state of the deployment and how to operate i
 ## The URLs
 
 ```text
-https://happyfarm-staging.longfx.trade/                    canonical custom domain (Access-gated)
-https://happy-farm-staging.duclong-reg.workers.dev         public; works today
+https://happyfarm-staging.longfx.trade/                    canonical custom domain, public
+https://happy-farm-staging.duclong-reg.workers.dev         public
 ```
 
-Both hostnames are the same Worker (`happy-farm-staging`). The custom domain is the one to hand to
-testers because it is easier to type, but it still answers `302` to
-`https://dawn-field-0231.cloudflareaccess.com/...`, so nobody can play on it yet. The `workers.dev`
-hostname has no Access application in front of it and is what a tester can play on right now.
+Both hostnames are the same Worker (`happy-farm-staging`), and both serve the same guest alpha. The
+custom domain is the one to hand to testers: it is easier to type, and it is verified working. A guest
+is scoped to the hostname it was created on (the cookie carries no `Domain`), so pick one URL per
+playtest - see the last section.
 
-Current deployment: Worker `happy-farm-staging`, version `174b4e39-f0dd-46e6-84e3-de0b97c9ed01`,
-deployed 2026-10-02 from commit `7ad4942` + the V13.6.2 identity work. (The V13.6.1 version was
+Current deployment: Worker `happy-farm-staging`, version `784f4e7f-607f-4106-92e9-34126df471d2`,
+deployed 2026-10-02 from commit `4311611` (V13.6.3: estate follow camera and mobile HUD), bundle
+`assets/index-CQNhKXDm.js`. (V13.6.2 was `174b4e39-f0dd-46e6-84e3-de0b97c9ed01`, V13.6.1
 `7df79218-2a86-4435-9cd9-a399f9415c93`.)
 
 ## Architecture
@@ -85,31 +86,27 @@ Cloudflare Access is untouched and still available: if a valid `Cf-Access-Jwt-As
 that identity wins, and the guest cookie is ignored for that request. Nothing about the Access path
 was removed - a browser holding both is always the Access player.
 
-## Making the custom domain public
+## The custom domain is public (was: the operator step)
 
-Repository code cannot remove a Cloudflare Access application: the deployment credentials carry
-Workers scopes, not Access scopes (`npx wrangler whoami` lists no Access permissions). An operator
-with dashboard access must do it.
+The V13.6.2 report asked an operator to lift the Cloudflare Access gate on
+`happyfarm-staging.longfx.trade`. That has been done, and it is verified from this environment:
 
-1. **Zero Trust -> Access -> Applications.**
-2. Find the application whose domain is `happyfarm-staging.longfx.trade` (audience tag
-   `ff946e88...e1ad`, the value committed as `ACCESS_AUD`).
-3. Add a **Bypass** policy for `Everyone` (`Policies -> Add a policy`, action **Bypass**, include
-   **Everyone**) and leave any existing `Allow` policy in place. That is the reversible move: delete
-   the bypass to restore the gate. Removing the application entirely also works, but note its AUD tag
-   first, because the Worker still has it configured.
-4. Verify:
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://happyfarm-staging.longfx.trade/            # 200
+curl -s -o /dev/null -w '%{http_code}\n' https://happyfarm-staging.longfx.trade/api/health   # 200
+curl -si https://happyfarm-staging.longfx.trade/api/session | grep -i set-cookie             # hf_guest=...
+curl -s -o /dev/null -w '%{http_code}\n' https://happyfarm-staging.longfx.trade/api/shop     # 401
+```
 
-   ```bash
-   curl -s -o /dev/null -w '%{http_code}\n' https://happyfarm-staging.longfx.trade/            # 200
-   curl -s -o /dev/null -w '%{http_code}\n' https://happyfarm-staging.longfx.trade/api/health  # 200
-   curl -si https://happyfarm-staging.longfx.trade/api/session | Select-String 'set-cookie'    # hf_guest=...
-   ```
+The last line is the one that matters: with no cookie and no Access assertion the API still answers
+`NOT_AUTHENTICATED`, so lifting the gate published the *guest* path and nothing else. The Worker's
+`ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` configuration is untouched, so if the gate is ever restored
+(re-enable the Access application, or delete a bypass policy), a valid `Cf-Access-Jwt-Assertion` still
+outranks a guest cookie exactly as before.
 
-   A `302` to `cloudflareaccess.com` means the gate is still there.
-
-Nothing about the deployment changes when this is done: the Worker already serves guest sessions on
-every hostname. Access configuration stays recoverable either way.
+Repository code cannot add or remove an Access application either way: the deployment credentials
+carry Workers scopes, not Access scopes (`npx wrangler whoami` lists no Access permissions). This
+section stays as the record of what was needed and how it was checked.
 
 ## Database
 
@@ -218,8 +215,9 @@ never blocks startup: if it 404s, the game still plays with the placeholder char
 
 ## Known limitations
 
-* **The custom domain is still Access-gated**, so the canonical URL cannot be played on until the
-  operator step above is done. The `workers.dev` hostname is public and is the URL to hand out.
+* **Both hostnames are public**, which is the intended alpha policy but also means two public entry
+  points into the same data. They share one database; if the alpha ever needs to be closed, the Access
+  application (or a Cloudflare route) is the lever, and it has to be applied to each hostname.
 * **Guest progress depends on keeping the guest credential.** Clearing site data, a private window,
   or a different browser makes a new guest; there is no account-linking or recovery path yet, so the
   old farm becomes unreachable. Documented for testers in `docs/qa/MULTI_USER_ALPHA.md`.
