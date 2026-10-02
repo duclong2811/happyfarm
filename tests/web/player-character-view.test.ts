@@ -13,6 +13,7 @@ import {
   type PlayerCharacterAssetConfig,
   type PlayerCharacterPose
 } from "../../apps/web/src/render/player-character";
+import { CHARACTER_MODEL_URL_BY_ID } from "../../apps/web/src/render/character-model-urls";
 
 /**
  * The character view, driven with a *synthetic* model.
@@ -67,36 +68,101 @@ async function loadedView(
     readonly load?: () => Promise<Group | null>;
     readonly onProblem?: (assetId: string, message: string) => void;
     readonly config?: PlayerCharacterAssetConfig;
+    readonly loadTimeoutMs?: number;
+    /** When false the harness builds the view and never asks it to load anything. */
+    readonly request?: boolean;
   } = {}
 ) {
   const fallback = new Group();
   fallback.add(new Mesh(new BoxGeometry(0.2, 0.2, 0.2), new MeshBasicMaterial()));
   const problems: string[] = [];
+  const lines: string[] = [];
   const view = createPlayerCharacterView({
     fallback,
-    loadModel: async () => (options.load === undefined ? syntheticModel() : options.load()),
-    animationsOf: () => clips(),
     onProblem: (assetId, message) => {
       problems.push(`${assetId}: ${message}`);
       options.onProblem?.(assetId, message);
     },
-    config: options.config ?? CONFIG
+    config: options.config ?? CONFIG,
+    log: (line) => lines.push(line),
+    ...(options.loadTimeoutMs === undefined ? {} : { loadTimeoutMs: options.loadTimeoutMs })
   });
-  // One turn of the microtask queue: the load above is a resolved promise.
-  await Promise.resolve();
-  await Promise.resolve();
-  return { view, fallback, problems };
+  // Building the view never loads anything; the caller asks, exactly as the scene does at the end of
+  // its own setup - after the model library exists.
+  if (options.request !== false) {
+    view.load({
+      loadModel: () => (options.load === undefined ? Promise.resolve(syntheticModel()) : options.load()),
+      animationsOf: () => clips()
+    });
+    // A turn of the microtask queue: the loader above is a resolved promise.
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  return { view, fallback, problems, lines };
 }
 
 describe("the character view", () => {
+  it("draws the placeholder before anything has been asked for, and loads nothing itself", async () => {
+    // The V13.4.1 hotfix, as a test. Constructing the view used to call the model library immediately,
+    // which threw inside the scene's own setup ("Cannot access 'library' before initialization") and
+    // left the world stuck before it was ever drawn. Constructing a cosmetic view must do nothing but
+    // build the placeholder.
+    const { view, fallback } = await loadedView({ request: false });
+    expect(view.ready()).toBe(false);
+    expect(view.usingFallback()).toBe(true);
+    expect(fallback.visible).toBe(true);
+    // And it is already usable: a pose draws the placeholder, so the game is playable before - and
+    // whether or not - the real model ever arrives.
+    view.update(pose({ movementState: "WALKING", elapsedWalk: 0.5 }), 0.016);
+    expect(view.root.visible).toBe(true);
+    expect(view.root.position.x).toBe(10);
+  });
+
+  it("asks for the model without handing the caller anything to wait on", async () => {
+    // `load` returns void by design: the world cannot accidentally await a cosmetic asset, because
+    // there is no promise to await. This is the API-level half of the invariant above.
+    const { view } = await loadedView({ request: false });
+    // The void-ness *is* the assertion here, which is the one case where reading a void expression is
+    // deliberate rather than a mistake.
+    // eslint-disable-next-line @typescript-eslint/no-confusing-void-expression -- asserting `load` hands back nothing
+    const returned: unknown = view.load({
+      loadModel: () => Promise.resolve(syntheticModel()),
+      animationsOf: () => clips()
+    });
+    expect(returned).toBeUndefined();
+    // And a second ask is ignored rather than starting a second download or a second mixer.
+    view.load({ loadModel: () => Promise.reject(new Error("should not be called")), animationsOf: () => [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(view.ready()).toBe(true);
+  });
+
+  it("stays playable while the model is still loading, and reports a request that hangs", async () => {
+    // A loader that never settles: the placeholder keeps being drawn, the world-facing state is
+    // unaffected, and the only consequence is one line of diagnostics after the timeout.
+    const { view, problems, lines } = await loadedView({ request: false, loadTimeoutMs: 0 });
+    view.load({ loadModel: () => new Promise<Group | null>(() => undefined), animationsOf: () => [] });
+    expect(view.ready()).toBe(false);
+    expect(view.usingFallback()).toBe(true);
+    view.update(pose({ movementState: "WALKING", elapsedWalk: 0.2 }), 0.016);
+    expect(view.root.visible).toBe(true);
+    // The timeout is a report, not a failure: nothing is cancelled and nothing is retried.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(problems.some((line) => line.includes("had not loaded"))).toBe(true);
+    expect(lines.some((line) => line.startsWith("[character] loading "))).toBe(true);
+  });
+
   it("draws the fallback until the model arrives, then swaps to it", async () => {
-    const { view, fallback } = await loadedView();
+    const { view, fallback, lines } = await loadedView();
     expect(view.ready()).toBe(true);
     expect(view.usingFallback()).toBe(false);
     // The fallback is still in the graph - a failed asset must be able to come back to it - but the
     // player cannot see it, so there are never two characters on screen.
     expect(fallback.visible).toBe(false);
     expect(view.root.children).toContain(fallback);
+    // The two diagnostics the hotfix asked for: what is being fetched, and that it arrived.
+    expect(lines[0]).toBe(`[character] loading ${CHARACTER_MODEL_URL_BY_ID.get(CONFIG.modelId) ?? CONFIG.modelId}`);
+    expect(lines.some((line) => line.startsWith("[character] loaded "))).toBe(true);
   });
 
   it("normalises the model to the world's character height and stands it on its feet", async () => {

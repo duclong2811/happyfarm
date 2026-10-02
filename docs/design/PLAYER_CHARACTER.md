@@ -7,6 +7,32 @@ this before touching the avatar, its animation, or the asset it comes from.
 >
 > It is never the authority for movement, position, terrain following, collision, camera mode or world
 > state. The player runtime remains authoritative; this layer only draws it.
+>
+> And it **can never hold up the world**: the character is asked for last, its load is never awaited,
+> and a slow, missing or broken file leaves a playable island with the placeholder on it.
+
+## Boot independence (the V13.4.1 hotfix)
+
+The first version of this layer loaded the model *while the view was being constructed*, and the scene
+constructs the character before it has built its model library. Reading that library early threw
+`ReferenceError: Cannot access 'library' before initialization` inside `createFarmScene`, which the
+page's own error handling then swallowed - so the game was stuck before its first frame with no
+visible reason.
+
+The rule that came out of it, and the reason the API is shaped the way it is:
+
+* **Constructing the view does nothing but build the fallback.** `createPlayerCharacterView` takes no
+  loader at all, so a scene cannot accidentally ask for an asset at construction time.
+* **The load is asked for explicitly, late, and never awaited.** `PlayerCharacterView.load(resources)`
+  returns `void` - there is no promise for boot to wait on. The scene calls it at the *end* of
+  `createFarmScene`, after the world is applied and drawn and after the model library exists.
+* **A request that hangs is only a report.** A watchdog says so once in the console after 15 s; the
+  placeholder stays on screen, nothing is cancelled or retried, and a model that arrives afterwards is
+  still adopted.
+
+`tests/web/character-boot-order.test.ts` pins the ordering, and
+`tests/web/player-character-view.test.ts` pins the behaviour (a view that loads nothing, a `load` that
+returns nothing, a pending load that stays playable, and the rejection that keeps the placeholder).
 
 ## The separation
 
@@ -136,6 +162,14 @@ mode change, not per instance. One `AnimationMixer` and (at most) three actions 
 traversed once, at load, to configure shadows. Per frame the cost is one mixer update and a handful of
 vector writes; there is no traversal, no allocation proportional to the scene, no skeleton cloning, no
 world rebuild and no API call.
+
+The diagnostics are one line each, and only three of them can ever be written:
+
+```text
+[character] loading <resolved url>
+[character] loaded player-farmer.glb
+[character] failed to load player-farmer.glb; using placeholder (<reason>)
+```
 
 ## Future customisation
 

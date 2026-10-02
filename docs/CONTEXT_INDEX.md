@@ -691,6 +691,12 @@ The avatar is presentation, and the authority is the player runtime - never the 
 - The old procedural avatar stays as the fallback, shown (with a console report) when the model cannot
   load. Gameplay must never know which file is drawn: no controller, camera, collision or scene code
   changes when the character is replaced.
+- **Boot independence (hotfix):** `createPlayerCharacterView` builds only the fallback and takes no
+  loader; `PlayerCharacterView.load(resources)` returns `void` and is called at the *end* of
+  `createFarmScene`, after the model library exists. A cosmetic asset may never be awaited by boot -
+  the placeholder is on screen from the first frame and a failed load only writes a console line.
+  `tests/web/character-boot-order.test.ts` pins the ordering (the scene used to read the library while
+  building the character, which threw and left the page at "Preparing 3D world…").
 - Tests: `tests/web/player-character.test.ts` (pure mapping, scale, orientation, no-mutation),
   `tests/web/player-character-view.test.ts` (the view against a synthetic model, including fallback),
   and `tests/integration/player-character-asset.test.ts` (the shipped file is self-contained, skinned,

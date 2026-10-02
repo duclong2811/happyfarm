@@ -668,11 +668,13 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
    * Gameplay knows nothing about any of it. The pose this draws is the one the player runtime
    * produced - position, facing and movement state are all *read* here, never written back - so a
    * different character model changes how the player looks and nothing about how they work.
+   *
+   * Constructed with the fallback and *nothing else*: the model library does not exist yet at this
+   * point in the scene's own setup, and a cosmetic asset must not be able to reach into boot at all.
+   * The load is asked for at the end of `createFarmScene`, and its result is never awaited.
    */
   const characterView = createPlayerCharacterView({
     fallback: fallbackAvatar,
-    loadModel: (modelId) => library.load(modelId),
-    animationsOf: (modelId) => library.animations(modelId),
     onProblem: (assetId, message) => {
       // A failed model is a report, not a failure: the fallback is already on screen, and the console
       // says which asset failed and what is being used instead.
@@ -2234,6 +2236,18 @@ let interactionGeometry: BufferGeometry | null = null;
   // Environment models are requested lazily by `sceneryModel`, so only the ones this world actually
   // places are ever downloaded.
   requestGeneratedModels();
+  /**
+   * The cosmetic character, asked for last and never awaited.
+   *
+   * The order matters and is the point of this hotfix: the world is already built, the fallback avatar
+   * is already in the scene, and the library exists by now. `load` returns nothing, so there is no
+   * promise for boot to wait on - a slow, missing or broken character asset leaves a playable island
+   * with the placeholder on it and one line in the console.
+   */
+  characterView.load({
+    loadModel: (modelId) => library.load(modelId),
+    animationsOf: (modelId) => library.animations(modelId)
+  });
 
   return {
     canvas,

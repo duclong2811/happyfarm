@@ -8,6 +8,7 @@ import {
   type Object3D
 } from "three";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { CHARACTER_MODEL_URL_BY_ID } from "./character-model-urls";
 
 /**
  * The player character as *presentation*, and nothing else.
@@ -244,13 +245,32 @@ export interface PlayerCharacterViewOptions {
    * this view owns the one decision that matters here - which of the two the player can see.
    */
   readonly fallback: Object3D;
+  /** Reports a failed load, so the host can say which asset and which fallback is active. */
+  readonly onProblem?: (assetId: string, message: string) => void;
+  readonly config?: PlayerCharacterAssetConfig;
+  /** Where the concise diagnostics go. Injectable so a test can read them instead of the console. */
+  readonly log?: (line: string) => void;
+  /**
+   * How long to wait before *saying* that the model is taking a while.
+   *
+   * Nothing waits for the model - this only turns a silent hang into a visible report. The placeholder
+   * stays on screen, and a model that arrives after the timeout is still drawn.
+   */
+  readonly loadTimeoutMs?: number;
+}
+
+/**
+ * What the view needs in order to ask for the real character.
+ *
+ * Handed in when the load is *asked for* rather than when the view is created, which is the whole of
+ * this hotfix: constructing the character must not touch the model library, because the scene builds
+ * the character before it builds the library (and reading a `const` before its initializer throws).
+ */
+export interface PlayerCharacterResources {
   /** Loads a model by id through the shared library. Resolves null when nothing can draw it. */
   readonly loadModel: (modelId: string) => Promise<Object3D | null>;
   /** The clips that arrived with that model. Empty for a model with no animation. */
   readonly animationsOf: (modelId: string) => readonly AnimationClip[];
-  /** Reports a failed load, so the host can say which asset and which fallback is active. */
-  readonly onProblem?: (assetId: string, message: string) => void;
-  readonly config?: PlayerCharacterAssetConfig;
 }
 
 export interface PlayerCharacterView {
@@ -260,6 +280,15 @@ export interface PlayerCharacterView {
   ready(): boolean;
   /** Whether the procedural fallback is what the player can currently see. */
   usingFallback(): boolean;
+  /**
+   * Asks for the real character, and returns immediately.
+   *
+   * Deliberately `void` rather than a promise: there is nothing for a caller to await, which is what
+   * makes "a cosmetic asset can never hold up the world" a property of the API instead of a promise
+   * about a call site. The fallback is already on screen, and the model replaces it when - and only
+   * when - it arrives.
+   */
+  load(resources: PlayerCharacterResources): void;
   /**
    * Draws the character at this pose, one frame of animation at a time.
    *
@@ -273,6 +302,14 @@ export interface PlayerCharacterView {
 /** The bob the fallback avatar had before there was a model: it keeps the old look intact. */
 const FALLBACK_BOB_WORLD = 0.035;
 const FALLBACK_STEP_FREQUENCY = 9;
+/**
+ * How long a character request may take before it is *reported* as slow.
+ *
+ * It is not a deadline and it does not cancel anything: the game is already playable with the
+ * placeholder, and a model that arrives late is still used. The number exists so a hung request is
+ * visible in the console instead of being a puzzle.
+ */
+const CHARACTER_LOAD_TIMEOUT_MS = 15_000;
 
 export function createPlayerCharacterView(options: PlayerCharacterViewOptions): PlayerCharacterView {
   const config = options.config ?? PLAYER_CHARACTER_ASSET;
@@ -292,56 +329,72 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
   let available: readonly string[] = [];
   let animationState: CharacterAnimationState | null = null;
   let current: AnimationAction | null = null;
+  let loading = false;
   let disposed = false;
 
-  void options.loadModel(config.modelId).then(
-    (loaded) => {
-      if (disposed) return;
-      if (loaded === null) {
-        // A missing or broken asset is a presentation problem, never a gameplay one: the fallback
-        // stays on screen and the console says exactly what failed and what is being used instead.
-        options.onProblem?.(
-          config.id,
-          `could not load ${config.modelId}; the placeholder character is being drawn instead`
-        );
-        return;
-      }
-      // The library keeps the original for every other caller, so a skinned mesh is cloned with
-      // `SkeletonUtils.clone` rather than `Object3D.clone`: a plain clone would share the original's
-      // bones and deform with it.
-      const model = cloneSkinned(loaded);
-      const box = new Box3().setFromObject(model);
-      const height = box.max.y - box.min.y;
-      const scale = characterVisualScale(config, height);
-      model.scale.setScalar(scale);
-      const offset = characterModelOffset(
-        { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] },
-        scale,
-        config
-      );
-      model.position.set(offset.x, offset.y, offset.z);
-      // One traversal, at load: shadows are configured once and never touched per frame.
-      model.traverse((child) => {
-        child.castShadow = true;
-      });
-      modelRoot.add(model);
-      modelRoot.visible = true;
-      fallback.visible = false;
+  /** Where the diagnostics go: one line when a load starts, one when it ends. */
+  const log =
+    options.log ??
+    ((line: string) => {
+      console.info(line);
+    });
 
-      const animationClips = options.animationsOf(config.modelId);
-      clips = new Map(animationClips.map((clip) => [clip.name, clip]));
-      available = animationClips.map((clip) => clip.name);
-      mixer = new AnimationMixer(model);
-    },
-    (error: unknown) => {
-      if (disposed) return;
-      options.onProblem?.(
-        config.id,
-        `could not load ${config.modelId} (${error instanceof Error ? error.message : String(error)}); ` +
-          "the placeholder character is being drawn instead"
-      );
-    }
-  );
+  /** The file name behind the model id, so the diagnostics name something a developer can find. */
+  function modelFileName(): string {
+    const url = CHARACTER_MODEL_URL_BY_ID.get(config.modelId) ?? config.modelId;
+    const last = url.split("/").pop() ?? url;
+    return last.split("?")[0] ?? last;
+  }
+
+  /**
+   * Reports a load that produced no character.
+   *
+   * The fallback is already on screen, so this only says what happened - and it says it completely:
+   * which asset, which URL, the reason, and that the placeholder is what the player is looking at.
+   * That is the message a developer needs to fix a 404 or a broken file.
+   */
+  function report(message: string): void {
+    const url = CHARACTER_MODEL_URL_BY_ID.get(config.modelId) ?? config.modelId;
+    options.onProblem?.(
+      config.id,
+      `could not load ${config.modelId} (${url}): ${message}; ` +
+        "the placeholder character is being drawn instead"
+    );
+    log(`[character] failed to load ${modelFileName()}; using placeholder (${message})`);
+  }
+
+  /**
+   * Takes the loaded model into the scene graph: cloned, measured, scaled, grounded, shadowed and
+   * given its mixer. Called once, from `load`, and only when a model actually arrived.
+   */
+  function adopt(loaded: Object3D, resources: PlayerCharacterResources): void {
+    // The library keeps the original for every other caller, so a skinned mesh is cloned with
+    // `SkeletonUtils.clone` rather than `Object3D.clone`: a plain clone would share the original's
+    // bones and deform with it.
+    const model = cloneSkinned(loaded);
+    const box = new Box3().setFromObject(model);
+    const height = box.max.y - box.min.y;
+    const scale = characterVisualScale(config, height);
+    model.scale.setScalar(scale);
+    const offset = characterModelOffset(
+      { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] },
+      scale,
+      config
+    );
+    model.position.set(offset.x, offset.y, offset.z);
+    // One traversal, at load: shadows are configured once and never touched per frame.
+    model.traverse((child) => {
+      child.castShadow = true;
+    });
+    modelRoot.add(model);
+    modelRoot.visible = true;
+    fallback.visible = false;
+
+    const animationClips = resources.animationsOf(config.modelId);
+    clips = new Map(animationClips.map((clip) => [clip.name, clip]));
+    available = animationClips.map((clip) => clip.name);
+    mixer = new AnimationMixer(model);
+  }
 
   /**
    * The action for a clip, created the first time it is wanted.
@@ -382,6 +435,47 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
     root,
     ready: () => mixer !== null,
     usingFallback: () => mixer === null,
+    load(resources): void {
+      // Once, and never awaited. A second call - a re-entrant boot, a hot reload - is ignored rather
+      // than starting a second download or a second mixer.
+      if (disposed || loading || mixer !== null) return;
+      loading = true;
+      // Only ever a *diagnostic*: nothing downstream waits on it. A request that hangs leaves the
+      // placeholder on screen - which is a working game - and says so once, rather than failing
+      // silently. A model that arrives afterwards is still adopted.
+      let settled = false;
+      const timeoutMs = options.loadTimeoutMs ?? CHARACTER_LOAD_TIMEOUT_MS;
+      const watchdog =
+        typeof setTimeout === "function"
+          ? setTimeout(() => {
+              if (settled || disposed) return;
+              report(`it had not loaded after ${String(timeoutMs)} ms`);
+            }, timeoutMs)
+          : null;
+      const settle = (): void => {
+        settled = true;
+        if (watchdog !== null) clearTimeout(watchdog);
+      };
+
+      log(`[character] loading ${CHARACTER_MODEL_URL_BY_ID.get(config.modelId) ?? config.modelId}`);
+      void resources.loadModel(config.modelId).then(
+        (loaded) => {
+          settle();
+          if (disposed) return;
+          if (loaded === null) {
+            report("the model could not be loaded");
+            return;
+          }
+          adopt(loaded, resources);
+          log(`[character] loaded ${modelFileName()}`);
+        },
+        (error: unknown) => {
+          settle();
+          if (disposed) return;
+          report(error instanceof Error ? error.message : String(error));
+        }
+      );
+    },
     update(pose, deltaSeconds): void {
       if (disposed) return;
       if (pose === null) {
