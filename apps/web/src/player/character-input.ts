@@ -31,10 +31,21 @@ export function characterIntentFromInput(vector: InputVector): CharacterMoveInte
   return { forward: vector.z, right: vector.x };
 }
 
-/** The same intent, from a future joystick: two bounded numbers, in the same ranges. */
+/**
+ * The same intent, from any source, bounded to one unit of movement.
+ *
+ * The **vector** is clamped, not each component: a source that reports (4, -3) must not become
+ * (1, -1), whose length is 1.41 - a diagonal faster than a straight push, which is exactly what the
+ * joystick's own rules forbid. Direction is preserved and the magnitude is capped, so "how far the
+ * stick is pushed" survives and "how hard the player can push" does not.
+ */
 export function clampCharacterIntent(intent: CharacterMoveIntent): CharacterMoveIntent {
   const bound = (value: number): number => (Number.isFinite(value) ? Math.min(Math.max(value, -1), 1) : 0);
-  return { forward: bound(intent.forward), right: bound(intent.right) };
+  const forward = bound(intent.forward);
+  const right = bound(intent.right);
+  const length = Math.hypot(forward, right);
+  if (length <= 1) return { forward, right };
+  return { forward: forward / length, right: right / length };
 }
 
 /**
@@ -69,3 +80,41 @@ export function cameraRelativeMovement(intent: CharacterMoveIntent, cameraYaw: n
 
 /** How much faster a run is than a walk. No stamina: this is a pace, not a resource. */
 export const RUN_SPEED_MULTIPLIER = 1.6;
+
+/** Which adapter produced the movement the character is making. */
+export type CharacterInputSource = "NONE" | "KEYBOARD" | "TOUCH";
+
+export interface ComposedCharacterInput {
+  readonly intent: CharacterMoveIntent;
+  readonly source: CharacterInputSource;
+}
+
+/** Whether an intent is asking for movement at all. */
+export function intentIsNeutral(intent: CharacterMoveIntent): boolean {
+  return !Number.isFinite(intent.forward) || !Number.isFinite(intent.right)
+    ? true
+    : Math.hypot(intent.forward, intent.right) <= 0.0001;
+}
+
+/**
+ * The one rule that decides whose movement counts when both adapters are live.
+ *
+ * **A deflected touch stick wins; otherwise the keyboard does.** The alternatives were to sum the two
+ * (which changes the *direction* when a hybrid player pushes a stick and holds a key - the character
+ * veers - and makes "how fast am I going" a function of how many devices are plugged in) and to clamp
+ * a sum to unit length (which keeps the speed honest but still veers). Choosing a source keeps the
+ * character walking exactly where the player is pointing, and the brief's requirement - that two
+ * inputs at once must never double the speed - is satisfied by construction: exactly one of them is
+ * ever used.
+ *
+ * A finger on the stick is the more deliberate act of the two, so it wins. The moment it is released
+ * the keyboard takes over again with no transition, because both feed the same controller.
+ */
+export function composeCharacterInput(
+  keyboard: CharacterMoveIntent,
+  touch: CharacterMoveIntent
+): ComposedCharacterInput {
+  if (!intentIsNeutral(touch)) return { intent: clampCharacterIntent(touch), source: "TOUCH" };
+  if (!intentIsNeutral(keyboard)) return { intent: clampCharacterIntent(keyboard), source: "KEYBOARD" };
+  return { intent: NO_CHARACTER_INTENT, source: "NONE" };
+}

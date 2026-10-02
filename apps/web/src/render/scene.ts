@@ -2108,9 +2108,18 @@ let interactionGeometry: BufferGeometry | null = null;
     const intent = gesture.move({ id: event.pointerId, x: event.clientX, y: event.clientY });
     switch (intent.kind) {
       case "pan":
-        // A finger drag pans; a mouse's left drag belongs to selection, so it never moves the view.
-        if (event.pointerType !== "mouse" && cameraMode === "ESTATE" && cameraInputEnabled()) {
-          panByScreen(intent.deltaX, intent.deltaY);
+        // A finger drag *orbits*, in either view. A phone has no right button, so the desktop's
+        // "right-drag rotates, middle-drag pans" cannot be the touch language: the brief's priority
+        // is selection, orbit and zoom, and panning stays a mouse gesture (V13.5 deliberately does
+        // not add a two-finger pan, which would compete with the pinch for the same two fingers).
+        // A mouse's left drag still belongs to selection, so nothing changes on the desktop.
+        if (event.pointerType !== "mouse" && cameraInputEnabled()) {
+          if (cameraMode === "CHARACTER") characterCamera.rotateByDrag(intent.deltaX, intent.deltaY);
+          else {
+            const turn = rotationForDrag(intent.deltaX, intent.deltaY);
+            cameraRig.rotate(turn.yaw, turn.pitch);
+          }
+          updateCamera();
           scheduleDraw();
         }
         return;

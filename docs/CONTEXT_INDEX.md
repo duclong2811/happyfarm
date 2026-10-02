@@ -670,6 +670,37 @@ the placement preview.
 
 ## Dual camera and character view (V13.4)
 
+### Mobile playtest (V13.5)
+
+Read `docs/design/MOBILE_INPUT.md` before touching the joystick, the touch camera or anything that
+decides movement, and `docs/design/MOBILE_UI.md` before touching the responsive layout. The invariant
+is: **one world, one gameplay controller; mobile is another input and presentation adapter.**
+
+- Capability, not user agents: `apps/web/src/mobile/capability.ts` separates *input* (`coarse`: the
+  primary pointer is a finger - decides whether the touch controls exist) from *layout* (`compact`: the
+  viewport is small - decides which CSS applies). Its numbers (900 px wide, 500 px short side) are the
+  stylesheet's own breakpoints. A touchscreen laptop keeps its desktop controls.
+- The joystick (`apps/web/src/mobile/joystick.ts`) is a fixed stick: a pure tracker (dead zone, analog
+  magnitude, magnitude clamped to one, one owned pointer id) plus a thin DOM binder that writes one
+  `translate3d`. It produces `CharacterMoveIntent` and knows nothing else. The same file provides the
+  press-and-hold Run control.
+- Composition: `composeCharacterInput` in `apps/web/src/player/character-input.ts` - **a deflected
+  touch stick wins, otherwise the keyboard does** - so two inputs at once can never double the speed.
+  Both feed the same `cameraRelativeMovement` → `stepPlayer` path; there is no mobile controller.
+- Touch gestures are owned structurally: the controls are DOM elements over the canvas, the joystick
+  owns one pointer id, and `apps/web/src/render/pointer-gesture.ts` still arbitrates tap / drag / pinch
+  (a drag or a pinch can never end in a selection). One-finger drag orbits the active rig in both
+  views; pinch zooms it; panning stays a mouse gesture.
+- Quality by capability: `deviceQualityProfile` in `apps/web/src/render/render-quality.ts` gives a
+  coarse-pointer touch device the `MOBILE` preset (DPR cap 1.4, half-size shadow map, no
+  micro-scenery); `?quality=low` still wins.
+- Tests: `tests/web/joystick.test.ts` (geometry, dead zone, analog, clamp, ownership, every kind of
+  release, the DOM binder's cleanup and single binding), `tests/web/mobile-capability.test.ts`
+  (desktop / phone / hybrid / tablet / narrow desktop), the composition and same-path cases in
+  `tests/web/character-movement.test.ts`, and the quality-profile cases in
+  `tests/web/render-quality.test.ts`. Real-device QA is still outstanding: see
+  `docs/qa/MOBILE_PLAYTEST.md`.
+
 Read `docs/design/PLAYER_CHARACTER.md` **and** `docs/design/DUAL_CAMERA_CHARACTER_MODE.md` before
 touching the avatar, its animation, or the camera that follows it.
 

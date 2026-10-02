@@ -27,6 +27,20 @@
       <!-- The one-time character-view hint: four lines, fades itself out. -->
       <p id="camera-hint" class="camera-hint" hidden></p>
 
+      <!--
+        Touch controls: character view only, and only for a finger (see `mobile/capability.ts`).
+        The joystick is a pointer-only convenience that produces the same movement intent the
+        keyboard does - it never replaces the keyboard, which remains the accessible path. The Run
+        button is a real button with `aria-pressed`, because it is a press-and-hold state rather
+        than a stick position.
+      -->
+      <div id="touch-controls" class="touch-controls" hidden>
+        <div id="joystick" class="joystick" aria-hidden="true">
+          <div id="joystick-thumb" class="joystick-thumb"></div>
+        </div>
+        <button id="run-button" class="run-button" type="button" aria-pressed="false">Run</button>
+      </div>
+
       <nav id="module-rail" class="module-rail" aria-label="Farm modules">
         <button id="inventory-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="inventory-panel" title="Inventory"><span data-icon="inventory" data-icon-size="22"></span></button>
         <button id="market-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="market-panel" title="Farm Market"><span data-icon="market" data-icon-size="22"></span></button>

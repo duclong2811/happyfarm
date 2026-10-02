@@ -13,7 +13,9 @@ import {
   NO_CHARACTER_INTENT,
   RUN_SPEED_MULTIPLIER,
   cameraRelativeMovement,
-  characterIntentFromInput
+  characterIntentFromInput,
+  composeCharacterInput,
+  intentIsNeutral
 } from "../../apps/web/src/player/character-input";
 import type { InputVector } from "../../apps/web/src/player/input";
 import { createPlayerCollisionWorld, slopeBlocks, type TerrainFollow } from "../../apps/web/src/player/collision";
@@ -46,6 +48,56 @@ function wallWorld(radius = 0.6): CollisionWorld {
 }
 
 describe("the movement intent", () => {
+  it("lets exactly one adapter steer, so two inputs at once cannot double the speed", () => {
+    // The composition rule (V13.5): a deflected touch stick wins, otherwise the keyboard does. Not a
+    // sum - a sum would veer when a hybrid player pushes both, and would make the pace depend on how
+    // many devices are plugged in.
+    const keyboardOnly = composeCharacterInput({ forward: 1, right: 0 }, NO_CHARACTER_INTENT);
+    expect(keyboardOnly.source).toBe("KEYBOARD");
+    expect(keyboardOnly.intent).toEqual({ forward: 1, right: 0 });
+
+    const touchOnly = composeCharacterInput(NO_CHARACTER_INTENT, { forward: 0, right: -1 });
+    expect(touchOnly.source).toBe("TOUCH");
+    expect(touchOnly.intent).toEqual({ forward: 0, right: -1 });
+
+    const both = composeCharacterInput({ forward: 1, right: 0 }, { forward: 0, right: 1 });
+    expect(both.source).toBe("TOUCH");
+    // One unit in total, not two: the keyboard's contribution is not added in.
+    expect(Math.hypot(both.intent.forward, both.intent.right)).toBeCloseTo(1, 9);
+
+    const neither = composeCharacterInput(NO_CHARACTER_INTENT, NO_CHARACTER_INTENT);
+    expect(neither.source).toBe("NONE");
+    expect(neither.intent).toEqual({ forward: 0, right: 0 });
+    expect(intentIsNeutral(neither.intent)).toBe(true);
+    // Sloppy numbers from a future adapter are treated as "not asking to move"...
+    expect(intentIsNeutral({ forward: Number.NaN, right: 0 })).toBe(true);
+    // ...and a stick pushed past its rim is clamped rather than being trusted.
+    const overpushed = composeCharacterInput(NO_CHARACTER_INTENT, { forward: 4, right: -3 }).intent;
+    expect(Math.hypot(overpushed.forward, overpushed.right)).toBeCloseTo(1, 9);
+  });
+
+  it("gives the controller the same input whichever adapter asked for it", () => {
+    // The invariant the brief insists on: there is no second movement implementation. A keyboard push
+    // and a joystick push that mean the same thing produce the same intent, the same world vector and
+    // therefore the same step - one code path, two input sources.
+    const wantForwardRight = { forward: 0.707, right: 0.707 };
+    const fromKeyboard = composeCharacterInput(characterIntentFromInput({ x: 0.707, z: 0.707 }), NO_CHARACTER_INTENT);
+    const fromJoystick = composeCharacterInput(NO_CHARACTER_INTENT, wantForwardRight);
+    expect(fromKeyboard.intent.forward).toBeCloseTo(fromJoystick.intent.forward, 6);
+    expect(fromKeyboard.intent.right).toBeCloseTo(fromJoystick.intent.right, 6);
+    for (const yaw of [0, Math.PI / 3, -2.1]) {
+      const viaKeyboard = cameraRelativeMovement(fromKeyboard.intent, yaw);
+      const viaJoystick = cameraRelativeMovement(fromJoystick.intent, yaw);
+      expect(viaKeyboard.x).toBeCloseTo(viaJoystick.x, 9);
+      expect(viaKeyboard.z).toBeCloseTo(viaJoystick.z, 9);
+      // And the same vector through the same controller lands in the same place.
+      const steppedFromKeyboard = stepPlayer(state(0, 0), viaKeyboard, 0.05, FLAT);
+      const steppedFromJoystick = stepPlayer(state(0, 0), viaJoystick, 0.05, FLAT);
+      expect(steppedFromKeyboard.x).toBeCloseTo(steppedFromJoystick.x, 9);
+      expect(steppedFromKeyboard.z).toBeCloseTo(steppedFromJoystick.z, 9);
+    }
+  });
+
   it("reads the movement keys as forward and right", () => {
     expect(characterIntentFromInput({ x: 0, z: 1 })).toEqual({ forward: 1, right: 0 });
     expect(characterIntentFromInput({ x: 0, z: -1 })).toEqual({ forward: -1, right: 0 });

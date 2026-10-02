@@ -42,9 +42,22 @@ import {
 } from "./panels";
 import type { PlayerState } from "./player/controller";
 import { PLAYER_MAX_SLOPE, PLAYER_MAX_STEP_WORLD } from "./player/controller";
-import { cameraRelativeMovement, characterIntentFromInput } from "./player/character-input";
+import {
+  NO_CHARACTER_INTENT,
+  cameraRelativeMovement,
+  characterIntentFromInput,
+  composeCharacterInput,
+  type CharacterMoveIntent
+} from "./player/character-input";
 import { createMovementInput, NEUTRAL_INPUT, type MovementInput } from "./player/input";
 import { createPlayerRuntime } from "./player/runtime";
+import {
+  deviceCapability,
+  showTouchControls,
+  type DeviceCapability
+} from "./mobile/capability";
+import { createHoldControl, createJoystickControl, type HoldControl, type JoystickControl } from "./mobile/joystick";
+import { deviceQualityProfile } from "./render/render-quality";
 import { DEFAULT_CAMERA_MODE, otherCameraMode, type CameraMode } from "./render/camera-mode";
 import { GROUND_SURFACE_Y, terrainHeightAt } from "./render/terrain-height";
 import { describeSelection, formatRemainingGrowth, type SelectionView } from "./selection";
@@ -340,6 +353,10 @@ function renderCameraMode(): void {
   character.setAttribute("aria-pressed", String(!inEstate));
   estate.title = t("camera.mode.estateHint");
   character.title = t("camera.mode.characterHint");
+  // The Run button's own words, so the touch control is translated like every other one.
+  const run = element<HTMLButtonElement>("run-button");
+  run.textContent = t("mobile.run");
+  run.setAttribute("aria-label", t("mobile.run.aria"));
 }
 
 /** Whether the one-time "how to walk about" hint has been shown this session. */
@@ -1675,7 +1692,18 @@ function renderPlacementHud(): void {
   confirm.addEventListener("click", () => {
     void confirmPlacement();
   });
-  node.appendChild(confirm);
+  // Confirm and Cancel together, in the panel itself. The keyboard shortcuts still work, but a phone
+  // has no Escape key: every "put it down / carry it / place it" state has to be leavable by touch.
+  const actions = make("div", "placement-actions");
+  const cancel = make("button", "placement-cancel");
+  cancel.type = "button";
+  cancel.textContent = t("build.hud.cancel");
+  cancel.addEventListener("click", () => {
+    cancelBuildSelection();
+  });
+  actions.appendChild(confirm);
+  actions.appendChild(cancel);
+  node.appendChild(actions);
 }
 
 /**
@@ -2309,6 +2337,16 @@ function renderObjectPanel(): void {
     keys.appendChild(key("Enter", t("object.move.confirm")));
     keys.appendChild(key("Esc", t("build.hud.cancel")));
     node.appendChild(keys);
+    // The same escape hatch the placement HUD has, for the same reason: a move or a restore has to be
+    // abandonable with one thumb. It cancels through the existing path, which changes nothing at all -
+    // the object is still exactly where it was.
+    const cancel = make("button", "object-cancel");
+    cancel.type = "button";
+    cancel.textContent = t("object.move.cancel");
+    cancel.addEventListener("click", () => {
+      cancelMove();
+    });
+    node.appendChild(cancel);
   }
 
   if (deleteArmed) {
@@ -2611,11 +2649,17 @@ const playerRuntime = createPlayerRuntime({
   readInput: () => {
     const held = movement?.vector() ?? NEUTRAL_INPUT;
     if (state.cameraMode !== "CHARACTER") return held;
-    return cameraRelativeMovement(characterIntentFromInput(held), scene?.cameraBearing() ?? 0);
+    // Two adapters, one rule (see `composeCharacterInput`): a deflected joystick wins, otherwise the
+    // keyboard does, and exactly one of them is ever used - so holding both cannot double the speed.
+    // Only a finger gets to steer the stick: on a device without one the intent is always neutral.
+    const touch: CharacterMoveIntent = capability.coarse && joystick !== null ? joystick.intent() : NO_CHARACTER_INTENT;
+    const composed = composeCharacterInput(characterIntentFromInput(held), touch);
+    return cameraRelativeMovement(composed.intent, scene?.cameraBearing() ?? 0);
   },
   // Running is the character view's: in the estate view the character is a marker being moved between
   // places, and a sprint there would be a silent behaviour change to shipped movement.
-  readRun: () => state.cameraMode === "CHARACTER" && (movement?.isRunning() ?? false),
+  readRun: () =>
+    state.cameraMode === "CHARACTER" && ((movement?.isRunning() ?? false) || runHeld),
   onPose: (pose) => {
     scene?.setPlayer(pose === null ? null : toScenePlayer(pose));
   },
@@ -2663,6 +2707,9 @@ function setCameraMode(mode: CameraMode): void {
     showCharacterHint();
   }
   scene?.setCameraMode(mode);
+  // The touch controls exist only in character view: leaving it clears the stick and the Run button
+  // before they can be forgotten about, which is the "no stuck movement across a mode switch" rule.
+  syncTouchControls();
   render();
 }
 
@@ -2743,6 +2790,67 @@ function renderQualityRequested(): RenderQualityName {
   } catch {
     return "NORMAL";
   }
+}
+
+/**
+ * What kind of device this page is on, from the browser's own capability signals.
+ *
+ * Capability rather than user-agent sniffing, and deliberately *two* answers: whether the primary
+ * pointer is a finger (which decides whether the touch controls are offered at all) and whether the
+ * viewport is small (which the stylesheet decides with the same breakpoints). A touchscreen laptop
+ * keeps its mouse and keyboard controls, and a narrow desktop window gets the compact layout without
+ * being handed a joystick it has no use for.
+ */
+function readDeviceCapability(): DeviceCapability {
+  const matches = (query: string): boolean => {
+    try {
+      return typeof window.matchMedia === "function" && window.matchMedia(query).matches;
+    } catch {
+      return false;
+    }
+  };
+  return deviceCapability({
+    coarsePointer: matches("(pointer: coarse)"),
+    hoverNone: matches("(hover: none)"),
+    maxTouchPoints: typeof navigator === "undefined" ? 0 : navigator.maxTouchPoints,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight
+  });
+}
+
+/** Re-read on every resize and orientation change: a device can gain or lose a keyboard. */
+let capability: DeviceCapability = readDeviceCapability();
+
+/**
+ * The touch controls, created once and shown or hidden as the mode and the device require.
+ *
+ * They exist for the life of the page rather than being built and torn down per mode: the brief's
+ * long-session check is about not accumulating listeners, and the cheapest way to pass it is to add
+ * each listener exactly once.
+ */
+let joystick: JoystickControl | null = null;
+let runControl: HoldControl | null = null;
+/** Whether the Run button is currently held. Touch state, never gameplay state. */
+let runHeld = false;
+
+/**
+ * Shows the touch controls only where they belong, and clears them when they go away.
+ *
+ * Two independent conditions, which is the point: the *input* has to be a finger (a touchscreen
+ * laptop keeps its keyboard and mouse), and the game has to be in character view (estate view is for
+ * selecting and building, where a movement stick would be in the way). Leaving character view clears
+ * both controls, so a finger lifted during the switch cannot leave the character walking.
+ */
+function syncTouchControls(): void {
+  const visible = showTouchControls(capability, state.cameraMode);
+  const controls = element<HTMLElement>("touch-controls");
+  if (controls.hidden === visible) controls.hidden = !visible;
+  document.body.classList.toggle("is-character-mode", state.cameraMode === "CHARACTER");
+  if (visible) return;
+  joystick?.clear();
+  runControl?.clear();
+  runHeld = false;
+  element<HTMLButtonElement>("run-button").setAttribute("aria-pressed", "false");
 }
 
 /** Applies a selection from either the 2D field or the 3D view; both read and write this one state. */
@@ -2881,7 +2989,10 @@ function enable3D(): void {
   if (scene === null) {
     try {
       scene = createFarmScene(element<HTMLCanvasElement>("scene"), {
-        quality: renderQualityRequested(),
+        // The mobile profile is chosen by *capability*, never by a game rule: a coarse-pointer touch
+        // device gets a conservative pixel ratio, a smaller shadow map and no micro-scenery. An
+        // explicit `?quality=low` still wins, because that is a developer asking by name.
+        quality: deviceQualityProfile(renderQualityRequested(), capability),
         onCellSelected: (cell) => {
           selectCell(cell.x, cell.y);
         },
@@ -3292,6 +3403,30 @@ function wire(): void {
   element<HTMLButtonElement>("camera-character").addEventListener("click", () => {
     setCameraMode("CHARACTER");
   });
+  // The touch controls: a fixed joystick that produces the same movement intent the keyboard does,
+  // and a press-and-hold Run button. Both are bound once and shown only where the brief wants them.
+  joystick = createJoystickControl({
+    surface: element<HTMLElement>("joystick"),
+    thumb: element<HTMLElement>("joystick-thumb"),
+    target: window,
+    // Any change of the stick's state asks for a frame: the render loop sleeps while nothing moves,
+    // and a finger is a reason to wake it. `wake` is a no-op while a frame is already pending.
+    onIntent: () => {
+      playerRuntime.wake();
+    }
+  });
+  joystick.attach();
+  runControl = createHoldControl({
+    element: element<HTMLButtonElement>("run-button"),
+    target: window,
+    onChange: (held) => {
+      runHeld = held;
+      element<HTMLButtonElement>("run-button").setAttribute("aria-pressed", String(held));
+      playerRuntime.wake();
+    }
+  });
+  runControl.attach();
+  syncTouchControls();
   element<HTMLButtonElement>("refresh").addEventListener("click", () => {
     void run(async () => {
       await refreshFarm();
@@ -3395,6 +3530,12 @@ function wire(): void {
     if (panels.active !== null) setActivePanel(closePanel(panels));
   });
   window.addEventListener("resize", () => {
+    // A rotation can change the input *and* the layout: a phone in landscape is coarse and short, the
+    // same phone in portrait is coarse and tall, and a tablet with a keyboard attached may stop being
+    // coarse at all. Capability is re-read and the controls follow; the world, the models and the
+    // player's position are untouched.
+    capability = readDeviceCapability();
+    syncTouchControls();
     const width = window.innerWidth;
     if (crossesPanelBreakpoint(lastViewportWidth, width)) {
       // The panel's presentation changed underneath it, so it closes rather than half-adapting.

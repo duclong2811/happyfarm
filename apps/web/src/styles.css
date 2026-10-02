@@ -46,10 +46,20 @@
   --text-number: 0.86rem;
   --shadow-panel: 0 10px 26px rgba(12, 26, 18, 0.28);
   --shadow-hud: 0 4px 14px rgba(12, 26, 18, 0.28);
+  /* Touch sizing (V13.5): one target size, one stick size, one bottom-action height. */
+  --touch-target: 44px;
+  --joystick-size: 128px;
+  --joystick-thumb-size: 52px;
+  --bottom-action-height: 3.2rem;
 }
 
 * { box-sizing: border-box; }
 html, body, .game-shell, .world { width: 100%; height: 100%; }
+/* Dynamic viewport units where they exist: a phone's address bar changes the viewport height, and
+   the canvas has to follow it rather than be sized from the tallest possible viewport. */
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
+}
 body { margin: 0; overflow: hidden; background: var(--forest-900); color: var(--cream); }
 button, select, input { font: inherit; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -303,6 +313,12 @@ button .label { margin-left: .3rem; }
 }
 .placement-confirm:disabled { color: var(--cream-dim); background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .16); }
 .placement-confirm:hover:not(:disabled) { background: var(--forest-700); }
+
+/* Confirm and Cancel sit together, so "put it down" is never the only touch-sized way out. */
+.placement-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.placement-cancel, .object-cancel { background: transparent; border-color: rgba(255, 255, 255, .24); color: var(--cream-dim); font-weight: 700; }
+.placement-cancel:hover, .object-cancel:hover { color: var(--cream); background: rgba(255, 255, 255, .12); }
+.object-cancel { margin-top: var(--space-2); width: 100%; }
 .shop-inspector-state.is-locked { color: #9c4a35; }
 .shop-inspector-state.is-preview { color: #6b5220; }
 .shop-place {
@@ -442,4 +458,51 @@ button.go { background: transparent; border-color: rgba(255, 255, 255, .22); fon
   .module-panel { max-height: 60vh; }
   .action-dock { bottom: calc(var(--rail-size) + var(--space-3)); }
   .status-wrap { bottom: calc(var(--rail-size) + 5.5rem); }
+}
+
+/* ------------------------------------------------------------------ mobile playtest (V13.5)
+
+   Touch controls and the compact presentation, in one section rather than scattered through the
+   sheet above. Two rules keep this honest:
+
+   * **Presentation only.** Nothing here decides what a control means: the joystick produces the same
+     movement intent the keyboard does, the object bar calls the same actions, and the shop is the
+     same shop. There is no mobile gameplay.
+   * **The media queries match `apps/web/src/mobile/capability.ts`.** 900 CSS px is the width at which
+     the sidebar layout stops fitting and 500 the short side below which a viewport is a phone held
+     sideways, so the CSS and the JavaScript agree about what "compact" means.
+
+   Touch behaviour is scoped: the canvas and the on-screen controls own their gestures (`touch-action:
+   none`), while the scrolling parts of the shop own theirs (`touch-action: pan-y`). Inputs, selects
+   and dialogs keep the browser's own behaviour. */
+
+.touch-controls { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.touch-controls[hidden] { display: none; }
+
+.joystick { position: absolute; left: max(var(--space-3), env(safe-area-inset-left)); bottom: max(var(--space-3), env(safe-area-inset-bottom)); width: var(--joystick-size); height: var(--joystick-size); border-radius: 50%; background: rgba(12, 32, 24, .34); border: 2px solid rgba(244, 242, 232, .22); box-shadow: var(--shadow-hud); pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.joystick-thumb { position: absolute; left: 50%; top: 50%; width: var(--joystick-thumb-size); height: var(--joystick-thumb-size); margin: calc(var(--joystick-thumb-size) / -2) 0 0 calc(var(--joystick-thumb-size) / -2); border-radius: 50%; background: rgba(244, 242, 232, .82); box-shadow: 0 2px 8px rgba(6, 18, 13, .45); will-change: transform; }
+
+.run-button { position: absolute; right: max(var(--space-4), env(safe-area-inset-right)); bottom: max(var(--space-4), env(safe-area-inset-bottom)); min-width: calc(var(--touch-target) + .5rem); min-height: var(--touch-target); padding: 0 var(--space-3); border-radius: 999px; font-weight: 800; color: var(--cream); background: var(--hud-surface); border: 2px solid rgba(244, 242, 232, .28); box-shadow: var(--shadow-hud); pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.run-button[aria-pressed="true"] { color: #f4fff1; background: var(--leaf-strong); border-color: rgba(244, 242, 232, .62); }
+
+@media (max-width: 900px), (max-height: 500px) {
+  /* The Build Shop (and every other module) becomes a bottom sheet: same element, same rendering
+     code, same catalog, only a different place on the screen. */
+  .module-panel { max-height: min(64vh, 26rem); max-height: min(64dvh, 26rem); border-radius: var(--radius-panel) var(--radius-panel) 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  /* The catalog scrolls itself, and its touches belong to it - never to the camera underneath. */
+  .module-body, .shop-grid, .shop-rows { touch-action: pan-y; overscroll-behavior: contain; }
+  .shop-grid { grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); }
+  /* Every action a finger has to hit is at least a finger wide. */
+  .action-dock button, .object-panel button, .placement-hud button, .module-panel button { min-height: var(--touch-target); }
+  /* In character view the bottom of the screen belongs to the movement controls, so the estate-only
+     surfaces step aside. Leaving character view brings them straight back. */
+  body.is-character-mode .module-rail,
+  body.is-character-mode .action-dock { display: none; }
+  body.is-character-mode .status-wrap { bottom: calc(var(--joystick-size) + var(--space-2)); }
+}
+
+@media (max-width: 600px) {
+  /* A narrow phone keeps the band short: the mark stays, the wordmark and the language toggle go. */
+  .brand h1, #language { display: none; }
+  .camera-mode-button { padding: .34rem .55rem; }
 }

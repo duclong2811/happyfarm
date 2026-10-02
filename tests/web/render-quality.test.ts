@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RENDER_QUALITY_PRESETS,
+  deviceQualityProfile,
   detailSceneryScale,
   renderQualityPreset,
   resolveRenderQuality
@@ -59,5 +60,33 @@ describe("render quality", () => {
       "shadows"
     ]);
     expect(renderQualityPreset("LOW").name).toBe("LOW");
+  });
+
+  it("gives a coarse-pointer touch device the conservative mobile profile", () => {
+    // V13.5: the profile is chosen by *capability*, and it is still only presentation - the same
+    // fields, the same meaning, a cheaper frame.
+    expect(deviceQualityProfile("NORMAL", { coarse: true, touch: true })).toBe("MOBILE");
+    expect(deviceQualityProfile("NORMAL", { coarse: false, touch: true })).toBe("NORMAL");
+    expect(deviceQualityProfile("NORMAL", { coarse: true, touch: false })).toBe("NORMAL");
+    expect(deviceQualityProfile("NORMAL", { coarse: false, touch: false })).toBe("NORMAL");
+    // A developer who asked for LOW by name still gets LOW, on any device.
+    expect(deviceQualityProfile("LOW", { coarse: true, touch: true })).toBe("LOW");
+  });
+
+  it("makes the mobile profile cheaper than normal on every axis, and never more expensive", () => {
+    const mobile = RENDER_QUALITY_PRESETS.MOBILE;
+    const normal = RENDER_QUALITY_PRESETS.NORMAL;
+    // A 3x phone display must not be drawn at 3x: the cap is the single largest saving.
+    expect(mobile.pixelRatioCap).toBeLessThan(normal.pixelRatioCap);
+    expect(mobile.pixelRatioCap).toBeGreaterThanOrEqual(1.25);
+    expect(mobile.pixelRatioCap).toBeLessThanOrEqual(1.5);
+    // Shadows stay (the character and the buildings read better with them) but smaller.
+    expect(mobile.shadows).toBe(true);
+    expect(mobile.shadowMapSize).toBeLessThan(normal.shadowMapSize);
+    // The micro-scenery - the highest draw-call count for the least information - goes.
+    expect(mobile.detailScenery).toBe(false);
+    expect(detailSceneryScale("MOBILE")).toBe(0);
+    // And the low level is still the cheapest of all three.
+    expect(RENDER_QUALITY_PRESETS.LOW.pixelRatioCap).toBeLessThanOrEqual(mobile.pixelRatioCap);
   });
 });

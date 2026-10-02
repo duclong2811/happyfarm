@@ -99,6 +99,10 @@ const EN_MESSAGES = {
   "camera.mode.estateHint": "Look down at the whole island: select land, build, and edit objects.",
   "camera.mode.characterHint": "Walk the island at ground level, behind your character.",
   "camera.hint": "WASD — Move · Mouse drag — Look · Wheel — Zoom · F — Estate view",
+  // Touch controls (V13.5). The joystick is a pointer-only convenience and is hidden from assistive
+  // technology; the keyboard remains the accessible way to move, and the Run button is a button.
+  "mobile.run": "Run",
+  "mobile.run.aria": "Hold to run",
   "panel.inventory": "Inventory",
   "panel.land": "Land",
   "panel.market": "Farm Market",
@@ -520,6 +524,8 @@ const VI_MESSAGES: Record<MessageKey, string> = {
   "camera.mode.estateHint": "Nhìn bao quát cả hòn đảo: chọn đất, xây dựng và sửa đồ vật.",
   "camera.mode.characterHint": "Dạo quanh hòn đảo ở tầm mặt đất, sau lưng nhân vật.",
   "camera.hint": "WASD — Di chuyển · Kéo chuột — Nhìn · Lăn chuột — Thu phóng · F — Về toàn cảnh",
+  "mobile.run": "Chạy",
+  "mobile.run.aria": "Giữ để chạy",
   "panel.inventory": "Túi đồ",
   "panel.land": "Đất",
   "panel.market": "Chợ nông sản",

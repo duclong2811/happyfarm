@@ -15,8 +15,14 @@
  *   the page with `?quality=low`. A player never sees it, and nothing has to be kept in sync.
  */
 
-/** The quality levels. `NORMAL` is what a player gets. */
-export type RenderQualityName = "NORMAL" | "LOW";
+/**
+ * The quality levels.
+ *
+ * `NORMAL` is what a player on a desktop gets. `MOBILE` is the conservative profile a phone or tablet
+ * gets automatically (V13.5) - chosen by capability, never by a game rule. `LOW` remains the
+ * developer's own switch, asked for by name.
+ */
+export type RenderQualityName = "NORMAL" | "MOBILE" | "LOW";
 
 /**
  * The numbers one quality level sets.
@@ -55,6 +61,23 @@ export const RENDER_QUALITY_PRESETS: Readonly<Record<RenderQualityName, RenderQu
     shadows: false,
     shadowMapSize: 1_024,
     detailScenery: false
+  },
+  /**
+   * The conservative profile for phones and tablets.
+   *
+   * Chosen to keep the game *looking* like the game on a device whose GPU is shared with the rest of
+   * the phone: the pixel ratio is capped below what a 3x display claims, the shadow map is half the
+   * desktop size, and the micro-scenery - the highest draw-call count for the least information - is
+   * dropped. Shadows stay on, because the character and the buildings read better with them, and
+   * nothing gameplay-side changes.
+   */
+  MOBILE: {
+    name: "MOBILE",
+    pixelRatioCap: 1.4,
+    antialias: true,
+    shadows: true,
+    shadowMapSize: 1_024,
+    detailScenery: false
   }
 };
 
@@ -75,11 +98,26 @@ export function renderQualityPreset(name: RenderQualityName): RenderQualityPrese
 }
 
 /**
+ * The quality a device should actually run at.
+ *
+ * An explicit developer request wins: `?quality=low` means low wherever it is typed, because that is
+ * the switch's whole job. Otherwise a coarse-pointer touch device gets the mobile profile, and
+ * everything else keeps what it was created with.
+ */
+export function deviceQualityProfile(
+  requested: RenderQualityName,
+  capability: { readonly coarse: boolean; readonly touch: boolean }
+): RenderQualityName {
+  if (requested === "LOW") return "LOW";
+  return capability.coarse && capability.touch ? "MOBILE" : requested;
+}
+
+/**
  * How much of the small-scenery budget survives a quality level.
  *
  * A multiplier rather than a hard zero, so a middle quality level is a later one-line change. LOW is
  * zero because a flower is a fraction of a pixel at any camera distance a development session uses.
  */
 export function detailSceneryScale(name: RenderQualityName): number {
-  return name === "LOW" ? 0 : 1;
+  return name === "NORMAL" ? 1 : 0;
 }
