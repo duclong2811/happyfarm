@@ -5,6 +5,104 @@ says so plainly rather than implying a result. Everything below the line has bee
 mobile *emulation* (viewport + coarse-pointer emulation) or not at all; see
 `docs/design/MOBILE_INPUT.md` and `docs/design/MOBILE_UI.md` for what the code is meant to do.
 
+## The staging URL (V13.6)
+
+```text
+https://happy-farm-staging.duclong-reg.workers.dev
+```
+
+The build is deployed, the database is migrated, and `/`, the JS, the CSS, the SPA fallback, the
+character model and `/api/health` were all verified over HTTPS from the deployed origin. **One step
+remains before a phone can play**: the Cloudflare Access application for that hostname, which is what
+gives the API an identity. Until it exists every API call answers 401 and the world never loads - see
+`docs/deployment/STAGING.md`, "The one remaining step".
+
+Once Access is on, this is the test to run. Fill it in on the device.
+
+---
+
+## TESTER WORKSHEET - fill this in on the phone
+
+**Device**: `____________`  **OS / version**: `____________`  **Browser**: `____________`
+**Orientation while testing**: portrait / landscape  **Date**: `____________`
+
+### A. Load
+
+- [ ] staging URL opens
+- [ ] no blank screen
+- [ ] world appears
+- [ ] character appears
+- [ ] no endless "Preparing 3D world"
+
+### B. Character view
+
+- [ ] joystick visible (bottom left)
+- [ ] joystick forward
+- [ ] joystick backward
+- [ ] joystick left / right
+- [ ] diagonal
+- [ ] release stops immediately
+- [ ] Run works
+- [ ] joystick + Run together
+- [ ] drag camera with right thumb
+- [ ] joystick + camera simultaneously
+- [ ] pinch zoom
+- [ ] rotate camera 180°, then move forward
+- [ ] character remains camera-relative
+
+### C. Estate view
+
+- [ ] switch to Estate
+- [ ] tap tree
+- [ ] tap rock
+- [ ] tap building
+- [ ] tap ground
+- [ ] orbit camera
+- [ ] pinch zoom
+
+### D. Build Shop
+
+- [ ] open Build Shop
+- [ ] scroll
+- [ ] cards readable
+- [ ] select item
+- [ ] Place
+- [ ] placement preview / state visible
+- [ ] Confirm
+- [ ] Cancel
+
+### E. Object editing
+
+- [ ] Move
+- [ ] Rotate
+- [ ] Store
+- [ ] Delete UI reachable
+
+### F. Orientation
+
+- [ ] portrait
+- [ ] landscape
+- [ ] portrait again
+- [ ] no reload
+- [ ] no duplicate joystick
+- [ ] no stuck movement
+
+### G. Performance (subjective)
+
+- [ ] smooth / [ ] acceptable / [ ] poor
+
+- Phone model: `____________`
+- Browser: `____________`
+- Orientation during the check: `____________`
+- Heat after ~5 minutes: `____________`
+- Obvious battery drain: `____________`
+- Visual stutter: `____________`
+- Camera stutter: `____________`
+
+### Anything else worth recording
+
+`____________________________________________________________________________`
+
 ## Before starting
 
 - [ ] Build and serve the current commit (`npm run build`, or `npm run dev` for a hot session).

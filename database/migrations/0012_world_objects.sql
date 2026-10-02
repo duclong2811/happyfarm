@@ -14,6 +14,12 @@
 --   * a starter object has a `placement_key`, unique per farm, which is what makes seeding idempotent;
 --   * `paid_amount` is the cost basis. A starter object paid for by nobody can refund nothing, which
 --     is the exploit this column exists to make impossible.
+--
+-- NOTE (V13.6): comments in this file are line comments (`--`) and never block comments (`/* */`).
+-- Wrangler's statement splitter does not understand a block comment, so a `;` inside one splits the
+-- statement it is part of and the remote database is sent an incomplete query - which is exactly how
+-- the first deployment of this migration failed. The SQL is otherwise identical, and the file is
+-- applied to remote databases statement by statement, so nothing about this note changes the schema.
 PRAGMA foreign_keys = ON;
 
 -- Which version of the starter arrangement a farm has been given. Additive: a later version seeds
@@ -36,14 +42,14 @@ CREATE TABLE farm_constructions_rebuilt (
   min_y INTEGER NOT NULL CHECK (min_y BETWEEN -1000000 AND 1000000),
   max_y INTEGER NOT NULL CHECK (max_y BETWEEN -1000000 AND 1000000),
   cell_count INTEGER NOT NULL CHECK (cell_count BETWEEN 1 AND 4096),
-  /* ACTIVE objects stand on the island; STORED ones are held in the player's storage. */
+  -- ACTIVE objects stand on the island; STORED ones are held in the player's storage.
   state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'STORED')),
   owner_player_id TEXT NOT NULL,
-  /* Provenance: where the object came from. It never decides what may be done to it. */
+  -- Provenance: where the object came from. It never decides what may be done to it.
   source TEXT NOT NULL CHECK (source IN ('STARTER', 'PLAYER_PLACED')),
-  /* A starter placement's stable identity, unique per farm; null for anything a player built. */
+  -- A starter placement's stable identity, unique per farm; null for anything a player built.
   placement_key TEXT CHECK (placement_key IS NULL OR length(placement_key) BETWEEN 3 AND 80),
-  /* The cost basis: what this object actually cost its owner. Refunds are a share of this. */
+  -- The cost basis: what this object actually cost its owner. Refunds are a share of this.
   paid_amount INTEGER NOT NULL CHECK (paid_amount BETWEEN 0 AND 9007199254740991),
   cost_amount INTEGER NOT NULL CHECK (cost_amount BETWEEN 0 AND 9007199254740991),
   cost_currency_id TEXT NOT NULL CHECK (cost_currency_id GLOB 'currency_*'),

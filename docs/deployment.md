@@ -130,9 +130,12 @@ Do these in order. Nothing here has been done for you, and no value should be co
    npx wrangler d1 migrations apply happy-farm-staging --config workers/api/wrangler.staging.toml
    ```
 
-   Expected: `0001` … `0010`. On a fresh database all ten are pending; a database created before the
-   V13 pass has `0009_starter_package.sql` and `0010_farm_constructions.sql` pending at least. Never
-   rewrite an applied migration.
+   Expected, as of V13.6: `0001` ... `0013` are all applied. On a fresh database all thirteen are
+   pending; the staging database was at `0009` when V13.6 ran and needed `0010` ... `0013` (see
+   `docs/deployment/STAGING.md` for what was applied and when). Never rewrite an applied migration -
+   and use `--` comments rather than block comments in a migration: a `;` inside a block comment
+   breaks the Wrangler statement splitter (`incomplete input: SQLITE_ERROR [code: 7500]`), which is the bug
+   V13.6 hit and fixed in `0012_world_objects.sql`.
    `0009_starter_package.sql` rebuilds `economy_ledger` to admit the `STARTER_GRANT` reason and
    generalizes the starter receipt; it moves schema and carries old seed-only receipts forward, and
    it grants nothing by itself. `0010_farm_constructions.sql` adds `farm_constructions` with its
@@ -171,12 +174,15 @@ Do these in order. Nothing here has been done for you, and no value should be co
 ## Not verified
 
 ```text
-REAL_CLOUDFLARE_ACCESS: NOT VERIFIED   (team domain and AUD are committed; the Access application is
-                                        not reachable from this environment)
-REMOTE D1 STAGING:      NOT VERIFIED   (a database id is committed; its existence, and which
-                                        migrations it has applied, are not)
-STAGING DEPLOY:         NOT VERIFIED   (no deploy has been run or observed from this environment)
-BROWSER ON STAGING:     NOT VERIFIED
+REAL_CLOUDFLARE_ACCESS: PARTIAL        (the team domain answers; an Access application covering the
+                                        staging hostname does not exist yet, so the API answers 401 -
+                                        this is the one step left before a phone can play)
+REMOTE D1 STAGING:      VERIFIED       (happy-farm-staging exists with the committed id and now has
+                                        migrations 0001 - 0013 applied; 5 players and 4 farms kept)
+STAGING DEPLOY:         VERIFIED       (V13.6 deployed happy-farm-staging from wrangler.staging.toml;
+                                        see docs/deployment/STAGING.md for the version id and URL)
+BROWSER ON STAGING:     NOT VERIFIED   (asset, API and bundle smoke tests ran over HTTPS from this
+                                        environment; no browser session was available)
 ```
 
 The automated tests use a deterministic JWKS fixture and the real verification code path; they are

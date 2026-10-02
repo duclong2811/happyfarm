@@ -758,6 +758,20 @@ control the same world, not separate game states.**
 
 ## Staging deployment foundation
 
+### Staging playtest deployment (V13.6)
+
+The current build is deployed for real-device testing; read `docs/deployment/STAGING.md` for the URL,
+the architecture, the database state and how to deploy or roll back. Two facts to carry forward:
+
+- **Identity on staging is Cloudflare Access**, and the API authenticates only the header Access
+  injects - the browser sends no credential by design. The Zero Trust *team* exists, but an Access
+  **application for the staging hostname does not yet**, so `/api/*` answers 401 and a phone cannot
+  load a farm until that application is created. That step needs the Cloudflare dashboard.
+- **A `;` inside a `/* */` block comment breaks Wrangler's statement splitter** ("incomplete input:
+  SQLITE_ERROR [code: 7500]"), which is how the first remote migration of `0012_world_objects.sql`
+  failed while the repository's own tests passed. Use `--` comments in migrations. The remote staging
+  database is now at migrations `0001` - `0013` with its existing players and farms intact.
+
 Read `docs/deployment.md` before touching the deployed entrypoint, the Access authenticator, the staging config, or static asset routing.
 
 - Entrypoint: `workers/api/src/index.ts` (`/api/*` ? handler, everything else ? `ASSETS`).
