@@ -15,18 +15,44 @@
 
 import { HARBOUR, tileToWorld } from "./geography";
 import type { TileCoordinate } from "./tiles";
+import { STARTER_WORLD_PLACEMENTS_V2 } from "./starter-v2";
 
-/** The version of this arrangement. A later one adds to it; it never rewrites a farm's objects. */
-export const STARTER_WORLD_VERSION = 1;
+/**
+ * The version of this arrangement.
+ *
+ * It is *additive*, and V13.3.1 is the first test of that: version 1 was the mill and a ring of
+ * authored vegetation, version 2 is the procedural forest, the authored buildings and the set
+ * dressing. A farm already stamped 1 is given only the version-2 placements; a farm at 0 gets both.
+ * Nothing is ever replayed, so an object the player moved is never put back where it started.
+ */
+export const STARTER_WORLD_VERSION = 2;
 
 export interface StarterPlacement {
   /** Stable identity of the placement, unique within a farm and unchanged by editing. */
   readonly key: string;
   readonly definitionId: string;
+  /** The seed version this placement arrived in: what makes the arrangement additive. */
+  readonly version: number;
   readonly tile: TileCoordinate;
   /** Quarter turns, the one rotation vocabulary the whole game uses. */
   readonly rotation: 0 | 1 | 2 | 3;
+  /**
+   * The facing the island drew this object at, on top of its quarter turns, in radians.
+   *
+   * The authored arrangement is not on a 90-degree lattice - a shed at 0.4 radians, a quay facing the
+   * bay - and rounding it would visibly turn buildings after a migration that is supposed to be
+   * invisible. The player's own rotation stays whole quarter turns; this is where the island's
+   * original facing is written down.
+   */
+  readonly baseYaw?: number;
+  /** The model this particular object draws, when its family has more than one. */
+  readonly modelId?: string;
+  /** How large that model is drawn, in world metres. */
+  readonly sizeWorld?: number;
 }
+
+/** A placement as it is authored: everything but the version its table stamps on it. */
+export type StarterPlacementInput = Omit<StarterPlacement, "version">;
 
 /**
  * The mill the island starts with.
@@ -36,7 +62,7 @@ export interface StarterPlacement {
  * reason for the one building that makes flour to be permanent. Rotation is a quarter turn of the
  * model (0.35 radians rounds to 0), which is the vocabulary every other object is turned by.
  */
-const STARTER_WINDMILL: StarterPlacement = {
+const STARTER_WINDMILL: StarterPlacementInput = {
   key: "starter.windmill.01",
   definitionId: "world.windmill",
   tile: { x: -16, y: -13 },
@@ -52,7 +78,7 @@ const STARTER_WINDMILL: StarterPlacement = {
  * the fence, south of the gate, and on the north shoulder - which is also where the scenery pass is
  * told to keep clear of them, so nothing is drawn twice.
  */
-const STARTER_PLANTING: readonly StarterPlacement[] = [
+const STARTER_PLANTING: readonly StarterPlacementInput[] = [
   // The western verge: a mixed line of broadleaf and pine down the field's west side. Everything west
   // of x = 0 is outside the plot reservation, so these stand on open ground the player already has
   // around their field rather than in the middle of land the catalogue has not sold yet.
@@ -99,8 +125,21 @@ const STARTER_PLANTING: readonly StarterPlacement[] = [
   { key: "starter.rock.far.01", definitionId: "world.rock", tile: { x: -19, y: 12 }, rotation: 3 }
 ];
 
-/** Every placement the starter arrangement holds, in a stable order. */
-export const STARTER_WORLD_PLACEMENTS: readonly StarterPlacement[] = [STARTER_WINDMILL, ...STARTER_PLANTING];
+/** Version 1: the arrangement V13.3 shipped. */
+const STARTER_WORLD_PLACEMENTS_V1: readonly StarterPlacement[] = [STARTER_WINDMILL, ...STARTER_PLANTING].map(
+  (placement) => ({ ...placement, version: 1 })
+);
+
+/**
+ * Every placement the starter arrangement holds, in a stable order: version 1, then version 2.
+ *
+ * The order is what lets the seeder take a slice - everything with a version above the farm's own -
+ * rather than replaying the whole map. See `starter-v2.ts` for the promoted island.
+ */
+export const STARTER_WORLD_PLACEMENTS: readonly StarterPlacement[] = [
+  ...STARTER_WORLD_PLACEMENTS_V1,
+  ...STARTER_WORLD_PLACEMENTS_V2
+];
 
 /** The world position of a placement, through the one tile mapping. */
 export function starterWorldPosition(placement: StarterPlacement): { readonly worldX: number; readonly worldZ: number } {

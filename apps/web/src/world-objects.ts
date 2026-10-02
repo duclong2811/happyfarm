@@ -1,4 +1,5 @@
 import type { BuildCatalogEntryDTO, ConstructionDTO, WorldObjectDefinitionDTO } from "@happy-farm/contracts";
+import { STARTER_WORLD_PLACEMENTS } from "@happy-farm/game-data";
 import { BUILDING_MODELS } from "./render/building-model-urls";
 import { tileToWorld, type WorldFrame } from "./render/layout";
 import { PROP_MODELS } from "./render/prop-model-urls";
@@ -18,6 +19,38 @@ export type WorldObjectDefinitions = ReadonlyMap<string, WorldObjectDefinitionDT
 
 export function indexWorldObjects(definitions: readonly WorldObjectDefinitionDTO[]): WorldObjectDefinitions {
   return new Map(definitions.map((definition) => [definition.id, definition]));
+}
+
+/**
+ * How the island arranged one object when it was still the renderer's.
+ *
+ * A forest is a family of models and a scatter of sizes, and V13.3.1 moved that family into rows
+ * without flattening it: the starter layout records which model each promoted tree grew as and how
+ * tall it was, and a row is drawn from that - keyed by its stable `placementKey`, so moving a tree
+ * keeps the tree. A row a player bought has no placement key and is resolved from its catalogue
+ * entry as before.
+ */
+export interface StarterVisual {
+  readonly modelId: string | null;
+  readonly sizeWorld: number | null;
+  /** The facing the island arranged it at, in radians, added to the player's whole quarter turns. */
+  readonly baseYaw: number;
+}
+
+const STARTER_VISUALS: ReadonlyMap<string, StarterVisual> = new Map(
+  STARTER_WORLD_PLACEMENTS.map((placement) => [
+    placement.key,
+    {
+      modelId: placement.modelId ?? null,
+      sizeWorld: placement.sizeWorld ?? null,
+      baseYaw: placement.baseYaw ?? 0
+    }
+  ])
+);
+
+/** The island's arrangement of one object, or undefined for anything the player placed. */
+export function starterVisual(placementKey: string | null): StarterVisual | undefined {
+  return placementKey === null ? undefined : STARTER_VISUALS.get(placementKey);
 }
 
 export interface ObjectPresentation {
@@ -151,9 +184,20 @@ export function activeObjects(rows: readonly ConstructionDTO[]): readonly Constr
  * stops a collision circle staying behind when its barn walks away. Only ACTIVE rows count: a
  * stored object has left the world and released its ground.
  */
-export function objectObstacles(rows: readonly ConstructionDTO[], frame: WorldFrame): readonly WorldObstacle[] {
+export function objectObstacles(
+  rows: readonly ConstructionDTO[],
+  frame: WorldFrame,
+  /**
+   * The definitions, so a circle is the object's *own* size rather than a guess from its footprint.
+   *
+   * A tree blocks by its trunk and a flower patch by nothing; with the whole island promoted those
+   * distinctions matter, and they already live on the definition the client holds.
+   */
+  definitions: WorldObjectDefinitions = new Map()
+): readonly WorldObstacle[] {
   const { pitch } = frame;
-  return activeObjects(rows).map((row) => {
+  const obstacles: WorldObstacle[] = [];
+  for (const row of activeObjects(rows)) {
     const anchor = tileToWorld({ x: row.anchorX, y: row.anchorY }, frame);
     // An even span's centre sits half a cell off the anchor's own centre, so an object is drawn and
     // blocked around the footprint the player picked rather than around one of its corners.
@@ -161,15 +205,22 @@ export function objectObstacles(rows: readonly ConstructionDTO[], frame: WorldFr
       anchor.worldX + ((row.footprint.widthCells - 1) / 2 - Math.floor((row.footprint.widthCells - 1) / 2)) * pitch;
     const centreZ =
       anchor.worldZ + ((row.footprint.depthCells - 1) / 2 - Math.floor((row.footprint.depthCells - 1) / 2)) * pitch;
-    const halfCells = Math.min(row.footprint.widthCells, row.footprint.depthCells) / 2;
-    return {
+    const definition = definitions.get(row.entryId);
+    const radiusWorld =
+      definition === undefined
+        ? (Math.min(row.footprint.widthCells, row.footprint.depthCells) / 2) * pitch + 0.18
+        : definition.collisionRadiusWorld;
+    // A definition that blocks nothing - a flower patch - has no circle at all, rather than a
+    // hair-thin one a walker would still bump into.
+    if (radiusWorld <= 0) continue;
+    obstacles.push({
       id: row.constructionId,
       centerWorldX: centreX,
       centerWorldZ: centreZ,
-      // A small margin past the footprint, so a walker goes around the walls rather than through them.
-      radiusWorld: halfCells * pitch + 0.18
-    };
-  });
+      radiusWorld
+    });
+  }
+  return obstacles;
 }
 
 /**

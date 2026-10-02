@@ -959,12 +959,13 @@ function buildScenery(
       worldZ: landmark.worldZ,
       radiusWorld: landmark.keepClearRadiusWorld ?? landmark.blockingRadiusWorld
     })),
-    // The island's own starter objects are rows drawn by the construction layer now, but this scatter
-    // still grows from the island's seed: without this the generator would grow a second tree on the
-    // cell a starter tree already stands on, and a crown through the mill's sails. That is the
-    // double-drawing V13.3 exists to prevent, so the sweep measures against them exactly as it does
-    // against a landmark.
-    ...STARTER_WORLD_PLACEMENTS.flatMap((placement) => {
+    // The island's *authored* starter objects are rows drawn by the construction layer now, but this
+    // scatter still grows from the island's seed: without this the generator would grow a second tree
+    // on the cell an authored tree already stands on, and a crown through the mill's sails. Only the
+    // version-1 placements are here: they are the ones drawn *besides* the scatter. The version-2
+    // arrangement is a transcription of this very scatter, so clearing the scatter around it would
+    // delete every tree from its own clearing - the island it describes is this function's output.
+    ...STARTER_WORLD_PLACEMENTS.filter((placement) => placement.version === 1).flatMap((placement) => {
       const definition = worldObjectDefinition(placement.definitionId);
       if (definition === null) return [];
       const position = starterWorldPosition(placement);

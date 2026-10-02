@@ -96,6 +96,7 @@ import {
   objectPolicy,
   objectPresentation,
   removalRefundPreview,
+  starterVisual,
   storageStacks,
   type WorldObjectDefinitions
 } from "./world-objects";
@@ -1299,6 +1300,7 @@ function renderBuildStatus(): void {
 function toSceneConstruction(construction: ConstructionDTO): {
   readonly id: string;
   readonly modelId: string | null;
+  readonly landmarkKind: string | null;
   readonly sizeWorld: number;
   readonly worldX: number;
   readonly worldZ: number;
@@ -1307,14 +1309,24 @@ function toSceneConstruction(construction: ConstructionDTO): {
   readonly depthCells: number;
 } {
   const anchor = tileToWorld({ x: construction.anchorX, y: construction.anchorY }, worldFrame());
-  const presentation = objectPresentation(construction, state.worldObjects, state.buildCatalog);
+  // The island's own arrangement of this object, when it has one: which model a tree grew as, how
+  // tall it was, and which way it faced. A row the player placed has no arrangement and is resolved
+  // from its catalogue entry instead.
+  const visual = starterVisual(construction.placementKey);
+  const presentation =
+    visual !== undefined && visual.modelId !== null && visual.sizeWorld !== null
+      ? { modelId: visual.modelId, sizeWorld: visual.sizeWorld }
+      : objectPresentation(construction, state.worldObjects, state.buildCatalog);
+  const definition = state.worldObjects.get(construction.entryId);
   return {
     id: construction.constructionId,
     modelId: presentation.modelId !== null && !presentation.modelId.startsWith("road.") ? presentation.modelId : null,
+    landmarkKind: definition?.landmarkKind ?? null,
     sizeWorld: presentation.sizeWorld,
     worldX: anchor.worldX,
     worldZ: anchor.worldZ,
-    rotationY: (construction.rotation * Math.PI) / 2,
+    // The island's authored facing, plus however many quarter turns the player has applied since.
+    rotationY: (visual?.baseYaw ?? 0) + (construction.rotation * Math.PI) / 2,
     widthCells: construction.footprint.widthCells,
     depthCells: construction.footprint.depthCells
   };
@@ -2699,9 +2711,13 @@ function refreshScene(): void {
   // character starts blocking the next step without a second refresh path. Rebuilding the collision
   // world never moves the character: it only changes where the next step may go.
   playerRuntime.setTiles(input.tiles);
+  // The island's own objects are solid too: a tree the player can select is a tree the character
+  // walks around, and because the circles come from the rows, moving or storing one takes it away.
+  const objectCircles = objectObstacles(state.constructions, worldFrame(), state.worldObjects);
+  playerRuntime.setObstacles(objectCircles);
   // The selection asks the same world whether a cell can be walked to, so a destination can never be
   // offered for ground the character would refuse.
-  selectionCollision = createPlayerCollisionWorld(input.tiles, objectObstacles(state.constructions, worldFrame()));
+  selectionCollision = createPlayerCollisionWorld(input.tiles, objectCircles);
   try {
     scene.setState(input);
   } catch (error: unknown) {

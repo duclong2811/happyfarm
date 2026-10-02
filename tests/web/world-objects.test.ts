@@ -25,6 +25,7 @@ function definition(overrides: Partial<WorldObjectDefinitionDTO> = {}): WorldObj
     modelId: "tree_broad_2",
     landmarkKind: null,
     sizeWorld: 3.4,
+    collisionRadiusWorld: 0.5,
     footprint: { widthCells: 1, depthCells: 1 },
     allowedTerrain: ["LAND"],
     movable: true,

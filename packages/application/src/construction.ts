@@ -754,6 +754,8 @@ export class RemoveConstruction {
 export interface StarterPlacementInput {
   readonly key: string;
   readonly definitionId: string;
+  /** The seed version this placement arrived in. A farm already past it is never given it again. */
+  readonly version: number;
   readonly tile: { readonly x: number; readonly y: number };
   readonly rotation: QuarterTurns;
 }
@@ -804,6 +806,10 @@ export class SeedStarterWorld {
     const now = clock.now();
     const instances: ConstructionInstance[] = [];
     for (const placement of world.placements) {
+      // Additive: a farm already at version N is given only what N+1 and later added. Replaying a
+      // version the farm already has would collide with its own rows - and, worse, would try to put
+      // back an object the player had moved, stored or removed.
+      if (placement.version <= state.version) continue;
       const definition = definitions.findById(placement.definitionId);
       if (definition === null) {
         // A layout naming a definition this build does not ship is a deployment mistake, and it must

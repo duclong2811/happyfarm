@@ -913,15 +913,28 @@ export const LANDMARKS_WORLD: readonly PlacedLandmark[] = LANDMARKS.map((landmar
 }));
 
 /**
- * Static obstacles a character must walk around.
+ * The geography a character must walk around: what the island itself is.
  *
- * Deliberately a short list of circles: the barn, the pond, and one per landmark. Crops and trees
- * are *not* here - they are authoritative runtime state, and the collision world reads them from the
- * farm's own rows the same way the renderer does today.
+ * Short on purpose. Until V13.3.1 the barn and every landmark were listed here too, because they were
+ * renderer-owned; they are world objects now, with rows the player may move, so their circles come
+ * from those rows (`objectObstacles`) and listing them here again would leave an invisible wall
+ * standing where a barn used to be. Crops and trees are not here either - they are authoritative
+ * runtime state, read from the farm's own rows.
  */
 export const STATIC_OBSTACLES: readonly WorldObstacle[] = [
+  { id: "pond", centerWorldX: POND_WORLD.worldX, centerWorldZ: POND_WORLD.worldZ, radiusWorld: Math.max(POND_WORLD.radiusWorldX, POND_WORLD.radiusWorldZ) }
+];
+
+/**
+ * The circles the *camera* must not sit inside: the buildings and the barn.
+ *
+ * Separate from `STATIC_OBSTACLES` because the two answer different questions. Walking reads the
+ * rows, so a barn that moved takes its wall with it; the camera reads the place a building is
+ * authored, and keeping the islands' silhouettes in its blocker list is what stops a pull-back from
+ * ending up inside the farmhouse. The pond is in both, because it is geography either way.
+ */
+export const CAMERA_BLOCKER_OBSTACLES: readonly WorldObstacle[] = [
   { id: "barn", centerWorldX: FARMSTEAD_WORLD.worldX, centerWorldZ: FARMSTEAD_WORLD.worldZ, radiusWorld: 2.2 },
-  { id: "pond", centerWorldX: POND_WORLD.worldX, centerWorldZ: POND_WORLD.worldZ, radiusWorld: Math.max(POND_WORLD.radiusWorldX, POND_WORLD.radiusWorldZ) },
   ...LANDMARKS_WORLD.map((landmark) => ({
     id: landmark.id,
     centerWorldX: landmark.worldX,

@@ -495,8 +495,16 @@ export const ConstructionDTOSchema = z
      */
     entryId: z.string().regex(/^(place_[a-z0-9]+(?:_[a-z0-9]+)*|world\.[a-z0-9]+(?:_[a-z0-9]+)*)$/),
     category: z.string().min(1).max(40),
-    anchorX: z.number().int().min(-1_000_000).max(1_000_000),
-    anchorY: z.number().int().min(-1_000_000).max(1_000_000),
+    /**
+     * Where the object stands, in tile coordinates.
+     *
+     * Fractional, because the island's own objects stand at a world position rather than on the grid:
+     * a tree the generator grew, an authored building. A player's edit still lands on a cell, so a
+     * row the player moved is always whole - but the arrangement the island starts with is not, and
+     * rounding it would re-plant the whole island on a lattice.
+     */
+    anchorX: z.number().min(-1_000_000).max(1_000_000),
+    anchorY: z.number().min(-1_000_000).max(1_000_000),
     rotation: ConstructionRotationSchema,
     footprint: z
       .object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() })
@@ -572,6 +580,14 @@ export const WorldObjectDefinitionDTOSchema = z
     /** The landmark kind the renderer builds it from, when it has no model. */
     landmarkKind: z.string().min(1).max(40).nullable(),
     sizeWorld: z.number().positive().max(1_000),
+    /**
+     * The circle a walker goes around, in world metres.
+     *
+     * The definition's own number: a tree blocks by its trunk, a rock by its boulder, and a flower
+     * patch by nothing at all. The client's collision world reads it from here rather than guessing a
+     * circle from the footprint, so what stops the player is what the object *is*.
+     */
+    collisionRadiusWorld: z.number().min(0).max(1_000),
     footprint: z
       .object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() })
       .strict(),

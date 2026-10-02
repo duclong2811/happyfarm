@@ -14,6 +14,7 @@ import {
   ISLAND_HALF_WIDTH_WORLD,
   isStaticObstacleTile,
   isWaterTile,
+  LANDMARKS_WORLD,
   POND_WORLD,
   SPAWN_TILE,
   SPAWN_WORLD,
@@ -123,7 +124,17 @@ describe("player collision world", () => {
       expect(world.depth(obstacle.centerWorldX, obstacle.centerWorldZ), obstacle.id).toBeGreaterThan(0);
     }
     expect(world.depth(POND_WORLD.worldX, POND_WORLD.worldZ)).toBeGreaterThan(0);
-    expect(world.depth(FARMSTEAD_WORLD.worldX, FARMSTEAD_WORLD.worldZ)).toBeGreaterThan(0);
+  });
+
+  it("no longer blocks the barn from the world config: the building is a row now", () => {
+    // V13.3.1 moved the barn and the landmarks out of `STATIC_OBSTACLES`, because they are the
+    // player's objects with rows of their own. Keeping them here as well would leave an invisible
+    // wall standing where a barn used to be - the exact defect the collision test below forbids.
+    const world = createPlayerCollisionWorld([]);
+    expect(world.depth(FARMSTEAD_WORLD.worldX, FARMSTEAD_WORLD.worldZ)).toBeLessThanOrEqual(0);
+    for (const landmark of LANDMARKS_WORLD) {
+      expect(world.depth(landmark.worldX, landmark.worldZ), landmark.id).toBeLessThanOrEqual(0);
+    }
   });
 
   it("blocks a crop as a circle at the tile centre, not as the whole tile", () => {

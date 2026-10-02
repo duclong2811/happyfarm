@@ -614,6 +614,33 @@ definitions, storage, refunds, or what the renderer draws from rows. Its princip
 Not editable yet, with reasons in the design doc: roads, the field fence, water objects, ambient
 scenery, and the remaining authored landmarks and composition props.
 
+### Complete object coverage (V13.3.1)
+
+Human browser QA found that the architecture worked but the *coverage* did not: a pine, a broadleaf
+tree, a bush or a village building still selected the ground under it. V13.3.1 promotes what a player
+sees as an individual object, so read the V13.3 section above first and then these four facts.
+
+- **Procedural scenery is persistent.** `packages/game-data/src/world/starter-v2.ts` is *generated*
+  from the renderer's deterministic world model (344 placements: the forest, the buildings, the set
+  dressing). `tests/codegen/starter-world-v2.test.ts` rebuilds the world and asserts the two still
+  agree - change the scatter and it fails, so regenerate rather than ship a different island.
+- **Anchors may be fractional.** `farm_constructions.anchor_x/anchor_y` hold a *position*; SQLite's
+  INTEGER affinity stores 42.5 as REAL, and `constructionBounds` floors the anchor so the occupied
+  *cells* stay whole. `rotation` is the player's quarter turn; a placement's `baseYaw` is the facing
+  the island authored. See `database/migrations/0013_world_objects_v2.sql`, which also lets two
+  `STARTER` rows nest (the scatter does) while a player's edit still respects everything standing.
+- **Everything is drawn from rows, instanced.** The construction layer groups rows by model into
+  `InstancedMesh` batches and writes an instance-to-object table under `constructionIds`
+  (`apps/web/src/render/object-picking.ts`); landmark-kind rows are built by `buildLandmarkNode`. The
+  renderer's static pass must not draw a landmark, the barn or a prop - `apps/web/src/render/terrain.ts`
+  deliberately does not.
+- **Collision comes from the definitions.** `objectObstacles(rows, frame, definitions)` uses each
+  definition's `collisionRadiusWorld`; the barn and the landmarks are out of `STATIC_OBSTACLES` (they
+  are rows now), and `CAMERA_BLOCKER_OBSTACLES` exists only so the camera keeps out of a building.
+
+Still not editable, with reasons in the design doc: roads, the field fence, water objects, micro
+scenery (flowers and tufts), wild growth on locked plots, and the production tree/crop lifecycle.
+
 ## Game-data/content task
 - relevant schema/type in `packages/game-data`
 - validation tests

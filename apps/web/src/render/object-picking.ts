@@ -14,16 +14,40 @@
 /** The key a construction root carries. One key, one meaning, read by the picker and the marker. */
 export const CONSTRUCTION_ID_KEY = "constructionId";
 
+/**
+ * The key an *instanced* construction batch carries: the object id behind each instance, in order.
+ *
+ * A forest is drawn as a few `InstancedMesh` batches rather than a mesh per tree, and a raycast
+ * against one reports an instance index - so the batch has to say what each index means. The batch is
+ * rebuilt whenever the rows change, so a removed or stored tree takes its slot with it and can never
+ * be selected through a stale mapping.
+ */
+export const CONSTRUCTION_IDS_KEY = "constructionIds";
+
 /** The two things a `userData` bag and a parent pointer are all this needs. */
 export interface PickableNode {
   readonly userData: { readonly [key: string]: unknown };
   readonly parent: PickableNode | null;
 }
 
-/** The id of the construction a node belongs to, or null when it belongs to none. */
-export function constructionIdFromNode(node: PickableNode | null): string | null {
+/**
+ * The id of the construction a node belongs to, or null when it belongs to none.
+ *
+ * `instanceId` is what a raycast against an `InstancedMesh` reports. When the node carries the batch's
+ * own instance-to-object table, that is the exact answer; otherwise the search walks the ancestors,
+ * which is how a *cloned* model - whose leaf mesh is three levels below the node the id was written
+ * on - is resolved.
+ */
+export function constructionIdFromNode(node: PickableNode | null, instanceId?: number): string | null {
   let current = node;
   while (current !== null) {
+    if (instanceId !== undefined) {
+      const ids = current.userData[CONSTRUCTION_IDS_KEY];
+      if (Array.isArray(ids)) {
+        const id = (ids as readonly unknown[])[instanceId];
+        if (typeof id === "string" && id.length > 0) return id;
+      }
+    }
     const id = current.userData[CONSTRUCTION_ID_KEY];
     if (typeof id === "string") return id;
     current = current.parent;
@@ -39,9 +63,11 @@ export function constructionIdFromNode(node: PickableNode | null): string | null
  * A hit that belongs to no construction is skipped rather than ending the search, because the world's
  * own scenery is interspersed with the player's objects on the same ray.
  */
-export function constructionIdFromHits(hits: readonly { readonly object: PickableNode }[]): string | null {
+export function constructionIdFromHits(
+  hits: readonly { readonly object: PickableNode; readonly instanceId?: number | undefined }[]
+): string | null {
   for (const hit of hits) {
-    const id = constructionIdFromNode(hit.object);
+    const id = constructionIdFromNode(hit.object, hit.instanceId);
     if (id !== null) return id;
   }
   return null;

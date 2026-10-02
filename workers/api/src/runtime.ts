@@ -81,6 +81,7 @@ export const gameDataStarterWorld = {
   placements: STARTER_WORLD_PLACEMENTS.map((placement) => ({
     key: placement.key,
     definitionId: placement.definitionId,
+    version: placement.version,
     tile: { x: placement.tile.x, y: placement.tile.y },
     rotation: placement.rotation
   }))
@@ -112,6 +113,7 @@ export function listWorldObjectDefinitions(): readonly {
   readonly modelId: string | null;
   readonly landmarkKind: string | null;
   readonly sizeWorld: number;
+  readonly collisionRadiusWorld: number;
   readonly footprint: { readonly widthCells: number; readonly depthCells: number };
   readonly allowedTerrain: ("LAND" | "SHORE" | "SHALLOW_WATER" | "WATER")[];
   readonly movable: boolean;
@@ -126,6 +128,7 @@ export function listWorldObjectDefinitions(): readonly {
     modelId: definition.presentation.form === "MODEL" ? definition.presentation.modelId : null,
     landmarkKind: definition.presentation.form === "LANDMARK" ? definition.presentation.kind : null,
     sizeWorld: definition.presentation.form === "MODEL" ? definition.presentation.sizeWorld : 1,
+    collisionRadiusWorld: definition.collisionRadiusWorld,
     footprint: {
       widthCells: definition.footprint.widthCells,
       depthCells: definition.footprint.depthCells

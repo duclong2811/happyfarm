@@ -22,7 +22,7 @@ import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurre
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql", "0012_world_objects.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql", "0012_world_objects.sql", "0013_world_objects_v2.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -1728,7 +1728,9 @@ describe("Worker API foundation", () => {
         const farmId = await farmWithGold(100);
         const first = await listOf(farmId);
         const seeded = first.filter((entry) => entry.source === "STARTER");
-        expect(seeded.length).toBeGreaterThan(20);
+        // The whole island: 37 authored objects (V13.3) plus the 344 the V13.3.1 arrangement promotes
+        // - the procedural forest, the buildings and the set dressing.
+        expect(seeded).toHaveLength(37 + 344);
         // Every starter object is the farm's, paid for by nobody, and carries its placement key.
         for (const entry of seeded) {
           expect(entry.paidAmount).toBe(0);
@@ -1740,11 +1742,12 @@ describe("Worker API foundation", () => {
         expect(second).toHaveLength(first.length);
         const again = await listOf(farmId);
         expect(again.filter((entry) => entry.source === "STARTER")).toHaveLength(seeded.length);
-        // The version is stamped, so the seeding pass is behind the farm for good.
+        // The version is stamped, so the seeding pass is behind the farm for good. A farm created
+        // today is given both versions at once and stamped at the current one.
         const version = db.sqlite
           .prepare("SELECT starter_world_version FROM farms WHERE id = ?")
           .get(farmId) as { starter_world_version: number };
-        expect(version.starter_world_version).toBe(1);
+        expect(version.starter_world_version).toBe(2);
         expect(goldOf()).toBe(100);
       });
 
@@ -1758,6 +1761,119 @@ describe("Worker API foundation", () => {
         expect(after.filter((entry) => entry.source === "STARTER").length).toBe(
           (await listOf(farmId)).filter((entry) => entry.source === "STARTER").length
         );
+      });
+
+      it("gives a version-1 farm only what version 2 added, exactly once", async () => {
+        // The V13.3 development farm, reproduced: it already has the authored arrangement and is
+        // stamped version 1. The next read must add the promoted island and nothing else - replaying
+        // version 1 would collide with rows that are already there, and stamping without inserting
+        // would leave the player with a forest that never appears.
+        const farmId = await farmWithGold(100);
+        db.sqlite.prepare("DELETE FROM farm_constructions WHERE farm_id = ?").run(farmId);
+        db.sqlite.prepare("UPDATE farms SET starter_world_version = 1 WHERE id = ?").run(farmId);
+
+        const migrated = await listOf(farmId);
+        expect(migrated.filter((entry) => entry.source === "STARTER")).toHaveLength(344);
+        // And every one of them is a version-2 object: nothing from version 1 was re-created.
+        expect(migrated.every((entry) => entry.placementKey !== null && !entry.placementKey.includes(".west."))).toBe(true);
+        // Reading again adds nothing at all.
+        expect(await listOf(farmId)).toHaveLength(344);
+      });
+
+      it("lets the player move a promoted pine, and the island does not grow it back", async () => {
+        // A tree the *generator* grew, not one the layout authored: its anchor is fractional because
+        // it stands where it grew. It is an ordinary row, so it moves like one.
+        const farmId = await farmWithGold(100);
+        const seeded = await listOf(farmId);
+        const pine = seeded.find((entry) => entry.entryId === "world.tree_pine" && entry.placementKey?.startsWith("starter.pine."));
+        expect(pine).toBeDefined();
+        if (pine === undefined) return;
+        const home = { x: pine.anchorX, y: pine.anchorY };
+
+        const moved = await post(`/farms/${farmId}/constructions/${pine.constructionId}/move`, {
+          requestId: "promoted_move_001",
+          anchorX: 4,
+          anchorY: 4,
+          rotation: 2,
+          expectedVersion: pine.version
+        });
+        expect(moved.status).toBe(200);
+        const after = await constructionOf(moved);
+        expect(after.anchorX).toBe(4);
+        expect(after.anchorY).toBe(4);
+        expect(after.rotation).toBe(2);
+        expect(goldOf()).toBe(100);
+
+        const reloaded = await listOf(farmId);
+        const same = reloaded.filter((entry) => entry.constructionId === pine.constructionId);
+        expect(same).toHaveLength(1);
+        expect(same[0]?.anchorX).toBe(4);
+        // Nothing stands where it grew, and the island still has exactly as many pines as it started
+        // with - a generator that re-created it would show a second tree at the old spot.
+        expect(reloaded.filter((entry) => entry.anchorX === home.x && entry.anchorY === home.y && entry.entryId === "world.tree_pine")).toHaveLength(0);
+        expect(reloaded.filter((entry) => entry.entryId === "world.tree_pine")).toHaveLength(
+          seeded.filter((entry) => entry.entryId === "world.tree_pine").length
+        );
+      });
+
+      it("stores a promoted rock and removes a promoted bush, and neither comes back", async () => {
+        const farmId = await farmWithGold(100);
+        const seeded = await listOf(farmId);
+        const rock = seeded.find((entry) => entry.entryId === "world.rock" && entry.placementKey?.startsWith("starter.rock."));
+        const bush = seeded.find((entry) => entry.entryId === "world.bush" && entry.placementKey?.startsWith("starter.bush."));
+        expect(rock).toBeDefined();
+        expect(bush).toBeDefined();
+        if (rock === undefined || bush === undefined) return;
+
+        const stored = await post(`/farms/${farmId}/constructions/${rock.constructionId}/store`, {
+          requestId: "promoted_store_001",
+          expectedVersion: rock.version
+        });
+        expect(stored.status).toBe(200);
+        const removed = await post(`/farms/${farmId}/constructions/${bush.constructionId}/remove`, {
+          requestId: "promoted_remove_001",
+          expectedVersion: bush.version
+        });
+        expect(removed.status).toBe(200);
+        // A promoted object was paid for by nobody, so removing it returns nothing.
+        expect(goldOf()).toBe(100);
+
+        const reloaded = await listOf(farmId);
+        expect(reloaded.filter((entry) => entry.constructionId === bush.constructionId)).toHaveLength(0);
+        const storedRock = reloaded.find((entry) => entry.constructionId === rock.constructionId);
+        expect(storedRock?.state).toBe("STORED");
+        // One fewer of each on the island, and no replacement grew in the gap.
+        expect(reloaded.filter((entry) => entry.entryId === "world.bush" && entry.state === "ACTIVE")).toHaveLength(
+          seeded.filter((entry) => entry.entryId === "world.bush").length - 1
+        );
+        expect(reloaded.filter((entry) => entry.entryId === "world.rock" && entry.state === "ACTIVE")).toHaveLength(
+          seeded.filter((entry) => entry.entryId === "world.rock").length - 1
+        );
+      });
+
+      it("lets the player move an authored building, and it keeps its new ground", async () => {
+        const farmId = await farmWithGold(100);
+        const seeded = await listOf(farmId);
+        const barn = seeded.find((entry) => entry.entryId === "world.barn");
+        expect(barn).toBeDefined();
+        if (barn === undefined) return;
+
+        const moved = await post(`/farms/${farmId}/constructions/${barn.constructionId}/move`, {
+          requestId: "building_move_001",
+          anchorX: 2,
+          anchorY: 2,
+          rotation: 1,
+          expectedVersion: barn.version
+        });
+        expect(moved.status).toBe(200);
+        const after = await constructionOf(moved);
+        expect(after.anchorX).toBe(2);
+        expect(after.anchorY).toBe(2);
+        expect(after.rotation).toBe(1);
+        // A move costs nothing, however large the building.
+        expect(goldOf()).toBe(100);
+        const reloaded = await listOf(farmId);
+        expect(reloaded.find((entry) => entry.constructionId === barn.constructionId)?.anchorX).toBe(2);
       });
 
       it("lets the player move a starter tree, and never puts it back where it started", async () => {

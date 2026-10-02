@@ -249,6 +249,49 @@ const BUILDERS: Readonly<Record<PlacedLandmark["kind"], (assets: SharedAssets) =
 };
 
 /**
+ * One landmark kind, built and scaled but not placed.
+ *
+ * The same decision `buildLandmarks` makes for the island's own buildings, lifted out so a *row* can
+ * use it: V13.3.1 hands the player the settlement, and a farmhouse drawn from a row has to look
+ * exactly like the farmhouse that stood there before. A model when the tier ships one and it has
+ * loaded, the primitive otherwise - the same fallback, the same scale, so migrating the building to a
+ * row changes who owns it and nothing about the picture.
+ */
+export function buildLandmarkNode(
+  assets: SharedAssets,
+  kind: string,
+  variantModelId: string | null = null,
+  getModel: (id: string) => Object3D | undefined = () => undefined
+): Group | null {
+  // Read as a partial map: the kind arrives from the server's definition row, and a build that ships
+  // no builder for it draws nothing rather than throwing.
+  const builders: Readonly<Record<string, ((assets: SharedAssets) => Group) | undefined>> = BUILDERS;
+  const builder = builders[kind];
+  if (builder === undefined) return null;
+  // A caller that does not name a variant - the construction layer, drawing a row - gets the tier the
+  // island draws, looked up from the kind. Without this a promoted silo would come back as the
+  // primitive it was only ever a fallback for.
+  const definition = BUILDINGS.find((building) => building.kind === (kind as PlacedLandmark["kind"]));
+  const tierModelId = variantModelId ?? (definition === undefined ? null : variantFor(definition).modelId);
+  const entry = tierModelId === null ? undefined : BUILDING_MODELS.get(tierModelId);
+  const model = entry === undefined ? undefined : getModel(entry.id);
+  if (model !== undefined && entry !== undefined) {
+    const node = new Group();
+    const clone = model.clone(true);
+    // The model is normalized to one world unit across its largest dimension, so this is the
+    // building's real size in metres.
+    clone.scale.setScalar(entry.sizeWorld);
+    node.add(clone);
+    return node;
+  }
+  const node = builder(assets);
+  // A primitive has to hold its own at estate zoom too, where the whole island is on screen. The
+  // harbour is the exception: its geometry already spans the quay, the pier and the yard.
+  node.scale.setScalar(kind === "HARBOR" ? 1 : 1.7);
+  return node;
+}
+
+/**
  * Draws every landmark the world config places.
  *
  * The group is positioned on the ground it stands on and rotated by the config, so a landmark's own
@@ -274,23 +317,8 @@ export function buildLandmarks(
     // the swap happens by itself when the model lands.
     const definition = BUILDINGS.find((building) => building.id === landmark.id);
     const variant = definition === undefined ? null : variantFor(definition);
-    const entry = variant?.modelId == null ? undefined : BUILDING_MODELS.get(variant.modelId);
-    const model = entry === undefined ? undefined : getModel(entry.id);
-
-    let node: Group;
-    if (model !== undefined && entry !== undefined) {
-      node = new Group();
-      const clone = model.clone(true);
-      // The model is normalized to one world unit across its largest dimension, so this is the
-      // building's real size in metres.
-      clone.scale.setScalar(entry.sizeWorld);
-      node.add(clone);
-    } else {
-      node = BUILDERS[landmark.kind](assets);
-      // A primitive has to hold its own at estate zoom too, where the whole island is on screen. The
-      // harbour is the exception: its geometry already spans the quay, the pier and the yard.
-      node.scale.setScalar(landmark.kind === "HARBOR" ? 1 : 1.7);
-    }
+    const node = buildLandmarkNode(assets, landmark.kind, variant?.modelId ?? null, getModel);
+    if (node === null) continue;
     // Stands on the ground rather than at the tile slabs' own base level, and on the *hill* rather
     // than at sea level when it stands on one.
     node.position.set(

@@ -1,4 +1,5 @@
 import type { SceneTile } from "../render/view-model";
+import type { WorldObstacle } from "../render/world-config";
 import { createPlayerCollisionWorld } from "./collision";
 import { createPlayerState, stepPlayer, type CollisionWorld, type PlayerState } from "./controller";
 import { DESTINATION_PROGRESS_WORLD, DESTINATION_STALL_MS, intentFor, movementVector } from "./intent";
@@ -52,6 +53,14 @@ export interface PlayerRuntime {
    * the controller's rule, not a teleport.
    */
   setTiles(tiles: readonly SceneTile[]): void;
+  /**
+   * Replaces the objects the character walks around: the island's own trees, rocks, props and
+   * buildings.
+   *
+   * Separate from `setTiles` because they move for different reasons - a row can be stored or moved
+   * without any tile changing - and both go into the one collision world the controller asks about.
+   */
+  setObstacles(obstacles: readonly WorldObstacle[]): void;
   /** Asks for a frame, for when movement keys go down. Extra calls while one is pending do nothing. */
   wake(): void;
   /**
@@ -72,6 +81,8 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
   // An empty farm until the first refresh arrives: the static world still blocks, and a frame that
   // lands before then simply cannot walk into a crop that has not been reported yet.
   let collision: CollisionWorld = createPlayerCollisionWorld([]);
+  let tiles: readonly SceneTile[] = [];
+  let obstacles: readonly WorldObstacle[] = [];
   let pose: PlayerState | null = null;
   let destination: { readonly worldX: number; readonly worldZ: number } | null = null;
   // Progress bookkeeping for a queued walk: the closest the character has been, and how long it has
@@ -177,8 +188,13 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
       clearDestination();
       publish(createPlayerState(deps.spawn, deps.feetY));
     },
-    setTiles(tiles: readonly SceneTile[]): void {
-      collision = createPlayerCollisionWorld(tiles);
+    setTiles(next: readonly SceneTile[]): void {
+      tiles = next;
+      collision = createPlayerCollisionWorld(tiles, obstacles);
+    },
+    setObstacles(next: readonly WorldObstacle[]): void {
+      obstacles = next;
+      collision = createPlayerCollisionWorld(tiles, obstacles);
     },
     wake(): void {
       schedule();

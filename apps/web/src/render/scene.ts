@@ -50,7 +50,8 @@ import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-u
 import { layoutFarmTiles, type TileCoordinate } from "./layout";
 import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials";
 import { createPointerGesture } from "./pointer-gesture";
-import { buildScenery } from "./scenery";
+import { buildInstancedObjects, buildScenery } from "./scenery";
+import { buildLandmarkNode } from "./landmarks";
 import { buildInteractionGrid } from "./interaction-grid";
 import { worldToCell } from "./world-cell";
 import {
@@ -71,7 +72,7 @@ import { GROUND_SURFACE_Y, terrainHeightAt } from "./terrain-height";
 import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
 import { EMPTY_WORLD_CELL_MAP } from "./world-cell";
-import { STATIC_OBSTACLES } from "./world-config";
+import { CAMERA_BLOCKER_OBSTACLES, STATIC_OBSTACLES } from "./world-config";
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
@@ -151,6 +152,14 @@ const PLACEMENT_CAMERA_DISTANCE = 13;
 export interface SceneConstruction {
   readonly id: string;
   readonly modelId: string | null;
+  /**
+   * The landmark builder this object draws, when it has no model of its own.
+   *
+   * The village and the quay are still assembled from primitives rather than a `.glb`, and they are
+   * world objects like everything else now: the definition says which builder draws it, exactly as
+   * `modelId` says which file does.
+   */
+  readonly landmarkKind: string | null;
   /** How large the model is drawn, in metres: every imported model is normalized to one unit. */
   readonly sizeWorld: number;
   readonly worldX: number;
@@ -810,16 +819,6 @@ let interactionGeometry: BufferGeometry | null = null;
     return library.get(id);
   }
 
-  /**
-   * The loaded model for a set-dressing prop.
-   *
-   * Deliberately the same cache and the same loader as scenery: a prop and a tree are both "a GLB
-   * this scene may need", and a second cache would be a second place for a model to be loaded twice.
-   */
-  function propModel(id: string): Object3D | undefined {
-    return library.get(id);
-  }
-
   /** The loaded building model for an id, starting its download the first time one is asked for. */
   function buildingModel(id: string): Object3D | undefined {
     return library.get(id);
@@ -1171,26 +1170,20 @@ let interactionGeometry: BufferGeometry | null = null;
     if (signature !== worldSignature) {
       worldSignature = signature;
       worldGroup.clear();
-      groundMesh = buildTerrain(
-        worldGroup,
-        assets,
-        next.world,
-        next.layout,
-        generatedModels.building_barn,
-        buildingModel,
-        propModel
-      );
-      // Two passes, one destination each: mass scenery into the world group and small detail into the
-      // group the camera switches off when it pulls back. The detail pass belongs to the dynamic
-      // layer, which owns both detail groups, so it is not duplicated here.
-      buildScenery(worldGroup, assets, next.world.scenery.filter((entry) => !entry.detail), sceneryModel);
+      groundMesh = buildTerrain(worldGroup, assets, next.world, next.layout);
+      // The island's mass scenery - the forest, the scrub, the boulders - is *not* drawn here any
+      // more. V13.3.1 made every one of those an ordinary world object, and they are drawn from their
+      // rows by the construction layer, so drawing the generator's copy as well would put two trees
+      // on every cell. Only the ambient detail (flowers, tufts of grass) still comes from the world
+      // model, into the group the camera switches off when it pulls back.
       // A new static world means new scenery for the detail groups and the overlay to draw, so the
       // dynamic layer cannot be considered up to date.
       dynamicWorldSignature = "";
       worldExtent = Math.max(next.world.islandHalfWidthWorld, next.world.islandHalfDepthWorld, MIN_FRAMED_EXTENT);
-      // The buildings the camera must not sit inside: the same circles the player's own collision
-      // uses, so "solid" means one thing in this client rather than two.
-      cameraBlockers = STATIC_OBSTACLES;
+      // The camera keeps out of the geography and the authored buildings. The *walker* reads the rows
+      // (the construction layer's circles), which is why this is a separate list: a barn that moved
+      // takes its wall with it, while the camera still avoids where a building is authored.
+      cameraBlockers = [...STATIC_OBSTACLES, ...CAMERA_BLOCKER_OBSTACLES];
       if (hasWorld && !cameraFramed) {
         // The very first world frames the island's middle. After that the camera is the player's:
         // buying land, or a model arriving, must never move where somebody is looking.
@@ -1358,17 +1351,22 @@ let interactionGeometry: BufferGeometry | null = null;
         (item) =>
           `${item.id}:${item.modelId ?? "-"}:${item.worldX.toFixed(2)},${item.worldZ.toFixed(2)}` +
           `:${item.rotationY.toFixed(3)}:${String(item.widthCells)}x${String(item.depthCells)}` +
-          `:${item.sizeWorld.toFixed(2)}`
+          `:${item.sizeWorld.toFixed(2)}:${item.landmarkKind ?? "-"}`
       )
       .join("|");
   }
 
   /**
-   * Draws every built thing, once.
+   * Draws every built thing, once - instanced, and by model.
    *
-   * Models come from the shared library and are cloned per construction, so forty fences are forty
-   * small clones of one loaded fence rather than forty downloads. A model that is still arriving is
-   * drawn when it lands - see the library listener in `createFarmScene`.
+   * V13.3.1 hands the player the whole island: a few hundred trees, rocks, bushes and props as well as
+   * the buildings. A clone per row would be a draw call per tree, which is exactly the regression the
+   * performance rule forbids - so rows are grouped by the model they draw and each group becomes one
+   * instanced batch, with the instance-to-object mapping written onto the batch so a click still
+   * resolves to a row. Landmark-kind rows (the village and the quay) are primitives with no model to
+   * instance, and there are a handful of them, so each is built on its own.
+   *
+   * A model that is still arriving is drawn when it lands - see the library listener.
    */
   function rebuildConstructions(): void {
     const signature = constructionSignatureOf(constructions);
@@ -1380,23 +1378,49 @@ let interactionGeometry: BufferGeometry | null = null;
     updateObjectMarker();
     if (constructions.length === 0) return;
     const token = ++constructionToken;
+
+    // The primitives first: a building is placed, not batched, and there is one of each.
+    for (const item of constructions) {
+      if (item.landmarkKind === null) continue;
+      const node = buildLandmarkNode(assets, item.landmarkKind, null, buildingModel);
+      if (node === null) continue;
+      node.position.set(
+        item.worldX,
+        GROUND_SURFACE_Y + terrainHeightAt(item.worldX, item.worldZ, state.world.terrain),
+        item.worldZ
+      );
+      node.rotation.y = item.rotationY;
+      node.traverse((child) => {
+        child.castShadow = true;
+      });
+      // What a click on the model resolves to, through the one key constant the picker reads.
+      (node.userData as Record<string, unknown>)[CONSTRUCTION_ID_KEY] = item.id;
+      constructionGroup.add(node);
+    }
+
+    // Then the model rows, bucketed by model so a forest is a handful of draws rather than hundreds.
+    const buckets = new Map<string, SceneConstruction[]>();
     for (const item of constructions) {
       if (item.modelId === null) continue;
-      void library.load(item.modelId).then((model) => {
+      const bucket = buckets.get(item.modelId);
+      if (bucket === undefined) buckets.set(item.modelId, [item]);
+      else bucket.push(item);
+    }
+    for (const [modelId, rows] of buckets) {
+      void library.load(modelId).then((model) => {
         if (disposed || token !== constructionToken || model === null) return;
-        const instance = model.clone(true);
-        // Every imported model is normalized to one world unit, so this number *is* the object's
-        // size: without it a placed tree would be a metre tall beside the island's own three-metre
-        // ones, which is what V13.2 shipped.
-        instance.scale.setScalar(item.sizeWorld);
-        const groundY = GROUND_SURFACE_Y + terrainHeightAt(item.worldX, item.worldZ, state.world.terrain);
-        instance.position.set(item.worldX, groundY, item.worldZ);
-        instance.rotation.y = item.rotationY;
-        // What a click on the model resolves to. The model is a clone with no identity of its own, so
-        // the row's id is written onto its root and read back by the picking raycast - through the one
-        // key constant, so the writer and the reader cannot drift apart.
-        (instance.userData as Record<string, unknown>)[CONSTRUCTION_ID_KEY] = item.id;
-        constructionGroup.add(instance);
+        const placements = rows.map((row) => ({
+          worldX: row.worldX,
+          // Every object stands on the ground under it, so the batch needs no per-row y from the row.
+          worldY: GROUND_SURFACE_Y + terrainHeightAt(row.worldX, row.worldZ, state.world.terrain),
+          worldZ: row.worldZ,
+          rotationY: row.rotationY,
+          // Every imported model is normalized to one world unit, so this number *is* the object's
+          // size: without it a placed tree would be a metre tall beside the island's own three-metre
+          // ones, which is what V13.2 shipped.
+          sizeWorld: row.sizeWorld
+        }));
+        buildInstancedObjects(constructionGroup, model, placements, true, rows.map((row) => row.id));
         draw();
       });
     }

@@ -12,6 +12,7 @@ import {
 import type { SharedAssets } from "./materials";
 import type { SceneryInstance } from "./world";
 import { ENVIRONMENT_MODELS, type EnvironmentModelEntry } from "./environment-model-urls";
+import { CONSTRUCTION_IDS_KEY } from "./object-picking";
 
 /**
  * The plants, stones, and props that furnish the island.
@@ -137,6 +138,63 @@ function addPrimitive(group: Group, assets: SharedAssets, kind: SceneryKind, ind
 /** The unit vector every scenery instance is rotated about. */
 const UP = new Vector3(0, 1, 0);
 
+/** One object drawn from a row: where it stands, how it is turned, and how large it is. */
+export interface InstancedPlacement {
+  readonly worldX: number;
+  readonly worldY: number;
+  readonly worldZ: number;
+  readonly rotationY: number;
+  readonly sizeWorld: number;
+}
+
+/**
+ * Draws a list of objects of one model as instances of it, optionally recording what each is.
+ *
+ * The same shape the scenery pass uses, lifted out so the construction layer can draw the island's
+ * hundreds of trees as a handful of draw calls *and* still resolve a click to a row: every mesh of
+ * the model becomes one `InstancedMesh`, and `ids` - when given - is written on each so the picker can
+ * turn an instance index back into a world object id.
+ */
+export function buildInstancedObjects(
+  group: Group,
+  model: Object3D,
+  placements: readonly InstancedPlacement[],
+  castShadow = true,
+  ids?: readonly string[]
+): void {
+  if (placements.length === 0) return;
+  model.updateMatrixWorld(true);
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  model.traverse((child) => {
+    if (!(child instanceof Mesh)) return;
+    const instanced = new InstancedMesh(child.geometry, child.material, placements.length);
+    placements.forEach((placement, index) => {
+      position.set(placement.worldX, placement.worldY, placement.worldZ);
+      scale.setScalar(placement.sizeWorld);
+      rotation.setFromAxisAngle(UP, placement.rotationY);
+      matrix.compose(position, rotation, scale);
+      // The instance places the model's root; the mesh's own world matrix puts it where it sits
+      // inside that model.
+      matrix.multiply(child.matrixWorld);
+      instanced.setMatrixAt(index, matrix);
+    });
+    instanced.instanceMatrix.needsUpdate = true;
+    instanced.castShadow = castShadow;
+    instanced.receiveShadow = false;
+    // The bounding sphere has to account for the instance matrices, or the whole batch would be
+    // culled as soon as the model's own origin left the frustum.
+    instanced.computeBoundingSphere();
+    // Written under the picker's own key: a raycast against a batch reports an instance index, and
+    // this is the table that turns it back into the object the player pointed at. It lives on the
+    // mesh, so it dies with the batch and can never outlive the rows it describes.
+    if (ids !== undefined) (instanced.userData as Record<string, unknown>)[CONSTRUCTION_IDS_KEY] = ids;
+    group.add(instanced);
+  });
+}
+
 /**
  * Draws every instance of one model as instances of it.
  *
@@ -152,34 +210,19 @@ function addInstancedModel(
   unitScale: number,
   castShadow: boolean
 ): void {
-  model.updateMatrixWorld(true);
-  const matrix = new Matrix4();
-  const position = new Vector3();
-  const scale = new Vector3();
-  const rotation = new Quaternion();
-
-  model.traverse((child) => {
-    if (!(child instanceof Mesh)) return;
-    const instanced = new InstancedMesh(child.geometry, child.material, instances.length);
-    instances.forEach((instance, index) => {
-      const size = instance.scale * unitScale;
-      position.set(instance.worldX, instance.worldY, instance.worldZ);
-      scale.set(size, size, size);
-      rotation.setFromAxisAngle(UP, instance.rotationY);
-      matrix.compose(position, rotation, scale);
-      // The instance places the model's root; the mesh's own world matrix puts it where it sits
-      // inside that model.
-      matrix.multiply(child.matrixWorld);
-      instanced.setMatrixAt(index, matrix);
-    });
-    instanced.instanceMatrix.needsUpdate = true;
-    instanced.castShadow = castShadow;
-    instanced.receiveShadow = false;
-    // The bounding sphere has to account for the instance matrices, or the whole group would be
-    // culled as soon as the model's own origin left the frustum.
-    instanced.computeBoundingSphere();
-    group.add(instanced);
-  });
+  buildInstancedObjects(
+    group,
+    model,
+    instances.map((instance) => ({
+      worldX: instance.worldX,
+      worldY: instance.worldY,
+      worldZ: instance.worldZ,
+      rotationY: instance.rotationY,
+      // Every model is normalized to one world unit, so the placement's height *is* the size drawn.
+      sizeWorld: instance.scale * unitScale
+    })),
+    castShadow
+  );
 }
 
 export function buildScenery(

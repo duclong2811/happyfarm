@@ -179,6 +179,12 @@ export function rotatedFootprint(
  * The anchor is the cell the player pointed at, and the footprint grows outwards from it with the
  * extra cell on the +x/+y side when a side has an even count - the same convention the world's own
  * tile mapping uses, so a preview, a server check and a saved row all name the same ground.
+ *
+ * The anchor may be fractional, and that is the V13.3.1 addition: the island's own objects - a tree
+ * the generator grew, an authored building - stand at a world position, not on a grid, and rounding
+ * every one of them onto a cell would visibly re-plant the island. The *cells* the object occupies
+ * are still whole: the anchor's own cell is the one it stands in, and the footprint grows from there,
+ * so ownership, occupancy and the crop/tree checks keep working on the integer grid.
  */
 export function constructionBounds(
   anchor: { readonly x: number; readonly y: number },
@@ -187,8 +193,11 @@ export function constructionBounds(
   if (footprint.widthCells < 1 || footprint.depthCells < 1) {
     throw new DomainError("INVALID_FOOTPRINT", "A footprint must cover at least one cell");
   }
-  const startX = anchor.x - Math.floor((footprint.widthCells - 1) / 2);
-  const startY = anchor.y - Math.floor((footprint.depthCells - 1) / 2);
+  if (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)) {
+    throw new DomainError("INVALID_FOOTPRINT", "A construction must stand at a finite position");
+  }
+  const startX = Math.floor(anchor.x) - Math.floor((footprint.widthCells - 1) / 2);
+  const startY = Math.floor(anchor.y) - Math.floor((footprint.depthCells - 1) / 2);
   return {
     minX: startX,
     maxX: startX + footprint.widthCells - 1,

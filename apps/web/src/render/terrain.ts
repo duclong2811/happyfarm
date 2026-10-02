@@ -39,9 +39,7 @@ import {
 } from "./terrain-height";
 import { ROAD_LIFT_WORLD } from "./roads";
 import { ROAD_SHOULDER_WORLD } from "./world-config";
-import { buildLandmarks } from "./landmarks";
 import { buildScenery } from "./scenery";
-import { buildCompositionProps } from "./dressing";
 
 /**
  * The static world's geometry: the island and its elevation, the beach and the shallows, the field's
@@ -73,8 +71,6 @@ const APRON_TOP_Y = -0.01;
  * base, so it never pokes through them.
  */
 const FIELD_BED_TOP_Y = -0.004;
-/** The generated barn is authored with its base on y = 0; the ground under the yard is a hair lower. */
-const BARN_FEET_Y = -0.02;
 /** Top of the island's ground surface where it is flat: level with the old grass slab. */
 const ISLAND_TOP_Y = GROUND_SURFACE_Y;
 /** How far the beach reaches past the ground surface, in world metres. */
@@ -971,71 +967,11 @@ function addHarbour(group: Group, assets: SharedAssets, harbour: FarmWorld["harb
   }
 }
 
-/**
- * The barn.
- *
- * The generated model is the barn; the primitives below are the fallback while it loads or if it
- * cannot be loaded at all, which is the same convention the crop and scenery models already follow.
- * The model is cloned, never re-fetched, and its footprint is presentation only: the yard's collision
- * is the canonical `STATIC_OBSTACLES` circle in `world-config.ts`.
- */
-function addBarn(
-  group: Group,
-  assets: SharedAssets,
-  world: FarmWorld,
-  model: Object3D | undefined,
-  modelScale: number
-): void {
-  if (world.barn === null) return;
-  if (model !== undefined) {
-    const barn = model.clone(true);
-    barn.scale.setScalar(modelScale);
-    barn.position.set(world.barn.worldX, BARN_FEET_Y, world.barn.worldZ);
-    barn.rotation.y = world.barn.rotationY;
-    barn.traverse((child) => {
-      child.castShadow = true;
-    });
-    group.add(barn);
-    return;
-  }
-  const barn = new Group();
-  barn.position.set(world.barn.worldX, -0.04, world.barn.worldZ);
-  barn.rotation.y = world.barn.rotationY;
-
-  const body = box(assets, assets.barnWall, 2.6, 1.5, 2, 0, 0.75, 0);
-  barn.add(body);
-  const roof = new Mesh(assets.roof, assets.barnRoof);
-  roof.rotation.y = Math.PI / 4;
-  roof.scale.set(2.15, 0.95, 1.75);
-  roof.position.y = 1.95;
-  barn.add(roof);
-  barn.add(box(assets, assets.barnTrim, 0.9, 1.05, 0.1, 0, 0.52, 1.02));
-  barn.add(box(assets, assets.barnTrim, 0.16, 0.5, 0.08, 0.85, 0.95, 1.02));
-  barn.add(box(assets, assets.barnTrim, 0.16, 0.5, 0.08, -0.85, 0.95, 1.02));
-
-  const silo = new Mesh(assets.cylinder, assets.barnTrim);
-  silo.scale.set(0.45, 1.7, 0.45);
-  silo.position.set(1.55, 0.85, -0.55);
-  barn.add(silo);
-  const siloRoof = new Mesh(assets.cone, assets.barnRoof);
-  siloRoof.scale.set(0.55, 0.6, 0.55);
-  siloRoof.position.set(1.55, 2, -0.55);
-  barn.add(siloRoof);
-  barn.traverse((child) => {
-    child.castShadow = true;
-  });
-
-  group.add(barn);
-}
-
 export function buildTerrain(
   group: Group,
   assets: SharedAssets,
   world: FarmWorld,
-  layout: FarmLayout,
-  barnModel?: Object3D,
-  getBuildingModel: (id: string) => Object3D | undefined = () => undefined,
-  getPropModel: (id: string) => Object3D | undefined = () => undefined
+  layout: FarmLayout
 ): Object3D {
   const ground = addIsland(group, assets, world);
   addMeadows(group, assets, world);
@@ -1043,14 +979,9 @@ export function buildTerrain(
   addRoads(group, assets, world);
   if (world.pond !== null) addPond(group, assets, world.pond);
   addHarbour(group, assets, world.harbour, layout);
-  // The set dressing is part of the static world: it is a function of the presets alone, and buying
-  // a plot must not move a barrel.
-  buildCompositionProps(group, world.compositions.props, getPropModel);
-  // The curated barn is normalized to one world unit, so it is drawn at its own size; the generated
-  // placeholder is already authored at the right scale.
-  const curatedBarn = getBuildingModel("farm.barn.t2");
-  addBarn(group, assets, world, curatedBarn ?? barnModel, curatedBarn === undefined ? 1 : 6.4);
-  buildLandmarks(group, assets, world.landmarks, world.terrain, getBuildingModel);
+  // The barn, the authored buildings and the set dressing were drawn here until V13.3.1. They are
+  // world objects now - rows the player may move, store or remove - so the construction layer draws
+  // them and this one must not, or the island would show two of everything.
   return ground;
 }
 

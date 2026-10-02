@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Group } from "three";
+import { BoxGeometry, Group, Mesh, MeshBasicMaterial } from "three";
 import { STARTER_WORLD_PLACEMENTS, starterWorldPosition, worldObjectDefinition } from "@happy-farm/game-data";
 import type { PlotDTO } from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
@@ -7,7 +7,7 @@ import { layoutFarmTiles } from "../../apps/web/src/render/layout";
 import { buildFarmWorld, landFrame } from "../../apps/web/src/render/world";
 import { GROUND_SURFACE_Y, islandRadiusAt, terrainHeightAt, volcanoRadiusFraction } from "../../apps/web/src/render/terrain-height";
 import { BUILDINGS, RESERVED_BUILDINGS } from "../../apps/web/src/render/buildings";
-import { buildLandmarks } from "../../apps/web/src/render/landmarks";
+import { buildLandmarkNode, buildLandmarks } from "../../apps/web/src/render/landmarks";
 import { createSharedAssets } from "../../apps/web/src/render/materials";
 import {
   DISTRICTS,
@@ -184,6 +184,26 @@ describe("districts hold what they claim to hold", () => {
     expect(definition?.presentation).toEqual({ form: "MODEL", modelId: "farm.windmill.t2", sizeWorld: 8.6 });
   });
 
+  it("draws a promoted building with the model its tier ships, not the primitive fallback", () => {
+    // The village and the quay are `LANDMARK` presentation - primitives - but a silo, an open barn, a
+    // coop and a well ship a `.glb` for their first tier, and the config path drew it. A row has to
+    // draw the same thing, or promoting the building would silently downgrade the island.
+    const assets = createSharedAssets();
+    const model = new Group();
+    model.add(new Mesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial()));
+    try {
+      const silo = buildLandmarkNode(assets, "SILO", null, () => model);
+      expect(silo?.children).toHaveLength(1);
+      // `farm.silo.t1` is drawn 3.6 m across; the primitive fallback is a different shape entirely.
+      expect(silo?.children[0]?.scale.x).toBeCloseTo(3.6, 6);
+      // A kind with no model still falls back to the primitive rather than drawing nothing.
+      const market = buildLandmarkNode(assets, "MARKET_STALL", null, () => model);
+      expect(market?.children.length ?? 0).toBeGreaterThan(1);
+    } finally {
+      assets.dispose();
+    }
+  });
+
   it("keeps decoration out of the volume a landmark occupies, not just off its wall", () => {
     // The scatter's own rule measures the *centre* of a candidate, which lets a canopy hang over a
     // wall - and, at the windmill, lets a treetop reach up into the sails. The world's last pass
@@ -211,15 +231,15 @@ describe("districts hold what they claim to hold", () => {
   });
 
   it("keeps procedural scenery out of the starter objects' own volume", () => {
-    // V13.3 promoted the island's own trees, rocks, flowers and the mill to persistent objects drawn
-    // from their rows, but the scatter still grows from the island's seed. Without a sweep, a
-    // procedural tree could be grown on the very cell a starter tree already stands on - the
-    // double-drawing this pass exists to prevent. This measures the finished list against every
-    // starter placement, the same way the landmark test above measures it against a building.
+    // The *authored* starter objects - the mill and the ring of trees, rocks, bushes and flowers
+    // V13.3 placed - are rows now, but the scatter still grows from the island's seed. Without a
+    // sweep, the generator could grow something on the very cell an authored object stands on. Only
+    // version 1 is measured: the version-2 arrangement *is* this scatter written down, so measuring
+    // the scatter against it would be measuring it against itself.
     const world = starterWorld();
     const offenders: string[] = [];
     for (const instance of world.scenery) {
-      for (const placement of STARTER_WORLD_PLACEMENTS) {
+      for (const placement of STARTER_WORLD_PLACEMENTS.filter((candidate) => candidate.version === 1)) {
         const definition = worldObjectDefinition(placement.definitionId);
         if (definition === null) continue;
         const position = starterWorldPosition(placement);

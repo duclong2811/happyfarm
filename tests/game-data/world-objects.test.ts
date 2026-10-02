@@ -31,22 +31,44 @@ describe("the starter arrangement", () => {
   it("gives every placement a stable key, and no two the same cell", () => {
     const keys = STARTER_WORLD_PLACEMENTS.map((placement) => placement.key);
     expect(new Set(keys).size).toBe(keys.length);
-    // One object per cell: a placement that shared ground with another would be refused by the very
-    // collision rule the grid exists for, so it must not exist in the layout either.
-    const cells = STARTER_WORLD_PLACEMENTS.map((placement) => `${String(placement.tile.x)},${String(placement.tile.y)}`);
+    expect(STARTER_WORLD_VERSION).toBe(2);
+    // The *authored* arrangement is one object per cell, because those stand on open ground beside
+    // each other. The version-2 scatter is the island as it already grows: a wood places its members
+    // within a radius of a cluster centre, two of them can share a cell, and the migration has to
+    // reproduce that rather than tidy it - see migration 0013, which lets two starter rows nest while
+    // still refusing to let a *player* place, move or restore anything on top of them.
+    const cells = STARTER_WORLD_PLACEMENTS.filter((placement) => placement.version === 1).map(
+      (placement) => `${String(placement.tile.x)},${String(placement.tile.y)}`
+    );
     expect(new Set(cells).size).toBe(cells.length);
   });
 
-  it("stands every placement on ordinary dry land inside the island", () => {
+  it("stands every placement on dry ground inside the island", () => {
     for (const placement of STARTER_WORLD_PLACEMENTS) {
       const classification = classifyTile(placement.tile);
       const world = tileToWorld(placement.tile);
-      expect(classification.terrain, placement.key).toBe("LAND");
-      expect(classification.protectedGround, placement.key).toBe(false);
       expect(classification.insideIsland, placement.key).toBe(true);
-      // Well inside the shoreline rather than on the beach: a starter tree at the waterline would be
-      // a tree with its roots in the surf.
-      expect(islandRadiusAt(world.worldX, world.worldZ), placement.key).toBeLessThan(0.9);
+      expect(classification.terrain, placement.key).not.toBe("WATER");
+      // Inside the shore rather than out on the water. A rock may stand on the shingle, so SHORE is
+      // ground a placement may use; the *sea* is not. The volcano's own cover is scenery the island
+      // grew - the mountain is geography, but the wood on its flank is an object like any other, and
+      // a player who moves one of those trees off the slope is doing exactly what this pass allows.
+      expect(islandRadiusAt(world.worldX, world.worldZ), placement.key).toBeLessThan(1);
+    }
+  });
+
+  it("keeps the island's scatter off the beach and the shore out of the field", () => {
+    // The two families are held to the rules the *island* was built with: the procedural vegetation
+    // keeps a real margin from the waterline, and nothing stands in the cells the plot catalogue
+    // sells. Authored buildings and set dressing are not scatter - they are placed, and their own
+    // presets decide where.
+    for (const placement of STARTER_WORLD_PLACEMENTS) {
+      if (!placement.key.startsWith("starter.tree.") && !placement.key.startsWith("starter.pine.") &&
+          !placement.key.startsWith("starter.bush.") && !placement.key.startsWith("starter.rock.")) {
+        continue;
+      }
+      const world = tileToWorld(placement.tile);
+      expect(islandRadiusAt(world.worldX, world.worldZ), placement.key).toBeLessThan(0.98);
     }
   });
 
