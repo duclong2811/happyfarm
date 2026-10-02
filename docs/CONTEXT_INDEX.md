@@ -431,6 +431,11 @@ Read `docs/development.md` first, then `docs/decisions/0006-starter-land-and-nod
 
 - UI only: `apps/web` (`api.ts`, `main.ts`, `i18n.ts`, `vite.config.ts`) and the contracts it consumes.
 - Development backend: `workers/api/dev/` plus `workers/api/src/dev-index.ts` and `dev-auth.ts`.
+  A local database written before one-farm-per-player (`0014`) can hold several farms for one player,
+  which the unique index cannot be created over. `workers/api/dev/repair-farm-ownership.ts` resolves
+  that before the migrations run - one farm kept per owner, the rest removed with their farm-scoped
+  rows - and the dev server logs what it did. Never "fix" it by deleting the local database, dropping
+  the index, or letting a player keep two farms.
 - Farm land: starter-land section of `docs/DATA_MODEL.md` and the Phase 3.5B section of `docs/protocols.md`.
 - Tests: `tests/api/dev-auth.test.ts`, `tests/integration/dev-host.test.ts`, `tests/integration/d1-starter-land.test.ts`.
 

@@ -6,6 +6,7 @@ import { DEV_AUTH_BOOTSTRAP_PATH } from "../src/dev-auth";
 import { createDevWorker, type DevEnv } from "../src/dev-index";
 import { readDevVars } from "./dev-vars";
 import { applyMigrations } from "./migrations";
+import { repairDuplicateFarmOwnership, type FarmOwnershipRepair } from "./repair-farm-ownership";
 import { SqliteD1Database } from "./sqlite-d1";
 
 /**
@@ -23,6 +24,14 @@ import { SqliteD1Database } from "./sqlite-d1";
 export interface DevApiHost {
   readonly databasePath: string;
   readonly appliedMigrations: readonly string[];
+  /**
+   * What the one-farm-per-player repair had to do to this local database, if anything.
+   *
+   * Non-zero means the file predates V13.6.1: it held several farms for one player, which is exactly
+   * what `0014`'s unique index refuses, so the runner resolved it before applying the migrations. The
+   * host reports it rather than logging it itself so the caller that owns a logger can say so.
+   */
+  readonly farmOwnershipRepair: FarmOwnershipRepair;
   readonly configured: boolean;
   handle(request: Request): Promise<Response>;
   /** Same-origin Vite traffic with the server-held dev credential attached. */
@@ -52,6 +61,10 @@ export function createDevApiHost(options: DevApiHostOptions): DevApiHost {
   // D1 enforces foreign keys while applying migrations too. Enabling it before the runner starts
   // keeps the local database from accepting a migration that production would reject.
   sqlite.exec("PRAGMA foreign_keys = ON");
+  // The repair has to happen *before* the migrations: `0014` creates the unique index on
+  // `farms(owner_player_id)`, and a local file written before V13.6.1 can hold duplicates that the
+  // index cannot be created over. See `repair-farm-ownership.ts`.
+  const farmOwnershipRepair = repairDuplicateFarmOwnership(sqlite);
   const appliedMigrations = applyMigrations(sqlite, join(options.repoRoot, "database", "migrations"));
 
   const devVarsPath = process.env.DEV_VARS_PATH ?? join(workerDir, ".dev.vars");
@@ -90,6 +103,7 @@ export function createDevApiHost(options: DevApiHostOptions): DevApiHost {
   return {
     databasePath,
     appliedMigrations,
+    farmOwnershipRepair,
     configured,
     handle,
     handleTrustedBrowserRequest: async (request: Request) => {

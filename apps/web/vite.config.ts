@@ -176,6 +176,14 @@ function devApiPlugin(): Plugin {
               createDevApiHost: (options: { repoRoot: string }) => DevApiHost;
             };
             const host = factory.createDevApiHost({ repoRoot });
+            if (host.farmOwnershipRepair.farmsRemoved > 0) {
+              // A local database from before one-farm-per-player. The runner kept the farm the last
+              // session was playing and removed the duplicates the old bootstrap left behind, because
+              // the unique index that makes "one player, one farm" true cannot be created over them.
+              server.config.logger.warn(
+                `[dev-api] repaired ${String(host.farmOwnershipRepair.farmsRemoved)} abandoned duplicate farm(s) in the local database; kept ${host.farmOwnershipRepair.keptFarmIds.join(", ")}`
+              );
+            }
             server.config.logger.info(
               `[dev-api] database ${host.databasePath}${
                 host.appliedMigrations.length > 0
