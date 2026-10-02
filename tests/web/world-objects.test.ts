@@ -33,6 +33,7 @@ function definition(overrides: Partial<WorldObjectDefinitionDTO> = {}): WorldObj
     storable: true,
     removable: true,
     removalRefundRate: 0.5,
+    service: null,
     ...overrides
   };
 }

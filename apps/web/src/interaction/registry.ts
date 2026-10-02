@@ -15,6 +15,7 @@ import {
   INTERACTION_RANGE_WORLD,
   cropInteraction,
   treeInteraction,
+  type InteractionAction,
   type InteractableTarget
 } from "./model";
 
@@ -155,7 +156,11 @@ function constructionTarget(
 ): InteractableTarget {
   const position = tileToWorld({ x: row.anchorX, y: row.anchorY }, worldFrame());
   const policy = objectPolicy(row, worldObjects, catalog);
-  const action = "INSPECT" as const;
+  // What the object *does* comes from its own definition, never from its model or its name: the market
+  // stall is a `FARM_MARKET` because game data says so, so a second stall - or a stall this build has
+  // never seen - offers Trade without a line of client code changing.
+  const service = worldObjects.get(row.entryId)?.service ?? null;
+  const action: InteractionAction = service === "FARM_MARKET" ? "TRADE" : "INSPECT";
   return {
     key: `object:${row.constructionId}`,
     kind: "WORLD_OBJECT",

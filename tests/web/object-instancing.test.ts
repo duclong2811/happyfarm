@@ -186,7 +186,8 @@ describe("the island's arrangement of a row", () => {
           rotatable: true,
           storable: true,
           removable: true,
-          removalRefundRate: 0.5
+          removalRefundRate: 0.5,
+          service: null
         }
       ]
     ]);

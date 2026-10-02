@@ -121,6 +121,7 @@ export function listWorldObjectDefinitions(): readonly {
   readonly storable: boolean;
   readonly removable: boolean;
   readonly removalRefundRate: number;
+  readonly service: "FARM_MARKET" | null;
 }[] {
   return WORLD_OBJECT_DEFINITIONS.map((definition) => ({
     id: definition.id,
@@ -139,6 +140,8 @@ export function listWorldObjectDefinitions(): readonly {
     storable: definition.storable,
     removable: definition.removable,
     removalRefundRate: definition.removalRefundRate
+    ,
+    service: definition.service ?? null
   }));
 }
 

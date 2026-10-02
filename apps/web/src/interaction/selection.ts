@@ -113,6 +113,12 @@ export type InteractionActivation =
       readonly treeInstanceId: string;
       readonly expectedTreeVersion: number;
     }
+  | {
+      /** A place that offers a service: walking up to the market stall and trading at it. */
+      readonly kind: "TRADE";
+      readonly service: "FARM_MARKET";
+      readonly target: InteractionCandidate;
+    }
   | { readonly kind: "STALE"; readonly reason: "GONE" | "CHANGED" };
 
 export function interactionActivation(
@@ -121,6 +127,7 @@ export function interactionActivation(
 ): InteractionActivation {
   if (selected === null || fresh === null) return { kind: "STALE", reason: "GONE" };
   if (fresh.key !== selected.key) return { kind: "STALE", reason: "CHANGED" };
+  if (fresh.action === "TRADE") return { kind: "TRADE", service: "FARM_MARKET", target: fresh };
   if (fresh.action === "HARVEST") {
     return fresh.kind === "TREE"
       ? { kind: "HARVEST_TREE", treeInstanceId: fresh.targetId, expectedTreeVersion: fresh.version }

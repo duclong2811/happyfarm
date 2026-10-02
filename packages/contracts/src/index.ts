@@ -680,6 +680,15 @@ export const WorldObjectDefinitionDTOSchema = z
     storable: z.boolean(),
     removable: z.boolean(),
     removalRefundRate: z.number().min(0).max(1)
+    ,
+    /**
+     * The gameplay service this object stands for, or null for one that is only itself.
+     *
+     * `FARM_MARKET` is the first: a market stall is a place a character can walk up to and trade at.
+     * The capability travels as data so the interaction layer never learns a model name, and so a
+     * second stall - or a stall on another island - is a row in game data and nothing else.
+     */
+    service: z.enum(["FARM_MARKET"]).nullable()
   })
   .strict();
 export type WorldObjectDefinitionDTO = z.infer<typeof WorldObjectDefinitionDTOSchema>;

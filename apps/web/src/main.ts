@@ -173,6 +173,17 @@ import {
   type InventoryCategory,
   type PlantOption
 } from "./items/catalogue";
+import {
+  clampMarketQuantity,
+  defaultMarketDirection,
+  marketCanSubmit,
+  marketCardFor,
+  marketCards,
+  marketQuantityBounds,
+  marketQuantityStep,
+  marketTotal,
+  type MarketCard
+} from "./market/market";
 import "./styles.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
@@ -1321,6 +1332,13 @@ function inventoryCategoryKey(category: InventoryCategory): MessageKey {
 function inventoryCardNode(card: InventoryCard): HTMLElement {
   const name = itemName(card.itemDefinitionId, card.nameKey ?? card.itemDefinitionId);
   const quantityLabel = t("inventory.quantityLabel", { quantity: card.quantity, item: name });
+  // A sellable stack offers the one action the inventory can honestly offer: take it to the market.
+  // The market is still where the trade settles, and the goods the player does not sell are not
+  // touched - a card that sold on click would be an inventory screen with a shop hidden in it.
+  const sellEntry = state.shop.find(
+    (row) => row.itemDefinitionId === card.itemDefinitionId && row.sellPrice !== null
+  );
+  const sellLabel = sellEntry === undefined ? "" : `, ${t("inventory.sellAtMarket")}`;
   return renderItemCard(
     {
       key: card.key,
@@ -1331,9 +1349,16 @@ function inventoryCardNode(card: InventoryCard): HTMLElement {
       note: inventoryNoteFor(card.itemDefinitionId),
       state: "NORMAL",
       disabled: false,
-      ariaLabel: `${name} — ${quantityLabel}`
+      ariaLabel: `${name} — ${quantityLabel}${sellLabel}`
     },
-    itemCardDeps()
+    itemCardDeps(),
+    sellEntry === undefined
+      ? {}
+      : {
+          onSelect: () => {
+            openFarmMarket({ direction: "sell", entryId: sellEntry.shopEntryId });
+          }
+        }
   );
 }
 
@@ -1356,89 +1381,315 @@ function itemCardDeps(): {
 }
 
 /**
- * The market, one row per entry, with a button only for the directions the server offers.
+ * The Farm Market: a shelf of visual cards and one transaction panel.
  *
- * Seeds carry a buy price and produce carries a sell price, so this renders whatever it is given
- * rather than deciding from the item's name. There is no row where a single click could buy and
- * sell the same item back.
+ * It used to be a vertical list of text rows, each carrying its own stepper and Buy button - a web
+ * form wearing a game's clothes. V14.3 keeps the server side exactly as it was (the same buy and sell
+ * commands, the same prices, the same ledger) and changes only the shape of the question: pick a card,
+ * then say how many, then confirm. One item is in play at a time, which is why the quantity control
+ * lives in the panel rather than on every card.
  */
-function renderShop(): void {
-  const container = element<HTMLDivElement>("shop");
-  container.replaceChildren();
-  if (state.shop.length === 0) {
-    container.appendChild(make("p", "muted", t("market.signedOut")));
-    return;
+
+/** Which card the trade panel is showing, and how many the player has asked for. */
+let marketSelection: string | null = null;
+let marketQuantity = 1;
+/** One trade at a time: a second press while the first is settling does nothing (the server's own
+ * idempotency is the real boundary - this only stops the UI from asking twice). */
+let marketTradePending = false;
+let marketGridSignature = "";
+let marketTradeSignature = "";
+
+/** The market's cards for a direction, from the rows the server last sent. */
+function marketCardsFor(direction: MarketDirection): MarketCard[] {
+  return marketCards({
+    entries: state.shop,
+    direction,
+    inventory: state.inventory,
+    cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions,
+    playerLevel: state.progression?.level ?? null
+  });
+}
+
+/** The wallet the market trades in. Absent means zero, which is what it is. */
+function goldBalance(): number {
+  return state.wallet.find((entry) => entry.currencyId === "currency_gold")?.balance ?? 0;
+}
+
+function renderMarket(): void {
+  renderMarketTabs();
+  const cards = marketCardsFor(shopDirection);
+  // A card can leave the shelf while it is selected - the last carrot sold, the tab switched - and a
+  // trade panel describing an item that is no longer there would be a lie.
+  if (marketSelection !== null && marketCardFor(cards, marketSelection) === null) {
+    marketSelection = null;
+    marketQuantity = 1;
   }
-  const direction = marketDirection();
-  const entries = state.shop.filter((entry) =>
-    direction === "buy" ? entry.buyPrice !== null : entry.sellPrice !== null
+  const gridSignature = JSON.stringify([
+    state.language,
+    shopDirection,
+    cards.map((card) => [card.key, card.unitPrice, card.owned, card.plantingLevel]),
+    marketSelection
+  ]);
+  if (gridSignature !== marketGridSignature) {
+    marketGridSignature = gridSignature;
+    const grid = element<HTMLElement>("market-grid");
+    grid.replaceChildren();
+    for (const card of cards) grid.appendChild(marketCardNode(card));
+    grid.hidden = cards.length === 0;
+    const empty = element<HTMLElement>("market-empty");
+    empty.hidden = cards.length > 0;
+    empty.textContent = t(shopDirection === "sell" ? "market.emptySell" : "market.noBuy");
+  }
+  renderMarketTrade(cards);
+}
+
+/**
+ * One market card: the shared item card, with the market's own emphasis.
+ *
+ * The quantity badge is what the player owns (both directions need it: buying without knowing what you
+ * have is how a player wastes gold), and the note is the unit price - or, for a seed they cannot plant
+ * yet, the level that unlocks it, because that is the fact that decides whether buying now is useful.
+ */
+function marketCardNode(card: MarketCard): HTMLElement {
+  const name = itemName(card.itemDefinitionId, card.nameKey ?? card.itemDefinitionId);
+  const price = marketPriceText(card);
+  const owned = t("market.owned", { quantity: card.owned });
+  const level = state.progression?.level ?? null;
+  const note =
+    card.plantingLevel !== null && level !== null && level < card.plantingLevel
+      ? t("market.plantingLevel", { level: card.plantingLevel })
+      : price;
+  return renderItemCard(
+    {
+      key: card.key,
+      visual: card.visual,
+      name,
+      quantity: card.owned,
+      quantityLabel: owned,
+      note,
+      state: marketSelection === card.key ? "SELECTED" : "NORMAL",
+      disabled: false,
+      ariaLabel: `${name} — ${owned}, ${price}`
+    },
+    itemCardDeps(),
+    {
+      onSelect: () => {
+        selectMarketCard(card);
+      }
+    }
   );
-  if (entries.length === 0) {
-    container.appendChild(make("p", "muted", t(direction === "buy" ? "market.noBuy" : "market.noSell")));
+}
+
+/** The catalogue's price for one unit, in the direction being browsed. */
+function marketPriceText(card: MarketCard): string {
+  const entry = state.shop.find((row) => row.shopEntryId === card.shopEntryId);
+  const currency = currencyLabel(
+    entry?.currencyId ?? "currency_gold",
+    entry?.currencyDisplayNameKey ?? "currency.gold.name"
+  );
+  return t("market.priceEach", { price: card.unitPrice, currency });
+}
+
+function selectMarketCard(card: MarketCard): void {
+  if (marketSelection === card.key) {
+    marketSelection = null;
+  } else {
+    marketSelection = card.key;
+    marketQuantity = 1;
+  }
+  renderMarket();
+}
+
+/**
+ * The one transaction panel: what is selected, how many, what it totals, and the action.
+ *
+ * Rebuilt only when something it shows has changed. The total is arithmetic the player can check by
+ * hand; the server settles its own number and the feedback quotes that one.
+ */
+function renderMarketTrade(cards: readonly MarketCard[]): void {
+  const panel = element<HTMLElement>("market-trade");
+  const card = marketCardFor(cards, marketSelection);
+  if (card === null) {
+    panel.hidden = true;
+    marketTradeSignature = "";
     return;
   }
-  for (const entry of entries) {
-    container.appendChild(shopRow(entry, direction));
+  const bounds = marketQuantityBounds(card, shopDirection, goldBalance());
+  marketQuantity = clampMarketQuantity(marketQuantity, bounds);
+  const canSubmit = marketCanSubmit(marketQuantity, bounds);
+  const signature = JSON.stringify([
+    state.language,
+    shopDirection,
+    card.key,
+    card.unitPrice,
+    card.owned,
+    marketQuantity,
+    bounds.max,
+    canSubmit,
+    marketTradePending,
+    goldBalance()
+  ]);
+  if (signature === marketTradeSignature) return;
+  marketTradeSignature = signature;
+  panel.hidden = false;
+  panel.replaceChildren();
+
+  const name = itemName(card.itemDefinitionId, card.nameKey ?? card.itemDefinitionId);
+  const head = make("div", "market-trade-head");
+  const image = document.createElement("img");
+  image.className = "market-trade-thumb";
+  image.alt = "";
+  itemThumbnails.apply(card.visual.request, image, (result) => {
+    if (result.dataUrl === null) image.hidden = true;
+  });
+  head.appendChild(image);
+  const headline = make("div", "market-trade-title");
+  headline.appendChild(make("strong", undefined, name));
+  headline.appendChild(
+    make("span", "market-trade-sub", `${marketPriceText(card)} · ${t("market.owned", { quantity: card.owned })}`)
+  );
+  head.appendChild(headline);
+  panel.appendChild(head);
+
+  if (bounds.max < bounds.min) {
+    panel.appendChild(make("p", "market-trade-note muted", t("market.notEnoughGold")));
+  } else {
+    const row = make("div", "market-quantity");
+    row.appendChild(
+      marketQuantityButton(
+        "minus",
+        t("market.decrease"),
+        () => {
+          marketQuantity = marketQuantityStep(marketQuantity, -1, bounds);
+          renderMarketTrade(cards);
+        }
+      )
+    );
+    row.appendChild(make("span", "market-quantity-value", String(marketQuantity)));
+    row.appendChild(
+      marketQuantityButton(
+        "plus",
+        t("market.increase"),
+        () => {
+          marketQuantity = marketQuantityStep(marketQuantity, 1, bounds);
+          renderMarketTrade(cards);
+        }
+      )
+    );
+    row.appendChild(marketQuantityText(t("market.max"), () => {
+      marketQuantity = bounds.max;
+      renderMarketTrade(cards);
+    }));
+    panel.appendChild(row);
+
+    const total = make("div", "market-total");
+    total.appendChild(make("span", undefined, t("market.total")));
+    total.appendChild(
+      make(
+        "strong",
+        undefined,
+        `${String(marketTotal(card.unitPrice, marketQuantity))} ${marketCurrencyOf(card)}`
+      )
+    );
+    panel.appendChild(total);
+  }
+
+  const submit = make("button", "primary market-submit");
+  submit.type = "button";
+  submit.textContent = t(shopDirection === "buy" ? "market.buyCount" : "market.sellCount", {
+    quantity: marketQuantity
+  });
+  submit.disabled = !canSubmit || marketTradePending;
+  submit.addEventListener("click", () => {
+    void run(submitMarketTrade);
+  });
+  panel.appendChild(submit);
+}
+
+/** A round stepper button: the one place in the HUD that only changes a number. */
+function marketQuantityButton(icon: IconName, label: string, onClick: () => void): HTMLButtonElement {
+  const button = make("button", "market-step");
+  button.type = "button";
+  button.appendChild(createIcon(icon, 16));
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function marketQuantityText(label: string, onClick: () => void): HTMLButtonElement {
+  const button = make("button", "market-max");
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function marketCurrencyOf(card: MarketCard): string {
+  const entry = state.shop.find((row) => row.shopEntryId === card.shopEntryId);
+  return currencyLabel(entry?.currencyId ?? "currency_gold", entry?.currencyDisplayNameKey ?? "currency.gold.name");
+}
+
+/**
+ * Settles one trade.
+ *
+ * The panel's bounds are a convenience, not a rule: this sends the item and the quantity and lets the
+ * server decide, exactly as it did when the market was a list of rows. The feedback quotes the
+ * settlement's own numbers.
+ */
+async function submitMarketTrade(): Promise<void> {
+  if (marketTradePending) return;
+  const card = marketCardFor(marketCardsFor(shopDirection), marketSelection);
+  if (card === null) return;
+  const bounds = marketQuantityBounds(card, shopDirection, goldBalance());
+  const quantity = clampMarketQuantity(marketQuantity, bounds);
+  if (!marketCanSubmit(quantity, bounds)) {
+    setStatus(message("market.notEnoughGold"), true);
+    return;
+  }
+  marketTradePending = true;
+  marketTradeSignature = "";
+  renderMarketTrade(marketCardsFor(shopDirection));
+  try {
+    await trade(shopDirection, card.shopEntryId, quantity);
+    // One trade, one decision: the next one starts from a single unit.
+    marketQuantity = 1;
+  } finally {
+    marketTradePending = false;
+    marketTradeSignature = "";
   }
 }
 
 /**
- * One market row: what it is, what it costs, how many, and the one action that applies.
+ * Opens the Farm Market.
  *
- * Rows rather than cards. The server decides the directions a row offers, so the tab and the button
- * are read from `ShopEntryDTO` and never from a client-side guess; prices come from the same DTO and
- * are never computed here.
+ * The Estate rail opens it directly; the market stall opens it from character view with the tab a
+ * player is most likely to want. Either way this is a *service overlay*: the camera mode, the
+ * character's position and the world are untouched, and closing it puts the player back exactly
+ * where they were.
  */
-function shopRow(entry: ShopEntryDTO, direction: MarketDirection): HTMLDivElement {
-  const currency = currencyLabel(entry.currencyId, entry.currencyDisplayNameKey);
-  const price = direction === "buy" ? entry.buyPrice : entry.sellPrice;
-  const row = make("div", "shop-row");
-  // Product information and controls are separated: the name carries the hierarchy, the price is
-  // metadata under it, and everything the player can press sits to the right on one line.
-  const product = make("div", "shop-product");
-  product.appendChild(make("span", "shop-name", itemName(entry.itemDefinitionId, entry.itemDisplayNameKey)));
-  product.appendChild(make("span", "shop-price", `${String(price ?? 0)} ${currency}`));
-  row.appendChild(product);
+function openFarmMarket(request?: { readonly direction?: MarketDirection; readonly entryId?: string }): void {
+  shopDirection = request?.direction ?? shopDirection;
+  marketSelection = request?.entryId ?? null;
+  marketQuantity = 1;
+  marketGridSignature = "";
+  marketTradeSignature = "";
+  setActivePanel(openPanel(panels, "market"));
+  renderMarket();
+}
 
-  const quantity = make("input");
-  quantity.type = "number";
-  quantity.min = "1";
-  quantity.max = String(entry.maxQuantityPerRequest);
-  quantity.value = "1";
-  quantity.className = "quantity";
-  quantity.setAttribute("aria-label", t("market.quantity"));
-
-  const stepper = make("div", "stepper");
-  const decrease = make("button", "stepper-button");
-  decrease.type = "button";
-  decrease.appendChild(createIcon("minus", 14));
-  decrease.setAttribute("aria-label", t("market.decrease"));
-  decrease.addEventListener("click", () => {
-    const next = Math.max(1, (quantity.valueAsNumber || 1) - 1);
-    quantity.value = String(next);
+/** Walking up to the stall: sell if there is anything to sell, otherwise browse seeds. */
+function openFarmMarketFromStall(): void {
+  const direction = defaultMarketDirection({
+    entries: state.shop,
+    direction: "sell",
+    inventory: state.inventory,
+    cropDefinitions: state.cropDefinitions,
+    treeDefinitions: state.treeDefinitions,
+    playerLevel: state.progression?.level ?? null
   });
-  const increase = make("button", "stepper-button");
-  increase.type = "button";
-  increase.appendChild(createIcon("plus", 14));
-  increase.setAttribute("aria-label", t("market.increase"));
-  increase.addEventListener("click", () => {
-    const max = entry.maxQuantityPerRequest;
-    const next = Math.min(max, (quantity.valueAsNumber || 1) + 1);
-    quantity.value = String(next);
-  });
-  // `appendChild` rather than `append`: the repository typechecks against both the DOM and the
-  // Workers lib, whose `append` signatures disagree.
-  stepper.appendChild(decrease);
-  stepper.appendChild(quantity);
-  stepper.appendChild(increase);
-  row.appendChild(stepper);
-
-  const action = make("button", "shop-action", t(direction === "buy" ? "market.buy" : "market.sell"));
-  action.addEventListener("click", () => {
-    void trade(direction, entry.shopEntryId, quantity.valueAsNumber);
-  });
-  row.appendChild(action);
-  return row;
+  openFarmMarket({ direction });
 }
 
 /**
@@ -2795,7 +3046,7 @@ function render(): void {
   renderSelection();
   renderGo();
   renderInventory();
-  renderShop();
+  renderMarket();
   // The shop's own render is driven by the panel: see `setActivePanel`.
   if (panels.active === "build") renderBuildPanel();
   renderObjectPanel();
@@ -2825,10 +3076,6 @@ let lastViewportWidth = window.innerWidth;
 type MarketDirection = "buy" | "sell";
 
 let shopDirection: MarketDirection = "buy";
-
-function marketDirection(): MarketDirection {
-  return shopDirection;
-}
 
 function renderMarketTabs(): void {
   for (const direction of ["buy", "sell"] as const) {
@@ -2871,6 +3118,9 @@ function setActivePanel(next: PanelState): void {
   // shoulder (the brief's rule, and the reason the shop's ghost and ownership wash make sense there).
   if (panels.active === "build") setCameraMode("ESTATE");
   renderPanels();
+  // A panel owns the world while it is open: the movement controls go away with it, and whatever a
+  // thumb was holding is released rather than left deflected behind the panel.
+  syncTouchControls();
   syncLayoutMetrics();
   // The shop draws itself when it is opened, and only then: a session that never opens it never asks
   // for a thumbnail, and so never creates the offscreen renderer those thumbnails need.
@@ -2966,6 +3216,9 @@ const playerRuntime = createPlayerRuntime({
    * the camera is looking - which is what makes W mean "away from the camera" rather than "south".
    */
   readInput: () => {
+    // A panel owns the keyboard and the stick while it is open. Movement is not a background activity:
+    // walking while the market is up would move the character out from under the trade they are making.
+    if (panels.active !== null) return NEUTRAL_INPUT;
     const held = movement?.vector() ?? NEUTRAL_INPUT;
     if (state.cameraMode !== "CHARACTER") return held;
     // Two adapters, one rule (see `composeCharacterInput`): a deflected joystick wins, otherwise the
@@ -2978,7 +3231,7 @@ const playerRuntime = createPlayerRuntime({
   // Running is the character view's: in the estate view the character is a marker being moved between
   // places, and a sprint there would be a silent behaviour change to shipped movement.
   readRun: () =>
-    state.cameraMode === "CHARACTER" && ((movement?.isRunning() ?? false) || runHeld),
+    panels.active === null && state.cameraMode === "CHARACTER" && ((movement?.isRunning() ?? false) || runHeld),
   onPose: (pose) => {
     characterPose = pose === null ? null : toScenePlayer(pose);
     scene?.setPlayer(characterPose);
@@ -3209,7 +3462,10 @@ let runHeld = false;
  * both controls, so a finger lifted during the switch cannot leave the character walking.
  */
 function syncTouchControls(): void {
-  const visible = showTouchControls(capability, state.cameraMode);
+  // No movement controls while a panel is open: the market, the inventory and the build shop are
+  // places the player is *doing something else*, and a stick left live underneath one would walk the
+  // character away while they shop.
+  const visible = showTouchControls(capability, state.cameraMode) && panels.active === null;
   const controls = element<HTMLElement>("touch-controls");
   if (controls.hidden === visible) controls.hidden = !visible;
   document.body.classList.toggle("is-character-mode", state.cameraMode === "CHARACTER");
@@ -3537,6 +3793,11 @@ async function activateInteraction(): Promise<void> {
       return;
     case "INSPECT":
       inspectTarget(decision.target);
+      return;
+    case "TRADE":
+      // A place that offers a service: opening the market is the whole action. No server call happens
+      // here - the market's own commands are the only thing that trades.
+      openFarmMarketFromStall();
       return;
     case "HARVEST_CROP":
       // The bow begins with the press, not with the answer: the request is already on its way, so
@@ -4164,7 +4425,11 @@ function wire(): void {
       () => {
         shopDirection = direction;
         renderMarketTabs();
-        renderShop();
+        marketSelection = null;
+        marketQuantity = 1;
+        marketGridSignature = "";
+        marketTradeSignature = "";
+        renderMarket();
       }
     );
   }

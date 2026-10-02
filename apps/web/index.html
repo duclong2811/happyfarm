@@ -101,7 +101,16 @@
           <button id="market-tab-buy" class="market-tab is-active" type="button" role="tab" aria-selected="true">Buy</button>
           <button id="market-tab-sell" class="market-tab" type="button" role="tab" aria-selected="false">Sell</button>
         </div>
-        <div id="market-body" class="module-body"><div id="shop" class="shop-rows"></div></div>
+        <div id="market-body" class="module-body">
+          <!-- The shelf: visual cards, one per tradeable item. Rendered by `renderMarket`. -->
+          <div id="market-grid" class="item-grid" role="list"></div>
+          <p id="market-empty" class="muted" hidden></p>
+        </div>
+        <!--
+          The one transaction panel: what is selected, how many, what it totals, and the action. It
+          appears only when a card is chosen, which is what keeps quantity controls off every card.
+        -->
+        <section id="market-trade" class="market-trade" hidden></section>
       </aside>
 
       <aside id="build-panel" class="module-panel module-panel-build" aria-labelledby="build-title" hidden>

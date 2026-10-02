@@ -791,6 +791,33 @@ item truth**, and **no surface offers an action the domain does not have**.
   `tests/web/harvest-feedback.test.ts`, and the `repeat` case in
   `tests/web/interaction-input.test.ts`.
 
+### The Farm Market and the first economy loop (V14.3)
+
+Read `docs/design/FARM_MARKET.md` before changing prices, the market's presentation, or how a character
+reaches it. Its rules: **prices are catalogue data and the server settles every trade**, **one shelf
+with two directions** (BUY sells what the catalogue sells, SELL lists only what the player owns), and
+**exactly one transaction panel** rather than controls on every card.
+
+- Market decisions (pure): `apps/web/src/market/market.ts` (`marketCards`, `plantingLevelFor`,
+  `defaultMarketDirection`, `marketQuantityBounds`, `clampMarketQuantity`, `marketQuantityStep`,
+  `marketTotal`, `marketCanSubmit`).
+- Presentation: `renderMarket` / `marketCardNode` / `renderMarketTrade` / `submitMarketTrade` /
+  `openFarmMarket` in `apps/web/src/main.ts`, with the shelf and the panel in `apps/web/index.html`
+  (`#market-grid`, `#market-empty`, `#market-trade`) and the V14.3 section of `apps/web/src/styles.css`.
+  It reuses `items/card.ts`, `items/thumbnails.ts` and `items/visuals.ts`; there is no second picture
+  pipeline. The old `renderShop` / `shopRow` text rows are gone.
+- The settlement path is the pre-existing one: `packages/application/src/shop.ts` and
+  `/shop/buy`, `/shop/sell` (`BuyItem`, `SellItem`), ledger reasons `SHOP_BUY` and `SHOP_SELL`. The
+  market adds no economy.
+- Market Stall: `service: "FARM_MARKET"` on the `world.market_stall` definition
+  (`packages/game-data/src/world/objects.ts`), carried in `WorldObjectDefinitionDTO.service` and read
+  by the interaction adapter (`apps/web/src/interaction/registry.ts`), which turns it into the `TRADE`
+  action (`interaction/model.ts`, `interaction/selection.ts`). No model name or mesh is ever matched.
+- Input: while any module panel is open, movement/run/interaction are suppressed and the touch stick is
+  put away (`readInput`, `readRun`, `syncTouchControls` and `setActivePanel` in `apps/web/src/main.ts`).
+- Tests: `tests/web/market-presentation.test.ts`, `tests/web/market-interaction.test.ts`, and the full
+  loop through the real API in `tests/api/farming-loop.test.ts`.
+
 ### The player character (V13.4.1)
 
 The avatar is presentation, and the authority is the player runtime - never the mesh.

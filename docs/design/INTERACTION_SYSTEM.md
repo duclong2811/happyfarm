@@ -238,3 +238,20 @@ Two rules keep it honest and cheap:
 
 The presentation half of this - the card language, the reward pop, the ready mark - is
 `docs/design/ITEM_PRESENTATION.md`.
+
+## Services: an object that *does* something (V14.3)
+
+The market stall is the first target that is not a crop, a tree or scenery - it is a *place*. The
+framework already had room for it, and the pieces that make it work are worth keeping in mind when the
+next service arrives (a harbour, a mailbox, a well):
+
+* The capability is **data**: `service: "FARM_MARKET"` on the object's own definition in
+  `packages/game-data/src/world/objects.ts`, carried to the client in `WorldObjectDefinitionDTO.service`.
+  The adapter reads it and emits the `TRADE` action; nothing matches a model name, a mesh, a landmark
+  kind or a coordinate, so a second stall is a row in game data.
+* `TRADE` shares the action band with `HARVEST` - both are "something I can do" - and outranks `INSPECT`,
+  so a stall and a ripe crop are separated by distance rather than by what kind of thing they are.
+* Activation returns `{ kind: "TRADE", service: "FARM_MARKET" }` and the host opens the market. Opening a
+  service is a **UI action**: no command is sent, and the world does not change.
+* The market's own commands are the only thing that trades, and they are the economy's, not the
+  interaction layer's. See `docs/design/FARM_MARKET.md`.

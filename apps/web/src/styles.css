@@ -666,3 +666,33 @@ button.item-card:disabled { cursor: not-allowed; }
   .action-dock.is-compact .item-picker .item-card-name { font-size: .72rem; }
   .action-dock.is-compact #plant-controls .item-picker { padding: .1rem 0; }
 }
+
+/* ------------------------------------------------------------------ the Farm Market (V14.3)
+
+   The market is the same shelf language as the inventory, plus one transaction panel. Styling only:
+   every price, bound and settlement comes from the server, and the panel is a view of one selected
+   card rather than a second economy. */
+
+.market-trade { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); border-top: 1px solid var(--parchment-line); background: var(--parchment); }
+.market-trade[hidden] { display: none; }
+.market-trade-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.market-trade-thumb { width: 3rem; height: 3rem; flex: 0 0 auto; border-radius: var(--radius-control); background: rgba(59, 50, 39, .06); object-fit: contain; }
+.market-trade-thumb[hidden] { display: none; }
+.market-trade-title { display: flex; flex-direction: column; min-width: 0; color: var(--parchment-ink); }
+.market-trade-title strong { font-size: var(--text-item); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-trade-sub { font-size: var(--text-meta); color: var(--parchment-muted); }
+.market-trade-note { margin: 0; font-size: var(--text-meta); }
+
+.market-quantity { display: flex; align-items: center; gap: var(--space-2); }
+.market-step, .market-max { min-width: var(--touch-target); min-height: var(--touch-target); display: inline-flex; align-items: center; justify-content: center; padding: 0 var(--space-2); border: 1px solid var(--parchment-line); border-radius: var(--radius-control); background: var(--raised-surface); color: var(--parchment-ink); font-weight: 700; }
+.market-max { font-size: var(--text-meta); letter-spacing: .04em; }
+.market-quantity-value { min-width: 2.5rem; text-align: center; font-size: var(--text-number); font-weight: 800; font-variant-numeric: tabular-nums; color: var(--parchment-ink); }
+.market-total { display: flex; align-items: baseline; justify-content: space-between; font-size: var(--text-item); color: var(--parchment-ink); }
+.market-total strong { font-variant-numeric: tabular-nums; }
+/* One strong action, full width: the market's answer to "what am I about to do". */
+.market-submit { min-height: var(--bottom-action-height); font-size: var(--text-item); }
+
+@media (max-width: 900px), (max-height: 500px) {
+  /* The sheet's own footer, clear of the home indicator and comfortably thumb-sized. */
+  .market-trade { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom)); }
+}

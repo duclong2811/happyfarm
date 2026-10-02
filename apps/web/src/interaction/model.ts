@@ -22,7 +22,7 @@ import type { CropStateDTO, TreeStateDTO } from "@happy-farm/contracts";
  * ENTER, USE) is deliberately absent rather than declared and unimplemented: an action exists here when
  * there is a handler for it, and adding one is a case in `interactionActionPriority` plus an executor.
  */
-export type InteractionAction = "INSPECT" | "HARVEST";
+export type InteractionAction = "INSPECT" | "HARVEST" | "TRADE";
 
 /**
  * What the target *is*, for range, priority and the adapter that reads it.
@@ -55,6 +55,9 @@ export const INTERACTION_RANGE_WORLD: Readonly<Record<InteractableKind, number>>
  * outranks "something I can look at". The numbers are a table so a future FISH or MINE is one row.
  */
 export const INTERACTION_ACTION_PRIORITY: Readonly<Record<InteractionAction, number>> = {
+  // A place's own service and a ripe crop are both "something I can do", so they share a band and are
+  // separated by distance; looking at a thing is worth less than acting on one.
+  TRADE: 2,
   HARVEST: 2,
   INSPECT: 1
 };
@@ -124,7 +127,7 @@ export interface InteractionCandidate extends InteractableTarget {
  */
 export interface InteractionPrompt {
   readonly key: string;
-  readonly actionKey: "interaction.harvest" | "interaction.inspect";
+  readonly actionKey: "interaction.harvest" | "interaction.inspect" | "interaction.trade";
   readonly nameKey: string | null;
   readonly nameFallback: string;
   readonly readyInSeconds: number | null;
@@ -133,11 +136,25 @@ export interface InteractionPrompt {
 export function interactionPromptFor(candidate: InteractionCandidate): InteractionPrompt {
   return {
     key: candidate.key,
-    actionKey: candidate.action === "HARVEST" ? "interaction.harvest" : "interaction.inspect",
+    actionKey: interactionActionKey(candidate.action),
     nameKey: candidate.nameKey,
     nameFallback: candidate.nameFallback,
     readyInSeconds: candidate.readyInSeconds
   };
+}
+
+/** The action's own word, as a translation key. One table, so a new action is one row. */
+export function interactionActionKey(
+  action: InteractionAction
+): "interaction.harvest" | "interaction.inspect" | "interaction.trade" {
+  switch (action) {
+    case "HARVEST":
+      return "interaction.harvest";
+    case "TRADE":
+      return "interaction.trade";
+    case "INSPECT":
+      return "interaction.inspect";
+  }
 }
 
 /** A crop row is harvestable exactly when the server says it is mature. */

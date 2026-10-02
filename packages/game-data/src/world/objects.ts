@@ -56,7 +56,23 @@ export interface WorldObjectDefinition {
    * somewhere to say so rather than being protected by their source.
    */
   readonly system: boolean;
+  /**
+   * A gameplay service this object *is*, or null for an object that is only itself.
+   *
+   * The market stall is the first one: walking up to it and interacting opens the Farm Market. The
+   * capability lives here, in the object's own definition, rather than in a renderer that recognises a
+   * mesh or a client that recognises a model file name - so a second stall, a second kind of stall, or
+   * a stall on another island is a row in this data and nothing else.
+   *
+   * The service is *what the place offers*, never a permission: the market itself still authorizes
+   * every trade from the authenticated actor and its own catalogue prices.
+   */
+  readonly service?: WorldObjectService | null;
 }
+
+/** The gameplay services an object can stand for. */
+export const WORLD_OBJECT_SERVICES = ["FARM_MARKET"] as const;
+export type WorldObjectService = (typeof WORLD_OBJECT_SERVICES)[number];
 
 /**
  * The ordinary starter objects.
@@ -188,12 +204,25 @@ interface BuildingObjectInput {
   readonly landmarkKind: string;
   readonly footprintCells: number;
   readonly collisionRadiusWorld: number;
+  /** Set on the buildings that *do* something: the market stall is the first. */
+  readonly service?: WorldObjectService;
 }
 
 const BUILDING_OBJECTS: readonly BuildingObjectInput[] = [
   { id: "world.barn", displayNameKey: "object.barn.name", landmarkKind: "FARMHOUSE", footprintCells: 4, collisionRadiusWorld: 2.2 },
   { id: "world.farmhouse", displayNameKey: "object.farmhouse.name", landmarkKind: "FARMHOUSE", footprintCells: 5, collisionRadiusWorld: 2.6 },
-  { id: "world.market_stall", displayNameKey: "object.market_stall.name", landmarkKind: "MARKET_STALL", footprintCells: 2, collisionRadiusWorld: 1.2 },
+  {
+    id: "world.market_stall",
+    displayNameKey: "object.market_stall.name",
+    landmarkKind: "MARKET_STALL",
+    footprintCells: 2,
+    collisionRadiusWorld: 1.2,
+    // The village market: the first building on the island that is a place to *do* something, not just
+    // stand next to. It stays movable like every other starter building, so a player who stores their
+    // stall keeps the Estate market and loses the walk-up one - which is a fair reading of putting the
+    // stall away.
+    service: "FARM_MARKET"
+  },
   { id: "world.well", displayNameKey: "object.well.name", landmarkKind: "WELL", footprintCells: 2, collisionRadiusWorld: 0.85 },
   { id: "world.storage_shed", displayNameKey: "object.storage_shed.name", landmarkKind: "STORAGE_SHED", footprintCells: 3, collisionRadiusWorld: 1.6 },
   { id: "world.open_barn", displayNameKey: "object.open_barn.name", landmarkKind: "OPEN_BARN", footprintCells: 3, collisionRadiusWorld: 1.8 },
@@ -220,7 +249,8 @@ function buildingObject(input: BuildingObjectInput): WorldObjectDefinition {
     storable: true,
     removable: true,
     removalRefundRate: 0.5,
-    system: false
+    system: false,
+    service: input.service ?? null
   };
 }
 
