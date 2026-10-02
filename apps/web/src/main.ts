@@ -84,6 +84,14 @@ import {
 } from "./build-shop/shop-state";
 import { createShopThumbnails } from "./build-shop/shop-thumbnails";
 import {
+  editableActions,
+  ownedBounds,
+  ownedCells,
+  ownershipOverlayFor,
+  refundPreview,
+  selectedRow
+} from "./object-editing";
+import {
   renderAssetGrid,
   renderCategoryRail,
   renderInspector,
@@ -145,13 +153,14 @@ interface AppState {
    */
   buildSelection: BuildCatalogEntryDTO | null;
   /**
-   * The player's own built thing the player is editing, or null.
+   * The id of the built thing the player is editing, or null.
    *
-   * An *object*, not a cell: picking a barn selects the barn, and the panel offers what the asset's
-   * own policy allows - move it, turn it, take it down. The row is the server's; this only remembers
-   * which one the player clicked.
+   * An *id*, not a row and not an object reference: every poll replaces the list with fresh rows, so a
+   * panel holding an old copy would describe an old version and then send that version to a server
+   * that has moved on. The row is resolved from `state.constructions` whenever it is needed, and a row
+   * that has gone (removed here or in another tab) resolves to nothing, which clears the selection.
    */
-  selectedObject: ConstructionDTO | null;
+  selectedObjectId: string | null;
   /**
    * Everything built on this farm, as the server last reported it.
    *
@@ -195,7 +204,7 @@ const state: AppState = {
   treeDefinitions: [],
   buildCatalog: [],
   buildSelection: null,
-  selectedObject: null,
+  selectedObjectId: null,
   constructions: [],
   cellMap: EMPTY_WORLD_CELL_MAP,
   inventory: [],
@@ -412,7 +421,7 @@ function renderWallet(): void {
             (entry) =>
               `${String(entry.balance)} ${currencyLabel(entry.currencyId, entry.displayNameKey)}`
           )
-          .join(" Â· ");
+          .join(" · ");
 }
 
 function renderProgression(): void {
@@ -558,7 +567,7 @@ function renderCrops(): void {
   if (state.cropDefinitions.length === 0) {
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = "â€”";
+    placeholder.textContent = "—";
     select.appendChild(placeholder);
     select.disabled = true;
     return;
@@ -581,7 +590,7 @@ function renderCrops(): void {
     }
     parts.push(t("dock.seedCount", { count: seedCount(definition) }));
     option.disabled = cropIsLocked(definition);
-    option.textContent = parts.join(" Â· ");
+    option.textContent = parts.join(" · ");
     cropGroup.appendChild(option);
   }
   const treeGroup = document.createElement("optgroup");
@@ -931,7 +940,7 @@ function renderInventory(): void {
     // One cell per stack: name and count, no card, so a growing inventory stays scannable.
     const cell = make("li", "inventory-cell");
     cell.appendChild(make("span", "inventory-name", itemName(entry.itemDefinitionId, entry.displayNameKey)));
-    cell.appendChild(make("span", "inventory-count", `Ã—${String(entry.quantity)}`));
+    cell.appendChild(make("span", "inventory-count", `×${String(entry.quantity)}`));
     list.appendChild(cell);
   }
 }
@@ -1417,6 +1426,7 @@ function enterPlacement(entry: BuildCatalogEntryDTO): void {
   // other down.
   clearObjectSelection();
   scene?.setObjectPicking(false);
+  refreshOwnershipOverlay();
   setActivePanel(NO_PANEL);
   // Pick a cell to hold the item *before* the camera moves: the one the player selected, or the cell
   // the camera is already looking at. Placement always starts somewhere concrete, and the camera comes
@@ -1511,7 +1521,7 @@ function renderPlacementHud(): void {
   const meta = make("span", "placement-meta");
   meta.appendChild(createIcon("coin", 13));
   meta.appendChild(make("span", undefined, buildPriceText(entry)));
-  meta.appendChild(make("span", "placement-sep", "Â·"));
+  meta.appendChild(make("span", "placement-sep", "·"));
   meta.appendChild(
     make(
       "span",
@@ -1542,6 +1552,15 @@ function renderPlacementHud(): void {
   keys.appendChild(entryFor("Enter", t("build.hud.confirm")));
   keys.appendChild(entryFor("Esc", t("build.hud.cancel")));
   node.appendChild(keys);
+
+  // The mark on the ground is the answer to "where is my land"; this is the sentence that names it,
+  // because a colour with no legend is a decoration.
+  const owned = make("p", "placement-note");
+  owned.textContent = t("build.hud.ownedHint");
+  node.appendChild(owned);
+
+  const diagnostic = debugDiagnostic(state.selected);
+  if (diagnostic !== null) node.appendChild(make("p", "placement-note", diagnostic));
 
   const confirm = make("button", "placement-confirm");
   confirm.type = "button";
@@ -1591,6 +1610,7 @@ async function confirmPlacement(): Promise<void> {
     placementTurns = 0;
     scene?.setPlacementPreview(null);
     scene?.setObjectPicking(true);
+    refreshOwnershipOverlay();
     renderPlacementHud();
     refreshScene();
     await refreshAccount();
@@ -1616,6 +1636,7 @@ function cancelBuildSelection(): void {
   placementTurns = 0;
   scene?.setPlacementPreview(null);
   scene?.setObjectPicking(true);
+  refreshOwnershipOverlay();
   renderPlacementHud();
   setStatus(message("status.placementCancelled"));
 }
@@ -1657,7 +1678,66 @@ function replaceConstruction(next: ConstructionDTO): void {
   state.constructions = state.constructions.map((candidate) =>
     candidate.constructionId === next.constructionId ? next : candidate
   );
-  if (state.selectedObject?.constructionId === next.constructionId) state.selectedObject = next;
+}
+
+/** The row the player is editing, resolved from the server's latest list by id. */
+function selectedConstruction(): ConstructionDTO | null {
+  return selectedRow(state.constructions, state.selectedObjectId);
+}
+
+/**
+ * Shows the player their own land while they are using it - and only then.
+ *
+ * The first live failure this pass fixes: the placement ghost could be moved around the island, and
+ * the answer to "may I build here" was "you do not own that land yet", with nothing on screen saying
+ * where the player's land was. The mark is drawn while something is in hand for placement or a move,
+ * and it is taken away the moment neither is true, so normal play still shows no grid at all.
+ */
+function refreshOwnershipOverlay(): void {
+  scene?.setOwnershipOverlay(
+    ownershipOverlayFor({
+      placing: state.buildSelection !== null,
+      moving: moveSession !== null,
+      cells: state.cellMap
+    })
+  );
+}
+
+/**
+ * The developer's line: the owned bounds, the cell in hand, and - while carrying something - where it
+ * came from.
+ *
+ * Behind `?debug=1` and nowhere else. It exists because the first live report of this pass was "many
+ * apparently normal cells say I do not own them", and there was no way to answer it from the screen;
+ * the numbers that settle it are these, and a player must never see them.
+ */
+function debugDiagnostic(selected: SelectedTile | null): string | null {
+  if (!debugRequested()) return null;
+  const bounds = ownedBounds(ownedCells(state.cellMap));
+  const owned = bounds === null ? "none" : `${String(bounds.minX)},${String(bounds.minY)}..${String(bounds.maxX)},${String(bounds.maxY)} (${String(bounds.count)})`;
+  const here = selected === null ? "-" : `${String(selected.x)},${String(selected.y)}`;
+  const carried = moveSession === null ? "" : ` from ${String(moveSession.construction.anchorX)},${String(moveSession.construction.anchorY)}`;
+  return `debug: owned ${owned}; cell ${here}${carried}; pick ${state.selectedObjectId ?? "-"}`;
+}
+
+/**
+ * Reacts to the farm's list changing underneath the editor.
+ *
+ * A poll that replaced the rows is harmless - the selection is an id - but a row that has *gone*
+ * (removed in another tab, or by this one) has to take its panel and its mark with it rather than
+ * leave the player looking at a ghost.
+ */
+function reconcileObjectSelection(): void {
+  if (state.selectedObjectId === null) return;
+  if (selectedConstruction() !== null) return;
+  state.selectedObjectId = null;
+  moveSession = null;
+  deleteArmed = false;
+  scene?.setObjectSelection(null);
+  scene?.setPlacementPreview(null);
+  scene?.setObjectPicking(true);
+  document.body.classList.remove("is-placing");
+  renderObjectPanel();
 }
 
 /** The player clicked one of their own objects: remember it and offer the asset's own actions. */
@@ -1668,22 +1748,30 @@ function selectObject(constructionId: string): void {
   state.buildSelection = null;
   placementTurns = 0;
   scene?.setPlacementPreview(null);
+  scene?.setOwnershipOverlay(null);
   renderPlacementHud();
-  state.selectedObject = construction;
+  state.selectedObjectId = construction.constructionId;
   deleteArmed = false;
   scene?.setObjectSelection(construction.constructionId);
   renderObjectPanel();
   renderField();
+  // The panel is the answer, and this is the sentence that says where it came from: a player who
+  // clicked something and saw nothing would otherwise have no way to tell selection from a dead click.
+  const entry = constructionEntry(construction);
+  setStatus((translate) =>
+    translate("object.selected", { item: entry === undefined ? construction.entryId : buildEntryName(entry) })
+  );
 }
 
 /** Drops the object selection: no mark, no panel, no armed delete. */
 function clearObjectSelection(): void {
-  if (state.selectedObject === null && moveSession === null) return;
-  state.selectedObject = null;
+  if (state.selectedObjectId === null && moveSession === null) return;
+  state.selectedObjectId = null;
   moveSession = null;
   deleteArmed = false;
   scene?.setObjectSelection(null);
   scene?.setPlacementPreview(null);
+  scene?.setOwnershipOverlay(null);
   scene?.setObjectPicking(true);
   document.body.classList.remove("is-placing");
   renderObjectPanel();
@@ -1697,7 +1785,7 @@ function clearObjectSelection(): void {
  * costs nothing at all and a failed move leaves the object exactly where it was.
  */
 function beginMove(): void {
-  const construction = state.selectedObject;
+  const construction = selectedConstruction();
   if (construction === null || moveSession !== null) return;
   const entry = constructionEntry(construction);
   if (entry === undefined || !entry.movable) {
@@ -1708,8 +1796,9 @@ function beginMove(): void {
   deleteArmed = false;
   // The ghost is drawn where the object already is, so the first thing the player sees is "this one".
   selectCell(construction.anchorX, construction.anchorY);
-  state.selectedObject = construction;
   scene?.setObjectPicking(false);
+  // Carrying something is exactly the moment the player has to know where their land ends.
+  refreshOwnershipOverlay();
   document.body.classList.add("is-placing");
   scene?.focusOnCell({ x: construction.anchorX, y: construction.anchorY });
   updateMovePreview();
@@ -1723,6 +1812,7 @@ function cancelMove(): void {
   moveSession = null;
   scene?.setPlacementPreview(null);
   scene?.setObjectPicking(true);
+  refreshOwnershipOverlay();
   document.body.classList.remove("is-placing");
   renderObjectPanel();
   setStatus(message("object.moveCancelled"));
@@ -1819,7 +1909,7 @@ async function confirmMove(): Promise<void> {
  * of a barn is easy to predict and the server refuses an overlap either way.
  */
 async function rotateSelectedObject(): Promise<void> {
-  const construction = state.selectedObject;
+  const construction = selectedConstruction();
   if (construction === null || objectPending || state.farmId === null || moveSession !== null) return;
   const entry = constructionEntry(construction);
   if (entry === undefined || !entry.rotatable) {
@@ -1849,7 +1939,7 @@ async function rotateSelectedObject(): Promise<void> {
 
 /** Takes the selected object down, once the player has confirmed it and the server has said so. */
 async function confirmDelete(): Promise<void> {
-  const construction = state.selectedObject;
+  const construction = selectedConstruction();
   if (construction === null || objectPending || !deleteArmed || state.farmId === null) return;
   const entry = constructionEntry(construction);
   if (entry === undefined) return;
@@ -1863,7 +1953,7 @@ async function confirmDelete(): Promise<void> {
     state.constructions = state.constructions.filter(
       (candidate) => candidate.constructionId !== removed.constructionId
     );
-    state.selectedObject = null;
+    state.selectedObjectId = null;
     deleteArmed = false;
     scene?.setObjectSelection(null);
     refreshScene();
@@ -1891,23 +1981,23 @@ async function confirmDelete(): Promise<void> {
  */
 function renderObjectPanel(): void {
   const node = element<HTMLElement>("object-panel");
-  const construction = state.selectedObject;
+  const construction = selectedConstruction();
   if (construction === null) {
     node.hidden = true;
     node.replaceChildren();
     return;
   }
   const entry = constructionEntry(construction);
-  if (entry === undefined) {
-    node.hidden = true;
-    node.replaceChildren();
-    return;
-  }
+  // The panel is shown for *any* selected row, even one the catalogue has not loaded for: a player
+  // who clicked their own barn and saw nothing would have no way to tell a missing catalogue entry
+  // from a dead click. The actions are what the entry decides, and no entry means no actions yet.
+  const actions = editableActions(entry ?? null);
+  const name = entry === undefined ? construction.entryId : buildEntryName(entry);
   node.hidden = false;
   node.replaceChildren();
 
   const copy = make("div", "placement-copy");
-  copy.appendChild(make("strong", "placement-name", buildEntryName(entry)));
+  copy.appendChild(make("strong", "placement-name", name));
   const meta = make("span", "placement-meta");
   meta.appendChild(
     make(
@@ -1919,10 +2009,10 @@ function renderObjectPanel(): void {
       })
     )
   );
-  meta.appendChild(make("span", "placement-sep", "Â·"));
-  meta.appendChild(
-    make("span", undefined, t("object.info.level", { level: entry.requiredLevel }))
-  );
+  if (entry !== undefined) {
+    meta.appendChild(make("span", "placement-sep", "·"));
+    meta.appendChild(make("span", undefined, t("object.info.level", { level: entry.requiredLevel })));
+  }
   copy.appendChild(meta);
   node.appendChild(copy);
 
@@ -1941,7 +2031,7 @@ function renderObjectPanel(): void {
       item.appendChild(make("span", undefined, label));
       return item;
     };
-    if (entry.rotatable) keys.appendChild(key("Q / E", t("build.hud.rotate")));
+    if (actions.rotate) keys.appendChild(key("Q / E", t("build.hud.rotate")));
     keys.appendChild(key(t("build.hud.clickKey"), t("object.move.pick")));
     keys.appendChild(key("Enter", t("object.move.confirm")));
     keys.appendChild(key("Esc", t("build.hud.cancel")));
@@ -1949,18 +2039,21 @@ function renderObjectPanel(): void {
   }
 
   if (deleteArmed) {
-    const refund = Math.floor(entry.price * entry.removalRefundRate);
+    const refund = entry === undefined ? 0 : refundPreview(entry.price, entry.removalRefundRate);
     const line = make("p", "placement-state is-invalid");
-    line.textContent = t("object.delete.confirm", { item: buildEntryName(entry) });
+    line.textContent = t("object.delete.confirm", { item: name });
     node.appendChild(line);
-    if (refund > 0) {
-      const note = make("p", "placement-note");
-      note.textContent = t("object.delete.refund", { gold: refund.toLocaleString(state.language) });
-      node.appendChild(note);
-    }
+    const note = make("p", "placement-note");
+    // Said either way. "Nothing comes back" is a policy, not a missing line: a player deciding
+    // whether to take a tree down should be told what they get, including when the answer is zero.
+    note.textContent =
+      refund > 0
+        ? t("object.delete.refund", { gold: refund.toLocaleString(state.language) })
+        : t("object.delete.noRefund");
+    node.appendChild(note);
   }
 
-  const actions = make("div", "object-actions");
+  const actionRow = make("div", "object-actions");
   const action = (label: string, className: string, handler: () => void, disabled = false): HTMLButtonElement => {
     const button = make("button", className);
     button.type = "button";
@@ -1972,20 +2065,20 @@ function renderObjectPanel(): void {
   // Confirming a delete replaces the action row rather than joining it: the question is "delete
   // this?", and offering Move and Rotate underneath it would be three answers to one question.
   if (deleteArmed) {
-    actions.appendChild(action(t("object.delete.yes"), "object-action is-danger", () => void confirmDelete()));
-    actions.appendChild(
+    actionRow.appendChild(action(t("object.delete.yes"), "object-action is-danger", () => void confirmDelete()));
+    actionRow.appendChild(
       action(t("object.delete.no"), "object-action", () => {
         deleteArmed = false;
         renderObjectPanel();
       })
     );
   } else if (moveSession === null) {
-    if (entry.movable) actions.appendChild(action(t("object.action.move"), "object-action", beginMove));
-    if (entry.rotatable) {
-      actions.appendChild(action(t("object.action.rotate"), "object-action", () => void rotateSelectedObject()));
+    if (actions.move) actionRow.appendChild(action(t("object.action.move"), "object-action", beginMove));
+    if (actions.rotate) {
+      actionRow.appendChild(action(t("object.action.rotate"), "object-action", () => void rotateSelectedObject()));
     }
-    if (entry.removable) {
-      actions.appendChild(
+    if (actions.remove) {
+      actionRow.appendChild(
         action(
           t("object.action.delete"),
           "object-action is-danger",
@@ -1997,12 +2090,15 @@ function renderObjectPanel(): void {
         )
       );
     }
-    actions.appendChild(action(t("object.action.close"), "object-action", clearObjectSelection));
+    actionRow.appendChild(action(t("object.action.close"), "object-action", clearObjectSelection));
   } else {
-    actions.appendChild(action(t("object.move.confirm"), "placement-confirm", () => void confirmMove()));
-    actions.appendChild(action(t("object.move.cancel"), "object-action", cancelMove));
+    actionRow.appendChild(action(t("object.move.confirm"), "placement-confirm", () => void confirmMove()));
+    actionRow.appendChild(action(t("object.move.cancel"), "object-action", cancelMove));
   }
-  node.appendChild(actions);
+  node.appendChild(actionRow);
+
+  const diagnostic = debugDiagnostic(state.selected);
+  if (diagnostic !== null) node.appendChild(make("p", "placement-note", diagnostic));
 }
 
 /**
@@ -2388,6 +2484,11 @@ function refreshScene(): void {
   // The shop's preview asks the same map the renderer draws from, so the two cannot disagree about
   // what ground is, what it can carry, or what stands on it.
   state.cellMap = input.cells;
+  // The ownership mark is drawn from the map, so a farm refresh that changes the land also refreshes
+  // the mark. `setOwnershipOverlay` compares what it is given and does nothing when it has not moved.
+  refreshOwnershipOverlay();
+  // And a row that the refresh no longer reports takes its panel and its mark with it.
+  reconcileObjectSelection();
   // Movement is blocked by the same rows the renderer draws, so a crop that grows under the
   // character starts blocking the next step without a second refresh path. Rebuilding the collision
   // world never moves the character: it only changes where the next step may go.
@@ -2912,7 +3013,7 @@ function wire(): void {
       cancelMove();
       return;
     }
-    if (state.selectedObject !== null) {
+    if (state.selectedObjectId !== null) {
       clearObjectSelection();
       return;
     }

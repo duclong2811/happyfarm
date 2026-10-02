@@ -137,6 +137,14 @@ export interface SharedAssets {
   readonly cellSelection: MeshBasicMaterial;
   readonly cellNeighbour: MeshBasicMaterial;
   readonly cellDebug: MeshBasicMaterial;
+  /**
+   * The ownership mark: a quiet green wash over the cells the player actually owns.
+   *
+   * Shown only while something is in hand for placement or a move, so the player can see where "here"
+   * is. Quieter than a selection, because it is *context* rather than an answer: a hundred and forty
+   * cells of it must not drown the footprint the player is deciding about.
+   */
+  readonly cellOwned: MeshBasicMaterial;
   readonly cropGrowing: MeshStandardMaterial;
   readonly cropMature: MeshStandardMaterial;
   /** Placeholder avatar colours. Art replaces these; nothing reads them back. */
@@ -284,6 +292,7 @@ export function createSharedAssets(): SharedAssets {
     cellSelection: flatMaterial(flat(0xf3f7e4, { opacity: 0.34, depthWrite: false })),
     cellNeighbour: flatMaterial(flat(0xdfe9cf, { opacity: 0.16, depthWrite: false })),
     cellDebug: flatMaterial(flat(0xffffff, { opacity: 0.62, depthWrite: false })),
+    cellOwned: flatMaterial(flat(0x86c96a, { opacity: 0.2, depthWrite: false })),
     cropGrowing: material(standard(0x6fbf7f)),
     cropMature: material(standard(0xe0b64a)),
     playerBody: material(standard(0x3f6fd8)),

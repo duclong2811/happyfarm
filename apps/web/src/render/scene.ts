@@ -53,7 +53,14 @@ import { createPointerGesture } from "./pointer-gesture";
 import { buildScenery } from "./scenery";
 import { buildInteractionGrid } from "./interaction-grid";
 import { worldToCell } from "./world-cell";
-import { planCellOverlay, buildCellOutlines, buildDebugGrid, buildSelectionQuad } from "./world-cell-overlay";
+import {
+  planCellOverlay,
+  buildCellOutlines,
+  buildDebugGrid,
+  buildOwnedLandOverlay,
+  buildSelectionQuad
+} from "./world-cell-overlay";
+import { CONSTRUCTION_ID_KEY, constructionIdFromHits, tapTargetFor } from "./object-picking";
 import { CELL_OVERLAY_LIFT_WORLD } from "./world-cell-overlay";
 import { CELL_OVERLAY_TILE_LIFT_WORLD } from "./world-cell-overlay";
 import { SEA_SURFACE_Y } from "./world-cell-overlay";
@@ -278,6 +285,14 @@ export interface FarmSceneHandle {
   setObjectPicking(enabled: boolean): void;
   /** Marks one built thing as the object the player is editing, or clears the mark with null. */
   setObjectSelection(constructionId: string | null): void;
+  /**
+   * Draws the cells the player owns, or clears the mark with null.
+   *
+   * The host decides *when*: while something is in hand for placement or a move, and nowhere else.
+   * The renderer decides *how*: one instanced quad per cell, one draw call for the parcel, rebuilt
+   * only when the cell list actually changes - never per frame, and never per pointer event.
+   */
+  setOwnershipOverlay(cells: readonly TileCoordinate[] | null): void;
   /**
    * Turns the developer overlay on or off: every cell, colour-coded by land use.
    *
@@ -591,6 +606,13 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // The cell overlay: the island's own selection feedback, and the debug lattice when asked for.
   const cellOverlayGroup = new Group();
   /**
+   * The ownership mark: the cells the player actually owns, drawn only while they are using the land.
+   *
+   * Its own group because it is a *mode*, not a layer: placement and a move turn it on, finishing
+   * either turns it off, and normal play never sees it.
+   */
+  const ownershipGroup = new Group();
+  /**
    * The placement ghost: what the build shop says the player is about to put down.
    *
    * Its own group because it is the one thing on screen that is neither world nor farm state: it is a
@@ -616,6 +638,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     overlayDetailGroup,
     interactionGroup,
     cellOverlayGroup,
+    ownershipGroup,
     previewGroup,
     constructionGroup,
     playerGroup
@@ -655,15 +678,18 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   /**
    * The mark around the built thing the player is editing.
    *
-   * Its own mesh rather than a recolour of the tile ring: an object is not a cell, and a player who
-   * has selected a barn should see the barn marked, at the barn's own size, while the cell under the
-   * pointer stays whatever it was. One mesh, hidden unless something is selected - the same cost as
-   * the tile marker.
+   * Two meshes rather than a recolour of the tile ring: an object is not a cell, and a player who has
+   * selected a barn should see the barn marked, at the barn's own *footprint*, while the cell under
+   * the pointer stays whatever it was. The wash says which ground would move; the ring says which
+   * object is selected. Both are hidden unless something is selected.
    */
+  const objectFootprintMarker = new Mesh(assets.circle, assets.cellSelection);
+  objectFootprintMarker.rotation.x = -Math.PI / 2;
+  objectFootprintMarker.visible = false;
   const objectMarker = new Mesh(assets.ring, assets.selection);
   objectMarker.rotation.x = -Math.PI / 2;
   objectMarker.visible = false;
-  scene.add(objectMarker);
+  scene.add(objectFootprintMarker, objectMarker);
   let hoverMarker: Mesh | null = null;
 
   const pickTargets = new Map<Object3D, TileCoordinate>();
@@ -1297,6 +1323,31 @@ let interactionGeometry: BufferGeometry | null = null;
   let objectPickingEnabled = true;
   /** Where each drawn construction stands, so the marker can be placed without touching the scene. */
   const constructionSites = new Map<string, SceneConstruction>();
+  /** The ownership mark's own geometry and the list it was built from, so a repeat costs nothing. */
+  let ownershipGeometry: BufferGeometry | null = null;
+  let ownershipSignature = "";
+
+  function rebuildOwnership(cells: readonly TileCoordinate[] | null): void {
+    const signature = cells === null ? "" : `${String(cells.length)}:${cells.map((cell) => `${String(cell.x)},${String(cell.y)}`).join(";")}`;
+    if (signature === ownershipSignature) return;
+    ownershipSignature = signature;
+    ownershipGroup.clear();
+    ownershipGeometry?.dispose();
+    ownershipGeometry = null;
+    if (cells === null || cells.length === 0) {
+      draw();
+      return;
+    }
+    const base = GROUND_SURFACE_Y + 0.02;
+    ownershipGeometry = buildOwnedLandOverlay(
+      ownershipGroup,
+      cells,
+      state.cells.frame,
+      assets.cellOwned,
+      (worldX, worldZ) => base + terrainHeightAt(worldX, worldZ, state.world.terrain)
+    );
+    draw();
+  }
 
   /** A cheap identity for the construction layer: ids, models, places, and turns. */
   function constructionSignatureOf(list: readonly SceneConstruction[]): string {
@@ -1335,8 +1386,9 @@ let interactionGeometry: BufferGeometry | null = null;
         instance.position.set(item.worldX, groundY, item.worldZ);
         instance.rotation.y = item.rotationY;
         // What a click on the model resolves to. The model is a clone with no identity of its own, so
-        // the row's id is written onto its root and read back by the picking raycast.
-        (instance.userData as { constructionId?: string }).constructionId = item.id;
+        // the row's id is written onto its root and read back by the picking raycast - through the one
+        // key constant, so the writer and the reader cannot drift apart.
+        (instance.userData as Record<string, unknown>)[CONSTRUCTION_ID_KEY] = item.id;
         constructionGroup.add(instance);
         draw();
       });
@@ -1348,18 +1400,28 @@ let interactionGeometry: BufferGeometry | null = null;
     const item = selectedObjectId === null ? undefined : constructionSites.get(selectedObjectId);
     if (item === undefined) {
       objectMarker.visible = false;
+      objectFootprintMarker.visible = false;
       return;
     }
     objectMarker.visible = true;
-    objectMarker.position.set(
-      item.worldX,
-      GROUND_SURFACE_Y + terrainHeightAt(item.worldX, item.worldZ, state.world.terrain) + 0.02,
-      item.worldZ
-    );
+    objectFootprintMarker.visible = true;
     const pitch = state.layout.pitch;
+    // The anchor carries the extra cell of an even side on +x/+z, so the footprint's own centre is a
+    // fraction of a cell away from it. Both markers sit on that centre, which is what makes the wash
+    // cover the ground a move would actually take.
+    const centreX = item.worldX + ((item.widthCells - 1) / 2 - Math.floor((item.widthCells - 1) / 2)) * pitch;
+    const centreZ = item.worldZ + ((item.depthCells - 1) / 2 - Math.floor((item.depthCells - 1) / 2)) * pitch;
+    const groundY = GROUND_SURFACE_Y + terrainHeightAt(centreX, centreZ, state.world.terrain);
+    objectFootprintMarker.position.set(centreX, groundY + 0.018, centreZ);
+    objectFootprintMarker.scale.set(
+      Math.max(state.layout.tileSize, item.widthCells * pitch * 0.62),
+      Math.max(state.layout.tileSize, item.depthCells * pitch * 0.62),
+      1
+    );
+    objectMarker.position.set(centreX, groundY + 0.026, centreZ);
     objectMarker.scale.set(
-      Math.max(state.layout.tileSize, item.widthCells * pitch * 0.7),
-      Math.max(state.layout.tileSize, item.depthCells * pitch * 0.7),
+      Math.max(state.layout.tileSize * 0.9, item.widthCells * pitch * 0.72),
+      Math.max(state.layout.tileSize * 0.9, item.depthCells * pitch * 0.72),
       1
     );
   }
@@ -1637,15 +1699,9 @@ let interactionGeometry: BufferGeometry | null = null;
       -((clientY - bounds.top) / bounds.height) * 2 + 1
     );
     raycaster.setFromCamera(pointer, camera);
-    for (const intersection of raycaster.intersectObjects(constructionGroup.children, true)) {
-      let node: Object3D | null = intersection.object;
-      while (node !== null) {
-        const id = (node.userData as { constructionId?: unknown }).constructionId;
-        if (typeof id === "string") return id;
-        node = node.parent;
-      }
-    }
-    return null;
+    // Recursive, against the whole group: a construction is a tree of cloned meshes, and the hit is
+    // usually a leaf several levels below the node that carries the id.
+    return constructionIdFromHits(raycaster.intersectObjects(constructionGroup.children, true));
   }
 
   /**
@@ -1789,10 +1845,12 @@ let interactionGeometry: BufferGeometry | null = null;
     const tap = wasDragging ? false : gesture.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!tap) return;
-    // A tap on one of the player's own objects selects the object; anything else selects the cell.
+    // A tap on one of the player's own objects selects the object; anything else selects the cell. The
+    // priority is one decision, in one place (`tapTargetFor`), so "placement wins over picking" cannot
+    // drift between the raycasts and the callback.
     const pickedObject = raycastConstructionAt(event.clientX, event.clientY);
-    if (pickedObject !== null) {
-      options.onObjectSelected?.(pickedObject);
+    if (tapTargetFor({ objectPickingEnabled, constructionId: pickedObject }) === "OBJECT") {
+      options.onObjectSelected?.(pickedObject as string);
       return;
     }
     const coordinate = raycastTileAt(event.clientX, event.clientY);
@@ -1940,6 +1998,9 @@ let interactionGeometry: BufferGeometry | null = null;
       updateObjectMarker();
       draw();
     },
+    setOwnershipOverlay(cells: readonly TileCoordinate[] | null): void {
+      rebuildOwnership(cells);
+    },
     focusOnCell(cell: TileCoordinate): void {
       const centre = tileToWorld(cell, worldFrame(state.layout.pitch));
       cameraRig.recenterTo(centre.worldX, centre.worldZ);
@@ -2003,6 +2064,9 @@ let interactionGeometry: BufferGeometry | null = null;
       stopListening();
       previewGroup.clear();
       constructionGroup.clear();
+      ownershipGroup.clear();
+      ownershipGeometry?.dispose();
+      ownershipGeometry = null;
       for (const dispose of previewDisposers) dispose();
       previewDisposers = [];
       placementPreview = null;

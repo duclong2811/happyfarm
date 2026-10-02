@@ -3,6 +3,37 @@
 Status: the architecture this build implements, and the one every later building pass has to stay
 inside. V13.2.
 
+## V13.2.1: the live fixes
+
+The first real browser session on V13.2 found two failures, both in the *interaction* layer rather
+than in the rules - which is exactly where the code had no tests of its own. What changed:
+
+* **The player's land is shown while they are using it.** `ownershipOverlayFor` asks for the mark only
+  while something is in hand for placement or a move, and `scene.setOwnershipOverlay` draws it as one
+  instanced quad per owned cell - one geometry, one draw call, rebuilt only when the cell list
+  changes. The placement HUD carries the legend ("Green marks the land you own"): a colour with no
+  legend is a decoration, not an answer. The mark is gone the moment neither mode is active, so
+  normal play still shows no grid.
+* **Picking is one tested decision, not a loop in the renderer.** `apps/web/src/render/object-picking.ts`
+  resolves a raycast hit to a construction by walking the intersected node's ancestors to the node
+  that carries `userData.constructionId` - never by mesh name, because names come from whichever
+  exporter produced the asset. `tapTargetFor` states the priority: while anything is in hand a tap is
+  a placement tap; otherwise a tap on a construction is a selection and never a click-to-move.
+  `tests/web/object-editing.test.ts` drives that with a real `Raycaster` against a root + wrapper +
+  leaf graph, which is the shape a cloned GLTF actually is.
+* **The selection is an id, not a row.** `selectedRow` resolves the panel's subject from the list the
+  server last reported, so a poll that replaced every row cannot leave the panel describing a stale
+  version - and a row that has gone clears the selection instead of leaving a ghost.
+* **The panel is never silent.** It renders for any selected row, falling back to the entry id when
+  the catalogue has not loaded, and it offers exactly the actions the asset's policy allows
+  (`editableActions`). Delete confirmation says what comes back *including when nothing does*.
+* **Enter and Build are one command.** Both call `confirmPlacement`; a test asserts there is exactly
+  one call to `placeConstruction` in the client.
+
+A developer's diagnostic (`?debug=1`) prints the owned bounds, the cell in hand and the carrier's
+origin in the placement HUD, because "you do not own that land yet" with no way to see the parcel was
+the thing that made the first failure hard to explain.
+
 > **Land use is chosen by the player, not predetermined by the map.**
 
 A normal owned cell does not have to be assigned to an economic district - FARM, FORESTRY, BUILD,
@@ -216,3 +247,26 @@ does nothing yet, and the shop says so.
 4. Letting a move or a removal write a receipt before its effect. The receipt is guarded by the
    effect being visible in the same batch.
 5. Giving a system object - the volcano, the village, the authored road - an editable row.
+
+## Verifying it by hand
+
+Everything below was verified against the rules, the API and a real database; the click-through is
+the human's, because the review environment has no browser.
+
+1. **Ownership.** Open the Build shop and pick Broadleaf Tree. The owned 12x12 parcel (cells
+   `0,0`..`11,11` of the starter field) turns green, and the HUD says what green means. Move the ghost
+   inside it: valid. Move it outside: "you do not own that land yet".
+2. **Place.** On an owned, empty cell press **Enter** (or click *Build it* - the same command).
+   Exactly one tree appears, exactly one charge appears in the wallet, and the reload keeps it.
+3. **Select.** Leave placement mode (Esc) and click the tree you just placed. It gets a ring and a
+   wash over its footprint, and the object panel opens with Move / Rotate / Delete. Clicking the
+   island's own trees, rocks, barn or windmill does *not* open it: those are world scenery, not
+   construction rows.
+4. **Move.** Press Move, click another owned cell (Q/E turns the ghost, Enter confirms, Esc cancels),
+   confirm. The tree is at the new cell only, nothing was charged, and a reload agrees.
+5. **Rotate.** Select a building with a rectangular footprint (Barn t1 is 4x3) and press Rotate. The
+   footprint becomes 3x4, and a reload keeps it. The silo has no Rotate button at all.
+6. **Delete.** Press Delete, read the confirmation (it says how much gold comes back, or that none
+   does), confirm. The object goes, the cells are free, the refund lands once, and a reload agrees.
+7. **Modes are visible.** While placing or carrying, the green parcel is on screen and clicking lands
+   where you point; once both modes are over, the island is unmarked again.

@@ -10,7 +10,7 @@ import {
   type Group,
   type MeshBasicMaterial
 } from "three";
-import type { TileCoordinate } from "./layout";
+import type { TileCoordinate, WorldFrame } from "./layout";
 import { cellKey, type WorldCell, type WorldCellMap } from "./world-cell";
 import { localNeighbourhood, type CellSelection } from "./world-cell-selection";
 
@@ -202,6 +202,65 @@ export function buildCellOutlines(
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   group.add(mesh);
+  return geometry;
+}
+
+/**
+ * The ownership mark: one instanced quad per owned cell, and one draw call for the whole parcel.
+ *
+ * The player's complaint that started this pass was that they could not tell where their land was, so
+ * the mark has to be legible without becoming the grid the project has deliberately kept out of normal
+ * play. It is therefore *instanced* - a hundred and forty cells are one geometry and one draw call -
+ * and it is only ever built while something is in hand for placement or a move.
+ */
+export function buildOwnedLandOverlay(
+  group: Group,
+  cells: readonly TileCoordinate[],
+  /** The one tile-to-world frame, so the mark cannot use an origin of its own. */
+  frame: WorldFrame,
+  material: MeshBasicMaterial,
+  heights: (x: number, z: number) => number
+): BufferGeometry | null {
+  if (cells.length === 0) return null;
+  const geometry = ownedLandGeometry();
+  const mesh = new InstancedMesh(geometry, material, cells.length);
+  const matrix = new Matrix4();
+  const position = new Vector3();
+  const scale = new Vector3();
+  const rotation = new Quaternion();
+  cells.forEach((cell, index) => {
+    const worldX = (cell.x - frame.originTileX) * frame.pitch;
+    const worldZ = (cell.y - frame.originTileY) * frame.pitch;
+    position.set(worldX, heights(worldX, worldZ), worldZ);
+    scale.set(frame.pitch, 1, frame.pitch);
+    matrix.compose(position, rotation, scale);
+    mesh.setMatrixAt(index, matrix);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 1;
+  group.add(mesh);
+  return geometry;
+}
+
+/** The unit quad an ownership instance is drawn from: one cell, centred on its own origin. */
+function ownedLandGeometry(): BufferGeometry {
+  const half = 0.5;
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new BufferAttribute(
+      new Float32Array([
+        -half, 0, -half,
+        -half, 0, half,
+        half, 0, half,
+        half, 0, -half
+      ]),
+      3
+    )
+  );
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
   return geometry;
 }
 

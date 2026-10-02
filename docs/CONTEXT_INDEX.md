@@ -538,10 +538,21 @@ occupancy, rotation, movement, removal or refunds. Its first principle is the on
   `confirmMove`, `rotateSelectedObject`, `confirmDelete`), object picking and the editing mark in
   `apps/web/src/render/scene.ts`, and the preview rule in
   `apps/web/src/render/placement-preview.ts`.
+- Interaction decisions are their own pure modules, because the first live session broke there rather
+  than in the rules: `apps/web/src/render/object-picking.ts` (a raycast hit walks its ancestors to the
+  node carrying `userData.constructionId`; `tapTargetFor` states that placement wins over selection)
+  and `apps/web/src/object-editing.ts` (`editableActions`, `refundPreview`, `selectedRow` - the
+  selection is an **id**, never a row, because every poll replaces the rows - and
+  `ownedCells`/`ownershipOverlayFor`/`ownedBounds` for the ownership mark).
+- The ownership mark is drawn only while placing or moving (`scene.setOwnershipOverlay`, one instanced
+  quad per owned cell, one draw call) and the placement HUD carries its legend. Normal play shows no
+  grid, ever. `?debug=1` adds the owned bounds and the cell in hand to the HUD.
 - Tests: `tests/domain/construction.test.ts`, `tests/web/build-placement-preview.test.ts`,
-  `tests/web/world-cell.test.ts` (ownership vs reservation), and the construction describe blocks in
-  `tests/api/handler.test.ts` (placement, move, rotate, removal, refunds and cross-player checks
-  against a real database and its triggers).
+  `tests/web/object-editing.test.ts` (picking through a real raycaster, tap priority, action policy,
+  selection by id, the ownership mark, one placement command), `tests/web/world-cell.test.ts`
+  (ownership vs reservation), and the construction describe blocks in `tests/api/handler.test.ts`
+  (placement, move, rotate, removal, refunds and cross-player checks against a real database and its
+  triggers).
 
 - Construction rules (pure): `packages/domain/src/construction.ts` - rotation, bounds, collisions,
   every refusal - plus the id in `packages/domain/src/ids.ts`. The ground rule itself is
