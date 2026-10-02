@@ -1,4 +1,10 @@
 ﻿import type { PlotDTO } from "@happy-farm/contracts";
+import {
+  STARTER_WORLD_PLACEMENTS,
+  starterWorldPosition,
+  worldObjectDefinition,
+  type WorldObjectDefinition
+} from "@happy-farm/game-data";
 import type { FarmLayout, TileBounds, TileCoordinate } from "./layout";
 import { DEFAULT_TILE_GAP, DEFAULT_TILE_SIZE, tileToWorld, worldFrame, worldToTile } from "./layout";
 import {
@@ -947,11 +953,24 @@ function buildScenery(
    * there reshuffles every placement after it and quietly re-grows the island. Removing the handful of
    * instances that actually collide leaves the rest of the island exactly where it was.
    */
-  const keepClear = LANDMARKS_WORLD.map((landmark) => ({
-    worldX: landmark.worldX,
-    worldZ: landmark.worldZ,
-    radiusWorld: landmark.keepClearRadiusWorld ?? landmark.blockingRadiusWorld
-  }));
+  const keepClear = [
+    ...LANDMARKS_WORLD.map((landmark) => ({
+      worldX: landmark.worldX,
+      worldZ: landmark.worldZ,
+      radiusWorld: landmark.keepClearRadiusWorld ?? landmark.blockingRadiusWorld
+    })),
+    // The island's own starter objects are rows drawn by the construction layer now, but this scatter
+    // still grows from the island's seed: without this the generator would grow a second tree on the
+    // cell a starter tree already stands on, and a crown through the mill's sails. That is the
+    // double-drawing V13.3 exists to prevent, so the sweep measures against them exactly as it does
+    // against a landmark.
+    ...STARTER_WORLD_PLACEMENTS.flatMap((placement) => {
+      const definition = worldObjectDefinition(placement.definitionId);
+      if (definition === null) return [];
+      const position = starterWorldPosition(placement);
+      return [{ worldX: position.worldX, worldZ: position.worldZ, radiusWorld: objectClearRadiusWorld(definition) }];
+    })
+  ];
   return scenery.filter((instance) =>
     keepClear.every(
       (landmark) =>
@@ -970,6 +989,19 @@ function buildScenery(
  * landmark.
  */
 const SCENERY_HALF_WIDTH_FRACTION = 0.35;
+
+/**
+ * How wide a world object's own clearing is, for the scenery sweep.
+ *
+ * Its model's width - the same fraction of the drawn height the sweep already uses for a scenery
+ * instance - or its walking circle when that is wider. Reading it off the definition keeps one rule
+ * for the mill, the trees and anything a later pass promotes to a world object.
+ */
+function objectClearRadiusWorld(definition: WorldObjectDefinition): number {
+  const occupied =
+    definition.presentation.form === "MODEL" ? definition.presentation.sizeWorld * SCENERY_HALF_WIDTH_FRACTION : 0;
+  return Math.max(definition.collisionRadiusWorld, occupied);
+}
 
 /**
  * How tall a prop of each kind is drawn, in world metres.

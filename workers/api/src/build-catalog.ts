@@ -30,6 +30,7 @@ export function listBuildCatalog(): readonly BuildCatalogEntryDTO[] {
     upgradeTo: entry.upgradeTo,
     rotatable: entry.rotatable,
     movable: entry.movable,
+    storable: entry.storable,
     removable: entry.removable,
     removalRefundRate: entry.removalRefundRate,
     decorative: entry.decorative,

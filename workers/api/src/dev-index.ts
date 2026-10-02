@@ -21,6 +21,8 @@ import {
   Sha256Fingerprint,
   SystemClock,
   gameDataProgressionDefinition,
+  gameDataStarterWorld,
+  gameDataTileTerrain,
   gameDataStarterPackage
 } from "./runtime";
 import { D1StarterGrantRepository, D1WalletRepository } from "./d1-repositories";
@@ -89,6 +91,8 @@ export function createDevWorker(env: DevEnv) {
     treeDefinitions: new GameDataTreeDefinitions(),
     constructionDefinitions: new GameDataConstructionDefinitions(),
     progressionDefinition: gameDataProgressionDefinition,
+    starterWorld: gameDataStarterWorld,
+    terrain: gameDataTileTerrain,
     clock
   });
   const bootstrap = new DevPlayerBootstrap(env.DB);

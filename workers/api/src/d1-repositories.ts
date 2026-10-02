@@ -50,6 +50,7 @@ import type {
   ConstructionRepository,
   ConstructionRelocation,
   ConstructionRemoval,
+  ConstructionSeed,
   CropInstanceRepository,
   FarmExpansionRepository,
   FarmMemberRepository,
@@ -89,6 +90,7 @@ interface FarmRow {
   name: string;
   created_at: string;
   updated_at: string;
+  starter_world_version: number;
 }
 
 interface FarmMemberRow {
@@ -250,6 +252,23 @@ export class D1FarmRepository implements FarmRepository {
           createdAt: row.created_at,
           updatedAt: row.updated_at
         };
+  }
+
+  /**
+   * What seeding needs to know about a farm, and nothing else.
+   *
+   * Its own read rather than a field on `Farm`: the version is bookkeeping for the one pass that
+   * seeds a farm, and every other use case would be carrying a number it never reads. A missing row
+   * answers null, which the seeder treats as "nothing to seed".
+   */
+  async starterWorldState(farmId: FarmId): Promise<{ readonly ownerPlayerId: PlayerId; readonly version: number } | null> {
+    const row = await this.db
+      .prepare("SELECT owner_player_id, starter_world_version FROM farms WHERE id = ?")
+      .bind(farmId)
+      .first<{ owner_player_id: string; starter_world_version: number }>();
+    return row === null
+      ? null
+      : { ownerPlayerId: parsePlayerId(row.owner_player_id), version: row.starter_world_version };
   }
 }
 
@@ -659,7 +678,9 @@ export class D1ConstructionRepository implements ConstructionRepository {
     const { construction, economy } = placement;
     if (
       economy.playerId !== idempotency.actorPlayerId ||
-      construction.builtByPlayerId !== idempotency.actorPlayerId ||
+      construction.ownerPlayerId !== idempotency.actorPlayerId ||
+      construction.source !== "PLAYER_PLACED" ||
+      construction.state !== "ACTIVE" ||
       economy.reason !== "CONSTRUCTION" ||
       economy.referenceId !== construction.id
     ) {
@@ -687,7 +708,7 @@ export class D1ConstructionRepository implements ConstructionRepository {
             economy.createdAt
           ),
         this.db
-          .prepare("INSERT INTO farm_constructions (id, farm_id, catalogue_entry_id, category, anchor_x, anchor_y, rotation, footprint_width, footprint_depth, min_x, max_x, min_y, max_y, cell_count, state, built_by_player_id, cost_amount, cost_currency_id, created_at, updated_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .prepare("INSERT INTO farm_constructions (id, farm_id, catalogue_entry_id, category, anchor_x, anchor_y, rotation, footprint_width, footprint_depth, min_x, max_x, min_y, max_y, cell_count, state, owner_player_id, source, placement_key, paid_amount, cost_amount, cost_currency_id, created_at, updated_at, stored_at, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
           .bind(
             construction.id,
             construction.farmId,
@@ -704,15 +725,19 @@ export class D1ConstructionRepository implements ConstructionRepository {
             construction.bounds.maxY,
             construction.footprint.widthCells * construction.footprint.depthCells,
             construction.state,
-            construction.builtByPlayerId,
+            construction.ownerPlayerId,
+            construction.source,
+            construction.placementKey,
+            construction.paidAmount,
             construction.costAmount,
             construction.costCurrencyDefinitionId,
             construction.createdAt,
             construction.updatedAt,
+            construction.storedAt,
             construction.version
           ),
         this.db
-          .prepare("INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM farm_constructions WHERE id = ? AND farm_id = ? AND built_by_player_id = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)")
+          .prepare("INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM farm_constructions WHERE id = ? AND farm_id = ? AND owner_player_id = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)")
           .bind(
             economy.playerId,
             economy.currencyDefinitionId,
@@ -720,7 +745,7 @@ export class D1ConstructionRepository implements ConstructionRepository {
             economy.expectedWalletVersion + 1,
             construction.id,
             construction.farmId,
-            construction.builtByPlayerId,
+            construction.ownerPlayerId,
             idempotency.actorPlayerId,
             idempotency.operation,
             idempotency.requestId,
@@ -765,7 +790,9 @@ export class D1ConstructionRepository implements ConstructionRepository {
 
   async listBounds(farmId: FarmId): Promise<readonly CellBounds[]> {
     const rows = await this.db
-      .prepare("SELECT min_x, max_x, min_y, max_y FROM farm_constructions WHERE farm_id = ?")
+      // Only objects *standing* on the farm block ground. A stored object is held, not placed, which
+      // is what lets a mill go into storage and something else take its cells.
+      .prepare("SELECT min_x, max_x, min_y, max_y FROM farm_constructions WHERE farm_id = ? AND state = 'ACTIVE'")
       .bind(farmId)
       .all<Record<string, unknown>>();
     return rows.results.map((row) => ({
@@ -789,7 +816,7 @@ export class D1ConstructionRepository implements ConstructionRepository {
     const { construction, expectedVersion } = relocation;
     if (
       construction.id !== idempotency.resourceId ||
-      construction.builtByPlayerId !== idempotency.actorPlayerId ||
+      construction.ownerPlayerId !== idempotency.actorPlayerId ||
       construction.version !== expectedVersion + 1
     ) {
       throw new ApplicationError("NOT_AUTHORIZED", "Construction relocation ownership does not match");
@@ -942,10 +969,152 @@ export class D1ConstructionRepository implements ConstructionRepository {
       throw error;
     }
   }
+
+  /**
+   * The starter arrangement, written once.
+   *
+   * The version stamp and the rows are one batch, and the rows are only written by the pass that
+   * actually moved the version - `WHERE starter_world_version = ?` on the insert, with the expected
+   * version the *new* one. A second caller finds the farm already stamped, its inserts select nothing,
+   * and it reports zero. The unique `(farm, placement_key)` index is the second lock on the same door.
+   */
+  async seedAtomically(seed: ConstructionSeed): Promise<number> {
+    if (seed.constructions.length === 0) return 0;
+    const statements = [
+      this.db
+        .prepare(
+          "UPDATE farms SET starter_world_version = ?, updated_at = ? WHERE id = ? AND starter_world_version < ?"
+        )
+        .bind(seed.version, seed.seededAt, seed.farmId, seed.version)
+    ];
+    let created = 0;
+    for (const construction of seed.constructions) {
+      if (construction.source !== "STARTER" || construction.placementKey === null) {
+        throw new ApplicationError("INTERNAL_ERROR", "A starter row must carry its placement key");
+      }
+      statements.push(
+        this.db
+          .prepare(
+            "INSERT INTO farm_constructions (id, farm_id, catalogue_entry_id, category, anchor_x, anchor_y, rotation, footprint_width, footprint_depth, min_x, max_x, min_y, max_y, cell_count, state, owner_player_id, source, placement_key, paid_amount, cost_amount, cost_currency_id, created_at, updated_at, stored_at, version) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT starter_world_version FROM farms WHERE id = ?) = ?"
+          )
+          .bind(
+            construction.id,
+            construction.farmId,
+            construction.entryId,
+            construction.category,
+            construction.anchorX,
+            construction.anchorY,
+            construction.rotation,
+            construction.footprint.widthCells,
+            construction.footprint.depthCells,
+            construction.bounds.minX,
+            construction.bounds.maxX,
+            construction.bounds.minY,
+            construction.bounds.maxY,
+            construction.footprint.widthCells * construction.footprint.depthCells,
+            construction.state,
+            construction.ownerPlayerId,
+            construction.source,
+            construction.placementKey,
+            construction.paidAmount,
+            construction.costAmount,
+            construction.costCurrencyDefinitionId,
+            construction.createdAt,
+            construction.updatedAt,
+            construction.storedAt,
+            construction.version,
+            seed.farmId,
+            seed.version
+          )
+      );
+    }
+    const results = await this.db.batch(statements);
+    // The first statement is the version stamp: if it changed nothing, this pass lost the race and
+    // created nothing, whatever the insert results say.
+    if ((results[0]?.meta.changes ?? 0) === 0) return 0;
+    created = results.slice(1).reduce((total, result) => total + (result.meta.changes ?? 0), 0);
+    return created;
+  }
+
+  /**
+   * Moving one object between the world and storage.
+   *
+   * One statement for both directions: the state, the moment it changed, and - on the way back out -
+   * the ground it is returning to. The version predicate is the same one every other edit uses, so a
+   * stale store or restore writes nothing, and the guarded receipt makes "the receipt exists" and
+   * "the object moved" the same fact.
+   */
+  async setStoredAtomically(relocation: ConstructionRelocation, idempotency: IdempotencyRecord): Promise<void> {
+    const { construction, expectedVersion } = relocation;
+    if (
+      construction.id !== idempotency.resourceId ||
+      construction.ownerPlayerId !== idempotency.actorPlayerId ||
+      construction.version !== expectedVersion + 1
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Construction storage ownership does not match");
+    }
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "UPDATE farm_constructions SET state = ?, anchor_x = ?, anchor_y = ?, rotation = ?, footprint_width = ?, footprint_depth = ?, min_x = ?, max_x = ?, min_y = ?, max_y = ?, cell_count = ?, stored_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND farm_id = ? AND version = ?"
+          )
+          .bind(
+            construction.state,
+            construction.anchorX,
+            construction.anchorY,
+            construction.rotation,
+            construction.footprint.widthCells,
+            construction.footprint.depthCells,
+            construction.bounds.minX,
+            construction.bounds.maxX,
+            construction.bounds.minY,
+            construction.bounds.maxY,
+            construction.footprint.widthCells * construction.footprint.depthCells,
+            construction.storedAt,
+            construction.updatedAt,
+            construction.id,
+            construction.farmId,
+            expectedVersion
+          ),
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM farm_constructions WHERE id = ? AND farm_id = ? AND updated_at = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            construction.id,
+            construction.farmId,
+            construction.updatedAt,
+            construction.version,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 2 || results.some((result) => !result.success)) {
+        throw new Error("Atomic construction storage change failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && /construction cells|idempotency_keys\.actor_player_id/.test(error.message)) {
+        throw new ApplicationError("CONSTRUCTION_CONFLICT", "Construction state changed concurrently");
+      }
+      throw error;
+    }
+  }
 }
 
 /** One persisted construction, as the domain reads it back. */
 function toConstructionInstance(row: Record<string, unknown>): ConstructionInstance {
+  // Read as values rather than coerced: a null placement key and a null stored_at are meaningful
+  // (a bought object has no placement, a standing one is not stored), and `String(null)` would turn
+  // either into the word "null".
+  const placementKey = row.placement_key;
+  const storedAt = row.stored_at;
   return {
     id: parseConstructionId(String(row.id)),
     farmId: parseFarmId(String(row.farm_id)),
@@ -961,12 +1130,16 @@ function toConstructionInstance(row: Record<string, unknown>): ConstructionInsta
       minY: Number(row.min_y),
       maxY: Number(row.max_y)
     },
-    state: "BUILT",
-    builtByPlayerId: parsePlayerId(String(row.built_by_player_id)),
+    state: String(row.state) === "STORED" ? "STORED" : "ACTIVE",
+    ownerPlayerId: parsePlayerId(String(row.owner_player_id)),
+    source: String(row.source) === "STARTER" ? "STARTER" : "PLAYER_PLACED",
+    placementKey: typeof placementKey === "string" ? placementKey : null,
+    paidAmount: Number(row.paid_amount),
     costAmount: Number(row.cost_amount),
     costCurrencyDefinitionId: String(row.cost_currency_id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+    storedAt: typeof storedAt === "string" ? storedAt : null,
     version: Number(row.version)
   };
 }

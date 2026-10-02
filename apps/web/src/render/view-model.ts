@@ -254,7 +254,11 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
   const cells = buildWorldCellMap({
     layout,
     tiles: uniqueTiles,
-    constructions: (state.constructions ?? []).map((construction) => constructionBoundsOf(construction)),
+    // Stored objects occupy no ground, so they are not occupancy: the map is built from what stands
+    // on the island, exactly as the renderer draws from what stands on the island.
+    constructions: (state.constructions ?? [])
+      .filter((construction) => construction.state === "ACTIVE")
+      .map((construction) => constructionBoundsOf(construction)),
     plantedTiles: state.crops.map((crop) => ({ x: crop.tileX, y: crop.tileY })).concat(
       state.trees.map((tree) => ({ x: tree.tileX, y: tree.tileY }))
     ),

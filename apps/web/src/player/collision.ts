@@ -3,7 +3,8 @@ import {
   ISLAND_HALF_DEPTH_WORLD,
   ISLAND_HALF_WIDTH_WORLD,
   ISLAND_SHAPE,
-  STATIC_OBSTACLES
+  STATIC_OBSTACLES,
+  type WorldObstacle
 } from "../render/world-config";
 import { islandRadiusAt } from "../render/terrain-height";
 import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
@@ -147,13 +148,23 @@ function farmBlocks(tiles: readonly SceneTile[]): { readonly circles: readonly B
  * alone. The dynamic half is whatever the farm currently has in the ground, so a crop that appears
  * under the character starts blocking the next step and a crop that is harvested stops blocking it.
  */
-export function createPlayerCollisionWorld(tiles: readonly SceneTile[]): CollisionWorld {
+export function createPlayerCollisionWorld(
+  tiles: readonly SceneTile[],
+  /**
+   * Extra circles to walk around, on top of the world's own static obstacles.
+   *
+   * The player's own objects: a building is as solid as a landmark, and because it can be moved,
+   * stored or removed its circle has to come from its row rather than from a list compiled into the
+   * world config. That is what stops a collision circle from staying behind when its barn walks away.
+   */
+  extraObstacles: readonly WorldObstacle[] = []
+): CollisionWorld {
   const farm = farmBlocks(tiles);
 
   return {
     depth(x: number, z: number): number {
       let depth = islandDepth(x, z);
-      for (const obstacle of STATIC_OBSTACLES) {
+      for (const obstacle of [...STATIC_OBSTACLES, ...extraObstacles]) {
         depth = Math.max(depth, circleDepth(x, z, obstacle.centerWorldX, obstacle.centerWorldZ, obstacle.radiusWorld));
       }
       for (const circle of farm.circles) {

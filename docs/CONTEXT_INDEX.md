@@ -579,6 +579,41 @@ occupancy, rotation, movement, removal or refunds. Its first principle is the on
 Construction is server-authoritative: the client sends a catalogue entry id, a cell and a rotation,
 and never a price, a level, a footprint or an effect.
 
+### Universal editable world objects (V13.3)
+
+Read `docs/design/UNIVERSAL_WORLD_OBJECTS.md` before touching the starter layout, the object
+definitions, storage, refunds, or what the renderer draws from rows. Its principle is the one to keep:
+**the starter map is a starting arrangement, not a permanent map.**
+
+- Shared world data, consumed by both the renderer and the API:
+  `packages/game-data/src/world/` - `geography.ts` (`classifyTile`, `islandRadiusAt`, `volcanoZoneAt`,
+  the island/volcano shapes and the plaza and harbour predicates), `objects.ts`
+  (`WORLD_OBJECT_DEFINITIONS`: presentation, footprint, `allowedTerrain`, the edit policy, the refund
+  rate, `system`), `starter.ts` (`STARTER_WORLD_VERSION`, `STARTER_WORLD_PLACEMENTS`). Never keep a
+  second copy of these numbers in the client.
+- `farm_constructions` is the one table of active world objects: `state ACTIVE|STORED`,
+  `source STARTER|PLAYER_PLACED`, `owner_player_id`, `placement_key`, `paid_amount`, `stored_at`,
+  `version`. `database/migrations/0012_world_objects.sql` rebuilt it and added
+  `farms.starter_world_version`; the ownership, overlap and crop/tree triggers apply to `ACTIVE` rows
+  only, which is what lets a stored object occupy no ground.
+- Seeding: `SeedStarterWorld` (`packages/application/src/construction.ts`), version-guarded and
+  idempotent, run from `ListFarmConstructions` so an existing farm is migrated by its first read.
+  Seeding only ever *adds*: it must never reconcile an object the player has edited.
+- Editing: `RelocateConstruction`, `StoreConstruction`, `RestoreConstruction`, `RemoveConstruction`;
+  routes `POST /farms/:farmId/constructions/:id/{move,rotate,store,restore,remove}`. A refund is
+  `floor(paidAmount x removalRefundRate)` - the cost basis, never the catalogue price, so a free
+  starter object can never be turned into gold.
+- Client: `apps/web/src/world-objects.ts` (presentation, policy, refund preview, storage stacks),
+  the object panel and storage list in `apps/web/src/main.ts` (`storeSelectedObject`,
+  `beginRestore`, `renderBuildStorage`), and the model size the scene now applies per instance.
+- Tests: `tests/game-data/world-objects.test.ts` (the layout is dry land, outside the reservation,
+  keyed and non-overlapping), `tests/web/world-objects.test.ts` (presentation, policy, cost-basis
+  refunds, storage stacks) and the starter-island block in `tests/api/handler.test.ts` (seeded once,
+  existing-farm migration, move/store/restore/remove, zero refund, cross-farm isolation).
+
+Not editable yet, with reasons in the design doc: roads, the field fence, water objects, ambient
+scenery, and the remaining authored landmarks and composition props.
+
 ## Game-data/content task
 - relevant schema/type in `packages/game-data`
 - validation tests

@@ -104,6 +104,8 @@ export const PlacementCatalogEntrySchema = z
     rotatable: z.boolean(),
     /** Whether the player may pick it up and place it somewhere else, for free. */
     movable: z.boolean(),
+    /** Whether the player may put it into storage instead of destroying it. */
+    storable: z.boolean(),
     /** Whether the player may remove it. */
     removable: z.boolean(),
     /**

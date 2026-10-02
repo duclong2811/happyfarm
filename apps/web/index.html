@@ -56,6 +56,12 @@
             <button id="build-close" class="panel-close" type="button" aria-label="Close"><span data-icon="close" data-icon-size="16"></span></button>
           </div>
         </header>
+        <!--
+          What the player has put into storage: ordinary objects they own and can place again,
+          without buying them a second time. Rendered by `renderBuildStorage`; empty and hidden until
+          something is stored.
+        -->
+        <div id="build-storage" class="build-storage" hidden></div>
         <div class="build-body">
           <nav id="build-rail" class="shop-rail" role="tablist" aria-label="Build categories"></nav>
           <section class="build-center">

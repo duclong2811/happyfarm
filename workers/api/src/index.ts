@@ -19,6 +19,8 @@ import {
   Sha256Fingerprint,
   SystemClock,
   gameDataProgressionDefinition,
+  gameDataStarterWorld,
+  gameDataTileTerrain,
   gameDataStarterPackage
 } from "./runtime";
 import { isApiRequest, rewriteToApiRequest } from "./staging-routing";
@@ -97,6 +99,8 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
     treeDefinitions: new GameDataTreeDefinitions(),
     constructionDefinitions: new GameDataConstructionDefinitions(),
     progressionDefinition: gameDataProgressionDefinition,
+    starterWorld: gameDataStarterWorld,
+    terrain: gameDataTileTerrain,
     clock
   });
 

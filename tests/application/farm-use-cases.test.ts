@@ -62,6 +62,11 @@ class MemoryFarms implements FarmRepository, FarmMemberRepository {
     return Promise.resolve(this.farm?.id === id ? this.farm : null);
   }
 
+  /** No starter arrangement in this fixture: the seeder is not part of these use cases. */
+  starterWorldState(): Promise<{ readonly ownerPlayerId: typeof PLAYER_ONE_ID; readonly version: number } | null> {
+    return Promise.resolve(this.farm === null ? null : { ownerPlayerId: this.farm.ownerPlayerId, version: 0 });
+  }
+
   findByFarmAndPlayer(farmId: FarmId, playerId: typeof PLAYER_ONE_ID): Promise<FarmMember | null> {
     return Promise.resolve(this.owner?.farmId === farmId && this.owner.playerId === playerId ? this.owner : null);
   }

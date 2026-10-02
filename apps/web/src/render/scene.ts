@@ -151,6 +151,8 @@ const PLACEMENT_CAMERA_DISTANCE = 13;
 export interface SceneConstruction {
   readonly id: string;
   readonly modelId: string | null;
+  /** How large the model is drawn, in metres: every imported model is normalized to one unit. */
+  readonly sizeWorld: number;
   readonly worldX: number;
   readonly worldZ: number;
   readonly rotationY: number;
@@ -1355,7 +1357,8 @@ let interactionGeometry: BufferGeometry | null = null;
       .map(
         (item) =>
           `${item.id}:${item.modelId ?? "-"}:${item.worldX.toFixed(2)},${item.worldZ.toFixed(2)}` +
-          `:${item.rotationY.toFixed(3)}:${String(item.widthCells)}x${String(item.depthCells)}`
+          `:${item.rotationY.toFixed(3)}:${String(item.widthCells)}x${String(item.depthCells)}` +
+          `:${item.sizeWorld.toFixed(2)}`
       )
       .join("|");
   }
@@ -1382,6 +1385,10 @@ let interactionGeometry: BufferGeometry | null = null;
       void library.load(item.modelId).then((model) => {
         if (disposed || token !== constructionToken || model === null) return;
         const instance = model.clone(true);
+        // Every imported model is normalized to one world unit, so this number *is* the object's
+        // size: without it a placed tree would be a metre tall beside the island's own three-metre
+        // ones, which is what V13.2 shipped.
+        instance.scale.setScalar(item.sizeWorld);
         const groundY = GROUND_SURFACE_Y + terrainHeightAt(item.worldX, item.worldZ, state.world.terrain);
         instance.position.set(item.worldX, groundY, item.worldZ);
         instance.rotation.y = item.rotationY;

@@ -80,6 +80,13 @@ export interface FarmRepository {
     initialTiles: readonly FarmTile[]
   ): Promise<void>;
   findById(id: FarmId): Promise<Farm | null>;
+  /**
+   * The farm's owner and how much of the starter arrangement it has been given.
+   *
+   * Separate from `findById` on purpose: this is bookkeeping for the seeding pass alone, and every
+   * other reader of a farm would be carrying a number it never looks at.
+   */
+  starterWorldState(farmId: FarmId): Promise<{ readonly ownerPlayerId: PlayerId; readonly version: number } | null>;
 }
 
 export interface FarmMemberRepository {
@@ -219,6 +226,37 @@ export interface ConstructionRemoval {
 }
 
 /**
+ * A farm's starter arrangement, written in one batch.
+ *
+ * `version` travels with it because the two must succeed together: the rows and the stamp that says
+ * the farm has been given them. A repository that wrote one without the other would either seed the
+ * island twice or leave a farm that never gets it.
+ */
+export interface ConstructionSeed {
+  readonly farmId: FarmId;
+  readonly version: number;
+  readonly constructions: readonly ConstructionInstance[];
+  readonly seededAt: string;
+}
+
+/**
+ * What the island's geography says about a tile.
+ *
+ * A port rather than an import, because `packages/application` owns rules and `packages/game-data`
+ * owns the world: the host hands the one implementation in, exactly as it hands the catalogue and the
+ * progression curve in. Until V13.3 the placement rule inferred "an owned tile is land" from the
+ * farm's own rows; it can now be told what the ground actually is, which is what lets it refuse water,
+ * a beach or protected ground for the *physical* reason rather than by accident of ownership.
+ */
+export interface TileTerrainLookup {
+  classify(tile: { readonly x: number; readonly y: number }): {
+    readonly terrain: "LAND" | "SHORE" | "WATER" | "VOLCANO" | "BLOCKED";
+    readonly shallowWater: boolean;
+    readonly protectedGround: boolean;
+  };
+}
+
+/**
  * The one write boundary for player construction.
  *
  * `listBounds` is what the collision rule reads: the rectangles already covered on this farm, so a
@@ -234,10 +272,24 @@ export interface ConstructionRemoval {
 export interface ConstructionRepository {
   findById(id: ConstructionId): Promise<ConstructionInstance | null>;
   listByFarm(farmId: FarmId): Promise<readonly ConstructionInstance[]>;
+  /** The rectangles of the objects *standing* on the farm: stored objects occupy no ground. */
   listBounds(farmId: FarmId): Promise<readonly CellBounds[]>;
   placeAtomically(placement: ConstructionPlacement, idempotency: IdempotencyRecord): Promise<void>;
   relocateAtomically(relocation: ConstructionRelocation, idempotency: IdempotencyRecord): Promise<void>;
   removeAtomically(removal: ConstructionRemoval, idempotency: IdempotencyRecord): Promise<void>;
+  /**
+   * Writes the starter rows and the farm's seed version together, and writes *nothing* if the farm
+   * already has this version. Returns how many rows it actually created.
+   */
+  seedAtomically(seed: ConstructionSeed): Promise<number>;
+  /**
+   * Moving one object between the world and storage: the same row, a new state.
+   *
+   * One method for both directions because they are one statement - `state`, `stored_at` and the
+   * rectangle change together or not at all - and because a second method would be a second place for
+   * the version predicate to be forgotten.
+   */
+  setStoredAtomically(relocation: ConstructionRelocation, idempotency: IdempotencyRecord): Promise<void>;
 }
 
 /** The catalogue, as the placement rules need it: what may be built, and what it costs. */

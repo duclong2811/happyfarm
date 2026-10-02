@@ -5,14 +5,18 @@ import {
   constructionBounds,
   constructionRefusal,
   createConstructionInstance,
+  createStarterConstructionInstance,
   groundRefusal,
   moveConstruction,
   moveRefusal,
   normaliseQuarterTurns,
   removalRefund,
   removalRefusal,
+  restoreConstruction,
   rotationRefusal,
   rotatedFootprint,
+  storageRefusal,
+  storeConstruction,
   type ConstructionCell,
   type ConstructionDefinition
 } from "@happy-farm/domain";
@@ -36,6 +40,7 @@ const definition: ConstructionDefinition = {
   allowedTerrain: ["LAND"],
   rotatable: true,
   movable: true,
+  storable: true,
   removable: true,
   removalRefundRate: 0.5,
   status: "ACTIVE",
@@ -194,13 +199,15 @@ describe("the row a placement creates", () => {
       definition,
       anchor: { x: 10, y: 10 },
       rotation: 1,
-      builtByPlayerId: parsePlayerId("player_11111111-1111-4111-8111-111111111111"),
+      ownerPlayerId: parsePlayerId("player_11111111-1111-4111-8111-111111111111"),
       createdAt: "2026-10-01T00:00:00.000Z"
     });
     expect(instance.costAmount).toBe(900);
     expect(instance.footprint).toEqual({ widthCells: 3, depthCells: 4 });
     expect(instance.bounds).toEqual({ minX: 9, maxX: 11, minY: 9, maxY: 12 });
-    expect(instance.state).toBe("BUILT");
+    expect(instance.state).toBe("ACTIVE");
+    expect(instance.source).toBe("PLAYER_PLACED");
+    expect(instance.paidAmount).toBe(900);
   });
 });
 
@@ -218,7 +225,7 @@ describe("moving an existing object", () => {
     definition,
     anchor: { x: 10, y: 10 },
     rotation: 0,
-    builtByPlayerId: parsePlayerId("player_11111111-1111-4111-8111-111111111111"),
+    ownerPlayerId: parsePlayerId("player_11111111-1111-4111-8111-111111111111"),
     createdAt: "2026-10-01T00:00:00.000Z"
   });
 
@@ -275,7 +282,7 @@ describe("moving an existing object", () => {
       updatedAt: "2026-10-02T00:00:00.000Z"
     });
     expect(moved.id).toBe(instance.id);
-    expect(moved.builtByPlayerId).toBe(instance.builtByPlayerId);
+    expect(moved.ownerPlayerId).toBe(instance.ownerPlayerId);
     expect(moved.costAmount).toBe(instance.costAmount);
     expect(moved.createdAt).toBe(instance.createdAt);
     // One version further on, and its rectangle is the new ground and only the new ground.
@@ -332,17 +339,83 @@ describe("turning an existing object", () => {
 });
 
 describe("taking an object down", () => {
-  it("returns a share of the price the asset declares, and never more than it cost", () => {
-    expect(removalRefund(definition)).toBe(450);
-    expect(removalRefund({ ...definition, removalRefundRate: 0 })).toBe(0);
-    expect(removalRefund({ ...definition, removalRefundRate: 0.25, price: 41 })).toBe(10);
-    // A rate that tried to be a money press is clamped rather than trusted.
-    expect(removalRefund({ ...definition, removalRefundRate: 4 })).toBe(900);
+  /**
+   * The cost-basis rule, which is this pass's P0 economic invariant.
+   *
+   * A refund is a share of what the object *actually cost its owner* - never of the catalogue price.
+   * A starter mill cost nobody anything, so removing it pays nothing however much a new one would
+   * cost; that is what makes "remove the free mill, keep the gold, start another farm" impossible.
+   */
+  it("returns a share of what the object actually cost, and never of its catalogue price", () => {
+    const bought = createConstructionInstance({
+      id: parseConstructionId("construct_55555555-5555-4555-8555-555555555555"),
+      farmId: parseFarmId("farm_11111111-1111-4111-8111-111111111111"),
+      definition,
+      anchor: { x: 4, y: 4 },
+      rotation: 0,
+      ownerPlayerId: parsePlayerId("player_11111111-1111-4111-8111-111111111111"),
+      createdAt: "2026-10-01T00:00:00.000Z"
+    });
+    // Bought: it paid the catalogue price, so half of it comes back.
+    expect(bought.paidAmount).toBe(900);
+    expect(removalRefund(bought, definition)).toBe(450);
+    expect(removalRefund(bought, { ...definition, removalRefundRate: 0 })).toBe(0);
+    expect(removalRefund(bought, { ...definition, removalRefundRate: 4 })).toBe(900);
+
+    // Seeded: nobody paid anything, so nothing comes back - whatever the definition is worth.
+    const seeded = createStarterConstructionInstance({
+      id: parseConstructionId("construct_66666666-6666-4666-8666-666666666666"),
+      farmId: parseFarmId("farm_11111111-1111-4111-8111-111111111111"),
+      definition: { ...definition, removalRefundRate: 1 },
+      placementKey: "starter.windmill.01",
+      anchor: { x: -16, y: -13 },
+      rotation: 0,
+      ownerPlayerId: parsePlayerId("player_11111111-1111-4111-8111-111111111111"),
+      createdAt: "2026-10-01T00:00:00.000Z"
+    });
+    expect(seeded.source).toBe("STARTER");
+    expect(seeded.paidAmount).toBe(0);
+    expect(seeded.placementKey).toBe("starter.windmill.01");
+    expect(removalRefund(seeded, { ...definition, removalRefundRate: 1 })).toBe(0);
   });
 
-  it("refuses to remove something the asset says is permanent", () => {
+  it("refuses to remove or store something the asset says is permanent", () => {
     expect(removalRefusal(definition)).toBeNull();
     expect(removalRefusal({ ...definition, removable: false })).toBe("NOT_REMOVABLE");
+    expect(storageRefusal(definition)).toBeNull();
+    expect(storageRefusal({ ...definition, storable: false })).toBe("NOT_STORABLE");
+  });
+
+  it("stores and restores the same object: one row, one identity, one version chain", () => {
+    const bought = createConstructionInstance({
+      id: parseConstructionId("construct_77777777-7777-4777-8777-777777777777"),
+      farmId: parseFarmId("farm_11111111-1111-4111-8111-111111111111"),
+      definition,
+      anchor: { x: 4, y: 4 },
+      rotation: 0,
+      ownerPlayerId: parsePlayerId("player_11111111-1111-4111-8111-111111111111"),
+      createdAt: "2026-10-01T00:00:00.000Z"
+    });
+    const stored = storeConstruction(bought, "2026-10-02T00:00:00.000Z");
+    expect(stored.state).toBe("STORED");
+    expect(stored.storedAt).toBe("2026-10-02T00:00:00.000Z");
+    expect(stored.id).toBe(bought.id);
+    expect(stored.paidAmount).toBe(bought.paidAmount);
+    expect(stored.version).toBe(bought.version + 1);
+
+    // Restoring keeps the id and the cost basis and takes the new ground: a store and a restore can
+    // never produce two objects, because there was only ever one row.
+    const restored = restoreConstruction(stored, {
+      anchor: { x: 9, y: 9 },
+      rotation: 1,
+      footprint: rotatedFootprint(definition.footprint, 1),
+      updatedAt: "2026-10-03T00:00:00.000Z"
+    });
+    expect(restored.state).toBe("ACTIVE");
+    expect(restored.storedAt).toBeNull();
+    expect(restored.id).toBe(bought.id);
+    expect(restored.version).toBe(stored.version + 1);
+    expect(restored.bounds).toEqual(constructionBounds({ x: 9, y: 9 }, rotatedFootprint(definition.footprint, 1)));
   });
 });
 

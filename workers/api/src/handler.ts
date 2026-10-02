@@ -18,6 +18,9 @@ import {
   ListFarmConstructions,
   RelocateConstruction,
   RemoveConstruction,
+  RestoreConstruction,
+  SeedStarterWorld,
+  StoreConstruction,
   HarvestTree,
   RemoveTree,
   TreeStateProjector,
@@ -44,6 +47,8 @@ import {
   type TreeDefinitionRepository,
   type TreeIdGenerator
   ,type ConstructionIdGenerator
+  ,type StarterWorldDefinition
+  ,type TileTerrainLookup
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
@@ -63,6 +68,8 @@ import {
   MoveConstructionRequestSchema,
   RotateConstructionRequestSchema,
   RemoveConstructionRequestSchema,
+  StoreConstructionRequestSchema,
+  RestoreConstructionRequestSchema,
   UprootCropRequestSchema,
   type ApiFailure,
   type ApiSuccess,
@@ -90,8 +97,10 @@ import {
   type BuildCatalogEntryDTO
   ,type ConstructionDTO
   ,type RemoveConstructionResponse
+  ,type WorldObjectDefinitionDTO
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
+import { listWorldObjectDefinitions } from "./runtime";
 import {
   parseCurrencyDefinitionId,
   parseFarmId,
@@ -140,6 +149,10 @@ export interface HandlerDependencies {
   readonly constructionDefinitions: ConstructionDefinitionRepository;
   /** The levelling curve. Passed in rather than imported, so application code stays game-data free. */
   readonly progressionDefinition: ProgressionDefinition;
+  /** The island's starter arrangement: what every farm is given once, and never re-applied. */
+  readonly starterWorld: StarterWorldDefinition;
+  /** The island's geography, as the placement rules read it. */
+  readonly terrain: TileTerrainLookup;
   readonly clock: Clock;
 }
 
@@ -162,9 +175,13 @@ function toConstructionDTO(construction: ConstructionInstance): ConstructionDTO 
       depthCells: construction.footprint.depthCells
     },
     state: construction.state,
+    source: construction.source,
+    placementKey: construction.placementKey,
+    paidAmount: construction.paidAmount,
     costAmount: construction.costAmount,
     costCurrencyDefinitionId: construction.costCurrencyDefinitionId,
     createdAt: construction.createdAt,
+    storedAt: construction.storedAt,
     version: construction.version
   };
 }
@@ -300,6 +317,8 @@ function errorStatus(code: ErrorCode): number {
     case "CONSTRUCTION_NOT_MOVABLE":
     case "CONSTRUCTION_NOT_ROTATABLE":
     case "CONSTRUCTION_NOT_REMOVABLE":
+    case "CONSTRUCTION_NOT_STORABLE":
+    case "CONSTRUCTION_NOT_STORED":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -492,6 +511,7 @@ export function createHandler(dependencies: HandlerDependencies) {
     farms,
     members,
     tiles,
+    terrain: dependencies.terrain,
     constructions,
     definitions: dependencies.constructionDefinitions,
     progression: progressions,
@@ -510,6 +530,7 @@ export function createHandler(dependencies: HandlerDependencies) {
     farms,
     members,
     tiles,
+    terrain: dependencies.terrain,
     constructions,
     definitions: dependencies.constructionDefinitions,
     wallets,
@@ -523,6 +544,7 @@ export function createHandler(dependencies: HandlerDependencies) {
     farms,
     members,
     tiles,
+    terrain: dependencies.terrain,
     constructions,
     definitions: dependencies.constructionDefinitions,
     wallets,
@@ -532,7 +554,44 @@ export function createHandler(dependencies: HandlerDependencies) {
     fingerprints: dependencies.fingerprints,
     clock: dependencies.clock
   });
-  const listFarmConstructions = new ListFarmConstructions(farms, members, constructions);
+  // The island's starter arrangement, seeded once per farm and never re-applied.
+  const seedStarterWorld = new SeedStarterWorld({
+    farms,
+    constructions,
+    definitions: dependencies.constructionDefinitions,
+    world: dependencies.starterWorld,
+    ids: dependencies.ids,
+    clock: dependencies.clock
+  });
+  const storeConstruction = new StoreConstruction({
+    farms,
+    members,
+    tiles,
+    terrain: dependencies.terrain,
+    constructions,
+    definitions: dependencies.constructionDefinitions,
+    wallets,
+    currencies: dependencies.currencyDefinitions,
+    economyService: new EconomyService(dependencies.ids, dependencies.clock),
+    idempotency: constructionIdempotency,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
+  const restoreConstruction = new RestoreConstruction({
+    farms,
+    members,
+    tiles,
+    terrain: dependencies.terrain,
+    constructions,
+    definitions: dependencies.constructionDefinitions,
+    wallets,
+    currencies: dependencies.currencyDefinitions,
+    economyService: new EconomyService(dependencies.ids, dependencies.clock),
+    idempotency: constructionIdempotency,
+    fingerprints: dependencies.fingerprints,
+    clock: dependencies.clock
+  });
+  const listFarmConstructions = new ListFarmConstructions(farms, members, constructions, seedStarterWorld);
   const expandFarm = new ExpandFarm({
     farms,
     members,
@@ -640,6 +699,20 @@ export function createHandler(dependencies: HandlerDependencies) {
         if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
         const entries: BuildCatalogEntryDTO[] = [...listBuildCatalog()];
         const body: ApiSuccess<{ entries: BuildCatalogEntryDTO[] }> = { ok: true, data: { entries } };
+        return jsonResponse(body);
+      }
+
+      /**
+       * The ordinary world objects a farm may hold.
+       *
+       * Read-only reference data, like the crop catalogue: it is what lets the client describe and
+       * offer the right actions for a starter tree it never bought. It names no player state, so any
+       * authenticated reader may have it.
+       */
+      if (request.method === "GET" && url.pathname === "/world-objects") {
+        if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
+        const objects: WorldObjectDefinitionDTO[] = [...listWorldObjectDefinitions()];
+        const body: ApiSuccess<{ objects: WorldObjectDefinitionDTO[] }> = { ok: true, data: { objects } };
         return jsonResponse(body);
       }
 
@@ -843,7 +916,7 @@ export function createHandler(dependencies: HandlerDependencies) {
        * request cannot name a price, a refund or an owner.
        */
       const constructionEditRoute =
-        /^\/farms\/([^/]+)\/constructions\/([^/]+)\/(move|rotate|remove)$/.exec(url.pathname);
+        /^\/farms\/([^/]+)\/constructions\/([^/]+)\/(move|rotate|remove|store|restore)$/.exec(url.pathname);
       if (constructionEditRoute?.[1] !== undefined && constructionEditRoute[2] !== undefined && constructionEditRoute[3] !== undefined) {
         const decodedFarm = decodePathSegment(constructionEditRoute[1]);
         const decodedObject = decodePathSegment(constructionEditRoute[2]);
@@ -878,6 +951,26 @@ export function createHandler(dependencies: HandlerDependencies) {
           const body: ApiSuccess<{ construction: ConstructionDTO }> = {
             ok: true,
             data: { construction: toConstructionDTO(turned) }
+          };
+          return jsonResponse(body);
+        }
+        if (operation === "store") {
+          const parsed = StoreConstructionRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const stored = await storeConstruction.execute(actor, farmId, decodedObject, parsed.data);
+          const body: ApiSuccess<{ construction: ConstructionDTO }> = {
+            ok: true,
+            data: { construction: toConstructionDTO(stored) }
+          };
+          return jsonResponse(body);
+        }
+        if (operation === "restore") {
+          const parsed = RestoreConstructionRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const restored = await restoreConstruction.execute(actor, farmId, decodedObject, parsed.data);
+          const body: ApiSuccess<{ construction: ConstructionDTO }> = {
+            ok: true,
+            data: { construction: toConstructionDTO(restored) }
           };
           return jsonResponse(body);
         }

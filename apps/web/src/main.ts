@@ -84,13 +84,21 @@ import {
 } from "./build-shop/shop-state";
 import { createShopThumbnails } from "./build-shop/shop-thumbnails";
 import {
-  editableActions,
   ownedBounds,
   ownedCells,
   ownershipOverlayFor,
-  refundPreview,
   selectedRow
 } from "./object-editing";
+import {
+  activeObjects,
+  indexWorldObjects,
+  objectObstacles,
+  objectPolicy,
+  objectPresentation,
+  removalRefundPreview,
+  storageStacks,
+  type WorldObjectDefinitions
+} from "./world-objects";
 import {
   renderAssetGrid,
   renderCategoryRail,
@@ -144,6 +152,13 @@ interface AppState {
    * and nothing in it buys anything, because placing is a command the server does not accept yet.
    */
   buildCatalog: readonly BuildCatalogEntryDTO[];
+  /**
+   * The island's own object definitions: what a starter tree or the mill *is*.
+   *
+   * Read-only reference data, like the crop catalogue. Without it the client could not draw or
+   * describe an object the player never bought - which is the whole of V13.3.
+   */
+  worldObjects: WorldObjectDefinitions;
   /**
    * The catalogue entry the player is about to place, or null.
    *
@@ -203,6 +218,7 @@ const state: AppState = {
   cropDefinitions: [],
   treeDefinitions: [],
   buildCatalog: [],
+  worldObjects: indexWorldObjects([]),
   buildSelection: null,
   selectedObjectId: null,
   constructions: [],
@@ -1144,6 +1160,7 @@ function renderBuildPanel(): void {
   renderSearchBar(element<HTMLElement>("build-search"), view, context, handlers);
   renderAssetGrid(element<HTMLElement>("build-rows"), view, context, handlers);
   renderInspector(element<HTMLElement>("build-inspector"), view, context, handlers);
+  renderBuildStorage();
   renderBuildStatus();
 }
 
@@ -1282,18 +1299,19 @@ function renderBuildStatus(): void {
 function toSceneConstruction(construction: ConstructionDTO): {
   readonly id: string;
   readonly modelId: string | null;
+  readonly sizeWorld: number;
   readonly worldX: number;
   readonly worldZ: number;
   readonly rotationY: number;
   readonly widthCells: number;
   readonly depthCells: number;
 } {
-  const entry = state.buildCatalog.find((candidate) => candidate.entryId === construction.entryId);
   const anchor = tileToWorld({ x: construction.anchorX, y: construction.anchorY }, worldFrame());
-  const modelId = entry?.modelId ?? null;
+  const presentation = objectPresentation(construction, state.worldObjects, state.buildCatalog);
   return {
     id: construction.constructionId,
-    modelId: modelId !== null && !modelId.startsWith("road.") ? modelId : null,
+    modelId: presentation.modelId !== null && !presentation.modelId.startsWith("road.") ? presentation.modelId : null,
+    sizeWorld: presentation.sizeWorld,
     worldX: anchor.worldX,
     worldZ: anchor.worldZ,
     rotationY: (construction.rotation * Math.PI) / 2,
@@ -1650,8 +1668,16 @@ function cancelBuildSelection(): void {
  * half does is describe the intention and show the server's answer.
  */
 
-/** The move in progress, or null. `turns` is the orientation the ghost is currently drawn at. */
-let moveSession: { readonly construction: ConstructionDTO; turns: 0 | 1 | 2 | 3 } | null = null;
+/**
+ * The object being carried, or null.
+ *
+ * One session for both directions of the same gesture: carrying something already on the island to a
+ * new cell (`MOVE`), and carrying something out of storage back onto the island (`RESTORE`). The
+ * ghost, the ownership mark, the validity rule and the keyboard all belong to the gesture rather than
+ * to the command, so they are shared; only the confirm differs.
+ */
+let moveSession: { readonly kind: "MOVE" | "RESTORE"; readonly construction: ConstructionDTO; turns: 0 | 1 | 2 | 3 } | null =
+  null;
 /** True while an edit command is in flight, so a double click cannot send two. */
 let objectPending = false;
 /** True once the player has pressed Delete and is being asked to confirm it. */
@@ -1660,6 +1686,42 @@ let deleteArmed = false;
 /** The catalogue entry a built thing came from: what it is called, and what may be done to it. */
 function constructionEntry(construction: ConstructionDTO): BuildCatalogEntryDTO | undefined {
   return state.buildCatalog.find((candidate) => candidate.entryId === construction.entryId);
+}
+
+/**
+ * What may be done with an object, whoever made it.
+ *
+ * A starter tree and a bought tree answer through the same policy shape: the source of an object
+ * never decides which buttons it gets.
+ */
+function objectPolicyFor(construction: ConstructionDTO) {
+  return objectPolicy(construction, state.worldObjects, state.buildCatalog);
+}
+
+/** The name a player reads for an object, from whichever definition family describes it. */
+function objectName(construction: ConstructionDTO): string {
+  const policy = objectPolicyFor(construction);
+  if (policy === null) return construction.entryId;
+  if (policy.label !== null) return policy.label;
+  if (policy.displayNameKey !== null) {
+    // The definition's words when the client has them, and a readable fallback derived from the key
+    // when it does not - a starter object must never show a raw id to a player.
+    return displayName(state.language, policy.displayNameKey, construction.entryId.replace(/^world\./, "").replace(/_/g, " "));
+  }
+  return construction.entryId;
+}
+
+/** The object's own footprint, before the player's turns are applied to it. */
+function objectFootprint(construction: ConstructionDTO): { readonly widthCells: number; readonly depthCells: number } {
+  const world = state.worldObjects.get(construction.entryId);
+  if (world !== undefined) return world.footprint;
+  const entry = constructionEntry(construction);
+  return entry?.footprint ?? construction.footprint;
+}
+
+/** The model a ghost draws for an object, and how big it is. */
+function objectModel(construction: ConstructionDTO): { modelId: string | null; sizeWorld: number } {
+  return objectPresentation(construction, state.worldObjects, state.buildCatalog);
 }
 
 /** Every cell a construction covers, as the preview's "not an obstacle to itself" list. */
@@ -1787,12 +1849,12 @@ function clearObjectSelection(): void {
 function beginMove(): void {
   const construction = selectedConstruction();
   if (construction === null || moveSession !== null) return;
-  const entry = constructionEntry(construction);
-  if (entry === undefined || !entry.movable) {
+  const policy = objectPolicyFor(construction);
+  if (policy === null || !policy.movable) {
     setStatus(message("object.notMovable"), true);
     return;
   }
-  moveSession = { construction, turns: construction.rotation };
+  moveSession = { kind: "MOVE", construction, turns: construction.rotation };
   deleteArmed = false;
   // The ghost is drawn where the object already is, so the first thing the player sees is "this one".
   selectCell(construction.anchorX, construction.anchorY);
@@ -1804,6 +1866,34 @@ function beginMove(): void {
   updateMovePreview();
   renderObjectPanel();
   setStatus(message("object.moveHint"));
+}
+
+/**
+ * Picks a *stored* object up as a ghost, ready to put back on the island.
+ *
+ * The same gesture as a move, from storage instead of from a cell: nothing is charged, the row keeps
+ * its identity, and a failed placement leaves it exactly where it was - in storage.
+ */
+function beginRestore(construction: ConstructionDTO): void {
+  if (moveSession !== null) return;
+  const policy = objectPolicyFor(construction);
+  if (policy === null || !policy.storable) {
+    setStatus(message("object.notStorable"), true);
+    return;
+  }
+  state.selectedObjectId = construction.constructionId;
+  deleteArmed = false;
+  moveSession = { kind: "RESTORE", construction, turns: construction.rotation };
+  setActivePanel(NO_PANEL);
+  const focus = state.selected ?? worldToCell({ worldX: scene?.cameraFrame().targetX ?? 0, worldZ: scene?.cameraFrame().targetZ ?? 0 });
+  selectCell(focus.x, focus.y);
+  scene?.setObjectPicking(false);
+  scene?.setObjectSelection(construction.constructionId);
+  refreshOwnershipOverlay();
+  document.body.classList.add("is-placing");
+  updateMovePreview();
+  renderObjectPanel();
+  setStatus(message("object.restoreHint"));
 }
 
 /** Abandons the move: the ghost goes, the object was never touched. */
@@ -1822,12 +1912,12 @@ function cancelMove(): void {
 function updateMovePreview(): void {
   const session = moveSession;
   if (session === null) return;
-  const entry = constructionEntry(session.construction);
-  if (entry === undefined) return;
-  const footprint = rotatedFootprint(entry.footprint, session.turns);
+  const model = objectModel(session.construction);
+  const footprint = rotatedFootprint(objectFootprint(session.construction), session.turns);
   scene?.setPlacementPreview({
-    modelId: entry.modelId !== null && !isProceduralVisual(entry.modelId) ? entry.modelId : null,
-    roadTierId: entry.category === "ROAD" ? entry.tier : null,
+    modelId: model.modelId !== null && !isProceduralVisual(model.modelId) ? model.modelId : null,
+    // A world object names a model, never a road tier: the tier belongs to the road catalogue alone.
+    roadTierId: constructionEntry(session.construction)?.category === "ROAD" ? constructionEntry(session.construction)?.tier ?? null : null,
     widthCells: footprint.widthCells,
     depthCells: footprint.depthCells,
     valid: moveRejectionFor(session) === null,
@@ -1838,11 +1928,14 @@ function updateMovePreview(): void {
 /** Why the object cannot go where the selection currently is, or null when it can. */
 function moveRejectionFor(session: { readonly construction: ConstructionDTO; readonly turns: 0 | 1 | 2 | 3 }): MessageKey | null {
   if (scene === null) return null;
-  const entry = constructionEntry(session.construction);
-  if (entry === undefined) return null;
-  const footprint = rotatedFootprint(entry.footprint, session.turns);
+  const policy = objectPolicyFor(session.construction);
+  if (policy === null) return null;
+  const footprint = rotatedFootprint(objectFootprint(session.construction), session.turns);
   const rejection = previewRejection(state.cellMap, state.selected, {
-    ...previewRequirement(entry, footprint),
+    allowedTerrain: state.worldObjects.get(session.construction.entryId)?.allowedTerrain ?? constructionEntry(session.construction)?.allowedTerrain ?? ["LAND"],
+    footprint,
+    isRoad: constructionEntry(session.construction)?.category === "ROAD",
+    requiresOwnership: true,
     // The object is not an obstacle to itself; everything else on the island still is.
     ignore: constructionCells(session.construction)
   });
@@ -1853,12 +1946,12 @@ function moveRejectionFor(session: { readonly construction: ConstructionDTO; rea
 function rotateMovePreview(step: number): void {
   const session = moveSession;
   if (session === null) return;
-  const entry = constructionEntry(session.construction);
-  if (entry === undefined || !entry.rotatable) {
+  const policy = objectPolicyFor(session.construction);
+  if (policy === null || !policy.rotatable) {
     setStatus(message("build.notRotatable"));
     return;
   }
-  moveSession = { construction: session.construction, turns: normaliseQuarterTurns(session.turns + step) };
+  moveSession = { ...session, turns: normaliseQuarterTurns(session.turns + step) };
   updateMovePreview();
   renderObjectPanel();
 }
@@ -1867,8 +1960,8 @@ function rotateMovePreview(step: number): void {
 async function confirmMove(): Promise<void> {
   const session = moveSession;
   if (session === null || objectPending || state.farmId === null || state.selected === null) return;
-  const entry = constructionEntry(session.construction);
-  if (entry === undefined) return;
+  const policy = objectPolicyFor(session.construction);
+  if (policy === null) return;
   const rejection = moveRejectionFor(session);
   if (rejection !== null) {
     setStatus((translate) => translate("build.cannotPlace", { reason: translate(rejection) }), true);
@@ -1877,22 +1970,32 @@ async function confirmMove(): Promise<void> {
   objectPending = true;
   renderObjectPanel();
   try {
-    const moved = await api().moveConstruction(state.farmId, session.construction.constructionId, {
-      requestId: newRequestId("move"),
+    // Carrying something in from storage and carrying something across the island are the same
+    // gesture with one different command; both send the cell, the turn and the version they read.
+    const body = {
+      requestId: newRequestId(session.kind === "RESTORE" ? "restore" : "move"),
       anchorX: state.selected.x,
       anchorY: state.selected.y,
       rotation: session.turns,
-      // The version the client is looking at: the server refuses a move built on a stale copy.
+      // The version the client is looking at: the server refuses an edit built on a stale copy.
       expectedVersion: session.construction.version
-    });
-    replaceConstruction(moved.construction);
+    };
+    const outcome =
+      session.kind === "RESTORE"
+        ? await api().restoreConstruction(state.farmId, session.construction.constructionId, body)
+        : await api().moveConstruction(state.farmId, session.construction.constructionId, body);
+    replaceConstruction(outcome.construction);
     moveSession = null;
     scene?.setPlacementPreview(null);
     scene?.setObjectPicking(true);
     document.body.classList.remove("is-placing");
-    scene?.setObjectSelection(moved.construction.constructionId);
+    scene?.setObjectSelection(outcome.construction.constructionId);
     refreshScene();
-    setStatus((translate) => translate("object.moved", { item: buildEntryName(entry) }));
+    setStatus((translate) =>
+      translate(session.kind === "RESTORE" ? "object.restored" : "object.moved", {
+        item: objectName(session.construction)
+      })
+    );
   } catch (error: unknown) {
     setStatus(describe(error), true);
   } finally {
@@ -1908,6 +2011,79 @@ async function confirmMove(): Promise<void> {
  * new orientation. One activation, one quarter turn - not a separate preview mode, because the shape
  * of a barn is easy to predict and the server refuses an overlap either way.
  */
+/**
+ * Puts the selected object into storage.
+ *
+ * The safe half of "get this out of the way": the object leaves the island, keeps its identity and
+ * its cost basis, and can be placed again from the Build panel's storage list without being bought
+ * again. Nothing is charged and nothing is refunded, because nothing changed hands.
+ */
+async function storeSelectedObject(): Promise<void> {
+  const construction = selectedConstruction();
+  if (construction === null || objectPending || state.farmId === null || moveSession !== null) return;
+  const policy = objectPolicyFor(construction);
+  if (policy === null || !policy.storable) {
+    setStatus(message("object.notStorable"), true);
+    return;
+  }
+  objectPending = true;
+  deleteArmed = false;
+  renderObjectPanel();
+  try {
+    const stored = await api().storeConstruction(state.farmId, construction.constructionId, {
+      requestId: newRequestId("store"),
+      expectedVersion: construction.version
+    });
+    replaceConstruction(stored.construction);
+    state.selectedObjectId = null;
+    scene?.setObjectSelection(null);
+    refreshScene();
+    if (panels.active === "build") renderBuildPanel();
+    setStatus((translate) => translate("object.stored", { item: objectName(construction) }));
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+  } finally {
+    objectPending = false;
+    renderObjectPanel();
+  }
+}
+
+/**
+ * What the player has in storage, in the Build panel.
+ *
+ * A short list of stacks rather than a second inventory screen: the point of storage is that an
+ * object a player already owns can be placed again, and the smallest honest UI for that is a row per
+ * definition with how many are held and one button to put the newest one back on the island.
+ */
+function renderBuildStorage(): void {
+  const node = element<HTMLElement>("build-storage");
+  const stacks = storageStacks(state.constructions);
+  if (stacks.length === 0) {
+    node.hidden = true;
+    node.replaceChildren();
+    return;
+  }
+  node.hidden = false;
+  node.replaceChildren();
+  node.appendChild(make("h3", "build-storage-title", t("storage.title")));
+  const list = make("ul", "build-storage-list");
+  for (const stack of stacks) {
+    const item = make("li", "build-storage-item");
+    item.appendChild(make("span", "build-storage-name", objectName(stack.newest)));
+    item.appendChild(make("span", "build-storage-count", `×${String(stack.count)}`));
+    const place = make("button", "object-action");
+    place.type = "button";
+    place.textContent = t("storage.place");
+    place.disabled = objectPending || moveSession !== null;
+    place.addEventListener("click", () => {
+      beginRestore(stack.newest);
+    });
+    item.appendChild(place);
+    list.appendChild(item);
+  }
+  node.appendChild(list);
+}
+
 async function rotateSelectedObject(): Promise<void> {
   const construction = selectedConstruction();
   if (construction === null || objectPending || state.farmId === null || moveSession !== null) return;
@@ -1987,12 +2163,17 @@ function renderObjectPanel(): void {
     node.replaceChildren();
     return;
   }
-  const entry = constructionEntry(construction);
-  // The panel is shown for *any* selected row, even one the catalogue has not loaded for: a player
-  // who clicked their own barn and saw nothing would have no way to tell a missing catalogue entry
-  // from a dead click. The actions are what the entry decides, and no entry means no actions yet.
-  const actions = editableActions(entry ?? null);
-  const name = entry === undefined ? construction.entryId : buildEntryName(entry);
+  // The panel is shown for *any* selected row, even one the client has no definition for: a player
+  // who clicked their own barn and saw nothing would have no way to tell a missing definition from a
+  // dead click. The actions are what the definition decides, and no definition means no actions yet.
+  const policy = objectPolicyFor(construction);
+  const actions = {
+    move: policy?.movable ?? false,
+    rotate: policy?.rotatable ?? false,
+    store: policy?.storable ?? false,
+    remove: policy?.removable ?? false
+  };
+  const name = objectName(construction);
   node.hidden = false;
   node.replaceChildren();
 
@@ -2009,9 +2190,9 @@ function renderObjectPanel(): void {
       })
     )
   );
-  if (entry !== undefined) {
+  if (policy !== null) {
     meta.appendChild(make("span", "placement-sep", "·"));
-    meta.appendChild(make("span", undefined, t("object.info.level", { level: entry.requiredLevel })));
+    meta.appendChild(make("span", undefined, t("object.info.level", { level: policy.requiredLevel })));
   }
   copy.appendChild(meta);
   node.appendChild(copy);
@@ -2039,7 +2220,7 @@ function renderObjectPanel(): void {
   }
 
   if (deleteArmed) {
-    const refund = entry === undefined ? 0 : refundPreview(entry.price, entry.removalRefundRate);
+    const refund = policy === null ? 0 : removalRefundPreview(construction, policy);
     const line = make("p", "placement-state is-invalid");
     line.textContent = t("object.delete.confirm", { item: name });
     node.appendChild(line);
@@ -2077,6 +2258,11 @@ function renderObjectPanel(): void {
     if (actions.rotate) {
       actionRow.appendChild(action(t("object.action.rotate"), "object-action", () => void rotateSelectedObject()));
     }
+    if (actions.store) {
+      // Store sits between Rotate and Delete on purpose: it is the *safe* remodeling action, and the
+      // one a player should reach for when they are not sure they want the thing gone for good.
+      actionRow.appendChild(action(t("object.action.store"), "object-action", () => void storeSelectedObject()));
+    }
     if (actions.remove) {
       actionRow.appendChild(
         action(
@@ -2096,6 +2282,13 @@ function renderObjectPanel(): void {
     actionRow.appendChild(action(t("object.move.cancel"), "object-action", cancelMove));
   }
   node.appendChild(actionRow);
+
+  // While something is being carried in from storage, say so and how much of that stack is left.
+  if (moveSession?.kind === "RESTORE") {
+    const note = make("p", "placement-note");
+    note.textContent = t("object.restoreNote", { item: name });
+    node.appendChild(note);
+  }
 
   const diagnostic = debugDiagnostic(state.selected);
   if (diagnostic !== null) node.appendChild(make("p", "placement-note", diagnostic));
@@ -2245,14 +2438,15 @@ function syncLayoutMetrics(): void {
 
 async function refreshAccount(): Promise<void> {
   const client = api();
-  const [inventory, wallet, shop, progression, cropDefinitions, treeDefinitions, buildCatalog] = await Promise.all([
+  const [inventory, wallet, shop, progression, cropDefinitions, treeDefinitions, buildCatalog, worldObjects] = await Promise.all([
     client.getInventory(),
     client.getWallet(),
     client.getShop(),
     client.getProgression(),
     client.getCropDefinitions(),
     client.getTreeDefinitions(),
-    client.getBuildCatalog()
+    client.getBuildCatalog(),
+    client.getWorldObjects()
   ]);
   state.inventory = inventory.items;
   state.wallet = wallet.wallets;
@@ -2261,6 +2455,7 @@ async function refreshAccount(): Promise<void> {
   state.cropDefinitions = cropDefinitions.definitions;
   state.treeDefinitions = treeDefinitions.definitions;
   state.buildCatalog = buildCatalog.entries;
+  state.worldObjects = indexWorldObjects(worldObjects.objects);
   ensurePlantableSelection();
 }
 
@@ -2332,6 +2527,14 @@ const playerRuntime = createPlayerRuntime({
  */
 let selectionCollision: CollisionWorld = createPlayerCollisionWorld([]);
 
+/**
+ * The circles the player's own objects put in the way.
+ *
+ * Derived from the footprint the server reports, in world metres, and only for objects *standing* on
+ * the island: a stored barn blocks nothing, and a moved one blocks where it now is. The refined
+ * per-definition collision radius a later pass may add is a refinement of this, not a replacement for
+ * it - what matters is that the circle follows the row.
+ */
 function startPlayer(): void {
   stopPlayer();
   movement = createMovementInput({
@@ -2477,7 +2680,10 @@ function refreshScene(): void {
   // covers everything these groups draw, growth quantised to the precision the panels print.
   // Built things are pushed before the gate: the signature is about the farm the server reports, and
   // a construction arriving is exactly the kind of change the setter is written to accept cheaply.
-  scene.setConstructions(state.constructions.map(toSceneConstruction));
+  // Only what is *standing* on the island: a stored object is the player's, and it is not there. The
+  // rows themselves are one list - storage is a state, not a second inventory - so this filter is the
+  // whole of "storage is a place objects are not drawn".
+  scene.setConstructions(activeObjects(state.constructions).map(toSceneConstruction));
   const signature = farmPresentationSignature(state);
   if (signature === scenePushSignature) return;
   const input = sceneInput();
@@ -2495,7 +2701,7 @@ function refreshScene(): void {
   playerRuntime.setTiles(input.tiles);
   // The selection asks the same world whether a cell can be walked to, so a destination can never be
   // offered for ground the character would refuse.
-  selectionCollision = createPlayerCollisionWorld(input.tiles);
+  selectionCollision = createPlayerCollisionWorld(input.tiles, objectObstacles(state.constructions, worldFrame()));
   try {
     scene.setState(input);
   } catch (error: unknown) {

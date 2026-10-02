@@ -20,6 +20,7 @@ import {
   GetFarmConstructionsResponseSchema,
   ConstructionEditResponseSchema,
   RemoveConstructionResponseSchema,
+  GetWorldObjectsResponseSchema,
   PlantTreeResponseSchema,
   RemoveTreeResponseSchema,
   UprootCropResponseSchema,
@@ -48,6 +49,7 @@ import type {
   UprootCropResponse,
   RemoveTreeResponse,
   RemoveConstructionResponse,
+  WorldObjectDefinitionDTO,
   XpAwardDTO,
   WalletDTO
 } from "@happy-farm/contracts";
@@ -288,6 +290,48 @@ export class ApiClient {
     return this.get(
       `/farms/${encodeURIComponent(farmId)}/constructions`,
       GetFarmConstructionsResponseSchema
+    );
+  }
+
+  /**
+   * The definitions of the island's own objects.
+   *
+   * Read-only reference data, fetched once with the catalogues: it is what lets the client draw and
+   * describe a starter tree - or the mill - that the player never bought.
+   */
+  getWorldObjects(): Promise<{ readonly objects: WorldObjectDefinitionDTO[] }> {
+    return this.get("/world-objects", GetWorldObjectsResponseSchema);
+  }
+
+  /** Puts one object into storage: out of the world, still the player's. */
+  storeConstruction(
+    farmId: string,
+    constructionId: string,
+    body: { readonly requestId: string; readonly expectedVersion: number }
+  ): Promise<{ readonly construction: ConstructionDTO }> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/constructions/${encodeURIComponent(constructionId)}/store`,
+      body,
+      ConstructionEditResponseSchema
+    );
+  }
+
+  /** Puts a stored object back on the island, at ground the player chose. Nothing is charged. */
+  restoreConstruction(
+    farmId: string,
+    constructionId: string,
+    body: {
+      readonly requestId: string;
+      readonly anchorX: number;
+      readonly anchorY: number;
+      readonly rotation: 0 | 1 | 2 | 3;
+      readonly expectedVersion: number;
+    }
+  ): Promise<{ readonly construction: ConstructionDTO }> {
+    return this.post(
+      `/farms/${encodeURIComponent(farmId)}/constructions/${encodeURIComponent(constructionId)}/restore`,
+      body,
+      ConstructionEditResponseSchema
     );
   }
 

@@ -46,7 +46,8 @@ import type {
   ShopEntryRepository,
   StarterPackageDefinition,
   TreeDefinitionRepository,
-  TreeIdGenerator
+  TreeIdGenerator,
+  TileTerrainLookup
 } from "@happy-farm/application";
 import {
   cropRegistry,
@@ -59,9 +60,84 @@ import {
   shopRegistry,
   starterPackage,
   treeRegistry,
+  STARTER_WORLD_PLACEMENTS,
+  STARTER_WORLD_VERSION,
+  classifyTile,
+  worldObjectDefinition,
+  WORLD_OBJECT_DEFINITIONS,
   type CropDefinitionData,
   type TreeDefinitionData
 } from "@happy-farm/game-data";
+
+/**
+ * The island's starter arrangement, as the application layer reads it.
+ *
+ * Content stays in game data; this is the adapter, exactly as the catalogue and the shop registries
+ * are. The layout is data - a key, a definition, a tile and a quarter turn - so seeding needs no
+ * geometry, no renderer and no second opinion about where the mill stands.
+ */
+export const gameDataStarterWorld = {
+  version: STARTER_WORLD_VERSION,
+  placements: STARTER_WORLD_PLACEMENTS.map((placement) => ({
+    key: placement.key,
+    definitionId: placement.definitionId,
+    tile: { x: placement.tile.x, y: placement.tile.y },
+    rotation: placement.rotation
+  }))
+};
+
+/**
+ * The island's geography, as the placement rules read it.
+ *
+ * The *same* `classifyTile` the client's cell map is built from, handed to the application as a port.
+ * This is the authority V13.2 said was missing: the server can now refuse a placement on a beach, in
+ * water, on the steep flank of the volcano or on ground the island keeps for itself, and it refuses
+ * it for that reason rather than because the farm happens not to own the tile.
+ */
+export const gameDataTileTerrain: TileTerrainLookup = {
+  classify(tile) {
+    const classification = classifyTile(tile);
+    return {
+      terrain: classification.terrain,
+      shallowWater: classification.shallowWater,
+      protectedGround: classification.protectedGround
+    };
+  }
+};
+
+/** Every ordinary world object the client may draw and edit, as the wire carries it. */
+export function listWorldObjectDefinitions(): readonly {
+  readonly id: string;
+  readonly displayNameKey: string;
+  readonly modelId: string | null;
+  readonly landmarkKind: string | null;
+  readonly sizeWorld: number;
+  readonly footprint: { readonly widthCells: number; readonly depthCells: number };
+  readonly allowedTerrain: ("LAND" | "SHORE" | "SHALLOW_WATER" | "WATER")[];
+  readonly movable: boolean;
+  readonly rotatable: boolean;
+  readonly storable: boolean;
+  readonly removable: boolean;
+  readonly removalRefundRate: number;
+}[] {
+  return WORLD_OBJECT_DEFINITIONS.map((definition) => ({
+    id: definition.id,
+    displayNameKey: definition.displayNameKey,
+    modelId: definition.presentation.form === "MODEL" ? definition.presentation.modelId : null,
+    landmarkKind: definition.presentation.form === "LANDMARK" ? definition.presentation.kind : null,
+    sizeWorld: definition.presentation.form === "MODEL" ? definition.presentation.sizeWorld : 1,
+    footprint: {
+      widthCells: definition.footprint.widthCells,
+      depthCells: definition.footprint.depthCells
+    },
+    allowedTerrain: [...definition.allowedTerrain],
+    movable: definition.movable,
+    rotatable: definition.rotatable,
+    storable: definition.storable,
+    removable: definition.removable,
+    removalRefundRate: definition.removalRefundRate
+  }));
+}
 
 /**
  * The levelling curve, read from game data and handed to the application layer as plain numbers.
@@ -128,6 +204,33 @@ export class CryptoIdGenerator
  */
 export class GameDataConstructionDefinitions implements ConstructionDefinitionRepository {
   findById(entryId: string): ConstructionDefinition | null {
+    // An ordinary world object - a starter tree, the mill - is described by its own definition rather
+    // than by a shop entry, and is edited by exactly the same policy shape. One resolver, two
+    // families, so a starter object and a bought one cannot drift into behaving differently.
+    const worldObject = worldObjectDefinition(entryId);
+    if (worldObject !== null) {
+      return {
+        entryId: worldObject.id,
+        category: "WORLD_OBJECT",
+        requiredLevel: 1,
+        // A world object is not for sale: it costs nothing to place, and nothing was paid for it.
+        price: 0,
+        currencyDefinitionId: "currency_gold",
+        footprint: {
+          widthCells: worldObject.footprint.widthCells,
+          depthCells: worldObject.footprint.depthCells
+        },
+        allowedTerrain: [...worldObject.allowedTerrain],
+        rotatable: worldObject.rotatable,
+        movable: worldObject.movable,
+        storable: worldObject.storable,
+        removable: worldObject.removable,
+        removalRefundRate: worldObject.removalRefundRate,
+        status: "ACTIVE",
+        // Deciding it by source would defeat the feature: this is the same rule the catalogue uses.
+        requiresOwnership: true
+      };
+    }
     const entry = placementEntries.find((candidate) => candidate.id === entryId);
     if (entry === undefined) return null;
     const gameplay = gameplayFor(entry.id);
@@ -144,6 +247,7 @@ export class GameDataConstructionDefinitions implements ConstructionDefinitionRe
       allowedTerrain: [...entry.allowedTerrain],
       rotatable: entry.rotatable,
       movable: entry.movable,
+      storable: entry.storable,
       removable: entry.removable,
       removalRefundRate: entry.removalRefundRate,
       status: gameplay.status,

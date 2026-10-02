@@ -2,13 +2,17 @@ import {
   cellsInBounds,
   constructionRefusal,
   createConstructionInstance,
+  createStarterConstructionInstance,
   moveConstruction,
   normaliseQuarterTurns,
   moveRefusal,
   removalRefund,
   removalRefusal,
+  restoreConstruction,
   rotationRefusal,
   rotatedFootprint,
+  storageRefusal,
+  storeConstruction,
   type ConstructionCell,
   type ConstructionDefinition,
   type ConstructionInstance,
@@ -41,6 +45,7 @@ import type {
   IdempotencyRepository,
   PayloadFingerprint,
   ProgressionRepository,
+  TileTerrainLookup,
   WalletRepository
 } from "./ports";
 import type { ProgressionDefinition } from "@happy-farm/domain";
@@ -71,6 +76,8 @@ export interface PlaceConstructionDependencies {
   readonly farms: FarmRepository;
   readonly members: FarmMemberRepository;
   readonly tiles: FarmTileRepository;
+  /** What the ground physically is, from the island's own geography. */
+  readonly terrain: TileTerrainLookup;
   readonly constructions: ConstructionRepository;
   readonly definitions: ConstructionDefinitionRepository;
   readonly progression: ProgressionRepository;
@@ -166,7 +173,7 @@ export class PlaceConstruction {
       definition,
       anchor,
       rotation,
-      builtByPlayerId: actor.playerId,
+      ownerPlayerId: actor.playerId,
       createdAt: now
     });
     const currency = this.currencyDefinition(definition, currencies);
@@ -276,14 +283,17 @@ export class PlaceConstruction {
     const cells: ConstructionCell[] = [];
     for (const cell of wanted) {
       const tile = await this.dependencies.tiles.find(farmId, cell.x, cell.y);
+      // Ownership is the farm's rows; everything else about the ground is the island's geography,
+      // through the one classifier the renderer also reads. Before V13.3 this said "an owned tile is
+      // land", which was true by luck rather than by rule.
+      const ground = this.dependencies.terrain.classify(cell);
       cells.push({
         x: cell.x,
         y: cell.y,
         owned: tile !== null,
-        terrain: tile === null ? ("WATER" as const) : ("LAND" as const),
-        // The server has no world model of its own yet: it knows the farm's soil and nothing finer.
-        shallowWater: false,
-        protectedGround: false,
+        terrain: ground.terrain,
+        shallowWater: ground.shallowWater,
+        protectedGround: ground.protectedGround,
         occupied: false
       });
     }
@@ -301,7 +311,16 @@ export class ListFarmConstructions {
   constructor(
     private readonly farms: FarmRepository,
     private readonly members: FarmMemberRepository,
-    private readonly constructions: ConstructionRepository
+    private readonly constructions: ConstructionRepository,
+    /**
+     * The starter arrangement, when the host has one.
+     *
+     * Reading a farm's objects is where an older farm first meets V13.3: the seeder is version-guarded
+     * and idempotent, so this is one extra `UPDATE ... WHERE version < ?` on the first read after the
+     * migration and nothing at all after it. That is why no manual step is needed to see the new
+     * island on a development database.
+     */
+    private readonly starterWorld?: { execute(farmId: FarmId): Promise<number> }
   ) {}
 
   async execute(actor: ActorContext | null, farmId: FarmId): Promise<readonly ConstructionInstance[]> {
@@ -313,6 +332,7 @@ export class ListFarmConstructions {
     if (membership === null) {
       throw new ApplicationError("NOT_AUTHORIZED", "Farm membership is required");
     }
+    await this.starterWorld?.execute(farmId);
     return this.constructions.listByFarm(parseFarmId(farmId));
   }
 }
@@ -363,6 +383,8 @@ export interface ConstructionEditDependencies {
   readonly farms: FarmRepository;
   readonly members: FarmMemberRepository;
   readonly tiles: FarmTileRepository;
+  /** What the ground physically is, from the island's own geography. */
+  readonly terrain: TileTerrainLookup;
   readonly constructions: ConstructionRepository;
   readonly definitions: ConstructionDefinitionRepository;
   readonly wallets: WalletRepository;
@@ -401,6 +423,8 @@ function constructionRefusalError(refusal: ConstructionRefusal): { readonly code
       return { code: "CONSTRUCTION_NOT_MOVABLE", message: "This cannot be moved" };
     case "NOT_ROTATABLE":
       return { code: "CONSTRUCTION_NOT_ROTATABLE", message: "This cannot be turned" };
+    case "NOT_STORABLE":
+      return { code: "CONSTRUCTION_NOT_STORABLE", message: "This cannot be stored" };
     case "NOT_REMOVABLE":
       return { code: "CONSTRUCTION_NOT_REMOVABLE", message: "This cannot be removed" };
   }
@@ -431,7 +455,7 @@ async function loadEditableConstruction(
     throw new ApplicationError("RESOURCE_NOT_FOUND", "That object was not found on this farm");
   }
   // The object's own owner, or the farm's: an editor may not quietly move a colleague's work.
-  if (construction.builtByPlayerId !== actor.playerId && membership.role !== "OWNER") {
+  if (construction.ownerPlayerId !== actor.playerId && membership.role !== "OWNER") {
     throw new ApplicationError("OBJECT_NOT_OWNED", "That object belongs to another player");
   }
   const definition = dependencies.definitions.findById(construction.entryId);
@@ -470,13 +494,14 @@ async function editGroundCells(
   const cells: ConstructionCell[] = [];
   for (const cell of wanted) {
     const tile = await dependencies.tiles.find(farmId, cell.x, cell.y);
+    const ground = dependencies.terrain.classify(cell);
     cells.push({
       x: cell.x,
       y: cell.y,
       owned: tile !== null,
-      terrain: tile === null ? ("WATER" as const) : ("LAND" as const),
-      shallowWater: false,
-      protectedGround: false,
+      terrain: ground.terrain,
+      shallowWater: ground.shallowWater,
+      protectedGround: ground.protectedGround,
       occupied: false
     });
   }
@@ -665,7 +690,9 @@ export class RemoveConstruction {
     if (currency === null) {
       throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
     }
-    const amount = removalRefund(definition);
+    // A share of what this object actually cost its owner. A seeded object cost nothing, so removing
+    // it pays nothing back however much the catalogue would charge for a new one.
+    const amount = removalRefund(construction, definition);
     const now = clock.now();
     const refund =
       amount > 0
@@ -715,6 +742,276 @@ export class RemoveConstruction {
       if (raced !== null) return JSON.parse(raced.responseJson) as RemoveConstructionResult;
       throw error;
     }
+  }
+}
+
+/**
+ * The starter arrangement, as the application layer sees it.
+ *
+ * A plain shape rather than a game-data import: this package owns rules, not content, so the layout
+ * is handed in by the host exactly as the catalogue and the progression curve are.
+ */
+export interface StarterPlacementInput {
+  readonly key: string;
+  readonly definitionId: string;
+  readonly tile: { readonly x: number; readonly y: number };
+  readonly rotation: QuarterTurns;
+}
+
+export interface StarterWorldDefinition {
+  readonly version: number;
+  readonly placements: readonly StarterPlacementInput[];
+}
+
+export const SEED_STARTER_WORLD_OPERATION = "SEED_STARTER_WORLD";
+
+/**
+ * Giving a farm its starter objects, exactly once.
+ *
+ * Three properties matter and all three come from the database rather than from this code being
+ * careful:
+ *
+ * * **Once.** The farm's `starter_world_version` is stamped by the same batch that inserts the rows,
+ *   with a `WHERE version < ?` predicate. A second caller - a race, a retry, two browser tabs - finds
+ *   the version already current and inserts nothing.
+ * * **Idempotent per object.** Each placement carries a stable key and a unique `(farm, key)` index,
+ *   so even a partly-applied pass cannot produce two of the same tree.
+ * * **Never a reset.** Seeding only ever *adds* rows. It never looks at an object that already exists,
+ *   so a tree the player moved, stored or removed is never put back where it started.
+ *
+ * Existing farms take this path the first time their constructions are read, which is why the local
+ * development farm needs no manual step: it is given the arrangement it never had, once.
+ */
+export class SeedStarterWorld {
+  constructor(
+    private readonly dependencies: {
+      readonly farms: FarmRepository;
+      readonly constructions: ConstructionRepository;
+      readonly definitions: ConstructionDefinitionRepository;
+      readonly world: StarterWorldDefinition;
+      readonly ids: ConstructionIdGenerator;
+      readonly clock: Clock;
+    }
+  ) {}
+
+  /** Seeds if the farm is behind, and reports how many objects it created. */
+  async execute(farmId: FarmId): Promise<number> {
+    const { farms, constructions, definitions, world, ids, clock } = this.dependencies;
+    const state = await farms.starterWorldState(farmId);
+    if (state === null) return 0;
+    if (state.version >= world.version) return 0;
+
+    const now = clock.now();
+    const instances: ConstructionInstance[] = [];
+    for (const placement of world.placements) {
+      const definition = definitions.findById(placement.definitionId);
+      if (definition === null) {
+        // A layout naming a definition this build does not ship is a deployment mistake, and it must
+        // be loud rather than quietly producing an island with a hole in it.
+        throw new ApplicationError("INTERNAL_ERROR", `Starter placement names an unknown definition: ${placement.definitionId}`);
+      }
+      instances.push(
+        createStarterConstructionInstance({
+          id: ids.newConstructionId(),
+          farmId,
+          definition,
+          placementKey: placement.key,
+          anchor: placement.tile,
+          rotation: placement.rotation,
+          // A starter object is the farm's, and a farm's authority is its owner's.
+          ownerPlayerId: state.ownerPlayerId,
+          createdAt: now
+        })
+      );
+    }
+    return constructions.seedAtomically({
+      farmId,
+      version: world.version,
+      constructions: instances,
+      seededAt: now
+    });
+  }
+}
+
+export const STORE_CONSTRUCTION_OPERATION = "STORE_CONSTRUCTION";
+export const RESTORE_CONSTRUCTION_OPERATION = "RESTORE_CONSTRUCTION";
+
+export interface StoreConstructionCommand {
+  readonly requestId: string;
+  readonly expectedVersion: number;
+}
+
+export interface RestoreConstructionCommand {
+  readonly requestId: string;
+  readonly anchorX: number;
+  readonly anchorY: number;
+  readonly rotation: number;
+  readonly expectedVersion: number;
+}
+
+/**
+ * Putting an object into storage: out of the world, still the player's, still itself.
+ *
+ * Not a removal and not a sale. The row keeps its id, its cost basis and its version chain, and it
+ * stops occupying ground because its state says so - which is what makes storing a mill and placing
+ * it again later impossible to turn into two mills.
+ */
+export class StoreConstruction {
+  constructor(private readonly dependencies: ConstructionEditDependencies) {}
+
+  async execute(
+    actor: ActorContext | null,
+    farmId: FarmId,
+    constructionId: string,
+    command: StoreConstructionCommand
+  ): Promise<ConstructionInstance> {
+    const { constructions, idempotency, fingerprints, clock } = this.dependencies;
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const fingerprint = await fingerprints.hash(
+      JSON.stringify([STORE_CONSTRUCTION_OPERATION, farmId, constructionId, command.expectedVersion])
+    );
+    const settled = await idempotency.find(actor.playerId, STORE_CONSTRUCTION_OPERATION, command.requestId);
+    if (settled !== null) {
+      if (settled.payloadFingerprint !== fingerprint) {
+        throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request id was already used for another payload");
+      }
+      return this.settledAnswer(farmId, constructionId);
+    }
+
+    const { construction, definition } = await loadEditableConstruction(
+      this.dependencies,
+      actor,
+      farmId,
+      constructionId
+    );
+    if (construction.version !== command.expectedVersion) {
+      throw new ApplicationError("CONFLICT_STALE_STATE", "That object has changed since you looked at it");
+    }
+    if (construction.state === "STORED") return construction;
+    const refusal = storageRefusal(definition);
+    if (refusal !== null) {
+      const mapped = constructionRefusalError(refusal);
+      throw new ApplicationError(mapped.code as never, mapped.message);
+    }
+
+    const now = clock.now();
+    const stored = storeConstruction(construction, now);
+    const record: IdempotencyRecord = {
+      actorPlayerId: actor.playerId,
+      operation: STORE_CONSTRUCTION_OPERATION,
+      requestId: command.requestId,
+      payloadFingerprint: fingerprint,
+      resourceId: stored.id,
+      responseJson: JSON.stringify({ constructionId: stored.id }),
+      status: "COMPLETED",
+      createdAt: now
+    };
+    try {
+      await constructions.setStoredAtomically({ construction: stored, expectedVersion: construction.version }, record);
+      return stored;
+    } catch (error: unknown) {
+      const raced = await idempotency.find(actor.playerId, STORE_CONSTRUCTION_OPERATION, command.requestId);
+      if (raced !== null) return this.settledAnswer(farmId, constructionId);
+      throw error;
+    }
+  }
+
+  private async settledAnswer(farmId: FarmId, constructionId: string): Promise<ConstructionInstance> {
+    const construction = await this.dependencies.constructions.findById(parseConstructionId(constructionId));
+    if (construction === null || construction.farmId !== farmId) {
+      throw new ApplicationError("CONSTRUCTION_NOT_FOUND", "The recorded construction no longer exists");
+    }
+    return construction;
+  }
+}
+
+/**
+ * Taking an object back out of storage, at ground the player has chosen.
+ *
+ * The destination is checked exactly as a move's is - owned, free, the asset's own terrain - and the
+ * row goes back to `ACTIVE` in one statement, so a failed restore leaves it in storage rather than
+ * producing a half-placed object. Nothing is charged: the object was already paid for, or never was.
+ */
+export class RestoreConstruction {
+  constructor(private readonly dependencies: ConstructionEditDependencies) {}
+
+  async execute(
+    actor: ActorContext | null,
+    farmId: FarmId,
+    constructionId: string,
+    command: RestoreConstructionCommand
+  ): Promise<ConstructionInstance> {
+    const { constructions, idempotency, fingerprints, clock } = this.dependencies;
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const payload = [RESTORE_CONSTRUCTION_OPERATION, farmId, constructionId, command.anchorX, command.anchorY, command.rotation, command.expectedVersion];
+    const fingerprint = await fingerprints.hash(JSON.stringify(payload));
+    const settled = await idempotency.find(actor.playerId, RESTORE_CONSTRUCTION_OPERATION, command.requestId);
+    if (settled !== null) {
+      if (settled.payloadFingerprint !== fingerprint) {
+        throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request id was already used for another payload");
+      }
+      return this.settledAnswer(farmId, constructionId);
+    }
+
+    const { construction, definition } = await loadEditableConstruction(
+      this.dependencies,
+      actor,
+      farmId,
+      constructionId
+    );
+    if (construction.version !== command.expectedVersion) {
+      throw new ApplicationError("CONFLICT_STALE_STATE", "That object has changed since you looked at it");
+    }
+    if (construction.state !== "STORED") {
+      throw new ApplicationError("CONSTRUCTION_NOT_STORED", "That object is not in storage");
+    }
+    const refusal = storageRefusal(definition);
+    if (refusal !== null) {
+      const mapped = constructionRefusalError(refusal);
+      throw new ApplicationError(mapped.code as never, mapped.message);
+    }
+
+    const rotation: QuarterTurns = normaliseQuarterTurns(command.rotation);
+    const footprint = rotatedFootprint(definition.footprint, rotation);
+    const anchor = { x: command.anchorX, y: command.anchorY };
+    const cells = await editGroundCells(this.dependencies, farmId, wantedCells(anchor, footprint));
+    // Every *other* active object is an obstacle; a stored one occupies nothing, which the repository's
+    // occupancy list already reflects.
+    const occupied = await constructions.listBounds(farmId);
+    const groundRefusalResult = moveRefusal({ definition, footprint, cells, occupied });
+    if (groundRefusalResult !== null) {
+      const mapped = constructionRefusalError(groundRefusalResult);
+      throw new ApplicationError(mapped.code as never, mapped.message);
+    }
+
+    const now = clock.now();
+    const restored = restoreConstruction(construction, { anchor, rotation, footprint, updatedAt: now });
+    const record: IdempotencyRecord = {
+      actorPlayerId: actor.playerId,
+      operation: RESTORE_CONSTRUCTION_OPERATION,
+      requestId: command.requestId,
+      payloadFingerprint: fingerprint,
+      resourceId: restored.id,
+      responseJson: JSON.stringify({ constructionId: restored.id }),
+      status: "COMPLETED",
+      createdAt: now
+    };
+    try {
+      await constructions.setStoredAtomically({ construction: restored, expectedVersion: construction.version }, record);
+      return restored;
+    } catch (error: unknown) {
+      const raced = await idempotency.find(actor.playerId, RESTORE_CONSTRUCTION_OPERATION, command.requestId);
+      if (raced !== null) return this.settledAnswer(farmId, constructionId);
+      throw error;
+    }
+  }
+
+  private async settledAnswer(farmId: FarmId, constructionId: string): Promise<ConstructionInstance> {
+    const construction = await this.dependencies.constructions.findById(parseConstructionId(constructionId));
+    if (construction === null || construction.farmId !== farmId) {
+      throw new ApplicationError("CONSTRUCTION_NOT_FOUND", "The recorded construction no longer exists");
+    }
+    return construction;
   }
 }
 

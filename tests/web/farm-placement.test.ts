@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Group } from "three";
+import { STARTER_WORLD_PLACEMENTS, starterWorldPosition, worldObjectDefinition } from "@happy-farm/game-data";
 import type { PlotDTO } from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import { layoutFarmTiles } from "../../apps/web/src/render/layout";
@@ -157,8 +158,6 @@ describe("districts hold what they claim to hold", () => {
     try {
       buildLandmarks(group, assets, world.landmarks, world.terrain);
       expect(group.children.length).toBe(world.landmarks.length);
-      const windmillIndex = world.landmarks.findIndex((landmark) => landmark.id === "windmill");
-      expect(windmillIndex, "the island must still have its windmill").toBeGreaterThanOrEqual(0);
       for (const [index, landmark] of world.landmarks.entries()) {
         const node = group.children[index];
         const ground = GROUND_SURFACE_Y + terrainHeightAt(landmark.worldX, landmark.worldZ, world.terrain);
@@ -166,11 +165,23 @@ describe("districts hold what they claim to hold", () => {
         expect(node?.position.x).toBeCloseTo(landmark.worldX, 9);
         expect(node?.position.z).toBeCloseTo(landmark.worldZ, 9);
       }
-      // And the case that was actually wrong: the windmill stands on a slope, not on the flat plane.
-      expect(group.children[windmillIndex]?.position.y ?? 0).toBeGreaterThan(GROUND_SURFACE_Y + 1);
     } finally {
       assets.dispose();
     }
+  });
+
+  it("draws the mill exactly once: as a player's object, never as a landmark as well", () => {
+    // V13.3 promoted the mill. A landmark entry for it left behind would be a second mill standing
+    // where the first one used to be, and moving the row would not move the picture.
+    expect(LANDMARKS.some((landmark) => landmark.kind === "WINDMILL")).toBe(false);
+    const mills = STARTER_WORLD_PLACEMENTS.filter((placement) => placement.definitionId === "world.windmill");
+    expect(mills).toHaveLength(1);
+    // And the object it is drawn from is a real, editable definition, not a protected one.
+    const definition = worldObjectDefinition("world.windmill");
+    expect(definition?.system).toBe(false);
+    expect(definition?.movable).toBe(true);
+    expect(definition?.storable).toBe(true);
+    expect(definition?.presentation).toEqual({ form: "MODEL", modelId: "farm.windmill.t2", sizeWorld: 8.6 });
   });
 
   it("keeps decoration out of the volume a landmark occupies, not just off its wall", () => {
@@ -194,11 +205,38 @@ describe("districts hold what they claim to hold", () => {
       }
     }
     expect(offenders, "nothing decorative may reach into a building's own volume").toEqual([]);
-    // And the windmill is the one building that declares the larger circle, because its sails reach
-    // nearly twice as far as the tower a walker goes around.
-    const windmill = world.landmarks.find((landmark) => landmark.id === "windmill");
-    expect(windmill).toBeDefined();
-    expect(windmill?.keepClearRadiusWorld ?? 0).toBeGreaterThan(windmill?.blockingRadiusWorld ?? 0);
+    // The mill's own keep-clear circle lives on its definition now, and it is still the wider one:
+    // its sails reach nearly twice as far as the tower a walker goes around.
+    expect(worldObjectDefinition("world.windmill")).not.toBeNull();
+  });
+
+  it("keeps procedural scenery out of the starter objects' own volume", () => {
+    // V13.3 promoted the island's own trees, rocks, flowers and the mill to persistent objects drawn
+    // from their rows, but the scatter still grows from the island's seed. Without a sweep, a
+    // procedural tree could be grown on the very cell a starter tree already stands on - the
+    // double-drawing this pass exists to prevent. This measures the finished list against every
+    // starter placement, the same way the landmark test above measures it against a building.
+    const world = starterWorld();
+    const offenders: string[] = [];
+    for (const instance of world.scenery) {
+      for (const placement of STARTER_WORLD_PLACEMENTS) {
+        const definition = worldObjectDefinition(placement.definitionId);
+        if (definition === null) continue;
+        const position = starterWorldPosition(placement);
+        const occupied = Math.max(
+          definition.collisionRadiusWorld,
+          definition.presentation.form === "MODEL" ? definition.presentation.sizeWorld * 0.35 : 0
+        );
+        const reach = occupied + instance.scale * 0.35;
+        const distance = Math.hypot(instance.worldX - position.worldX, instance.worldZ - position.worldZ);
+        if (distance < reach - 0.001) {
+          offenders.push(
+            `${instance.kind} ${(reach - distance).toFixed(2)}m into ${placement.key} (${distance.toFixed(2)} < ${reach.toFixed(2)})`
+          );
+        }
+      }
+    }
+    expect(offenders, "nothing decorative may stand inside a starter object").toEqual([]);
   });
 
   it("leaves every building and landmark outside the reserved field", () => {

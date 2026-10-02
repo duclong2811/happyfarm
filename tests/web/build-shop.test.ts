@@ -40,6 +40,7 @@ function entry(overrides: Partial<BuildCatalogEntryDTO>): BuildCatalogEntryDTO {
     upgradeTo: null,
     rotatable: true,
     movable: true,
+    storable: true,
     removable: true,
     removalRefundRate: 0,
     decorative: true,

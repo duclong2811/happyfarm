@@ -748,10 +748,12 @@ export const LANDMARKS: readonly LandmarkSpec[] = [
   // farm rather than as a pattern of brown rectangles.
   { id: "open_barn", kind: "OPEN_BARN", tile: { x: 42.5, y: -6.5 }, rotationY: 0, blockingRadiusWorld: 1.8 },
   { id: "silo", kind: "SILO", tile: { x: 34.5, y: -4 }, rotationY: 0, blockingRadiusWorld: 1.6 },
-  // The orchard's mill, on the slope above the rows, and the pasture's coop out where the animals go.
-  // The rotor reaches 0.347 of the model's own width in every direction, and the model is drawn 8.6 m
-  // across, so 3 m is the circle the sails sweep - nearly twice the tower a walker goes around.
-  { id: "windmill", kind: "WINDMILL", tile: { x: -16, y: -13 }, rotationY: 0.35, blockingRadiusWorld: 1.8, keepClearRadiusWorld: 3 },
+  // The mill on the slope above the orchard used to stand here as a landmark. It is a *player's*
+  // object now: `world.windmill` in the shared starter layout, seeded into `farm_constructions` and
+  // drawn from its row like everything else the player may move. Drawing it here as well would be a
+  // second windmill standing where the first one used to be.
+  //
+  // The coop stays: it is out where the animals go, and it is the next slice of the same migration.
   { id: "coop", kind: "COOP", tile: { x: -18, y: 6 }, rotationY: 0.5, blockingRadiusWorld: 1.1 },
   // The bay runs out to the south-east, so the quay faces that way and its pier reaches the water
   // rather than the grass behind it. It stands on the *landward* side of the yard, so the road can

@@ -450,6 +450,7 @@ export const BuildCatalogEntryDTOSchema = z
     rotatable: z.boolean(),
     /** Whether the player may move it, and remove it, and what a removal returns. */
     movable: z.boolean(),
+    storable: z.boolean(),
     removable: z.boolean(),
     removalRefundRate: z.number().min(0).max(1),
     decorative: z.boolean(),
@@ -487,7 +488,12 @@ export const ConstructionDTOSchema = z
   .object({
     constructionId: ConstructionIdSchema,
     farmId: FarmIdSchema,
-    entryId: z.string().regex(/^place_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    /**
+     * What the object is: a catalogue entry a player bought (`place_*`) or an ordinary world object
+     * (`world.*`) such as a starter tree. One id space with two namespaces, because both are edited
+     * by the same commands and drawn by the same layer.
+     */
+    entryId: z.string().regex(/^(place_[a-z0-9]+(?:_[a-z0-9]+)*|world\.[a-z0-9]+(?:_[a-z0-9]+)*)$/),
     category: z.string().min(1).max(40),
     anchorX: z.number().int().min(-1_000_000).max(1_000_000),
     anchorY: z.number().int().min(-1_000_000).max(1_000_000),
@@ -495,10 +501,25 @@ export const ConstructionDTOSchema = z
     footprint: z
       .object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() })
       .strict(),
-    state: z.literal("BUILT"),
+    /** Standing on the island, or held in the player's storage. */
+    state: z.enum(["ACTIVE", "STORED"]),
+    /** Where it came from. It never decides what may be done to it. */
+    source: z.enum(["STARTER", "PLAYER_PLACED"]),
+    /** A starter placement's stable identity, or null for anything a player placed. */
+    placementKey: z.string().min(3).max(80).nullable(),
+    /**
+     * What the object actually cost its owner.
+     *
+     * A starter object paid for by nobody carries zero, which is why removing one can refund nothing
+     * however valuable its catalogue entry is. The client shows a refund preview from this number and
+     * never from the price.
+     */
+    paidAmount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     costAmount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     costCurrencyDefinitionId: z.string().min(1).max(120),
     createdAt: z.string().min(1).max(40),
+    /** When it was put into storage, or null while it stands on the island. */
+    storedAt: z.string().min(1).max(40).nullable(),
     /**
      * The row's version, which every edit command echoes back.
      *
@@ -533,6 +554,40 @@ export const PlaceConstructionResponseSchema = z
 
 export const GetFarmConstructionsResponseSchema = z
   .object({ constructions: z.array(ConstructionDTOSchema) })
+  .strict();
+
+/**
+ * One ordinary world object a farm may hold: a starter tree, a rock, the mill.
+ *
+ * Read-only reference data like the crop catalogue, and the reason a client can draw and describe an
+ * object it never bought: the definition says what the object is and what may be done to it, and the
+ * instance row says where it is.
+ */
+export const WorldObjectDefinitionDTOSchema = z
+  .object({
+    id: z.string().regex(/^world\.[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    displayNameKey: z.string().min(1).max(120),
+    /** The `.glb` the client resolves, or null when the object is drawn from a landmark builder. */
+    modelId: z.string().min(1).max(120).nullable(),
+    /** The landmark kind the renderer builds it from, when it has no model. */
+    landmarkKind: z.string().min(1).max(40).nullable(),
+    sizeWorld: z.number().positive().max(1_000),
+    footprint: z
+      .object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() })
+      .strict(),
+    /** The ground this world object may stand on. */
+    allowedTerrain: z.array(z.enum(["LAND", "SHORE", "SHALLOW_WATER", "WATER"])).min(1),
+    movable: z.boolean(),
+    rotatable: z.boolean(),
+    storable: z.boolean(),
+    removable: z.boolean(),
+    removalRefundRate: z.number().min(0).max(1)
+  })
+  .strict();
+export type WorldObjectDefinitionDTO = z.infer<typeof WorldObjectDefinitionDTOSchema>;
+
+export const GetWorldObjectsResponseSchema = z
+  .object({ objects: z.array(WorldObjectDefinitionDTOSchema) })
   .strict();
 
 /** The version of the row an edit is acting on: the optimistic-concurrency token. */
@@ -574,6 +629,27 @@ export const RemoveConstructionRequestSchema = z
   })
   .strict();
 export type RemoveConstructionRequest = z.infer<typeof RemoveConstructionRequestSchema>;
+
+/** Putting an object into storage: the version, and nothing else. */
+export const StoreConstructionRequestSchema = z
+  .object({
+    requestId: z.string().min(8).max(100),
+    expectedVersion: ConstructionVersionSchema
+  })
+  .strict();
+export type StoreConstructionRequest = z.infer<typeof StoreConstructionRequestSchema>;
+
+/** Taking an object back out of storage: where, which way round, and which version. */
+export const RestoreConstructionRequestSchema = z
+  .object({
+    requestId: z.string().min(8).max(100),
+    anchorX: z.number().int().min(-1_000_000).max(1_000_000),
+    anchorY: z.number().int().min(-1_000_000).max(1_000_000),
+    rotation: ConstructionRotationSchema,
+    expectedVersion: ConstructionVersionSchema
+  })
+  .strict();
+export type RestoreConstructionRequest = z.infer<typeof RestoreConstructionRequestSchema>;
 
 export const ConstructionEditResponseSchema = z
   .object({ construction: ConstructionDTOSchema })
@@ -748,6 +824,8 @@ export const ErrorCodeSchema = z.enum([
   "CONSTRUCTION_NOT_MOVABLE",
   "CONSTRUCTION_NOT_ROTATABLE",
   "CONSTRUCTION_NOT_REMOVABLE",
+  "CONSTRUCTION_NOT_STORABLE",
+  "CONSTRUCTION_NOT_STORED",
   "CONSTRUCTION_CONFLICT",
   "OBJECT_NOT_OWNED",
   "INSUFFICIENT_ITEMS",

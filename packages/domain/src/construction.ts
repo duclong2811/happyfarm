@@ -82,6 +82,14 @@ export interface ConstructionDefinition {
   readonly rotatable: boolean;
   /** Whether the player may pick it up and put it down somewhere else. */
   readonly movable: boolean;
+  /**
+   * Whether the player may put it into storage instead of destroying it.
+   *
+   * Storage is the *safe* remodeling action: a valuable object leaves the island and can be placed
+   * again without being bought again. It is deliberately a separate policy from removal, because the
+   * two mean different things to a player deciding what to do with a mill.
+   */
+  readonly storable: boolean;
   /** Whether the player may remove it. */
   readonly removable: boolean;
   /** The share of its price a removal returns, 0..1. The server's number, never the client's. */
@@ -92,7 +100,17 @@ export interface ConstructionDefinition {
   readonly requiresOwnership: boolean;
 }
 
-export type ConstructionState = "BUILT";
+/**
+ * Where an object came from.
+ *
+ * Provenance, and nothing else: it never decides what may be done to an object. A starter tree and a
+ * bought tree are edited by the same policy; the only thing the source changes is that a starter
+ * object carries the placement key its seeding was idempotent by.
+ */
+export type ConstructionSource = "STARTER" | "PLAYER_PLACED";
+
+/** Standing on the island, or held in the player's storage. */
+export type ConstructionState = "ACTIVE" | "STORED";
 
 export interface ConstructionInstance {
   readonly id: ConstructionId;
@@ -105,11 +123,19 @@ export interface ConstructionInstance {
   readonly footprint: { readonly widthCells: number; readonly depthCells: number };
   readonly bounds: CellBounds;
   readonly state: ConstructionState;
-  readonly builtByPlayerId: PlayerId;
+  /** Who the object belongs to. For a starter object this is the farm's owner, who owns it by fiat. */
+  readonly ownerPlayerId: PlayerId;
+  readonly source: ConstructionSource;
+  /** A starter placement's stable identity, or null for anything a player placed. */
+  readonly placementKey: string | null;
+  /** What this object actually cost its owner. Refunds are a share of *this*, never of the price. */
+  readonly paidAmount: number;
   readonly costAmount: number;
   readonly costCurrencyDefinitionId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** When it was put into storage, or null while it stands on the island. */
+  readonly storedAt: string | null;
   readonly version: number;
 }
 
@@ -126,6 +152,7 @@ export type ConstructionRefusal =
   /** The object exists and is the actor's; its asset policy forbids this edit. */
   | "NOT_MOVABLE"
   | "NOT_ROTATABLE"
+  | "NOT_STORABLE"
   | "NOT_REMOVABLE";
 
 /** Normalises any integer into one of the four quarter turns. */
@@ -302,11 +329,6 @@ export function removalRefusal(definition: ConstructionDefinition): Construction
  * gravel, and a building half of what it cost in materials. It is a definition, never a constant in
  * the removal path, so rebalancing is a table edit rather than a rewrite.
  */
-export function removalRefund(definition: ConstructionDefinition): number {
-  const rate = Math.min(1, Math.max(0, definition.removalRefundRate));
-  return Math.floor(definition.price * rate);
-}
-
 /**
  * The object, moved and/or turned: the same identity, the same owner, the same ledger history, new
  * ground and one version further on.
@@ -368,7 +390,7 @@ export function createConstructionInstance(input: {
   readonly definition: ConstructionDefinition;
   readonly anchor: { readonly x: number; readonly y: number };
   readonly rotation: QuarterTurns;
-  readonly builtByPlayerId: PlayerId;
+  readonly ownerPlayerId: PlayerId;
   readonly createdAt: string;
 }): ConstructionInstance {
   const footprint = rotatedFootprint(input.definition.footprint, input.rotation);
@@ -383,12 +405,114 @@ export function createConstructionInstance(input: {
     rotation: input.rotation,
     footprint,
     bounds,
-    state: "BUILT",
-    builtByPlayerId: input.builtByPlayerId,
+    state: "ACTIVE",
+    ownerPlayerId: input.ownerPlayerId,
+    source: "PLAYER_PLACED",
+    placementKey: null,
+    // The catalogue's own price is what the player paid, because placing is what pays it.
+    paidAmount: input.definition.price,
     costAmount: input.definition.price,
     costCurrencyDefinitionId: input.definition.currencyDefinitionId,
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
+    storedAt: null,
     version: 1
+  };
+}
+
+/**
+ * A starter object: seeded, not placed.
+ *
+ * Two differences from a placed one, and both are the point of the whole provenance model. It cost
+ * its owner **nothing** (`paidAmount` is zero, so no removal can ever mint gold from it), and it
+ * carries the stable `placementKey` its seeding is idempotent by. Its *edit* policy is identical to
+ * a bought object's, because editability comes from the definition rather than from where a thing
+ * came from.
+ */
+export function createStarterConstructionInstance(input: {
+  readonly id: ConstructionId;
+  readonly farmId: FarmId;
+  readonly definition: ConstructionDefinition;
+  readonly placementKey: string;
+  readonly anchor: { readonly x: number; readonly y: number };
+  readonly rotation: QuarterTurns;
+  readonly ownerPlayerId: PlayerId;
+  readonly createdAt: string;
+}): ConstructionInstance {
+  const footprint = rotatedFootprint(input.definition.footprint, input.rotation);
+  return {
+    id: input.id,
+    farmId: input.farmId,
+    entryId: input.definition.entryId,
+    category: input.definition.category,
+    anchorX: input.anchor.x,
+    anchorY: input.anchor.y,
+    rotation: input.rotation,
+    footprint,
+    bounds: constructionBounds(input.anchor, footprint),
+    state: "ACTIVE",
+    ownerPlayerId: input.ownerPlayerId,
+    source: "STARTER",
+    placementKey: input.placementKey,
+    paidAmount: 0,
+    costAmount: 0,
+    costCurrencyDefinitionId: input.definition.currencyDefinitionId,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    storedAt: null,
+    version: 1
+  };
+}
+
+/**
+ * What a removal returns to the player.
+ *
+ * A share of what the object **actually cost its owner** - never of the catalogue's current price. A
+ * starter mill cost nothing, so it returns nothing, however much a new one would cost; that is the
+ * P0 invariant that stops "remove the free mill, keep the gold, start another farm".
+ */
+export function removalRefund(instance: ConstructionInstance, definition: ConstructionDefinition): number {
+  const rate = Math.min(1, Math.max(0, definition.removalRefundRate));
+  const paid = Math.max(0, Math.min(instance.paidAmount, instance.costAmount));
+  return Math.floor(paid * rate);
+}
+
+export function storageRefusal(definition: ConstructionDefinition): ConstructionRefusal | null {
+  return definition.storable ? null : "NOT_STORABLE";
+}
+
+/**
+ * The object, put into storage: the same row, the same identity, the same version chain.
+ *
+ * Storage keeps the row rather than moving it to a second table, which is what makes the duplication
+ * exploit impossible: there is one object, and this is its state. The anchor is left where it was so
+ * a restore can start from the last place the player had it, and the rectangle stops occupying ground
+ * the moment the state says `STORED`.
+ */
+export function storeConstruction(instance: ConstructionInstance, updatedAt: string): ConstructionInstance {
+  return { ...instance, state: "STORED", storedAt: updatedAt, updatedAt, version: instance.version + 1 };
+}
+
+/** The object, taken back out of storage at the ground the player chose. */
+export function restoreConstruction(
+  instance: ConstructionInstance,
+  input: {
+    readonly anchor: { readonly x: number; readonly y: number };
+    readonly rotation: QuarterTurns;
+    readonly footprint: { readonly widthCells: number; readonly depthCells: number };
+    readonly updatedAt: string;
+  }
+): ConstructionInstance {
+  return {
+    ...instance,
+    state: "ACTIVE",
+    storedAt: null,
+    anchorX: input.anchor.x,
+    anchorY: input.anchor.y,
+    rotation: input.rotation,
+    footprint: input.footprint,
+    bounds: constructionBounds(input.anchor, input.footprint),
+    updatedAt: input.updatedAt,
+    version: instance.version + 1
   };
 }

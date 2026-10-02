@@ -38,6 +38,8 @@ export type ApplicationErrorCode =
   | "CONSTRUCTION_NOT_MOVABLE"
   | "CONSTRUCTION_NOT_ROTATABLE"
   | "CONSTRUCTION_NOT_REMOVABLE"
+  | "CONSTRUCTION_NOT_STORABLE"
+  | "CONSTRUCTION_NOT_STORED"
   | "CONSTRUCTION_CONFLICT"
   /** The object exists and is not the actor's to change. */
   | "OBJECT_NOT_OWNED"

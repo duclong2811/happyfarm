@@ -133,6 +133,7 @@ function roadEntries(): PlacementCatalogEntryData[] {
       upgradeTo: next === undefined ? null : `place_road_${next.surface.toLowerCase()}`,
       rotatable: true,
       movable: true,
+      storable: true,
       removable: true,
       removalRefundRate: REMOVAL_REFUND_POLICY.ROAD,
       decorative: false,
@@ -171,6 +172,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
     upgradeTo: null,
     rotatable: true,
     movable: true,
+    storable: true,
     removable: true,
     removalRefundRate: REMOVAL_REFUND_POLICY.VEGETATION,
     decorative: true,
@@ -200,9 +202,10 @@ function assetEntries(): PlacementCatalogEntryData[] {
    */
   const onLand = (
     category: PlacementCategory
-  ): Pick<PlacementCatalogEntryData, "allowedTerrain" | "movable" | "removable" | "removalRefundRate"> => ({
+  ): Pick<PlacementCatalogEntryData, "allowedTerrain" | "movable" | "storable" | "removable" | "removalRefundRate"> => ({
     allowedTerrain: ["LAND"],
     movable: true,
+    storable: true,
     removable: true,
     removalRefundRate: REMOVAL_REFUND_POLICY[category]
   });

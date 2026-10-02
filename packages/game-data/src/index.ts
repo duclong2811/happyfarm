@@ -12,3 +12,4 @@ export * from "./schema";
 export * from "./shops";
 export * from "./starter";
 export * from "./trees";
+export * from "./world";

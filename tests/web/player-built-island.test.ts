@@ -6,6 +6,7 @@ import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import { buildFarmSceneInput } from "../../apps/web/src/render/view-model";
 import { worldFrame, worldToTile } from "../../apps/web/src/render/layout";
 import { BUILDINGS, RESERVED_BUILDINGS, variantFor } from "../../apps/web/src/render/buildings";
+import { WORLD_OBJECT_DEFINITIONS } from "@happy-farm/game-data";
 import { islandRadiusAt, volcanoZoneAt, type VolcanoZone } from "../../apps/web/src/render/terrain-height";
 import {
   DISTRICTS,
@@ -264,7 +265,14 @@ describe("buildings", () => {
         );
       }
     }
-    const named = new Set(BUILDINGS.flatMap((building) => building.variants.map((variant) => variant.modelId)));
+    // A shipped building model is named by a building definition *or* by a world object definition:
+    // the mill left the landmark list in V13.3 and is drawn from `world.windmill` now.
+    const named = new Set([
+      ...BUILDINGS.flatMap((building) => building.variants.map((variant) => variant.modelId)),
+      ...WORLD_OBJECT_DEFINITIONS.map((definition) =>
+        definition.presentation.form === "MODEL" ? definition.presentation.modelId : null
+      )
+    ]);
     for (const id of shipped) {
       expect(named.has(id), `${id} is shipped but nothing draws it`).toBe(true);
     }

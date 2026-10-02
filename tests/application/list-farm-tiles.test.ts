@@ -19,6 +19,10 @@ class MemoryFarms implements FarmRepository, FarmMemberRepository {
     updatedAt: NOW
   };
 
+  starterWorldState(): Promise<{ readonly ownerPlayerId: PlayerId; readonly version: number }> {
+    return Promise.resolve({ ownerPlayerId: PLAYER_ONE_ID, version: 0 });
+  }
+
   createWithOwner(): Promise<void> {
     return Promise.resolve();
   }
