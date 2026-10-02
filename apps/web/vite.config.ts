@@ -107,8 +107,33 @@ function readRequestBody(request: IncomingMessage): Promise<Uint8Array<ArrayBuff
   });
 }
 
-function toWebRequest(request: IncomingMessage, body: Uint8Array<ArrayBuffer>): Request {
-  const url = new URL(request.url ?? "/", "http://localhost");
+/**
+ * The origin the browser used, read from the `Host` header it sent.
+ *
+ * The request handed to the Worker has to describe *the same request the browser made*, and that
+ * includes its origin. The API compares a browser's `Origin` header against the request's own origin -
+ * a cross-site unsafe request is refused before it is authenticated - so a bridge that rebuilds every
+ * request as `http://localhost` makes a page served at `http://localhost:5173` look like another site:
+ * every POST (create the farm, plant, harvest, trade, edit an object) was answered
+ * `NOT_AUTHENTICATED`, while safe GETs went through. The deployed Worker sees the real origin, so this
+ * is a development-bridge fidelity bug, not a rule to relax.
+ *
+ * A missing or unusable `Host` falls back to a placeholder, which is what a bare HTTP/1.0 client or a
+ * unit test gets; such a request carries no `Origin` either, so the guard leaves it alone.
+ */
+export function originForRequest(request: IncomingMessage): string {
+  const host = request.headers.host;
+  if (typeof host !== "string" || host.length === 0 || host.length > 255) return "http://localhost";
+  try {
+    return new URL(`http://${host}`).origin;
+  } catch {
+    return "http://localhost";
+  }
+}
+
+/** The same request, in the Worker's own terms: real origin, `/api` prefix stripped. */
+export function toWebRequest(request: IncomingMessage, body: Uint8Array<ArrayBuffer>): Request {
+  const url = new URL(request.url ?? "/", originForRequest(request));
   url.pathname = url.pathname.slice(API_PREFIX.length) || "/";
   const headers = new Headers();
   for (const [key, value] of Object.entries(request.headers)) {
