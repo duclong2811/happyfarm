@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { Group } from "three";
 import type { PlotDTO } from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import { layoutFarmTiles } from "../../apps/web/src/render/layout";
 import { buildFarmWorld, landFrame } from "../../apps/web/src/render/world";
-import { islandRadiusAt, volcanoRadiusFraction } from "../../apps/web/src/render/terrain-height";
+import { GROUND_SURFACE_Y, islandRadiusAt, terrainHeightAt, volcanoRadiusFraction } from "../../apps/web/src/render/terrain-height";
 import { BUILDINGS, RESERVED_BUILDINGS } from "../../apps/web/src/render/buildings";
+import { buildLandmarks } from "../../apps/web/src/render/landmarks";
+import { createSharedAssets } from "../../apps/web/src/render/materials";
 import {
   DISTRICTS,
   FARMSTEAD,
@@ -141,6 +144,61 @@ describe("districts hold what they claim to hold", () => {
       expect(host, `${building.id} needs a ${building.district} district`).toBeDefined();
       expect(owner?.kind, `${building.id} stands in ${owner?.kind ?? "no district"}`).toBe(building.district);
     }
+  });
+
+  it("stands every landmark on the ground it is drawn on, hill or not", () => {
+    // V13.0 put every landmark at the flat ground plane, which is right on the field, the square and
+    // the quay - all held level - and wrong on the rolling ground: the windmill stands two metres up
+    // a slope and was drawn with its base and the bottom of its tower inside the hill. A landmark is
+    // placed exactly like every other thing on the island, and this is the assertion that says so.
+    const world = starterWorld();
+    const assets = createSharedAssets();
+    const group = new Group();
+    try {
+      buildLandmarks(group, assets, world.landmarks, world.terrain);
+      expect(group.children.length).toBe(world.landmarks.length);
+      const windmillIndex = world.landmarks.findIndex((landmark) => landmark.id === "windmill");
+      expect(windmillIndex, "the island must still have its windmill").toBeGreaterThanOrEqual(0);
+      for (const [index, landmark] of world.landmarks.entries()) {
+        const node = group.children[index];
+        const ground = GROUND_SURFACE_Y + terrainHeightAt(landmark.worldX, landmark.worldZ, world.terrain);
+        expect(node?.position.y, `${landmark.id} must stand on its own ground`).toBeCloseTo(ground, 9);
+        expect(node?.position.x).toBeCloseTo(landmark.worldX, 9);
+        expect(node?.position.z).toBeCloseTo(landmark.worldZ, 9);
+      }
+      // And the case that was actually wrong: the windmill stands on a slope, not on the flat plane.
+      expect(group.children[windmillIndex]?.position.y ?? 0).toBeGreaterThan(GROUND_SURFACE_Y + 1);
+    } finally {
+      assets.dispose();
+    }
+  });
+
+  it("keeps decoration out of the volume a landmark occupies, not just off its wall", () => {
+    // The scatter's own rule measures the *centre* of a candidate, which lets a canopy hang over a
+    // wall - and, at the windmill, lets a treetop reach up into the sails. The world's last pass
+    // sweeps the finished list against the circle each building occupies, plus the candidate's own
+    // half-width (`SCENERY_HALF_WIDTH_FRACTION`, repeated here so the test measures rather than
+    // restates), and drops what reaches in. This is that invariant.
+    const world = starterWorld();
+    const offenders: string[] = [];
+    for (const instance of world.scenery) {
+      for (const landmark of world.landmarks) {
+        const occupied = landmark.keepClearRadiusWorld ?? landmark.blockingRadiusWorld;
+        const reach = occupied + instance.scale * 0.35;
+        const distance = Math.hypot(instance.worldX - landmark.worldX, instance.worldZ - landmark.worldZ);
+        if (distance < reach - 0.001) {
+          offenders.push(
+            `${instance.kind} ${(reach - distance).toFixed(2)}m into ${landmark.id} (${distance.toFixed(2)} < ${reach.toFixed(2)})`
+          );
+        }
+      }
+    }
+    expect(offenders, "nothing decorative may reach into a building's own volume").toEqual([]);
+    // And the windmill is the one building that declares the larger circle, because its sails reach
+    // nearly twice as far as the tower a walker goes around.
+    const windmill = world.landmarks.find((landmark) => landmark.id === "windmill");
+    expect(windmill).toBeDefined();
+    expect(windmill?.keepClearRadiusWorld ?? 0).toBeGreaterThan(windmill?.blockingRadiusWorld ?? 0);
   });
 
   it("leaves every building and landmark outside the reserved field", () => {

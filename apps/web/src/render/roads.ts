@@ -6,12 +6,21 @@ import { ROAD_WIDTH_TILES, type Road, type RoadKind } from "./world-config";
  * Roads, as pure geometry.
  *
  * A road is authored as a handful of tile coordinates - the waypoints somebody would actually think
- * of - and turned here into a smooth, terrain-following centreline in world metres. The renderer
- * extrudes that centreline into a ribbon and nothing else; collision does not read roads at all,
- * because a road is ground like any other ground.
+ * of - and turned here into a terrain-following centreline in world metres. The renderer extrudes
+ * that centreline into a ribbon and nothing else; collision does not read roads at all, because a
+ * road is ground like any other ground.
  *
- * Deterministic by construction: a spline through fixed points, sampled a fixed number of times, so
- * the same road is the same shape on every client and after every refresh.
+ * The alignment is *surveyed*, not grown. A road the island built is a straight run, a corner, and
+ * another straight run: the authored segment between two waypoints is drawn as the straight line it
+ * is, and only an interior waypoint - a corner - is rounded, by a fillet whose radius is a multiple
+ * of the road's own width. That is the whole shape rule, and it is what stops a road from acquiring
+ * a bend nobody asked for. A Catmull-Rom spline through unevenly spaced waypoints does exactly that:
+ * it begins turning a whole segment before the corner and finishes a segment after it, which spreads
+ * one deliberate turn into the long S the V13.1 pass exists to remove.
+ *
+ * Deterministic by construction: straight segments and circular fillets through fixed points,
+ * walked at a fixed step, so the same road is the same shape on every client and after every
+ * refresh.
  */
 
 /**
@@ -54,14 +63,22 @@ export interface RoadSpec {
 /**
  * How far apart the centreline's samples are, in world metres.
  *
- * Uniform *by arc length*, not by spline parameter. Sampling a spline at even `t` puts samples far
- * apart on a straight run and close together in a bend, so the ribbon's triangles are uneven and its
- * edge reads as wobbling even when the centreline is smooth - which is precisely what the V12.2
- * screenshots showed. A fixed step makes every triangle along the road the same length.
+ * Uniform *by arc length* rather than by whatever parameter produced the alignment: a fixed step
+ * makes every triangle along the road the same length, so the ribbon's two edges stay in step
+ * through a fillet instead of bunching up inside the bend.
  */
 export const ROAD_SAMPLE_SPACING_WORLD = 0.6;
-/** How finely the spline is walked *before* the arc-length resample. Cheap, and only done once. */
-const SPLINE_SAMPLES_PER_SEGMENT = 32;
+/**
+ * How far a corner is rounded, as a multiple of the road's full width.
+ *
+ * Three widths, so the fillet reaches six half-widths from the corner's own centre: about six metres
+ * on the island's dirt road, which is a bend a cart takes without slowing, and proportionally tighter
+ * on a footpath. A *multiple* rather than a fixed distance, so a wide stone road does not turn as
+ * sharply as a track.
+ */
+const ROAD_CORNER_RADIUS_WIDTHS = 3;
+/** How finely a fillet's arc is walked *before* the arc-length resample. Cheap, and done once. */
+const CORNER_SAMPLES_PER_METRE = 2;
 /**
  * The longest a mitre may reach, as a multiple of the half-width.
  *
@@ -86,25 +103,28 @@ const MITER_LIMIT = 1.8;
  */
 export const ROAD_LIFT_WORLD = 0.03;
 
-function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
-  const t2 = t * t;
-  const t3 = t2 * t;
-  return (
-    0.5 *
-    (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
-  );
-}
+/** How close two authored waypoints have to be to count as the same one, in world metres. */
+const WAYPOINT_EPSILON_WORLD = 0.001;
 
 /**
- * Resamples a polyline through a Catmull-Rom spline.
+ * An alignment through the authored waypoints: straight runs, joined by circular fillets.
  *
- * The end segments duplicate their neighbour so the curve starts and ends exactly on the authored
- * waypoints rather than overshooting them - which is what keeps a road ending on the harbour quay
- * instead of in the sea.
+ * Every authored segment is drawn straight, exactly as it was written down. An interior waypoint is
+ * a *corner*, and a corner is rounded with a fillet of the requested radius - the arc is tangent to
+ * both legs, so the road arrives at it and leaves it without a kink, and the run on either side of
+ * the arc is as straight as the author wrote it.
+ *
+ * The fillet's tangent length is capped at just under half of the shorter of the two legs it joins,
+ * and the radius shrinks with it. That is what keeps a hairpin in a short lane from eating the whole
+ * segment: the corner that is left is as round as the ground allows and the legs stay.
+ *
+ * A ring - `village_street` around the square is one - is authored with its last waypoint repeating
+ * its first. That is detected, the duplicated point is dropped, and the seam is filleted like every
+ * other corner instead of becoming a kink at the one place the author could not see it.
  */
-export function splineThrough(
+export function alignmentThrough(
   points: readonly { readonly worldX: number; readonly worldZ: number }[],
-  samplesPerSegment: number = SPLINE_SAMPLES_PER_SEGMENT
+  cornerRadiusWorld: number = 0
 ): readonly { readonly worldX: number; readonly worldZ: number }[] {
   if (points.length === 0) return [];
   const first = points[0];
@@ -112,21 +132,97 @@ export function splineThrough(
   if (first === undefined || last === undefined) return [];
   if (points.length === 1) return [{ worldX: first.worldX, worldZ: first.worldZ }];
 
+  const ring = points.length > 2 && Math.hypot(last.worldX - first.worldX, last.worldZ - first.worldZ) <= WAYPOINT_EPSILON_WORLD;
+  const vertices = ring ? points.slice(0, -1) : points;
+  const count = vertices.length;
+  if (count < 3 || cornerRadiusWorld <= 0) return points.map((point) => ({ ...point }));
+
   const result: { worldX: number; worldZ: number }[] = [];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const p0 = points[index - 1] ?? first;
-    const p1 = points[index] ?? first;
-    const p2 = points[index + 1] ?? last;
-    const p3 = points[index + 2] ?? last;
-    for (let step = 0; step < samplesPerSegment; step += 1) {
-      const t = step / samplesPerSegment;
+  if (!ring) {
+    const head = vertices[0];
+    if (head === undefined) return [];
+    result.push({ worldX: head.worldX, worldZ: head.worldZ });
+  }
+
+  const firstCorner = ring ? 0 : 1;
+  const lastCorner = ring ? count - 1 : count - 2;
+  for (let index = firstCorner; index <= lastCorner; index += 1) {
+    const previous = vertices[(index - 1 + count) % count];
+    const vertex = vertices[index];
+    const next = vertices[(index + 1) % count];
+    if (previous === undefined || vertex === undefined || next === undefined) continue;
+
+    const legAX = previous.worldX - vertex.worldX;
+    const legAZ = previous.worldZ - vertex.worldZ;
+    const legBX = next.worldX - vertex.worldX;
+    const legBZ = next.worldZ - vertex.worldZ;
+    const legALength = Math.hypot(legAX, legAZ);
+    const legBLength = Math.hypot(legBX, legBZ);
+    if (legALength < WAYPOINT_EPSILON_WORLD || legBLength < WAYPOINT_EPSILON_WORLD) continue;
+
+    const ax = legAX / legALength;
+    const az = legAZ / legALength;
+    const bx = legBX / legBLength;
+    const bz = legBZ / legBLength;
+    // The angle at the corner, between the two legs. Pi is a straight run through, 0 a hairpin.
+    const interior = Math.acos(Math.min(1, Math.max(-1, ax * bx + az * bz)));
+    // A corner the road drives straight through needs no fillet, and a spike would be a folded ribbon.
+    if (interior > Math.PI - 1e-3) {
+      result.push({ worldX: vertex.worldX, worldZ: vertex.worldZ });
+      continue;
+    }
+
+    let radius = cornerRadiusWorld;
+    let tangent = radius / Math.tan(interior / 2);
+    const longestTangent = Math.min(legALength, legBLength) * 0.48;
+    if (tangent > longestTangent) {
+      tangent = longestTangent;
+      radius = tangent * Math.tan(interior / 2);
+    }
+    // The arc starts and ends exactly here, on the two legs, at the fillet's tangent points.
+    const enterX = vertex.worldX + ax * tangent;
+    const enterZ = vertex.worldZ + az * tangent;
+    const leaveX = vertex.worldX + bx * tangent;
+    const leaveZ = vertex.worldZ + bz * tangent;
+
+    const bisectorX = ax + bx;
+    const bisectorZ = az + bz;
+    const bisectorLength = Math.hypot(bisectorX, bisectorZ);
+    if (bisectorLength < 1e-6) {
+      result.push({ worldX: vertex.worldX, worldZ: vertex.worldZ });
+      continue;
+    }
+    // The centre sits on the bisector at the distance that puts it `radius` from both legs.
+    const centreDistance = radius / Math.sin(interior / 2);
+    const centreX = vertex.worldX + (bisectorX / bisectorLength) * centreDistance;
+    const centreZ = vertex.worldZ + (bisectorZ / bisectorLength) * centreDistance;
+
+    const enterAngle = Math.atan2(enterZ - centreZ, enterX - centreX);
+    // Sweep the short way round; the turn itself decides the sign, so the arc bulges outward from
+    // the corner rather than cutting across the inside of it.
+    const turn = Math.PI - interior;
+    const cross = ax * bz - az * bx;
+    const sweep = (cross > 0 ? -1 : 1) * turn;
+    const steps = Math.max(2, Math.ceil(radius * Math.abs(sweep) * CORNER_SAMPLES_PER_METRE));
+    for (let step = 0; step < steps; step += 1) {
+      const angle = enterAngle + sweep * (step / steps);
       result.push({
-        worldX: catmullRom(p0.worldX, p1.worldX, p2.worldX, p3.worldX, t),
-        worldZ: catmullRom(p0.worldZ, p1.worldZ, p2.worldZ, p3.worldZ, t)
+        worldX: centreX + Math.cos(angle) * radius,
+        worldZ: centreZ + Math.sin(angle) * radius
       });
     }
+    // The fillet ends exactly on the second leg, so the straight run after it starts where the arc
+    // does rather than a rounding error away from it.
+    result.push({ worldX: leaveX, worldZ: leaveZ });
   }
-  result.push({ worldX: last.worldX, worldZ: last.worldZ });
+
+  if (ring) {
+    const head = result[0];
+    if (head !== undefined) result.push({ worldX: head.worldX, worldZ: head.worldZ });
+  } else {
+    const tail = vertices[count - 1];
+    if (tail !== undefined) result.push({ worldX: tail.worldX, worldZ: tail.worldZ });
+  }
   return result;
 }
 
@@ -230,7 +326,9 @@ export function mitredNormals(
     const unitZ = bisectorZ / length;
     // How far the bisector has to reach for the edge to stay half a width from the centreline.
     const cosHalf = unitX * previous.normalX + unitZ * previous.normalZ;
-    const miter = cosHalf <= 1e-3 ? MITER_LIMIT : Math.min(MITER_LIMIT, 1 / cosHalf);
+    // Never below 1: on a straight run the bisector *is* the normal, and one sample's worth of
+    // floating-point error must not narrow the road at that join.
+    const miter = cosHalf <= 1e-3 ? MITER_LIMIT : Math.max(1, Math.min(MITER_LIMIT, 1 / cosHalf));
     normals[index] = { normalX: unitX, normalZ: unitZ, miter, distance: current.distance };
   }
   return normals;
@@ -241,11 +339,16 @@ export function mitredNormals(
  *
  * The height comes from the same `terrainHeightAt` the ground mesh is built from, so a road climbs a
  * hill it crosses rather than cutting through it or floating over it.
+ *
+ * The width comes first, because the corner radius is a multiple of it: the alignment is surveyed at
+ * the size of road it will be drawn as, then walked at a fixed step.
  */
 export function buildRoadSpec(road: Road, layout: FarmLayout, terrain: TerrainShape): RoadSpec {
   const frame = worldFrame(layout.pitch);
+  const widthWorld = ROAD_WIDTH_TILES[road.kind] * layout.pitch;
   const waypoints = road.points.map((point) => tileToWorld(point, frame));
-  const centreline = resampleByDistance(splineThrough(waypoints), ROAD_SAMPLE_SPACING_WORLD);
+  const alignment = alignmentThrough(waypoints, widthWorld * ROAD_CORNER_RADIUS_WIDTHS);
+  const centreline = resampleByDistance(alignment, ROAD_SAMPLE_SPACING_WORLD);
   const joins = mitredNormals(centreline);
   const samples: RoadSample[] = centreline.map((point, index) => {
     const join = joins[index];
@@ -262,7 +365,7 @@ export function buildRoadSpec(road: Road, layout: FarmLayout, terrain: TerrainSh
   return {
     id: road.id,
     kind: road.kind,
-    widthWorld: ROAD_WIDTH_TILES[road.kind] * layout.pitch,
+    widthWorld,
     samples
   };
 }

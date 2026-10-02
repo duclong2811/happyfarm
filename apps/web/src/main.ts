@@ -2540,7 +2540,22 @@ void run(async () => {
       setStatus(message("status.loaded"));
       return;
     } catch (error: unknown) {
-      if (!(error instanceof ApiError) || error.code !== "RESOURCE_NOT_FOUND") throw error;
+      /**
+       * Two answers mean "this browser is remembering a farm that is not ours": the farm no longer
+       * exists, or it exists and belongs to somebody else.
+       *
+       * The second is what a playtest hits. Two testers who share a laptop share a browser profile and
+       * therefore this one stored id, and the server answers the second tester with NOT_AUTHORIZED -
+       * which is the authorization working, not a fault. Retrying that id forever leaves them staring
+       * at a page that never leaves its loading state, so the stale id is dropped and the player goes
+       * on to create the farm this browser will use, exactly as when a stored farm has been deleted.
+       */
+      if (
+        !(error instanceof ApiError) ||
+        (error.code !== "RESOURCE_NOT_FOUND" && error.code !== "NOT_AUTHORIZED")
+      ) {
+        throw error;
+      }
       localStorage.removeItem(FARM_KEY);
     }
   }

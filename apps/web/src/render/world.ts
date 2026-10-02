@@ -933,8 +933,43 @@ function buildScenery(
   // bought yet is a fence they did not ask for. Natural cover between the groves is the whole
   // composition now: clusters, clearings, and open ground.
 
-  return scenery;
+  /**
+   * The landmark sweep: the last thing that happens to the finished list.
+   *
+   * The scatter above rejects a candidate that lands inside a building's clearing, but that rule
+   * measures the *centre* of the candidate: a tree whose trunk stands a clear couple of metres from a
+   * wall can still put its crown through the building. This pass measures what the candidate actually
+   * occupies - its own half-width, from the height the model is drawn at - against the volume the
+   * building occupies, and drops an instance that reaches in.
+   *
+   * It *drops* rather than re-rolls, and that is the point. A rejection inside the scatter advances
+   * the generator by a different number of steps than an acceptance does, so one extra rejection
+   * there reshuffles every placement after it and quietly re-grows the island. Removing the handful of
+   * instances that actually collide leaves the rest of the island exactly where it was.
+   */
+  const keepClear = LANDMARKS_WORLD.map((landmark) => ({
+    worldX: landmark.worldX,
+    worldZ: landmark.worldZ,
+    radiusWorld: landmark.keepClearRadiusWorld ?? landmark.blockingRadiusWorld
+  }));
+  return scenery.filter((instance) =>
+    keepClear.every(
+      (landmark) =>
+        Math.hypot(instance.worldX - landmark.worldX, instance.worldZ - landmark.worldZ) >=
+        landmark.radiusWorld + instance.scale * SCENERY_HALF_WIDTH_FRACTION
+    )
+  );
 }
+
+/**
+ * How wide a placement stands, as a fraction of its height.
+ *
+ * Every model is normalized to one unit, so `scale` *is* the height, and a broad tree's crown is
+ * about a third of that in radius. The clearance sweep deliberately over-estimates: dropping a tree
+ * that would have been clear costs one tree, and letting a crown through a windmill's sails costs the
+ * landmark.
+ */
+const SCENERY_HALF_WIDTH_FRACTION = 0.35;
 
 /**
  * How tall a prop of each kind is drawn, in world metres.

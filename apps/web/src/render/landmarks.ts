@@ -1,6 +1,6 @@
 import { Group, Mesh, type BufferGeometry, type Material, type Object3D } from "three";
 import type { SharedAssets } from "./materials";
-import { GROUND_SURFACE_Y } from "./terrain-height";
+import { GROUND_SURFACE_Y, terrainHeightAt, type TerrainShape } from "./terrain-height";
 import type { PlacedLandmark } from "./world-config";
 import { BUILDING_MODELS } from "./building-model-urls";
 import { BUILDINGS, variantFor } from "./buildings";
@@ -251,13 +251,21 @@ const BUILDERS: Readonly<Record<PlacedLandmark["kind"], (assets: SharedAssets) =
 /**
  * Draws every landmark the world config places.
  *
- * The group is positioned on the ground (`worldY` is 0 on the plateau the landmarks all stand on)
- * and rotated by the config, so a landmark's own geometry never has to know where it is.
+ * The group is positioned on the ground it stands on and rotated by the config, so a landmark's own
+ * geometry never has to know where it is.
+ *
+ * "The ground it stands on" is `terrainHeightAt`, the same function the terrain mesh, the scenery,
+ * the composition props and the player's collision use. V13.0 placed every landmark at the flat
+ * ground plane instead, which is right on the field, the square and the quay - all held level - and
+ * wrong everywhere else: the windmill stands two metres up the rolling ground north-west of the
+ * village, so it was drawn with its base and the bottom of its tower buried in the hillside. A
+ * building is placed like every other thing on the island.
  */
 export function buildLandmarks(
   group: Group,
   assets: SharedAssets,
   landmarks: readonly PlacedLandmark[],
+  terrain: TerrainShape,
   getModel: (id: string) => Object3D | undefined = () => undefined
 ): void {
   for (const landmark of landmarks) {
@@ -283,8 +291,13 @@ export function buildLandmarks(
       // harbour is the exception: its geometry already spans the quay, the pier and the yard.
       node.scale.setScalar(landmark.kind === "HARBOR" ? 1 : 1.7);
     }
-    // Stands on the ground rather than at the tile slabs' own base level.
-    node.position.set(landmark.worldX, GROUND_SURFACE_Y, landmark.worldZ);
+    // Stands on the ground rather than at the tile slabs' own base level, and on the *hill* rather
+    // than at sea level when it stands on one.
+    node.position.set(
+      landmark.worldX,
+      GROUND_SURFACE_Y + terrainHeightAt(landmark.worldX, landmark.worldZ, terrain),
+      landmark.worldZ
+    );
     node.rotation.y = landmark.rotationY;
     node.traverse((child) => {
       child.castShadow = true;

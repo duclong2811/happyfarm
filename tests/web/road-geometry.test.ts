@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FarmTileDTO, PlotDTO } from "@happy-farm/contracts";
 import { buildFarmSceneInput } from "../../apps/web/src/render/view-model";
-import { ROAD_SAMPLE_SPACING_WORLD, splineThrough, resampleByDistance } from "../../apps/web/src/render/roads";
+import { ROAD_SAMPLE_SPACING_WORLD, alignmentThrough, resampleByDistance } from "../../apps/web/src/render/roads";
 import { ribbonSurface } from "../../apps/web/src/render/road-surface";
 import { ROADS } from "../../apps/web/src/render/world-config";
 
@@ -63,12 +63,15 @@ function edges(sample: { worldX: number; worldZ: number; normalX: number; normal
 describe("one authoritative centreline", () => {
   const world = roads();
 
-  it("samples the centreline at a fixed arc length, not at even spline parameters", () => {
-    const line = splineThrough([
-      { worldX: 0, worldZ: 0 },
-      { worldX: 20, worldZ: 0 },
-      { worldX: 20, worldZ: 20 }
-    ]);
+  it("samples the centreline at a fixed arc length, not at even alignment parameters", () => {
+    const line = alignmentThrough(
+      [
+        { worldX: 0, worldZ: 0 },
+        { worldX: 20, worldZ: 0 },
+        { worldX: 20, worldZ: 20 }
+      ],
+      6
+    );
     const even = resampleByDistance(line, ROAD_SAMPLE_SPACING_WORLD);
     expect(even.length).toBeGreaterThan(40);
     for (let index = 1; index < even.length - 1; index += 1) {
@@ -76,15 +79,76 @@ describe("one authoritative centreline", () => {
       const current = even[index];
       if (previous === undefined || current === undefined) continue;
       const step = Math.hypot(current.worldX - previous.worldX, current.worldZ - previous.worldZ);
-      // Within a hair: the resampler walks the spline's *chords*, so a step that spans a bend is a
-      // fraction shorter in a straight line than the arc it covers. What matters is that the spacing
-      // is fixed rather than following the spline's parameter.
+      // Within a hair: the resampler walks the alignment's *chords*, so a step that spans a fillet's
+      // own chord boundary is a fraction shorter in a straight line than the arc it covers. What
+      // matters is that the spacing is fixed rather than following the alignment's parameter.
       expect(step).toBeGreaterThan(ROAD_SAMPLE_SPACING_WORLD * 0.99);
       expect(step).toBeLessThanOrEqual(ROAD_SAMPLE_SPACING_WORLD + 1e-9);
     }
     // …and the author's last point is a sample, so a road ends where it was told to.
     const last = even[even.length - 1];
     expect(Math.hypot((last?.worldX ?? 0) - 20, (last?.worldZ ?? 0) - 20)).toBeLessThan(0.001);
+  });
+
+  it("draws the authored runs straight and the corners round", () => {
+    const corner = alignmentThrough(
+      [
+        { worldX: 0, worldZ: 0 },
+        { worldX: 20, worldZ: 0 },
+        { worldX: 20, worldZ: 20 }
+      ],
+      6
+    );
+    // The author's own ends survive untouched, so a road begins and ends exactly where it was drawn.
+    expect(corner[0]).toEqual({ worldX: 0, worldZ: 0 });
+    const last = corner[corner.length - 1];
+    expect(Math.hypot((last?.worldX ?? 0) - 20, (last?.worldZ ?? 0) - 20)).toBeLessThan(0.001);
+
+    // The corner is a fillet of the requested radius, not a cut: every point of the arc is the same
+    // distance from the one centre, and it is tangent to both legs.
+    const centre = { worldX: 14, worldZ: 6 };
+    const arc = corner.filter(
+      (point) => point.worldX > 14.001 && point.worldZ > 0.001 && point.worldZ < 6.001
+    );
+    expect(arc.length).toBeGreaterThan(4);
+    for (const point of arc) {
+      expect(Math.hypot(point.worldX - centre.worldX, point.worldZ - centre.worldZ)).toBeCloseTo(6, 9);
+    }
+    // And nothing wanders off the authored shape: every point is on a leg's own line or on the arc.
+    for (const point of corner) {
+      const onFirstLeg = Math.abs(point.worldZ) < 1e-9 && point.worldX <= 14 + 1e-9;
+      const onSecondLeg = Math.abs(point.worldX - 20) < 1e-9 && point.worldZ >= 6 - 1e-9;
+      const onArc = Math.hypot(point.worldX - centre.worldX, point.worldZ - centre.worldZ) < 6 + 1e-9;
+      expect(onFirstLeg || onSecondLeg || onArc).toBe(true);
+    }
+  });
+
+  it("closes a ring without a kink at the seam the author could not see", () => {
+    // `village_street` is authored as a ring: the last waypoint repeats the first. That seam is a
+    // corner like any other, so it is filleted like any other - otherwise the village's own street
+    // has one sharp elbow, at the one place the author's eye never went.
+    const ring = alignmentThrough(
+      [
+        { worldX: 0, worldZ: 0 },
+        { worldX: 10, worldZ: 0 },
+        { worldX: 10, worldZ: 10 },
+        { worldX: 0, worldZ: 10 },
+        { worldX: 0, worldZ: 0 }
+      ],
+      3
+    );
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    expect(first).toBeDefined();
+    expect(last).toBeDefined();
+    // The loop closes on itself, and the seam is rounded rather than left as a right angle.
+    expect(Math.hypot((last?.worldX ?? 0) - (first?.worldX ?? 0), (last?.worldZ ?? 0) - (first?.worldZ ?? 0))).toBeLessThan(1e-9);
+    // No point of a sharp corner would fall in this box: it is exactly where the seam's arc cuts.
+    expect(
+      ring.some(
+        (point) => point.worldX > 0.5 && point.worldX < 3.5 && point.worldZ > 0.5 && point.worldZ < 3.5
+      )
+    ).toBe(true);
   });
 
   it("carries a unit normal and a sane mitre at every sample", () => {

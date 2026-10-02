@@ -1,8 +1,12 @@
 # Deployment: staging on Cloudflare Free
 
-Status: repository foundation complete; Cloudflare resources are not created yet, so nothing has
-been deployed. Everything below the "USER ACTION REQUIRED" heading is for a human with dashboard
-access.
+Status: repository foundation complete. `workers/api/wrangler.staging.toml` carries real values for
+the Access team domain, the Access audience and the staging D1 database id - `npm run
+check:staging-config` reports no remaining placeholders - but **the remote state behind those values
+has not been verified from this repository**: whether the Worker, the D1 database and the Access
+application exist, which migrations the remote database has applied, and whether anything is
+currently deployed can only be answered by a machine with Wrangler credentials and network access.
+Everything below the "USER ACTION REQUIRED" heading is for a human with dashboard access.
 
 ## Topology
 
@@ -98,18 +102,22 @@ Do these in order. Nothing here has been done for you, and no value should be co
    The audit environment's token could not list D1 (`Authentication error [code: 10000]`), so this
    is the first thing to confirm.
 
-2. **Create the staging database** and keep the returned id:
+2. **Confirm the staging database.** `workers/api/wrangler.staging.toml` already names
+   `happy-farm-staging` and carries a database id, so create one only if that id is not the real one:
 
    ```bash
+   npx wrangler d1 list
    npx wrangler d1 create happy-farm-staging
    ```
 
-   Paste the id over `REPLACE_WITH_STAGING_D1_ID` in
-   `workers/api/wrangler.staging.toml`. The id is not a secret, but it must be the real one; the
-   sentinel exists so a deploy fails loudly instead of binding somewhere else.
+   If a new id is returned, paste it over the `database_id` in
+   `workers/api/wrangler.staging.toml`. The id is not a secret, but it must be the real one: a deploy
+   bound to a name that does not exist fails loudly, which is the point.
 
-3. **Create the Cloudflare Access application** (Zero Trust → Access → Applications → Self-hosted)
-   for the staging hostname, with a policy that allows only the 2–3 tester emails. Copy:
+3. **Confirm the Cloudflare Access application** (Zero Trust → Access → Applications → Self-hosted)
+   for the staging hostname, with a policy that allows only the 2–3 tester emails. Both of the values
+   below are already committed in `workers/api/wrangler.staging.toml`; re-copy them only if the
+   application has been recreated:
 
    * the **team domain** (`https://<team>.cloudflareaccess.com`) → `ACCESS_TEAM_DOMAIN`
    * the **application audience (AUD) tag** → `ACCESS_AUD`
@@ -122,10 +130,14 @@ Do these in order. Nothing here has been done for you, and no value should be co
    npx wrangler d1 migrations apply happy-farm-staging --config workers/api/wrangler.staging.toml
    ```
 
-   Expected: `0001` … `0009`, all pending on a fresh database. Never rewrite an applied migration.
+   Expected: `0001` … `0010`. On a fresh database all ten are pending; a database created before the
+   V13 pass has `0009_starter_package.sql` and `0010_farm_constructions.sql` pending at least. Never
+   rewrite an applied migration.
    `0009_starter_package.sql` rebuilds `economy_ledger` to admit the `STARTER_GRANT` reason and
    generalizes the starter receipt; it moves schema and carries old seed-only receipts forward, and
-   it grants nothing by itself.
+   it grants nothing by itself. `0010_farm_constructions.sql` adds `farm_constructions` with its
+   ownership and collision triggers and rebuilds `economy_ledger` once more to admit the
+   `CONSTRUCTION` reason.
 
 5. **Check the configuration is no longer a template**, then build and deploy:
 
@@ -159,9 +171,11 @@ Do these in order. Nothing here has been done for you, and no value should be co
 ## Not verified
 
 ```text
-REAL_CLOUDFLARE_ACCESS: NOT VERIFIED   (no team domain/AUD exists yet)
-REMOTE D1 STAGING:      NOT VERIFIED   (database not created; Wrangler API access failed)
-STAGING DEPLOY:         NOT PERFORMED  (no deploy in this task)
+REAL_CLOUDFLARE_ACCESS: NOT VERIFIED   (team domain and AUD are committed; the Access application is
+                                        not reachable from this environment)
+REMOTE D1 STAGING:      NOT VERIFIED   (a database id is committed; its existence, and which
+                                        migrations it has applied, are not)
+STAGING DEPLOY:         NOT VERIFIED   (no deploy has been run or observed from this environment)
 BROWSER ON STAGING:     NOT VERIFIED
 ```
 

@@ -289,16 +289,20 @@ export const ROADS: readonly Road[] = [
       // it supplies is the cheapest one that works. The paving starts inside the village, where the
       // plaza is, and the transition between the two is the whole visual story of the road.
       //
-      // It stops at the square. Past the village the road is the *player's*: everything beyond the
-      // settlement is ground somebody has to build on.
+      // Three waypoints, because that is what a built road is: the quay, the one corner where the
+      // waterfront leg turns inland, and the village entrance. V13.1 cut this from eight points to
+      // three and the road from a spline to a surveyed alignment: the eight points were a shuffle
+      // westward that only existed to give the spline something to do, and the spline turned the one
+      // real corner - the 39 degrees at the harbour yard - into a hook that began at the quay.
+      //
+      // The last waypoint sits just *inside* the paved rim of the square, not at its centre. Dirt
+      // that stops at the paving edge leaves a sliver of grass at the corners of its own end cap;
+      // dirt that reaches a few decimetres under the paving meets it with no seam at all, and the
+      // paving is the top surface there, so the square stays paved. Past the village the road is the
+      // *player's*: everything beyond the settlement is ground somebody has to build on.
       { x: 53, y: 53 },
       { x: 50, y: 50 },
-      { x: 49.2, y: 44 },
-      { x: 48.4, y: 34 },
-      { x: 47.6, y: 24 },
-      { x: 46.8, y: 14 },
-      { x: 45.8, y: 7 },
-      { x: 45, y: 3 }
+      { x: 45.9, y: 5.4 }
     ]
   },
   {
@@ -309,9 +313,11 @@ export const ROADS: readonly Road[] = [
       // The village's own working road: the dirt that starts where the paving stops and runs out to
       // the barn's yard. A stone surface in the settlement and a warm earth one outside it is the
       // whole road hierarchy in two hundred metres, and it is the last stretch the island authors.
-      { x: 45, y: 3 },
-      { x: 46.6, y: 0.4 },
-      { x: 44.4, y: -3.2 },
+      //
+      // Two waypoints: a straight spur from the square's north-west rim to the yard. It used to
+      // leave the square's centre north-east and then bend back west, which painted a dirt blot in
+      // the middle of the one paved place on the island and described a detour nothing needed.
+      { x: 43.4, y: -0.3 },
       { x: 41, y: -4 }
     ]
   },
@@ -358,8 +364,11 @@ export const ROADS: readonly Road[] = [
       // north-west up the gentle ground, and stopping on the volcano's lower flank. It is dirt rather
       // than stone because it is a rural access route rather than civic infrastructure - and it stops
       // *before* the steep ground, because nothing should be climbing the landmark.
-      { x: 45, y: 3 },
-      { x: 44, y: -2 },
+      //
+      // It leaves from the square's own north-west rim, like the lane to the barn, rather than from
+      // the square's middle: a footpath across the paving is one more line painted on the one paved
+      // place on the island.
+      { x: 44.3, y: -0.4 },
       { x: 41, y: -7 },
       { x: 37, y: -10 },
       { x: 32, y: -12 },
@@ -708,6 +717,15 @@ export interface LandmarkSpec {
   readonly tile: TileCoordinate;
   readonly rotationY: number;
   readonly blockingRadiusWorld: number;
+  /**
+   * How far the building's own parts reach, when that is more than a walker's circle.
+   *
+   * `blockingRadiusWorld` is what a *walker* goes around, and a low structure's parts do not reach
+   * past it. A windmill's sails do: the tower is under two metres across, and the rotor sweeps three
+   * metres, over the heads of anyone walking under it. Decoration is kept out of the larger number,
+   * so a treetop cannot grow through a turning sail. Defaults to `blockingRadiusWorld`.
+   */
+  readonly keepClearRadiusWorld?: number;
 }
 
 /**
@@ -731,7 +749,9 @@ export const LANDMARKS: readonly LandmarkSpec[] = [
   { id: "open_barn", kind: "OPEN_BARN", tile: { x: 42.5, y: -6.5 }, rotationY: 0, blockingRadiusWorld: 1.8 },
   { id: "silo", kind: "SILO", tile: { x: 34.5, y: -4 }, rotationY: 0, blockingRadiusWorld: 1.6 },
   // The orchard's mill, on the slope above the rows, and the pasture's coop out where the animals go.
-  { id: "windmill", kind: "WINDMILL", tile: { x: -16, y: -13 }, rotationY: 0.35, blockingRadiusWorld: 1.8 },
+  // The rotor reaches 0.347 of the model's own width in every direction, and the model is drawn 8.6 m
+  // across, so 3 m is the circle the sails sweep - nearly twice the tower a walker goes around.
+  { id: "windmill", kind: "WINDMILL", tile: { x: -16, y: -13 }, rotationY: 0.35, blockingRadiusWorld: 1.8, keepClearRadiusWorld: 3 },
   { id: "coop", kind: "COOP", tile: { x: -18, y: 6 }, rotationY: 0.5, blockingRadiusWorld: 1.1 },
   // The bay runs out to the south-east, so the quay faces that way and its pier reaches the water
   // rather than the grass behind it. It stands on the *landward* side of the yard, so the road can

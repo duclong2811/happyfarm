@@ -1050,7 +1050,7 @@ export function buildTerrain(
   // placeholder is already authored at the right scale.
   const curatedBarn = getBuildingModel("farm.barn.t2");
   addBarn(group, assets, world, curatedBarn ?? barnModel, curatedBarn === undefined ? 1 : 6.4);
-  buildLandmarks(group, assets, world.landmarks, getBuildingModel);
+  buildLandmarks(group, assets, world.landmarks, world.terrain, getBuildingModel);
   return ground;
 }
 

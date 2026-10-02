@@ -128,6 +128,12 @@ landmark set, or the renderer's lighting, sky, shadows, and instancing.
 - Landmarks: `LANDMARKS`/`LANDMARKS_WORLD`/`STATIC_OBSTACLES` in `world-config.ts` and the builders
   in `apps/web/src/render/landmarks.ts`. A landmark is scenery with a collision circle; it unlocks,
   stores, and prices nothing.
+  `buildLandmarks` places each one on the ground it stands on (`terrainHeightAt`, the same function
+  the terrain mesh, the scenery and collision use) - a landmark on a slope must not be drawn at the
+  flat ground plane. `blockingRadiusWorld` is the circle a *walker* goes around, and the optional
+  `keepClearRadiusWorld` is the bigger circle a building whose parts overhang declares (the
+  windmill's sails); `world.ts` sweeps the finished scenery list against the latter, dropping a
+  placement whose own half-width reaches in.
 - Scenery is clustered and deterministically seeded in `world.ts`, and drawn instanced by kind in
   `apps/web/src/render/scenery.ts`. Tile slabs are one `InstancedMesh` built in `scene.ts`.
 
@@ -247,8 +253,11 @@ navigation, land use, occupancy, or the visibility of any grid.
 - Island outline and elevation: `terrain-height.ts` (`islandRadiusAt`, `islandRimPoint`,
   `islandOutlineScale`, `terrainHeightAt`, `flatMask`, `uplandOffset`). The playable tile grid never
   samples it.
-- Roads: `apps/web/src/render/roads.ts` (waypoints to a terrain-following centreline) and
-  `roadGeometry` in `terrain.ts` (the ribbon).
+- Roads: `apps/web/src/render/roads.ts` (waypoints to a terrain-following centreline: straight runs
+  between the authored waypoints, joined by a circular fillet at each interior corner, walked at a
+  fixed arc-length step) and `addRoads` in `terrain.ts` (the ribbons, cobbles, shoulders and verge
+  stones). A road's shape is the author's alignment and nothing else - do not reintroduce a spline
+  through the waypoints, which turns a corner over the segments on either side of it.
 - Districts are landscape, not ownership: `FarmWorld.districts` tints ground, `FarmWorld.roads`
   carries the network, and the *only* thing that decides where farming is allowed is still
   `farm_tiles` plus the plot catalogue.
@@ -279,6 +288,10 @@ plus ownership plus placed objects.
   `ROAD_SHOULDER_WORLD` in `world-config.ts` and `packages/game-data/src/roads/index.ts`; the shoulder
   table lives there rather than in `terrain.ts` because scenery clearance is measured from the
   rendered edge. `ROAD_CLEARANCE_WORLD` in `placement.ts` is the corridor, scaled per scenery class.
+  The starter alignment itself is three waypoints in `ROADS` (`harbour_spine`: the quay, the one
+  corner at the yard, the village entrance just inside the paving); its last sample sits *under* the
+  plaza surface so the square reads as paved rather than painted, and every road that reaches the
+  square leaves from its rim, not from its middle.
 - `WOODLANDS` in `world-config.ts` is the island's two tree masses. They are landscape, not districts:
   a player clears them like any other tree, and `CellCapability` is still the only thing that decides
   what a cell may become.
