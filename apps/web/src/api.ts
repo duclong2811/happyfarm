@@ -26,6 +26,7 @@ import {
   UprootCropResponseSchema,
   SellItemResultDTOSchema
   ,ExpandFarmResponseSchema
+  ,GetSessionResponseSchema
 } from "@happy-farm/contracts";
 import type {
   BuyItemResultDTO,
@@ -51,7 +52,8 @@ import type {
   RemoveConstructionResponse,
   WorldObjectDefinitionDTO,
   XpAwardDTO,
-  WalletDTO
+  WalletDTO,
+  SessionPlayerDTO
 } from "@happy-farm/contracts";
 
 /** Same-origin base: the Vite dev server forwards `/api/*` to the development Worker. */
@@ -156,7 +158,9 @@ export class ApiClient {
   }
 
   private async request<T>(path: string, init: RequestInit, validate: Validator<T>): Promise<T> {
-    const response = await fetch(`${API_BASE}${path}`, init);
+    // `same-origin` is the default, and it is stated here because the session is a cookie: the
+    // guest credential must travel with every request to this origin and never to another one.
+    const response = await fetch(`${API_BASE}${path}`, { ...init, credentials: "same-origin" });
     let payload: unknown = null;
     try {
       payload = await response.json();
@@ -185,6 +189,17 @@ export class ApiClient {
 
   createFarm(name: string): Promise<CreateFarmResult> {
     return this.post("/farms", { name }, CreateFarmResponseSchema);
+  }
+
+  /**
+   * Who this browser is, establishing a guest session on a first visit.
+   *
+   * The server sets the guest cookie on this response; the page keeps no credential of its own and
+   * could not forge one. A host without a session endpoint answers `RESOURCE_NOT_FOUND`, which the
+   * boot treats as "use the plain API", the way the development bridge works.
+   */
+  getSession(): Promise<{ readonly player: SessionPlayerDTO }> {
+    return this.get("/session", GetSessionResponseSchema);
   }
 
   getFarm(farmId: string): Promise<CreateFarmResult> {

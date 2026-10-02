@@ -98,9 +98,12 @@ import {
   ,type ConstructionDTO
   ,type RemoveConstructionResponse
   ,type WorldObjectDefinitionDTO
+  ,type GetSessionResponse
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
 import { listWorldObjectDefinitions } from "./runtime";
+import { rejectsCrossOriginRequest } from "./origin-guard";
+import type { SessionPort } from "./session";
 import {
   parseCurrencyDefinitionId,
   parseFarmId,
@@ -133,6 +136,13 @@ const MAX_JSON_BODY_BYTES = 16_384;
 export interface HandlerDependencies {
   readonly db: D1DatabaseLike;
   readonly authenticator: AuthenticationPort<Request>;
+  /**
+   * Where `GET /session` resolves or establishes the caller's identity.
+   *
+   * Absent on a host that has no session concept (the development bridge), where `/session` then
+   * answers `RESOURCE_NOT_FOUND` rather than pretending to have one.
+   */
+  readonly session?: SessionPort;
   readonly ids: IdGenerator &
     CropIdGenerator &
     TreeIdGenerator &
@@ -156,8 +166,8 @@ export interface HandlerDependencies {
   readonly clock: Clock;
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return Response.json(body, { status, headers: { "cache-control": "no-store" } });
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
 }
 
 /** One persisted construction, as the client reads it. Pure projection: nothing is derived here. */
@@ -613,8 +623,35 @@ export function createHandler(dependencies: HandlerDependencies) {
     const url = new URL(request.url);
 
     try {
+      // A mutation a browser says came from somewhere else is refused before any identity is
+      // resolved: this is what keeps a cookie-borne session from being driven by another site.
+      if (rejectsCrossOriginRequest(request)) return failure("NOT_AUTHENTICATED", requestId);
+
       if (request.method === "GET" && url.pathname === "/health") {
         return jsonResponse({ ok: true, data: { status: "ok" } });
+      }
+
+      /**
+       * Who the caller is - and, the first time, the credential that makes them them.
+       *
+       * The only route that may create an identity, and it is a safe GET: the page asks once at
+       * boot, the server answers with the guest cookie when the deployment allows guest play, and
+       * every other route only ever resolves an identity that already exists.
+       */
+      if (request.method === "GET" && url.pathname === "/session") {
+        const session = dependencies.session;
+        if (session === undefined) return failure("RESOURCE_NOT_FOUND", requestId);
+        const established = await session.establish(request);
+        if (established === null) return failure("NOT_AUTHENTICATED", requestId);
+        const body: ApiSuccess<GetSessionResponse> = {
+          ok: true,
+          data: { player: { playerId: established.playerId, kind: established.kind } }
+        };
+        return jsonResponse(
+          body,
+          200,
+          established.setCookie === undefined ? {} : { "set-cookie": established.setCookie }
+        );
       }
 
       const actor: ActorContext | null = await dependencies.authenticator.authenticate(request);

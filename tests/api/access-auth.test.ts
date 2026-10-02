@@ -25,7 +25,7 @@ const JWKS_URL = `${TEAM_DOMAIN}/cdn-cgi/access/certs`;
 const JWT_HEADER = "cf-access-jwt-assertion";
 const NOW_SECONDS = 1_800_000_000;
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0007_seed_economy.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0007_seed_economy.sql", "0015_player_identities.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 

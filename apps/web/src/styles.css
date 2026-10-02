@@ -423,6 +423,9 @@ button.go { background: transparent; border-color: rgba(255, 255, 255, .22); fon
 .status-wrap { position: absolute; z-index: 7; left: 50%; bottom: calc(var(--space-3) + 5rem); transform: translateX(-50%); pointer-events: none; max-width: calc(100% - var(--space-4)); }
 .status { margin: 0; padding: .35rem .8rem; border-radius: var(--radius-control); background: rgba(12, 32, 24, .9); color: var(--cream); font-size: .76rem; text-align: center; }
 .status.error { color: #ffe1da; background: rgba(84, 32, 24, .92); }
+/* The status wrap is click-through; the retry button is the one thing in it that is not. */
+.boot-retry { display: block; margin: var(--space-2) auto 0; pointer-events: auto; }
+.boot-retry[hidden] { display: none; }
 .renderer-state { position: absolute; z-index: 2; left: max(var(--space-3), env(safe-area-inset-left)); bottom: var(--space-2); color: rgba(244, 242, 232, .45); font-size: .65rem; }
 .debug-field { display: none !important; }
 

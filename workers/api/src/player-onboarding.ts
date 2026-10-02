@@ -1,4 +1,4 @@
-import { parsePlayerId, type Player, type PlayerId } from "@happy-farm/domain";
+import { parsePlayerId, type IdentityKind, type Player, type PlayerId } from "@happy-farm/domain";
 import type { ActorContext, AuthenticationPort } from "@happy-farm/application";
 import type { AccessIdentity } from "./access-auth";
 import type { D1DatabaseLike } from "./d1-types";
@@ -53,6 +53,12 @@ export interface OnboardingOptions {
   readonly starterGrantPolicy?: StarterGrantPolicy;
 }
 
+/** A verified visitor, resolved to the player they own. */
+export interface OnboardedIdentity {
+  readonly playerId: PlayerId;
+  readonly kind: IdentityKind;
+}
+
 /** Reads the policy binding. Anything unrecognised, including absence, is the safe default. */
 export function readStarterGrantPolicy(value: string | undefined): StarterGrantPolicy {
   return value?.trim().toUpperCase() === "ALL_UNRECEIPTED" ? "ALL_UNRECEIPTED" : "NEW_PLAYERS";
@@ -77,8 +83,18 @@ export class AccessPlayerDirectory {
       .bind(identity.issuer, identity.subject)
       .first<PlayerIdentityRow>();
     if (row === null) return null;
+    // Record the identity in the multi-identity table as well, so an Access player created after
+    // migration 0015 resolves the same way a backfilled one does. `ON CONFLICT DO NOTHING` keeps it
+    // idempotent, and the id is derived from the player id rather than random so a replay is a no-op.
+    const playerId = parsePlayerId(row.id);
+    await this.db
+      .prepare(
+        "INSERT INTO player_identities (id, player_id, kind, issuer, subject, created_at, last_seen_at) VALUES (?, ?, 'CLOUDFLARE_ACCESS', ?, ?, ?, ?) ON CONFLICT DO NOTHING"
+      )
+      .bind(`identity_access_${playerId}`, playerId, identity.issuer, identity.subject, now, now)
+      .run();
     return {
-      playerId: parsePlayerId(row.id),
+      playerId,
       status: row.status,
       created: (inserted.meta.changes ?? 0) > 0
     };
@@ -95,6 +111,18 @@ export class OnboardingAuthenticator implements AuthenticationPort<Request> {
   ) {}
 
   async authenticate(request: Request): Promise<ActorContext | null> {
+    const identity = await this.authenticateIdentity(request);
+    return identity === null ? null : { playerId: identity.playerId };
+  }
+
+  /**
+   * The same verification as `authenticate`, with the identity kind kept.
+   *
+   * The session endpoint needs to say *how* the caller is signed in; the composite authenticator
+   * only ever needs the actor. Both share this one path, so the player row and the starter package
+   * are settled in exactly one place.
+   */
+  async authenticateIdentity(request: Request): Promise<OnboardedIdentity | null> {
     const identity = await this.access.authenticateIdentity(request);
     if (identity === null) return null;
     let player: OnboardedPlayer | null;
@@ -118,6 +146,6 @@ export class OnboardingAuthenticator implements AuthenticationPort<Request> {
         // script settles it for a player who never comes back.
       }
     }
-    return actor;
+    return { playerId: actor.playerId, kind: "CLOUDFLARE_ACCESS" };
   }
 }

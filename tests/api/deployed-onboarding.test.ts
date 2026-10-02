@@ -23,7 +23,8 @@ const MIGRATIONS = [
   "0006_farm_expansion.sql",
   "0007_seed_economy.sql",
   "0008_tree_instances.sql",
-  "0009_starter_package.sql"
+  "0009_starter_package.sql",
+  "0015_player_identities.sql"
 ]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");

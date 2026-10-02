@@ -764,11 +764,12 @@ Read `docs/qa/MULTI_USER_ALPHA.md` before inviting testers. Its invariant is non
 **multiple testers does not mean shared authority** - every player-owned read and mutation is
 authorized from the authenticated server-side actor, never from an id the browser supplied.
 
-- Identity is Cloudflare Access, and the API trusts only the `Cf-Access-Jwt-Assertion` header Access
-  injects; the browser sends no credential of its own. The staging hostname still has **no Access
-  application**, so `/api/*` answers 401 and testers cannot sign in until an operator creates it - the
-  exact dashboard steps are in both documents. Access applications cannot be created with the
-  deployment environment's credentials (Workers scopes, not Access scopes).
+- Identity used to be Cloudflare Access only; **since V13.6.2 the public path is a guest cookie**
+  (see "Public guest alpha" below). Access is kept as the stronger path and still wins when a verified
+  `Cf-Access-Jwt-Assertion` is present, and neither path trusts a client-supplied identity. Note the
+  direction changed: an Access application now *exists* for the canonical custom domain and is what
+  the operator must bypass or remove to make it public. Access applications cannot be created or
+  removed with the deployment environment's credentials (Workers scopes, not Access scopes).
 - **One player owns one farm** (V13.6.1). `CreateFarm` resolves a player's existing farm before
   creating anything, and a unique index on `farms(owner_player_id)`
   (`0014_one_farm_per_player.sql`) makes that true under concurrency; a repeat request answers `200`
@@ -788,7 +789,40 @@ the architecture, the database state and how to deploy or roll back. Two facts t
 - **A `;` inside a `/* */` block comment breaks Wrangler's statement splitter** ("incomplete input:
   SQLITE_ERROR [code: 7500]"), which is how the first remote migration of `0012_world_objects.sql`
   failed while the repository's own tests passed. Use `--` comments in migrations. The remote staging
-  database is now at migrations `0001` - `0013` with its existing players and farms intact.
+  database is now at migrations `0001` - `0015` with its existing players and farms intact.
+
+### Public guest alpha (V13.6.2)
+
+Read `docs/design/IDENTITY.md` before touching identity, sessions, cookies, onboarding, the Access
+authenticator, or anything that decides which player a request is. Its invariant:
+**a player is the durable owner; an identity only ever answers which player that is.** Guest is an
+authentication state, never a throwaway farm, so a later Google/email sign-in attaches a second
+identity to the same player instead of founding a new farm.
+
+- **Player vs identity**: `players` keeps its `(auth_issuer, auth_subject)` pair as the *primary*
+  identity; `player_identities` (`0015_player_identities.sql`) is the resolution table and may hold
+  several identities per player. Pure rules: `packages/domain/src/identity.ts` (`identityKey`,
+  `attachIdentity`, `resolveIdentity`); repository: `workers/api/src/player-identities.ts`.
+- **Guest session**: `workers/api/src/guest-auth.ts` (32 random bytes from `crypto.getRandomValues`,
+  `hf_guest` cookie - `HttpOnly; Secure; SameSite=Lax`, 180 days - only the SHA-256 stored), the
+  session port in `workers/api/src/session.ts`, and `GET /session` in `workers/api/src/handler.ts`
+  as the *only* route that may create an identity. `GUEST_AUTH_ENABLED = "true"` lives in
+  `wrangler.staging.toml` alone, so production stays fail-closed with no `if (staging)` anywhere.
+- **Composition**: `CompositeAuthenticator` tries Access first and the guest resolver second; the
+  starter package is applied through the same shared use case for both paths
+  (`workers/api/src/player-onboarding.ts`).
+- **CSRF**: cookies make unsafe requests cross-site-relevant, so `workers/api/src/origin-guard.ts`
+  refuses an unsafe request whose `Origin` names another origin (401, before authentication).
+- **Client boot**: `apps/web/src/main.ts` (`startSession`, `boot`) calls `/session` first, shows a
+  retryable message instead of a stuck "Preparing 3D world…", and `apps/web/src/api.ts` sends
+  `credentials: "same-origin"`.
+- Tests: `tests/api/guest-alpha.test.ts` (new guest, same-cookie persistence, two guests isolated,
+  edited/unknown/truncated credentials, guest-off production behaviour, Access preference,
+  cross-origin refusal), `tests/domain/identity.test.ts` (attaching a second identity keeps one
+  player), `tests/api/origin-guard.test.ts`.
+- **Known limitation**: guest progress depends on keeping the cookie. Clearing site data makes the
+  old farm unreachable until an account-linking pass exists; that future conflict/merge policy is
+  described in `docs/design/IDENTITY.md` and deliberately not implemented.
 
 Read `docs/deployment.md` before touching the deployed entrypoint, the Access authenticator, the staging config, or static asset routing.
 
@@ -796,6 +830,8 @@ Read `docs/deployment.md` before touching the deployed entrypoint, the Access au
 - Access auth: `workers/api/src/access-auth.ts` (JWKS-verified JWT, deterministic `player_<uuid>` from `(issuer, subject)`, fail-closed without config).
 - Onboarding: `workers/api/src/player-onboarding.ts` (one Player row per verified visitor, plus the
   one-time starter package; the policy is `STARTER_GRANT_POLICY`, default `NEW_PLAYERS`).
+- Guest auth: `workers/api/src/guest-auth.ts` (opaque cookie, hashed credential, `/session`), wired
+  only when `GUEST_AUTH_ENABLED` is `"true"`.
 - Boundary: `workers/api/src/staging-routing.ts`; config: `workers/api/wrangler.staging.toml` (staging D1 + `[assets]`).
 - Tests: `tests/api/access-auth.test.ts`, `tests/api/staging-routing.test.ts` (includes an import-graph proof that the deployed entrypoint cannot reach the dev bridge).
 

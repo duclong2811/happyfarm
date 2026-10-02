@@ -117,7 +117,11 @@
         </div>
       </section>
 
-      <div class="status-wrap"><p id="status" class="status">Loading your farm…</p></div>
+      <div class="status-wrap">
+        <p id="status" class="status">Loading your farm…</p>
+        <!-- Shown only when the boot could not establish a session; see renderBootRetry. -->
+        <button id="boot-retry" class="ghost-button boot-retry" type="button" hidden>Retry</button>
+      </div>
       <div class="renderer-state" id="render-3d-state">Preparing 3D world…</div>
       <button id="render-3d" type="button" hidden>Enable 3D</button><div id="field" class="debug-field" hidden></div>
     </section></main><script type="module" src="/src/main.ts"></script>

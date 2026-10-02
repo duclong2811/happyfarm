@@ -271,6 +271,13 @@ const state: AppState = {
 let t: Translate = createTranslator(state.language);
 let statusText: StatusText = (translate) => translate("hud.starting");
 let statusIsError = false;
+/**
+ * Whether the boot could not even start a session.
+ *
+ * Kept as state rather than written straight into the status line so the retry control can be shown
+ * with it and the message survives a language switch.
+ */
+let bootFailed = false;
 
 // The 3D view is opt-in. Creating a WebGL context is the one thing this page cannot take back, so
 // it happens on an explicit click instead of during load.
@@ -330,6 +337,19 @@ function renderStatus(): void {
   const node = element<HTMLParagraphElement>("status");
   node.textContent = statusText(t, state.language);
   node.classList.toggle("error", statusIsError);
+}
+
+/**
+ * Shows the retry control only when there is something to retry.
+ *
+ * A guest session is established once at boot, and the one way that can fail is the network. The
+ * page must not sit at "Preparing 3D world…" forever, so the failure is a sentence and a button
+ * rather than a spinner.
+ */
+function renderBootRetry(): void {
+  const button = element<HTMLButtonElement>("boot-retry");
+  button.hidden = !bootFailed;
+  button.textContent = t("boot.retry");
 }
 
 /**
@@ -2461,6 +2481,7 @@ function renderChrome(): void {
   language.title = t("language.label");
   language.setAttribute("aria-label", t("language.label"));
   element<HTMLButtonElement>("refresh").title = t("hud.refresh");
+  renderBootRetry();
 }
 
 function render(): void {
@@ -3427,6 +3448,11 @@ function wire(): void {
   });
   runControl.attach();
   syncTouchControls();
+  // The retry control only exists when the boot session could not be established; clicking it runs
+  // the same boot the page ran on load.
+  element<HTMLButtonElement>("boot-retry").addEventListener("click", () => {
+    void run(boot);
+  });
   element<HTMLButtonElement>("refresh").addEventListener("click", () => {
     void run(async () => {
       await refreshFarm();
@@ -3586,10 +3612,39 @@ document.documentElement.lang = languageTag(state.language);
 wire();
 renderIcons();
 render();
-void run(async () => {
-  // No startup handshake: a deployed Worker authenticates the visitor and creates their Player row
-  // on the first API call, and the development host does the same server-side. Keeping the dev
-  // bootstrap out of the client is what keeps a development-only route out of the shipped bundle.
+
+/**
+ * Asks the server who this browser is, which is also what establishes a guest session.
+ *
+ * The guest credential lives in an HttpOnly cookie the page cannot read, so the only way to get one
+ * is to ask. A host that has no session endpoint - the development bridge - answers
+ * `RESOURCE_NOT_FOUND`, and that is not a failure: there the plain API is the whole story.
+ */
+async function startSession(): Promise<boolean> {
+  try {
+    await api().getSession();
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof ApiError && error.code === "RESOURCE_NOT_FOUND") return true;
+    return false;
+  }
+}
+
+/**
+ * Opens the farm: session, then the farm this browser already has or a fresh one.
+ *
+ * The stored farm id is only a cache of a server-owned fact - the cookie is what proves who the
+ * player is - so a stale or foreign id is dropped and the server's answer for this session wins.
+ */
+async function boot(): Promise<void> {
+  bootFailed = false;
+  renderBootRetry();
+  if (!(await startSession())) {
+    bootFailed = true;
+    setStatus(message("boot.sessionFailed"), true);
+    renderBootRetry();
+    return;
+  }
   const storedFarm = localStorage.getItem(FARM_KEY);
   if (storedFarm !== null) {
     try {
@@ -3620,4 +3675,6 @@ void run(async () => {
   await createFarm();
   enable3D();
   setStatus(message("status.created"));
-});
+}
+
+void run(boot);

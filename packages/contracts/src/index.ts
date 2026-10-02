@@ -75,6 +75,19 @@ export const HealthResponseSchema = z
   .object({ ok: z.literal(true), data: z.object({ status: z.literal("ok") }).strict() })
   .strict();
 
+/**
+ * How the caller is currently authenticated, as the session endpoint reports it.
+ *
+ * The client never sends this and never decides it: it is how the page can say "Playing as Guest",
+ * and how a future account-linking control will know whether it has anything to link. `GUEST` is an
+ * anonymous credential that resolves to a real player, not a temporary or throwaway farm.
+ */
+export const IdentityKindSchema = z.enum(["GUEST", "CLOUDFLARE_ACCESS", "GOOGLE", "EMAIL"]);
+export const SessionPlayerDTOSchema = z
+  .object({ playerId: PlayerIdSchema, kind: IdentityKindSchema })
+  .strict();
+export const GetSessionResponseSchema = z.object({ player: SessionPlayerDTOSchema }).strict();
+
 export const PlantCropRequestSchema = z
   .object({
     requestId: RequestIdSchema,
@@ -858,6 +871,9 @@ export type FarmDTO = z.infer<typeof FarmDTOSchema>;
 export type FarmMemberDTO = z.infer<typeof FarmMemberDTOSchema>;
 export type FarmTileDTO = z.infer<typeof FarmTileDTOSchema>;
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
+export type IdentityKindDTO = z.infer<typeof IdentityKindSchema>;
+export type SessionPlayerDTO = z.infer<typeof SessionPlayerDTOSchema>;
+export type GetSessionResponse = z.infer<typeof GetSessionResponseSchema>;
 export type PlantCropRequest = z.infer<typeof PlantCropRequestSchema>;
 export type CropStateDTO = z.infer<typeof CropStateDTOSchema>;
 export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;

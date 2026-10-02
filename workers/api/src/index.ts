@@ -6,6 +6,12 @@ import {
   OnboardingAuthenticator,
   readStarterGrantPolicy
 } from "./player-onboarding";
+import {
+  CompositeAuthenticator,
+  D1GuestDirectory,
+  GuestSessionService,
+  readGuestAuthEnabled
+} from "./guest-auth";
 import { D1StarterGrantRepository, D1WalletRepository } from "./d1-repositories";
 import {
   CryptoIdGenerator,
@@ -34,14 +40,16 @@ import type { D1DatabaseLike } from "./d1-types";
  *   /api/*  -> the existing handler (the prefix is stripped here, once)
  *   else    -> Cloudflare static assets: the SPA shell, JS, CSS, and the generated GLB models
  *
- * Identity comes from Cloudflare Access (`Cf-Access-Jwt-Assertion`, cryptographically verified in
- * `access-auth.ts`), and the first verified visit creates that visitor's Player row. Nothing here
- * reads an identity supplied by the browser, and nothing here imports the development bridge:
- * `dev-auth.ts`, `dev-index.ts` and `workers/api/dev/**` are not in this file's import graph, so
- * `/__dev/bootstrap` cannot exist in a deployment built from it.
+ * Identity is a verified Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`, cryptographically checked
+ * in `access-auth.ts`), or - when `GUEST_AUTH_ENABLED` says so - an opaque guest cookie whose
+ * credential is validated against a stored hash (`guest-auth.ts`). Either way a first visit creates
+ * that visitor's Player row, and neither path trusts an identity the browser merely claims. Nothing
+ * here imports the development bridge: `dev-auth.ts`, `dev-index.ts` and `workers/api/dev/**` are
+ * not in this file's import graph, so `/__dev/bootstrap` cannot exist in a deployment built from it.
  *
- * Configuration is fail-closed. With `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` unset, every authenticated
- * route answers NOT_AUTHENTICATED rather than falling back to another authenticator.
+ * Configuration is fail-closed. With `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` unset and guest play
+ * switched off, every authenticated route answers NOT_AUTHENTICATED rather than falling back to
+ * another authenticator.
  */
 
 /** The static asset binding, when a deployment serves the web app next to the API. */
@@ -57,6 +65,13 @@ export interface DeploymentEnv extends AccessAuthBindings {
    * grants it only to a visitor whose Player row this request creates.
    */
   readonly STARTER_GRANT_POLICY?: string;
+  /**
+   * Whether anonymous guest sessions are allowed in this deployment.
+   *
+   * Absent, blank, or anything other than `"true"` means off, which is the production default and
+   * keeps a deployment fail-closed without any route having to know which environment it is in.
+   */
+  readonly GUEST_AUTH_ENABLED?: string;
 }
 
 export interface DeploymentWorkerOptions {
@@ -83,12 +98,25 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
     clock,
     gameDataStarterPackage
   );
+  const accessDirectory = new AccessPlayerDirectory(env.DB);
+  const onboarding = new OnboardingAuthenticator(access, accessDirectory, clock, {
+    grantStarterPackage: (actor) => grantStarterPackage.execute(actor),
+    starterGrantPolicy: readStarterGrantPolicy(env.STARTER_GRANT_POLICY)
+  });
+  // The session endpoint and the ordinary routes read the same guest table, but only the endpoint
+  // may create a row: `CompositeAuthenticator` resolves, `GuestSessionService.establish` mints.
+  const guestSessions = new GuestSessionService({
+    enabled: readGuestAuthEnabled(env.GUEST_AUTH_ENABLED),
+    clock,
+    directory: new D1GuestDirectory(env.DB),
+    strong: onboarding,
+    grantStarterPackage: (actor) => grantStarterPackage.execute(actor),
+    starterGrantPolicy: readStarterGrantPolicy(env.STARTER_GRANT_POLICY)
+  });
   const handler = createHandler({
     db: env.DB,
-    authenticator: new OnboardingAuthenticator(access, new AccessPlayerDirectory(env.DB), clock, {
-      grantStarterPackage: (actor) => grantStarterPackage.execute(actor),
-      starterGrantPolicy: readStarterGrantPolicy(env.STARTER_GRANT_POLICY)
-    }),
+    authenticator: new CompositeAuthenticator(onboarding, guestSessions),
+    session: guestSessions,
     ids,
     fingerprints: new Sha256Fingerprint(),
     cropDefinitions: new GameDataCropDefinitions(),

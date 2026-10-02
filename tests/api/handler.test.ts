@@ -22,7 +22,7 @@ import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurre
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, FARM_TWO_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql", "0012_world_objects.sql", "0013_world_objects_v2.sql", "0014_one_farm_per_player.sql"]
+const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql", "0012_world_objects.sql", "0013_world_objects_v2.sql", "0014_one_farm_per_player.sql", "0015_player_identities.sql"]
   .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
   .join("\n");
 
@@ -152,6 +152,26 @@ describe("Worker API foundation", () => {
     auth.setActor(null);
     const response = await handle(new Request("https://api.test/health"));
     expect(response.status).toBe(200);
+  });
+
+  it("does not offer a session route on a host that has no session concept", async () => {
+    // The development bridge has no cookie identity, so `/session` is absent rather than a route
+    // that would have to invent one. The deployed worker is the host that serves it.
+    const response = await handle(new Request("https://api.test/session"));
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: "RESOURCE_NOT_FOUND" } });
+  });
+
+  it("refuses a mutation a browser reports from another origin, before it authenticates anyone", async () => {
+    const response = await handle(
+      new Request("https://api.test/farms", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://evil.example" },
+        body: JSON.stringify({ name: "Cross" })
+      })
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: "NOT_AUTHENTICATED" } });
   });
 
   it("rejects malformed JSON without leaking parser details", async () => {

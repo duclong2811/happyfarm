@@ -1,87 +1,115 @@
 # Staging: the playtest environment
 
-Status: **deployed and smoke-tested** (V13.6, redeployed for V13.6.1), with one step still to do
-before a phone can play - the Cloudflare Access application for the staging hostname. See "The one
-remaining step" below, and `docs/qa/MULTI_USER_ALPHA.md` for the tester-facing version of it.
+Status: **deployed and smoke-tested** (V13.6.2, 2026-10-02). Staging is a **public guest alpha**: a
+visitor opens the link and plays, with no email, OTP, or Access login. One operator step remains - the
+custom domain is still behind a Cloudflare Access application - and the `workers.dev` hostname is the
+public URL until it is done. See "The URLs" and "Making the custom domain public" below, and
+`docs/qa/MULTI_USER_ALPHA.md` for the tester-facing version.
 
 This is a mobile playtest environment, not a launch. `docs/deployment.md` is the older, wider
 checklist; this file is the current state of the deployment and how to operate it.
 
-## The URL
+## The URLs
 
 ```text
-https://happy-farm-staging.duclong-reg.workers.dev
+https://happyfarm-staging.longfx.trade/                    canonical custom domain (Access-gated)
+https://happy-farm-staging.duclong-reg.workers.dev         public; works today
 ```
 
-Worker `happy-farm-staging`, version `279a8ce2-b03a-459c-a7ca-9be114ac8bb2`, deployed 2026-10-02 from
-commit `b23498d` (V13.5) with the V13.6 migration-comment fix.
+Both hostnames are the same Worker (`happy-farm-staging`). The custom domain is the one to hand to
+testers because it is easier to type, but it still answers `302` to
+`https://dawn-field-0231.cloudflareaccess.com/...`, so nobody can play on it yet. The `workers.dev`
+hostname has no Access application in front of it and is what a tester can play on right now.
+
+Current deployment: Worker `happy-farm-staging`, version `174b4e39-f0dd-46e6-84e3-de0b97c9ed01`,
+deployed 2026-10-02 from commit `7ad4942` + the V13.6.2 identity work. (The V13.6.1 version was
+`7df79218-2a86-4435-9cd9-a399f9415c93`.)
 
 ## Architecture
 
 ```text
-                    Cloudflare Access (Zero Trust)   <-- NOT YET APPLIED to the hostname above
-                              │  challenge + signed JWT
-                              ▼
+        browser
+          |  opens the canonical URL
+          v
+        Cloudflare Access (Zero Trust)     <-- applies to the CUSTOM DOMAIN only; the one remaining
+          |  (operator: bypass/remove)          operator step. workers.dev is not covered by it.
+          v
         happy-farm-staging Worker   (workers/api/wrangler.staging.toml)
-                              │  main = src/index.ts
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-        /api/*   (prefix stripped once)   everything else
-              │                               │
-              ▼                               ▼
-        API handler                Cloudflare Static Assets (ASSETS)
-        workers/api/src/handler.ts  apps/web/dist: SPA shell, hashed JS/CSS,
-              │                     GLB models, single-page fallback
-              ▼
-        happy-farm-staging D1  (binding DB)
+          |  main = src/index.ts
+          +-- /api/*  (prefix stripped once) --> API handler  (workers/api/src/handler.ts)
+          |                                      identity: Access JWT, or guest cookie
+          |                                      storage: happy-farm-staging D1 (binding DB)
+          |
+          +-- everything else ----------------> Cloudflare Static Assets (ASSETS)
+                                                 apps/web/dist: SPA shell, hashed JS/CSS,
+                                                 GLB models, single-page fallback
 ```
 
 One origin, so there is **no CORS**: the browser uses `API_BASE = "/api"` (`apps/web/src/api.ts`) and
-is served by the same Worker that owns the API. Nothing in the shipped bundle refers to `localhost`,
-`127.0.0.1`, a dev-server port or a filesystem path - verified against the deployed JS in V13.6, not
-only against the source.
+is served by the same Worker that owns the API. That is also what makes a cookie-borne guest session
+simple, and why the only CSRF defence needed beyond `SameSite=Lax` is the origin check in
+`workers/api/src/origin-guard.ts`. Nothing in the shipped bundle refers to `localhost`, `127.0.0.1`,
+a dev-server port or a filesystem path.
 
 ## Environments
 
 | | Entrypoint | Config | Database | Identity |
 | --- | --- | --- | --- | --- |
 | Local dev | `workers/api/src/dev-index.ts` | `wrangler.dev.toml` | `happy-farm-local` (local SQLite) | dev bearer token via the Vite proxy |
-| **Staging** | `workers/api/src/index.ts` | `wrangler.staging.toml` | `happy-farm-staging` (D1, binding `DB`) | Cloudflare Access JWT |
-| Production | not configured | `wrangler.toml` (local placeholder) | - | - |
+| **Staging** | `workers/api/src/index.ts` | `wrangler.staging.toml` | `happy-farm-staging` (D1, binding `DB`) | guest cookie (`GUEST_AUTH_ENABLED = "true"`), plus Cloudflare Access if a JWT is present |
+| Production | not configured | `wrangler.toml` (local placeholder) | - | none until Access is configured; guest play is off |
 
 The development bridge (`dev-auth.ts`, `dev-index.ts`, `workers/api/dev/**`) is not in the deployed
 entrypoint's import graph: it cannot exist in a Worker built from the staging config, and the deployed
 bundle was checked for it.
 
-## Identity: what works and what is missing
+## Identity: guest sessions (V13.6.2)
 
-Identity on staging is **Cloudflare Access**, and the API authenticates only the
-`Cf-Access-Jwt-Assertion` header that Access injects (RS256 verified against the team's JWKS). The
-browser sends no credential of its own, by design.
+A visitor who lands on a public hostname gets a real player, a real farm, and no login. The whole
+design is in `docs/design/IDENTITY.md`; the operational facts are:
 
-* The Zero Trust **team** exists: `https://dawn-field-0231.cloudflareaccess.com` answers.
-* The values in `wrangler.staging.toml` (`ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`) are the real ones, and
-  the API fails **closed** without a valid JWT - verified: `GET /api/shop` on the deployed Worker
-  answers **401** with no identity.
-* **There is no Access application covering the staging hostname yet.** An unauthenticated request to
-  `/` returns the app shell (200) rather than an Access challenge, which is how V13.6 proved it.
+| | |
+| --- | --- |
+| Credential | 32 random bytes from `crypto.getRandomValues`, base64url, in the `hf_guest` cookie |
+| Cookie | `Path=/; Max-Age=15552000; HttpOnly; Secure; SameSite=Lax` (180 days) |
+| Storage | `player_identities(kind='GUEST')`; the **SHA-256 hash** of the credential, never the credential |
+| Establishment | `GET /api/session` (the only route that may create an identity) |
+| Resolution | every other route; a cookie that does not resolve is simply not authenticated |
+| CSRF | `SameSite=Lax` plus an `Origin` check on unsafe methods (401 before authentication) |
 
-### The one remaining step (needs the Cloudflare dashboard)
+`GUEST_AUTH_ENABLED = "true"` in `workers/api/wrangler.staging.toml` is the only place guest play is
+switched on. Production leaves it unset, so `/api/session` answers `NOT_AUTHENTICATED` there and no
+player is created.
 
-Until this is done, a phone will load the shell and then fail every API call with
-`NOT_AUTHENTICATED`: the world never loads, and no farm is created.
+Cloudflare Access is untouched and still available: if a valid `Cf-Access-Jwt-Assertion` is present,
+that identity wins, and the guest cookie is ignored for that request. Nothing about the Access path
+was removed - a browser holding both is always the Access player.
 
-1. Zero Trust → **Access → Applications → Add an application → Self-hosted**.
-2. Application domain: `happy-farm-staging.duclong-reg.workers.dev` (or a custom domain, see below).
-3. Policy: **Allow**, with the tester emails (2-3 people is plenty).
-4. Copy the application's **Audience (AUD)** tag if it differs from the committed one, and its team
-   domain, into `workers/api/wrangler.staging.toml`, then redeploy (the commands below).
-5. `npm run check:staging-config` to confirm no placeholder remains.
+## Making the custom domain public
 
-Optional but recommended for a phone: attach a **custom domain** to the Worker (Workers → the
-`happy-farm-staging` service → Settings → Domains & Routes) and put *that* hostname in the Access
-application. `*.workers.dev` hostnames are perfectly functional; a custom domain is simply easier to
-type and to hand to a tester.
+Repository code cannot remove a Cloudflare Access application: the deployment credentials carry
+Workers scopes, not Access scopes (`npx wrangler whoami` lists no Access permissions). An operator
+with dashboard access must do it.
+
+1. **Zero Trust -> Access -> Applications.**
+2. Find the application whose domain is `happyfarm-staging.longfx.trade` (audience tag
+   `ff946e88...e1ad`, the value committed as `ACCESS_AUD`).
+3. Add a **Bypass** policy for `Everyone` (`Policies -> Add a policy`, action **Bypass**, include
+   **Everyone**) and leave any existing `Allow` policy in place. That is the reversible move: delete
+   the bypass to restore the gate. Removing the application entirely also works, but note its AUD tag
+   first, because the Worker still has it configured.
+4. Verify:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' https://happyfarm-staging.longfx.trade/            # 200
+   curl -s -o /dev/null -w '%{http_code}\n' https://happyfarm-staging.longfx.trade/api/health  # 200
+   curl -si https://happyfarm-staging.longfx.trade/api/session | Select-String 'set-cookie'    # hf_guest=...
+   ```
+
+   A `302` to `cloudflareaccess.com` means the gate is still there.
+
+Nothing about the deployment changes when this is done: the Worker already serves guest sessions on
+every hostname. Access configuration stays recoverable either way.
 
 ## Database
 
@@ -90,19 +118,25 @@ type and to hand to a tester.
 | Binding | `DB` |
 | Database | `happy-farm-staging` |
 | Id | `acc598c9-e726-46c8-b1a3-23e5b6a42d52` (committed in `wrangler.staging.toml`; not a secret) |
-| Migrations | **0001 - 0013 applied** (V13.6) |
-| Data at deploy time | 5 players, 4 farms, 80 tiles - preserved, not reset |
+| Migrations | **0001 - 0015 applied** |
+| Data after the V13.6.2 smoke test | 7 players, 7 identities (2 of them guest), 6 farms - nothing reset |
 
 V13.6.1 added `0014_one_farm_per_player.sql`: a unique index on `farms(owner_player_id)`, so a phone
 that retries "create my farm" cannot end up with two farms - and with its gold and crops on the one it
-cannot see. The index was safe to add because no staging player owned more than one farm (4 farms, 4
-owner memberships, 0 duplicates). `CreateFarm` also looks for the player's farm before creating one,
-and answers `200` (rather than `201`) when it finds it.
+cannot see. `CreateFarm` also looks for the player's farm before creating one, and answers `200`
+(rather than `201`) when it finds it.
 
-The database existed from the earlier alpha and was at `0009`. V13.6 applied `0010`, `0011`, `0012`
-and `0013` through the repository's own workflow; nothing was altered by hand, and no data was
-deleted. Existing testers keep their farms, and their first read after the deploy seeds the V13.3
-starter world objects onto them (that is the designed migration path, not a reset).
+V13.6.2 added `0015_player_identities.sql`: the multi-identity table (`packages`-level model in
+`packages/domain/src/identity.ts`). It is additive - `players` keeps its columns and its
+`(auth_issuer, auth_subject)` pair as the primary identity - and it backfilled all 5 players that
+existed at migration time as `CLOUDFLARE_ACCESS` identities, verified before the deploy (`5 players,
+5 identities, 4 farms`). The two guest players created by the live smoke test are the first two
+`GUEST` rows.
+
+The database existed from the earlier alpha and was at `0009` before V13.6. V13.6 applied `0010`,
+`0011`, `0012` and `0013` through the repository's own workflow, V13.6.1 applied `0014`, and V13.6.2
+applied `0015`; nothing was altered by hand and no data was deleted. Existing testers keep their
+farms.
 
 ### A migration bug V13.6 found and fixed
 
@@ -128,7 +162,7 @@ npm run assets:validate && npm run check:staging-config
 npm run build                     # writes apps/web/dist, which the Worker serves
 npm run build:worker:staging      # dry run of the Worker bundle
 
-# 2. Migrations, if any are pending (see below)
+# 2. Migrations, if any are pending
 npx wrangler d1 migrations list happy-farm-staging --remote --config workers/api/wrangler.staging.toml
 npx wrangler d1 migrations apply happy-farm-staging --remote --config workers/api/wrangler.staging.toml
 
@@ -136,8 +170,14 @@ npx wrangler d1 migrations apply happy-farm-staging --remote --config workers/ap
 npx wrangler deploy --config workers/api/wrangler.staging.toml
 ```
 
-Authentication for step 3 is `npx wrangler login` (an OAuth session), or `CLOUDFLARE_API_TOKEN` in
-CI. The token needs Workers Scripts: Edit and D1: Edit for this account.
+Authentication is `npx wrangler login` (an OAuth session), or `CLOUDFLARE_API_TOKEN` in CI. The token
+needs Workers Scripts: Edit and D1: Edit for this account. A rare `7403 "account is not valid or is
+not authorized"` from the D1 endpoint has been seen and cleared by simply retrying the command.
+
+**Order matters for V13.6.2**: this Worker's onboarding writes to `player_identities`, so migration
+`0015` must be applied *before* this version is deployed. Deploying the code first would leave every
+authenticated request answering `NOT_AUTHENTICATED` (the identity write fails, and the authenticator
+fails closed) until the migration lands. Apply migrations, then deploy.
 
 Prerequisites that already exist in this account: the `happy-farm-staging` Worker and D1 database.
 `npx wrangler d1 create happy-farm-staging` is only needed if the database is ever deleted.
@@ -152,10 +192,11 @@ npx wrangler versions list --config workers/api/wrangler.staging.toml
 npx wrangler rollback <version-id> --config workers/api/wrangler.staging.toml
 ```
 
-The Worker that was live before V13.6 is recoverable this way. **Database migrations do not roll
-back** - they are additive and forward-only, as the project's migration policy requires - so a
-rollback of the Worker to a pre-V13 build against a migrated database is not a supported state. If
-that is ever needed, the safe move is a new forward migration, not a downgrade.
+The Worker that was live before V13.6.2 is recoverable this way (`7df79218-...`, V13.6.1).
+**Database migrations do not roll back** - they are additive and forward-only, as the project's
+migration policy requires - so a rollback of the Worker to a pre-`0015` build against a migrated
+database is not a supported state. If that is ever needed, the safe move is a new forward migration,
+not a downgrade.
 
 ## Verifying a deploy
 
@@ -164,7 +205,11 @@ BASE=https://happy-farm-staging.duclong-reg.workers.dev
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/                     # 200, the app shell
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/some/client/route    # 200, the SPA fallback
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/health           # 200, the Worker is alive
-curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/shop             # 401 until Access is in front
+curl -s -o /dev/null -w '%{http_code}\n' $BASE/api/shop             # 401, no cookie and no JWT
+
+# A whole guest session, with its own cookie jar
+JAR=$(mktemp); curl -s -c $JAR -o /dev/null -w '%{http_code}\n' $BASE/api/session   # 200, sets hf_guest
+curl -s -b $JAR $BASE/api/session                                                   # same player id
 ```
 
 The character model is served as a hashed asset; find its name in `apps/web/dist/index.html` or the
@@ -173,11 +218,23 @@ never blocks startup: if it 404s, the game still plays with the placeholder char
 
 ## Known limitations
 
-* **Access is not yet applied to the hostname**, so the API answers 401 and a phone cannot play. This
-  is the only thing standing between this deployment and a real-device test.
-* The `workers.dev` URL is the staging URL; there is no custom domain yet.
+* **The custom domain is still Access-gated**, so the canonical URL cannot be played on until the
+  operator step above is done. The `workers.dev` hostname is public and is the URL to hand out.
+* **Guest progress depends on keeping the guest credential.** Clearing site data, a private window,
+  or a different browser makes a new guest; there is no account-linking or recovery path yet, so the
+  old farm becomes unreachable. Documented for testers in `docs/qa/MULTI_USER_ALPHA.md`.
+* **Guest creation is not rate-limited by the application.** The public URL can be scripted to mint
+  players, bounded only by Cloudflare's platform protections. Acceptable for an invited alpha;
+  a launch would need a limit (rate limiting rule, Turnstile, or a per-IP creation cap).
+* The `workers.dev` hostname is reachable whenever the Worker is; it is not on Access. It is,
+  intentionally, the same policy as the intended public custom domain - but it is a second public
+  entry point an operator should be aware of and can disable with a Cloudflare route if needed.
+* **Guest identity is per hostname.** The `hf_guest` cookie is set with `Path=/` and no `Domain`, so a
+  guest on `workers.dev` is a different guest from one on the custom domain. Testers who switch
+  hostnames get a new farm (their old one still exists, addressed only by the old cookie). Choose one
+  URL per playtest; when the custom domain is made public, hand that one out from the start.
 * Staging is the only deployed environment. There is no production deployment, and the production
   config still carries the local placeholder database - do not deploy it.
-* `STARTER_GRANT_POLICY = "ALL_UNRECEIPTED"` is set on staging so the earlier alpha testers receive
-  the starter package once. Production leaves it unset; that difference is intentional.
+* `STARTER_GRANT_POLICY = "ALL_UNRECEIPTED"` is set on staging so earlier alpha testers receive the
+  starter package once. Production leaves it unset; that difference is intentional.
 * The migrations are forward-only (see "Rolling back").

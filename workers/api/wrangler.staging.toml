@@ -28,6 +28,12 @@ ACCESS_AUD = "ff946e884e717fbe9e1eb792784389252a5e966006016d4ac19d4e222c35e1ad"
 # package to a player who has no receipt for it. Production leaves this unset - and therefore only
 # ever grants a brand-new player - which is what keeps an existing balance out of a page refresh.
 STARTER_GRANT_POLICY = "ALL_UNRECEIPTED"
+# V13.6.2 public guest alpha: anyone who opens the link gets a real Player and starter farm behind an
+# opaque guest cookie, with no email, OTP, or Access login. This is the only place guest play is
+# switched on; production leaves it unset and stays fail-closed. When the operator removes the Access
+# application from the staging hostname (docs/deployment/STAGING.md), the guest path is what testers
+# land on.
+GUEST_AUTH_ENABLED = "true"
 
 [assets]
 # The built web app: SPA shell, hashed JS/CSS, and the generated GLB models. The path is relative to

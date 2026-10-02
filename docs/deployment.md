@@ -130,9 +130,10 @@ Do these in order. Nothing here has been done for you, and no value should be co
    npx wrangler d1 migrations apply happy-farm-staging --config workers/api/wrangler.staging.toml
    ```
 
-   Expected, as of V13.6: `0001` ... `0013` are all applied. On a fresh database all thirteen are
-   pending; the staging database was at `0009` when V13.6 ran and needed `0010` ... `0013` (see
-   `docs/deployment/STAGING.md` for what was applied and when). Never rewrite an applied migration -
+   Expected, as of V13.6.2: `0001` ... `0015` are all applied. On a fresh database all fifteen are
+   pending; the staging database was at `0009` when V13.6 ran and needed `0010` ... `0015` across
+   V13.6, V13.6.1 (`0014`, one farm per player) and V13.6.2 (`0015`, player identities) - see
+   `docs/deployment/STAGING.md` for what was applied and when. Never rewrite an applied migration -
    and use `--` comments rather than block comments in a migration: a `;` inside a block comment
    breaks the Wrangler statement splitter (`incomplete input: SQLITE_ERROR [code: 7500]`), which is the bug
    V13.6 hit and fixed in `0012_world_objects.sql`.
@@ -174,13 +175,19 @@ Do these in order. Nothing here has been done for you, and no value should be co
 ## Not verified
 
 ```text
-REAL_CLOUDFLARE_ACCESS: PARTIAL        (the team domain answers; an Access application covering the
-                                        staging hostname does not exist yet, so the API answers 401 -
-                                        this is the one step left before a phone can play)
+REAL_CLOUDFLARE_ACCESS: GATED          (the team domain answers and an Access application now covers
+                                        the canonical custom domain, so it answers 302 to the Access
+                                        login - this is the one operator step left before a phone can
+                                        use that URL; the workers.dev hostname is public)
 REMOTE D1 STAGING:      VERIFIED       (happy-farm-staging exists with the committed id and now has
-                                        migrations 0001 - 0013 applied; 5 players and 4 farms kept)
-STAGING DEPLOY:         VERIFIED       (V13.6 deployed happy-farm-staging from wrangler.staging.toml;
-                                        see docs/deployment/STAGING.md for the version id and URL)
+                                        migrations 0001 - 0015 applied; the pre-existing players and
+                                        farms were backfilled as identities, nothing reset)
+STAGING DEPLOY:         VERIFIED       (V13.6.2 deployed happy-farm-staging from wrangler.staging.toml;
+                                        see docs/deployment/STAGING.md for the version id and URLs)
+PUBLIC GUEST SESSION:   VERIFIED       (over HTTPS: two cookie jars got two distinct guest players and
+                                        farms, a reload kept the same one, A spent gold and B's balance
+                                        did not move, B was refused A's farm with 403, and a cross-origin
+                                        POST was refused with 401)
 BROWSER ON STAGING:     NOT VERIFIED   (asset, API and bundle smoke tests ran over HTTPS from this
                                         environment; no browser session was available)
 ```
