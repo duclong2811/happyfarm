@@ -17,6 +17,15 @@ therefore has zero authority in a deployment: `POST /api/farms` with a valid dev
 `NOT_AUTHENTICATED`, and `/__dev/bootstrap` is not a route at all. Local development keeps working
 unchanged through `npm run dev` and `npm run dev:worker`.
 
+### Never a remote database
+
+`npm run dev` talks only to the local file `.wrangler/dev-local.sqlite`
+(`workers/api/dev/api-host.ts` reads it with `node:sqlite`); `npm test` talks only to in-memory
+`node:sqlite` (`tests/support/node-d1.ts`). Normal coding, tests and builds cannot reach Cloudflare
+D1 - `docs/performance/D1_READ_AUDIT.md` records the V14.3.2 audit that proved it and
+`tests/integration/d1-local-isolation.test.ts` is the guardrail. Remote D1 is touched only by a
+deliberate staging operation (`docs/deployment/STAGING.md`), never by a routine loop.
+
 ## Configure local development
 
 1. Copy the template and fill in local-only values:

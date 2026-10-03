@@ -30,6 +30,7 @@ import {
 } from "./i18n";
 import { progressionSummary } from "./progression";
 import { LEVEL_UP_DURATION_MS, levelUpFeedback, unlockNotices } from "./unlocks";
+import { GROWTH_REFRESH_INTERVAL_MS, shouldRefreshGrowth } from "./polling";
 import { createIcon, renderIcons, type IconName } from "./icons";
 import {
   closePanel,
@@ -188,7 +189,6 @@ import {
 import "./styles.css";
 
 const FARM_KEY = "happy-farm.dev.farmId";
-const REFRESH_INTERVAL_MS = 2_000;
 // A success message is transient: it says what just happened and then gives the world its screen
 // back. Errors are not on this clock - they stay until something replaces them, because they are
 // usually the only sign that an action the player asked for did not happen.
@@ -4014,6 +4014,26 @@ async function refreshFarm(): Promise<void> {
   refreshScene();
 }
 
+/**
+ * The lists a timer has to re-read: crops and trees mature on the server's clock.
+ *
+ * Land, plots and built objects change only when the player acts, and every action already calls
+ * `refreshFarm`, so polling them bought nothing and cost a full-list D1 read every cycle. The V14.3.2
+ * audit found those two queries were 91.8% of 5.83M rows read in a day. See
+ * `docs/performance/D1_READ_AUDIT.md`.
+ */
+async function refreshGrowth(): Promise<void> {
+  if (state.farmId === null) return;
+  const client = api();
+  const [crops, trees] = await Promise.all([
+    client.getCrops(state.farmId),
+    client.getTrees(state.farmId)
+  ]);
+  state.crops = crops.crops;
+  state.trees = trees.trees;
+  refreshScene();
+}
+
 async function loadFarm(farmId: string): Promise<void> {
   const client = api();
   const result = await client.getFarm(farmId);
@@ -4569,20 +4589,34 @@ function wire(): void {
    * Whether a poll is still running.
    *
    * The interval is fixed, and a slow round trip - a cold development API, a machine already under
-   * load - used to let ticks stack: another four requests, another state push, another whole-page
-   * re-render, every two seconds, all overlapping the tick before. That is a self-sustaining load
-   * spiral on exactly the machine this recovery pass exists to rescue, so a tick that arrives while
-   * the previous one is still running is dropped. The next tick is at most two seconds away and the
-   * lost poll is indistinguishable from a slow response.
+   * load - used to let ticks stack: another pair of requests, another state push, another whole-page
+   * re-render, all overlapping the tick before. That is a self-sustaining load
+   * spiral, so a tick that arrives while the previous one is still running is dropped. The gap is
+   * small next to how slowly crops grow, and the lost poll is indistinguishable from a slow response.
    */
   let farmRefreshInFlight = false;
 
-  window.setInterval(() => {
-    if (state.farmId === null || farmRefreshInFlight) return;
+  /**
+   * One growth refresh, if the gate allows it.
+   *
+   * A hidden tab reads nothing: a phone in a pocket, a background tab, or a second window left open
+   * overnight must not keep reading the database. Coming back to the foreground refreshes at once
+   * rather than waiting out the interval.
+   */
+  function refreshGrowthOnce(): void {
+    if (
+      !shouldRefreshGrowth({
+        farmLoaded: state.farmId !== null,
+        visible: document.visibilityState === "visible",
+        inFlight: farmRefreshInFlight
+      })
+    ) {
+      return;
+    }
     farmRefreshInFlight = true;
     void (async () => {
       try {
-        await refreshFarm();
+        await refreshGrowth();
         render();
       } catch {
         // Growth polling is best-effort; explicit actions surface their own errors.
@@ -4590,7 +4624,12 @@ function wire(): void {
         farmRefreshInFlight = false;
       }
     })();
-  }, REFRESH_INTERVAL_MS);
+  }
+
+  window.setInterval(refreshGrowthOnce, GROWTH_REFRESH_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshGrowthOnce();
+  });
 }
 
 document.documentElement.lang = languageTag(state.language);

@@ -896,6 +896,24 @@ control the same world, not separate game states.**
 
 ## Staging deployment foundation
 
+### D1 read cost and remote safety (V14.3.2)
+
+Read `docs/performance/D1_READ_AUDIT.md` before changing the client's refresh/polling behaviour, the
+farm read endpoints, or any script that could reach a remote database. It records the incident (the
+staging database read 5.83M rows/day and tripped the 5M Free limit), the read-only D1 metrics that
+proved the cause, and the cost model.
+
+- The cause was the 2 s client poll reading full lists: `farm_tiles` twice (`/tiles` + `/plots`) and
+  `farm_constructions` once per tick, ~1,304 rows/tick, 91.8% of the day's rows.
+- The fix: `apps/web/src/polling.ts` (`GROWTH_REFRESH_INTERVAL_MS`, `shouldRefreshGrowth`) plus the
+  timer in `apps/web/src/main.ts` - the poll now refreshes only crops and trees, only while the tab
+  is visible, and `refreshGrowth` replaces the full `refreshFarm` on the timer. Full reads stay on
+  explicit actions.
+- Guardrail test: `tests/integration/d1-local-isolation.test.ts` fails if a routine script names
+  `--remote` or deploys with `wrangler deploy` without `--dry-run`.
+- Policy: LOCAL is sqlite only; STAGING is manual verification only; PRODUCTION is not configured.
+  `npx wrangler d1 info` / `d1 insights` are the read-only way to re-check the budget.
+
 ### Staging playtest deployment (V13.6)
 
 Read `docs/qa/MULTI_USER_ALPHA.md` before inviting testers. Its invariant is non-negotiable:

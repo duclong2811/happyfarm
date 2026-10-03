@@ -234,6 +234,11 @@ never blocks startup: if it 404s, the game still plays with the placeholder char
   URL per playtest; when the custom domain is made public, hand that one out from the start.
 * Staging is the only deployed environment. There is no production deployment, and the production
   config still carries the local placeholder database - do not deploy it.
+* **Do not put staging in a coding loop.** The client used to poll the whole farm every 2 s, and a
+  couple of tabs left open read 5.83M rows in a day - over the D1 Free limit (see
+  `docs/performance/D1_READ_AUDIT.md`). The poll now reads only growth, only while visible, but the
+  rule stands: normal coding and tests are local (`npm run dev`, `npm test`), and a live staging
+  check is a deliberate, occasional action.
 * `STARTER_GRANT_POLICY = "ALL_UNRECEIPTED"` is set on staging so earlier alpha testers receive the
   starter package once. Production leaves it unset; that difference is intentional.
 * The migrations are forward-only (see "Rolling back").
