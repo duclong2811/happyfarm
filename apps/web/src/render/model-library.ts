@@ -1,6 +1,6 @@
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { Mesh, type AnimationClip, type BufferGeometry, type Material, type Object3D } from "three";
-import { CROP_MODEL_URLS } from "./model-urls";
+import { CROP_MODEL_URLS, resourceModelUrl } from "./model-urls";
 import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
 import { PROP_MODEL_URL_BY_ID } from "./prop-model-urls";
 import { BUILDING_MODELS } from "./building-model-urls";
@@ -51,6 +51,8 @@ export interface ModelLibrary {
 export function modelUrlFor(modelId: string): string | undefined {
   const crop = cropModelId(modelId);
   if (crop !== null) return CROP_MODEL_URLS[crop];
+  const resource = resourceModelUrl(modelId);
+  if (resource !== null) return resource;
   const character = CHARACTER_MODEL_URL_BY_ID.get(modelId);
   if (character !== undefined) return character;
   const environment = ENVIRONMENT_MODEL_URL_BY_ID.get(modelId);

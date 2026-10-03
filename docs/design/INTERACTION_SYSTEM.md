@@ -1,8 +1,9 @@
 # Character interaction: discovery, intent, execution
 
 Status: implemented in V14.1 for `INSPECT` and `HARVEST` on crops, production trees and built things,
-extended in V14.3 with `TRADE` on a service object and in V15.1 with `FISH` on a fishing spot. Read this
-before adding an action, changing what is "in reach", or wiring a new kind of
+extended in V14.3 with `TRADE` on a service object, in V15.1 with `FISH` on a fishing spot, and in V15.2
+with the node's own verb - `MINE`, and `CHOP` for a definition that declares it - on a resource node.
+Read this before adding an action, changing what is "in reach", or wiring a new kind of
 target into character view.
 
 > **Discovery looks; execution acts.** Nothing that finds a target may change the world, and nothing
@@ -48,7 +49,7 @@ read models (crops, trees, constructions)
         |
         |  activation re-asks discovery with fresh data
         v
-   InteractionActivation           HARVEST_CROP | HARVEST_TREE | TRADE | FISH | INSPECT | STALE
+   InteractionActivation           HARVEST_CROP | HARVEST_TREE | TRADE | FISH | GATHER | INSPECT | STALE
         |
         v
    existing server-authoritative command (harvest) or the existing selection surface (inspect)

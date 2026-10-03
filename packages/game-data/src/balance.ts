@@ -8,6 +8,11 @@ import {
   type FishingTableData
 } from "./fishing";
 import { shopRegistry } from "./shops";
+import {
+  resourceDefinitionRegistry,
+  resourceDropTableRegistry,
+  resourceNodes
+} from "./resources";
 import { treeRegistry, type TreeDefinitionData } from "./trees";
 
 /**
@@ -181,4 +186,66 @@ export function fishingTableEconomics(table: FishingTableData): FishingTableEcon
 export const fishingBalance = {
   actionSeconds: FISHING_ACTION_SECONDS,
   tables: fishingTables.map(fishingTableEconomics)
+} as const;
+
+export interface ResourceEconomics {
+  readonly id: string;
+  readonly verb: string;
+  readonly actionSeconds: number;
+  readonly regenerationSeconds: number;
+  readonly xp: number;
+  readonly dropItemDefinitionId: string;
+  readonly quantityPerGather: number;
+  readonly unitSellPrice: number;
+  readonly goldPerGather: number;
+  /** How many of this node type stand on Home Island. */
+  readonly nodeCount: number;
+  /**
+   * Sustained gold per minute for this node type once regeneration is accounted for.
+   *
+   * `nodeCount x goldPerGather / max(nodeCount x actionSeconds, regenerationSeconds)`: mining every
+   * node of a type back to back then waiting is the fastest a single player can farm it.
+   */
+  readonly sustainedGoldPerMinute: number;
+  readonly sustainedXpPerMinute: number;
+}
+
+/**
+ * The mining economy, computed from the node definitions exactly as the crops and fish are.
+ *
+ * `sustained` is the honest number: instantaneous gold per action is meaningless when the node then
+ * has to come back, so the rate divides by whichever is longer - the time to walk and mine every node
+ * of that type, or one node's regeneration.
+ */
+export function resourceEconomics(definitionId: string): ResourceEconomics {
+  const definition = resourceDefinitionRegistry.get(definitionId);
+  if (definition === undefined) throw new Error(`Unknown resource definition: ${definitionId}`);
+  const table = resourceDropTableRegistry.get(definition.dropTableId);
+  if (table === undefined) throw new Error(`Unknown drop table: ${definition.dropTableId}`);
+  const entry = table.entries[0];
+  if (entry === undefined) throw new Error(`Empty drop table: ${table.id}`);
+  const unitSellPrice = requiredSellPrice(entry.itemDefinitionId);
+  const quantityPerGather = entry.minQuantity;
+  const goldPerGather = quantityPerGather * unitSellPrice;
+  const nodeCount = resourceNodes.filter((node) => node.definitionId === definition.id).length;
+  const windowSeconds = Math.max(nodeCount * definition.actionSeconds, definition.regenerationSeconds);
+  const windowsPerMinute = 60 / windowSeconds;
+  return {
+    id: definition.id,
+    verb: definition.verb,
+    actionSeconds: definition.actionSeconds,
+    regenerationSeconds: definition.regenerationSeconds,
+    xp: definition.xp,
+    dropItemDefinitionId: entry.itemDefinitionId,
+    quantityPerGather,
+    unitSellPrice,
+    goldPerGather,
+    nodeCount,
+    sustainedGoldPerMinute: nodeCount * goldPerGather * windowsPerMinute,
+    sustainedXpPerMinute: nodeCount * definition.xp * windowsPerMinute
+  };
+}
+
+export const miningBalance = {
+  resources: [...resourceDefinitionRegistry.keys()].map(resourceEconomics)
 } as const;

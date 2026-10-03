@@ -121,6 +121,7 @@ describe("the inventory shelf", () => {
       ALL: 1,
       PRODUCE: 0,
       FISH: 0,
+      MATERIALS: 0,
       SEEDS: 1,
       SAPLINGS: 0
     });

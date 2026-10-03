@@ -1,6 +1,11 @@
-import type { CropDefinitionDTO, FishDefinitionDTO, TreeDefinitionDTO } from "@happy-farm/contracts";
+import type {
+  CropDefinitionDTO,
+  FishDefinitionDTO,
+  ResourceNodeDTO,
+  TreeDefinitionDTO
+} from "@happy-farm/contracts";
 import { cropModelId } from "../render/assets";
-import { fishModelUrl } from "../render/model-urls";
+import { fishModelUrl, resourceModelUrl } from "../render/model-urls";
 import type { ThumbnailRequest } from "../render/thumbnail";
 
 /**
@@ -61,6 +66,11 @@ export function fishVisualFor(modelId: string | null): ItemVisual {
   return modelVisual(fishModelUrl(modelId), "PRODUCE");
 }
 
+/** A mined material: the deposit's own art, so a card shows the rock the ore came out of. */
+export function resourceVisualFor(modelId: string | null): ItemVisual {
+  return modelVisual(resourceModelUrl(modelId), "PRODUCE");
+}
+
 /** Anything this build has no definition for: a plain crate, sized like every other card. */
 export function unknownItemVisual(): ItemVisual {
   return modelVisual(null, "ITEM");
@@ -71,6 +81,8 @@ export interface ItemVisualCatalogues {
   readonly treeDefinitions: readonly TreeDefinitionDTO[];
   /** The species this deployment can catch, so a fish item draws its own species rather than a crate. */
   readonly fish?: readonly FishDefinitionDTO[];
+  /** The island's deposits, so a material item draws the node it was mined from. */
+  readonly resourceNodes?: readonly ResourceNodeDTO[];
 }
 
 /**
@@ -92,6 +104,10 @@ export function itemVisualFor(
     (definition) => definition.itemDefinitionId === itemDefinitionId
   );
   if (caught !== undefined) return fishVisualFor(caught.modelId);
+  const mined = (catalogues.resourceNodes ?? []).find(
+    (node) => node.dropItemDefinitionId === itemDefinitionId
+  );
+  if (mined !== undefined) return resourceVisualFor(mined.modelId);
   const seedOf = catalogues.cropDefinitions.find(
     (definition) => definition.seedItemDefinitionId === itemDefinitionId
   );

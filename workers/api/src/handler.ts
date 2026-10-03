@@ -30,7 +30,12 @@ import {
   CancelFishing,
   EconomyService,
   GetActiveFishing,
+  GetActiveResourceAction,
   ListFishingCatalogue,
+  ListResourceNodes,
+  CancelResourceAction,
+  SettleResourceAction,
+  StartResourceAction,
   SellItem,
   SettleFishing,
   StartFishing,
@@ -60,6 +65,11 @@ import {
   ,type FishView
   ,type FishingActionView
   ,type FishingSpotView
+  ,type RandomPort
+  ,type ResourceActionView
+  ,type ResourceCataloguePort
+  ,type ResourceIdGenerator
+  ,type ResourceNodeView
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
@@ -85,11 +95,18 @@ import {
   StartFishingRequestSchema,
   SettleFishingRequestSchema,
   CancelFishingRequestSchema,
+  StartResourceActionRequestSchema,
+  SettleResourceActionRequestSchema,
+  CancelResourceActionRequestSchema,
   type FishingActionDTO,
   type FishingSpotDTO,
   type FishDefinitionDTO,
   type StartFishingResponse,
   type SettleFishingResponse,
+  type ResourceActionDTO,
+  type ResourceNodeDTO,
+  type StartResourceActionResponse,
+  type SettleResourceActionResponse,
   type ApiFailure,
   type ApiSuccess,
   type ErrorCode,
@@ -139,6 +156,9 @@ import {
   D1FishingActionRepository,
   D1FishingSettlementRepository,
   D1HomeIslandZoneResolver,
+  D1ResourceActionRepository,
+  D1ResourceNodeStateRepository,
+  D1ResourceSettlementRepository,
   D1FarmExpansionRepository,
   D1TreeRepository,
   D1ConstructionRepository,
@@ -195,6 +215,17 @@ export interface HandlerDependencies {
     readonly catalogue: FishingCataloguePort;
     readonly ids: FishingIdGenerator;
     readonly random: FishingRandomPort;
+  };
+  /**
+   * Resource nodes: the catalogue, the id source, and the shared entropy.
+   *
+   * Optional for the same reason fishing's is: a host that has not wired gathering answers
+   * `RESOURCE_NOT_FOUND` on its routes rather than refusing to build.
+   */
+  readonly resources?: {
+    readonly catalogue: ResourceCataloguePort;
+    readonly ids: ResourceIdGenerator;
+    readonly random: RandomPort;
   };
   readonly clock: Clock;
 }
@@ -263,6 +294,40 @@ function toFishingActionDTO(action: FishingActionView): FishingActionDTO {
     },
     spotId: action.spotId,
     tableId: action.tableId,
+    status: action.status,
+    startedAt: action.startedAt,
+    readyAt: action.readyAt,
+    secondsUntilReady: action.secondsUntilReady,
+    version: action.version
+  };
+}
+
+function toResourceNodeDTO(node: ResourceNodeView): ResourceNodeDTO {
+  return {
+    nodeId: node.nodeId,
+    definitionId: node.definitionId,
+    displayNameKey: node.displayNameKey,
+    verb: node.verb,
+    zoneKind: node.zoneKind as ResourceNodeDTO["zoneKind"],
+    position: { x: node.position.x, y: node.position.y },
+    interactionRadiusTiles: node.interactionRadiusTiles,
+    actionSeconds: node.actionSeconds,
+    modelId: node.modelId,
+    dropItemDefinitionId: node.dropItemDefinitionId,
+    requiredLevel: node.requiredLevel,
+    availableAt: node.availableAt,
+    secondsUntilAvailable: node.secondsUntilAvailable,
+    available: node.available
+  };
+}
+
+function toResourceActionDTO(action: ResourceActionView): ResourceActionDTO {
+  return {
+    actionId: action.actionId,
+    zone: { kind: action.zone.kind as ResourceActionDTO["zone"]["kind"], zoneId: action.zone.id },
+    nodeId: action.nodeId,
+    definitionId: action.definitionId,
+    verb: action.verb,
     status: action.status,
     startedAt: action.startedAt,
     readyAt: action.readyAt,
@@ -405,6 +470,8 @@ function errorStatus(code: ErrorCode): number {
     case "CONSTRUCTION_NOT_STORABLE":
     case "CONSTRUCTION_NOT_STORED":
     case "FISHING_ZONE_NOT_ALLOWED":
+    case "RESOURCE_ZONE_NOT_ALLOWED":
+    case "RESOURCE_LEVEL_REQUIRED":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -417,6 +484,8 @@ function errorStatus(code: ErrorCode): number {
     case "CONSTRUCTION_NOT_FOUND":
     case "FISHING_SPOT_NOT_FOUND":
     case "FISHING_ACTION_NOT_FOUND":
+    case "RESOURCE_NODE_NOT_FOUND":
+    case "RESOURCE_ACTION_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
     case "REQUEST_ALREADY_PROCESSED":
@@ -440,6 +509,11 @@ function errorStatus(code: ErrorCode): number {
     case "FISHING_NOT_READY":
     case "FISHING_ACTION_NOT_ACTIVE":
     case "FISHING_CONFLICT":
+    case "RESOURCE_NODE_DEPLETED":
+    case "RESOURCE_ALREADY_ACTIVE":
+    case "RESOURCE_NOT_READY":
+    case "RESOURCE_ACTION_NOT_ACTIVE":
+    case "RESOURCE_CONFLICT":
       return 409;
     case "CONSTRUCTION_UNSUITABLE_GROUND":
     case "CONSTRUCTION_BLOCKED":
@@ -748,6 +822,60 @@ export function createHandler(dependencies: HandlerDependencies) {
           )
         };
 
+  /**
+   * Resource nodes, when the host wired them: the same shape as fishing, one level more generic.
+   * Mining uses it today with `verb: "MINE"`, and forestry reuses the same use cases with `CHOP`.
+   */
+  const resources = dependencies.resources;
+  const resourceStates = new D1ResourceNodeStateRepository(dependencies.db);
+  const resourceActions = new D1ResourceActionRepository(dependencies.db);
+  const resourceSettlement = new D1ResourceSettlementRepository(dependencies.db);
+  const resourceNodeRoutes =
+    resources === undefined
+      ? null
+      : {
+          list: new ListResourceNodes(
+            resources.catalogue,
+            resourceStates,
+            new D1HomeIslandZoneResolver(farms),
+            dependencies.clock
+          ),
+          active: new GetActiveResourceAction(resourceActions, dependencies.clock),
+          start: new StartResourceAction(
+            new D1HomeIslandZoneResolver(farms),
+            resources.catalogue,
+            resourceStates,
+            resourceActions,
+            progressions,
+            dependencies.progressionDefinition,
+            new D1IdempotencyRepository(dependencies.db),
+            resources.ids,
+            dependencies.fingerprints,
+            dependencies.clock
+          ),
+          settle: new SettleResourceAction(
+            resourceActions,
+            resourceSettlement,
+            resources.catalogue,
+            resourceStates,
+            inventory,
+            new InventoryService(dependencies.itemDefinitions, dependencies.clock),
+            progressions,
+            dependencies.progressionDefinition,
+            new D1IdempotencyRepository(dependencies.db),
+            resources.random,
+            dependencies.fingerprints,
+            dependencies.clock
+          ),
+          cancel: new CancelResourceAction(
+            resourceActions,
+            resourceSettlement,
+            new D1IdempotencyRepository(dependencies.db),
+            dependencies.fingerprints,
+            dependencies.clock
+          )
+        };
+
   return async function handle(request: Request): Promise<Response> {
     const requestId = crypto.randomUUID();
     const url = new URL(request.url);
@@ -944,6 +1072,82 @@ export function createHandler(dependencies: HandlerDependencies) {
         const parsed = CancelFishingRequestSchema.safeParse(await parseJson(request));
         if (!parsed.success) return failure("INVALID_INPUT", requestId);
         const result = await fishingCatalogue.cancel.execute(actor, {
+          actionId: decodedActionId,
+          expectedActionVersion: parsed.data.expectedActionVersion,
+          requestId: parsed.data.requestId
+        });
+        const body: ApiSuccess<{ cancelled: true }> = { ok: true, data: result };
+        return jsonResponse(body);
+      }
+
+      /**
+       * Resource nodes.
+       *
+       * The catalogue folds the actor's own zone's availability into the static placements, so the
+       * client can draw a depleted node and count it down without polling. Starting names a node;
+       * settling names the server's own action and lets it choose the drop, the experience, the
+       * depletion and the regeneration clock. A host that has not wired gathering answers
+       * `RESOURCE_NOT_FOUND`.
+       */
+      if (resourceNodeRoutes !== null && request.method === "GET" && url.pathname === "/resource-nodes") {
+        const catalogue = await resourceNodeRoutes.list.execute(actor);
+        const body: ApiSuccess<{ nodes: ResourceNodeDTO[] }> = {
+          ok: true,
+          data: { nodes: catalogue.nodes.map(toResourceNodeDTO) }
+        };
+        return jsonResponse(body);
+      }
+
+      if (
+        resourceNodeRoutes !== null &&
+        request.method === "GET" &&
+        url.pathname === "/resource-actions/active"
+      ) {
+        const action = await resourceNodeRoutes.active.execute(actor);
+        const body: ApiSuccess<{ action: ResourceActionDTO | null }> = {
+          ok: true,
+          data: { action: action === null ? null : toResourceActionDTO(action) }
+        };
+        return jsonResponse(body);
+      }
+
+      if (
+        resourceNodeRoutes !== null &&
+        request.method === "POST" &&
+        url.pathname === "/resource-actions/start"
+      ) {
+        const parsed = StartResourceActionRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const action = await resourceNodeRoutes.start.execute(actor, parsed.data);
+        const body: ApiSuccess<StartResourceActionResponse> = {
+          ok: true,
+          data: { action: toResourceActionDTO(action) }
+        };
+        return jsonResponse(body, 201);
+      }
+
+      const resourceSettleRoute = /^\/resource-actions\/([^/]+)\/settle$/.exec(url.pathname);
+      if (resourceNodeRoutes !== null && request.method === "POST" && resourceSettleRoute?.[1] !== undefined) {
+        const decodedActionId = decodePathSegment(resourceSettleRoute[1]);
+        if (decodedActionId === null) return failure("INVALID_INPUT", requestId);
+        const parsed = SettleResourceActionRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const result = await resourceNodeRoutes.settle.execute(actor, {
+          actionId: decodedActionId,
+          expectedActionVersion: parsed.data.expectedActionVersion,
+          requestId: parsed.data.requestId
+        });
+        const body: ApiSuccess<SettleResourceActionResponse> = { ok: true, data: result };
+        return jsonResponse(body);
+      }
+
+      const resourceCancelRoute = /^\/resource-actions\/([^/]+)\/cancel$/.exec(url.pathname);
+      if (resourceNodeRoutes !== null && request.method === "POST" && resourceCancelRoute?.[1] !== undefined) {
+        const decodedActionId = decodePathSegment(resourceCancelRoute[1]);
+        if (decodedActionId === null) return failure("INVALID_INPUT", requestId);
+        const parsed = CancelResourceActionRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const result = await resourceNodeRoutes.cancel.execute(actor, {
           actionId: decodedActionId,
           expectedActionVersion: parsed.data.expectedActionVersion,
           requestId: parsed.data.requestId

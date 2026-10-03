@@ -4,6 +4,7 @@ import {
   constructionIdFromUuid,
   farmIdFromUuid,
   fishingActionIdFromUuid,
+  resourceActionIdFromUuid,
   parseCropDefinitionId,
   parseCurrencyDefinitionId,
   parseItemDefinitionId,
@@ -18,6 +19,7 @@ import {
   type ConstructionId,
   type FarmId,
   type FishingActionId,
+  type ResourceActionId,
   type CurrencyDefinition,
   type CurrencyDefinitionId,
   type EconomyTransactionId,
@@ -47,6 +49,12 @@ import type {
   FishingRandomPort,
   FishingSpotDefinition,
   FishingTableDefinition,
+  ResourceCataloguePort,
+  ResourceDefinitionView,
+  ResourceDropTableView,
+  ResourceIdGenerator,
+  ResourceNodePlacement,
+  RandomPort,
   IdGenerator,
   ItemDefinitionRepository,
   PlotDefinitionRepository,
@@ -69,6 +77,9 @@ import {
   placementEntries,
   playerProgression,
   plotRegistry,
+  resourceDefinitionRegistry,
+  resourceDropTableRegistry,
+  resourceNodeRegistry,
   shopRegistry,
   starterPackage,
   treeRegistry,
@@ -190,7 +201,7 @@ export class SystemClock implements Clock {
 }
 
 export class CryptoIdGenerator
-  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator, ConstructionIdGenerator, FishingIdGenerator
+  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator, ConstructionIdGenerator, FishingIdGenerator, ResourceIdGenerator
 {
   newFarmId(): FarmId {
     return farmIdFromUuid(crypto.randomUUID());
@@ -215,6 +226,10 @@ export class CryptoIdGenerator
   newFishingActionId(): FishingActionId {
     return fishingActionIdFromUuid(crypto.randomUUID());
   }
+
+  newResourceActionId(): ResourceActionId {
+    return resourceActionIdFromUuid(crypto.randomUUID());
+  }
 }
 
 /**
@@ -233,6 +248,98 @@ export class CryptoFishingRandom implements FishingRandomPort {
       value = word[0] ?? 0;
     } while (value === 0xffffffff);
     return value / 0x1_0000_0000;
+  }
+}
+
+/**
+ * The shared gather roll, for the same reason fishing's is not `Math.random`: a reward table's outcome
+ * belongs to the server's entropy, and a test has to be able to script it.
+ */
+export class CryptoResourceRandom implements RandomPort {
+  roll(): number {
+    const word = new Uint32Array(1);
+    let value = 0;
+    do {
+      crypto.getRandomValues(word);
+      value = word[0] ?? 0;
+    } while (value === 0xffffffff);
+    return value / 0x1_0000_0000;
+  }
+}
+
+/**
+ * The resource catalogue as the application layer reads it: definitions, placements and drop tables.
+ *
+ * Pure game data. A node's *state* is the only mutable part, and it is read from D1 by the repository;
+ * this class never touches the database.
+ */
+export class GameDataResourceCatalogue implements ResourceCataloguePort {
+  listDefinitions(): readonly ResourceDefinitionView[] {
+    return [...resourceDefinitionRegistry.values()].map((definition) => ({
+      id: definition.id,
+      displayNameKey: definition.displayNameKey,
+      verb: definition.verb,
+      actionSeconds: definition.actionSeconds,
+      regenerationSeconds: definition.regenerationSeconds,
+      dropTableId: definition.dropTableId,
+      xp: definition.xp,
+      modelId: definition.modelId,
+      requiredLevel: definition.requiredLevel ?? 1
+    }));
+  }
+
+  listNodes(): readonly ResourceNodePlacement[] {
+    return [...resourceNodeRegistry.values()].map((node) => ({
+      id: node.id,
+      definitionId: node.definitionId,
+      zoneKind: node.zoneKind,
+      position: { x: node.position.x, y: node.position.y },
+      interactionRadiusTiles: node.interactionRadiusTiles
+    }));
+  }
+
+  findDefinition(id: string): ResourceDefinitionView | null {
+    const definition = resourceDefinitionRegistry.get(id);
+    if (definition === undefined) return null;
+    return {
+      id: definition.id,
+      displayNameKey: definition.displayNameKey,
+      verb: definition.verb,
+      actionSeconds: definition.actionSeconds,
+      regenerationSeconds: definition.regenerationSeconds,
+      dropTableId: definition.dropTableId,
+      xp: definition.xp,
+      modelId: definition.modelId,
+      requiredLevel: definition.requiredLevel ?? 1
+    };
+  }
+
+  findNode(id: string): ResourceNodePlacement | null {
+    const node = resourceNodeRegistry.get(id);
+    return node === undefined
+      ? null
+      : {
+          id: node.id,
+          definitionId: node.definitionId,
+          zoneKind: node.zoneKind,
+          position: { x: node.position.x, y: node.position.y },
+          interactionRadiusTiles: node.interactionRadiusTiles
+        };
+  }
+
+  findDropTable(id: string): ResourceDropTableView | null {
+    const table = resourceDropTableRegistry.get(id);
+    return table === undefined
+      ? null
+      : {
+          id: table.id,
+          entries: table.entries.map((entry) => ({
+            itemDefinitionId: entry.itemDefinitionId,
+            minQuantity: entry.minQuantity,
+            maxQuantity: entry.maxQuantity,
+            weight: entry.weight
+          }))
+        };
   }
 }
 

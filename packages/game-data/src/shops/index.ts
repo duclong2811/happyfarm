@@ -55,14 +55,20 @@ export function createShopRegistry(input: unknown): ReadonlyMap<string, ShopEntr
       throw new Error(`Unknown shop currency definition: ${definition.currencyDefinitionId}`);
     }
     // The product decision, made structural: gold buys planting inputs (seeds and saplings) and
-    // nothing else, and only gathered produce (a harvested crop or a caught fish) can be sold. A
+    // nothing else, and only gathered goods (a harvested crop, a caught fish, or a mined material)
+    // can be sold. A
     // catalogue that let a player buy produce directly would bypass the activity that made it, and
     // one that let a seed be sold back would price the loop against itself.
     const item = itemRegistry.get(definition.itemDefinitionId);
     if (definition.buyPrice !== undefined && item?.category !== "SEED") {
       throw new Error(`Only seeds can be bought: ${definition.itemDefinitionId}`);
     }
-    if (definition.sellPrice !== undefined && item?.category !== "CROP" && item?.category !== "FISH") {
+    if (
+      definition.sellPrice !== undefined &&
+      item?.category !== "CROP" &&
+      item?.category !== "FISH" &&
+      item?.category !== "MATERIAL"
+    ) {
       throw new Error(`Only harvested produce can be sold: ${definition.itemDefinitionId}`);
     }
     registry.set(definition.id, definition);
@@ -110,6 +116,13 @@ export const shopRegistry = createShopRegistry([
   { id: "shop_fish_mackerel", itemDefinitionId: "item_fish_mackerel", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_snapper", itemDefinitionId: "item_fish_snapper", currencyDefinitionId: "currency_gold", sellPrice: 5, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_tuna", itemDefinitionId: "item_fish_tuna", currencyDefinitionId: "currency_gold", sellPrice: 15, maxQuantityPerRequest: 1_000 }
+  // Raw materials sell conservatively on purpose: they are the inputs crafting and building will want,
+  // so selling is early cash rather than the obviously best use of them. See
+  // `docs/design/MINING_BALANCE.md`.
+  ,{ id: "shop_stone", itemDefinitionId: "item_stone", currencyDefinitionId: "currency_gold", sellPrice: 1, maxQuantityPerRequest: 1_000 }
+  ,{ id: "shop_copper_ore", itemDefinitionId: "item_copper_ore", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 }
+  ,{ id: "shop_iron_ore", itemDefinitionId: "item_iron_ore", currencyDefinitionId: "currency_gold", sellPrice: 4, maxQuantityPerRequest: 1_000 }
+  ,{ id: "shop_coal", itemDefinitionId: "item_coal", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 }
 ]);
 
 export const shops = [...shopRegistry.values()];

@@ -28,6 +28,10 @@ import type {
   TreeInstanceId,
   FishingAction,
   FishingActionId,
+  ResourceAction,
+  ResourceActionId,
+  ResourceNodeState,
+  ResourceVerb,
   QuarterTurns,
   XpAward,
   Wallet
@@ -43,6 +47,7 @@ import {
   parseFishingActionId,
   parseItemDefinitionId,
   parsePlayerId,
+  parseResourceActionId,
   parseTreeInstanceId,
   parseTreeDefinitionId,
   PLOT_TILE_COUNT,
@@ -58,6 +63,9 @@ import type {
   FarmExpansionRepository,
   FishingActionRepository,
   FishingSettlementRepository,
+  ResourceActionRepository,
+  ResourceNodeStateRepository,
+  ResourceSettlementRepository,
   FarmMemberRepository,
   HomeIslandZoneResolver,
   FarmRepository,
@@ -2040,6 +2048,330 @@ export class D1FishingSettlementRepository implements FishingSettlementRepositor
     } catch (error: unknown) {
       if (error instanceof Error && error.message.includes("NOT NULL constraint failed: idempotency_keys")) {
         throw new ApplicationError("FISHING_CONFLICT", "Fishing action changed concurrently");
+      }
+      throw error;
+    }
+  }
+}
+
+interface ResourceNodeStateRow {
+  zone_kind: string;
+  zone_id: string;
+  node_id: string;
+  available_at: string;
+  depleted_at: string;
+  version: number;
+}
+
+interface ResourceActionRow {
+  action_id: string;
+  actor_player_id: string;
+  zone_kind: string;
+  zone_id: string;
+  node_id: string;
+  definition_id: string;
+  verb: string;
+  status: string;
+  started_at: string;
+  ready_at: string;
+  settled_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function toResourceNodeState(row: ResourceNodeStateRow): ResourceNodeState {
+  return {
+    zoneKind: row.zone_kind,
+    zoneId: row.zone_id,
+    nodeId: row.node_id,
+    availableAt: row.available_at,
+    depletedAt: row.depleted_at,
+    version: row.version
+  };
+}
+
+function toResourceAction(row: ResourceActionRow): ResourceAction {
+  return {
+    actionId: parseResourceActionId(row.action_id),
+    actorPlayerId: parsePlayerId(row.actor_player_id),
+    zoneKind: row.zone_kind,
+    zoneId: row.zone_id,
+    nodeId: row.node_id,
+    definitionId: row.definition_id,
+    verb: row.verb as ResourceVerb,
+    status: row.status as ResourceAction["status"],
+    startedAt: row.started_at,
+    readyAt: row.ready_at,
+    settledAt: row.settled_at,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+const RESOURCE_ACTION_COLUMNS =
+  "action_id, actor_player_id, zone_kind, zone_id, node_id, definition_id, verb, status, started_at, ready_at, settled_at, version, created_at, updated_at";
+
+/**
+ * One zone's resource-node availability.
+ *
+ * A node with no row has never been gathered, which is available - so the read is a bounded range scan
+ * of `(zone_id, ...)` and the answer for a fresh island is simply "nothing is depleted".
+ */
+export class D1ResourceNodeStateRepository implements ResourceNodeStateRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async listByZone(zoneId: string): Promise<readonly ResourceNodeState[]> {
+    const result = await this.db
+      .prepare(
+        "SELECT zone_kind, zone_id, node_id, available_at, depleted_at, version FROM resource_node_states WHERE zone_id = ?"
+      )
+      .bind(zoneId)
+      .all<ResourceNodeStateRow>();
+    return result.results.map(toResourceNodeState);
+  }
+
+  async find(zoneId: string, nodeId: string): Promise<ResourceNodeState | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT zone_kind, zone_id, node_id, available_at, depleted_at, version FROM resource_node_states WHERE zone_id = ? AND node_id = ?"
+      )
+      .bind(zoneId, nodeId)
+      .first<ResourceNodeStateRow>();
+    return row === null ? null : toResourceNodeState(row);
+  }
+}
+
+/**
+ * Gather attempts: one durable row each, exactly as fishing's actions are.
+ *
+ * The verb travels with the action, so forestry's CHOP reuses this table and the settlement below
+ * without a schema change.
+ */
+export class D1ResourceActionRepository implements ResourceActionRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async findById(actionId: ResourceActionId): Promise<ResourceAction | null> {
+    const row = await this.db
+      .prepare(`SELECT ${RESOURCE_ACTION_COLUMNS} FROM resource_actions WHERE action_id = ?`)
+      .bind(actionId)
+      .first<ResourceActionRow>();
+    return row === null ? null : toResourceAction(row);
+  }
+
+  async findActiveByActor(actorPlayerId: PlayerId): Promise<ResourceAction | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT ${RESOURCE_ACTION_COLUMNS} FROM resource_actions WHERE actor_player_id = ? AND status = 'ACTIVE' LIMIT 1`
+      )
+      .bind(actorPlayerId)
+      .first<ResourceActionRow>();
+    return row === null ? null : toResourceAction(row);
+  }
+
+  async create(action: ResourceAction, idempotency: IdempotencyRecord): Promise<void> {
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "INSERT INTO resource_actions (action_id, actor_player_id, zone_kind, zone_id, node_id, definition_id, verb, status, started_at, ready_at, settled_at, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            action.zoneKind,
+            action.zoneId,
+            action.nodeId,
+            action.definitionId,
+            action.verb,
+            action.status,
+            action.startedAt,
+            action.readyAt,
+            action.settledAt,
+            action.version,
+            action.createdAt,
+            action.updatedAt
+          ),
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM resource_actions WHERE action_id = ? AND actor_player_id = ? AND status = 'ACTIVE') THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 2 || results.some((result) => !result.success)) {
+        throw new Error("Atomic resource start failed");
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("UNIQUE constraint failed: resource_actions") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys"))
+      ) {
+        throw new ApplicationError("RESOURCE_ALREADY_ACTIVE", "A gather is already in progress");
+      }
+      throw error;
+    }
+  }
+}
+
+/**
+ * The one write boundary for settling or giving up a gather.
+ *
+ * Six statements in one batch, and the last four all hinge on the same guard: the action must actually
+ * have moved to SETTLED at the revision the caller expected, the node must still have been available
+ * when the batch ran (so two attempts can only deplete it once), the experience row must be where the
+ * caller read it, and the stack must have room. If any of those is false the receipt's actor evaluates
+ * to NULL and the whole batch aborts - the material, the experience, the depletion and the
+ * regeneration clock are all-or-nothing.
+ */
+export class D1ResourceSettlementRepository implements ResourceSettlementRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async settleResourceAtomically(
+    action: ResourceAction,
+    addition: InventoryAddition,
+    award: XpAward,
+    nodeState: ResourceNodeState,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    if (award.playerId !== idempotency.actorPlayerId || award.playerId !== addition.playerId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Settlement ownership does not match");
+    }
+    const expectedVersion = action.version - 1;
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "UPDATE resource_actions SET status = 'SETTLED', settled_at = ?, version = version + 1, updated_at = ? WHERE action_id = ? AND actor_player_id = ? AND status = 'ACTIVE' AND version = ?"
+          )
+          .bind(action.settledAt, action.updatedAt, action.actionId, action.actorPlayerId, expectedVersion),
+        // The node's availability is written here, and only here: a gather that never settles never
+        // depletes anything.
+        this.db
+          .prepare(
+            "INSERT INTO resource_node_states (zone_kind, zone_id, node_id, available_at, depleted_at, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(zone_id, node_id) DO UPDATE SET available_at = excluded.available_at, depleted_at = excluded.depleted_at, version = resource_node_states.version + 1, updated_at = excluded.updated_at"
+          )
+          .bind(
+            nodeState.zoneKind,
+            nodeState.zoneId,
+            nodeState.nodeId,
+            nodeState.availableAt,
+            nodeState.depletedAt,
+            nodeState.version,
+            award.timestamp,
+            award.timestamp
+          ),
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 0, 1, ?, ?)"
+          )
+          .bind(award.playerId, award.timestamp, award.timestamp),
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM resource_actions WHERE action_id = ? AND actor_player_id = ? AND status = 'SETTLED' AND version = ? AND settled_at = ?) AND EXISTS (SELECT 1 FROM resource_node_states WHERE zone_id = ? AND node_id = ? AND available_at = ?) AND EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?) AND COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) <= ? - ? THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            action.version,
+            action.settledAt,
+            nodeState.zoneId,
+            nodeState.nodeId,
+            nodeState.availableAt,
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion,
+            addition.playerId,
+            addition.itemDefinitionId,
+            addition.maxQuantity,
+            addition.quantity,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          ),
+        this.db
+          .prepare(
+            "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = inventory_items.quantity + excluded.quantity, updated_at = excluded.updated_at, version = inventory_items.version + 1"
+          )
+          .bind(addition.playerId, addition.itemDefinitionId, addition.quantity, addition.timestamp),
+        this.db
+          .prepare(
+            "UPDATE player_progression SET level = ?, xp = ?, progression_version = progression_version + 1, updated_at = ? WHERE player_id = ? AND xp = ? AND progression_version = ?"
+          )
+          .bind(
+            award.levelAfter,
+            award.xpAfter,
+            award.timestamp,
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion
+          )
+      ]);
+      if (results.length !== 6 || results.some((result) => !result.success)) {
+        throw new Error("Atomic resource settlement failed");
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("player progression") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys"))
+      ) {
+        throw new ApplicationError("RESOURCE_CONFLICT", "Resource settlement changed concurrently");
+      }
+      throw error;
+    }
+  }
+
+  async cancelResourceAtomically(action: ResourceAction, idempotency: IdempotencyRecord): Promise<void> {
+    const expectedVersion = action.version - 1;
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "UPDATE resource_actions SET status = 'CANCELLED', version = version + 1, updated_at = ? WHERE action_id = ? AND actor_player_id = ? AND status = 'ACTIVE' AND version = ?"
+          )
+          .bind(action.updatedAt, action.actionId, action.actorPlayerId, expectedVersion),
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM resource_actions WHERE action_id = ? AND actor_player_id = ? AND status = 'CANCELLED' AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            action.version,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 2 || results.some((result) => !result.success)) {
+        throw new Error("Atomic resource cancel failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("NOT NULL constraint failed: idempotency_keys")) {
+        throw new ApplicationError("RESOURCE_CONFLICT", "Resource action changed concurrently");
       }
       throw error;
     }

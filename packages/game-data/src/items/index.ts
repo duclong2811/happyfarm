@@ -9,7 +9,7 @@ export const MAX_ITEM_STACK = 2_147_483_647;
  * distinction is what lets the shop sell seeds and saplings while buying produce and fish, instead of
  * letting a single price list drift into an arbitrage loop; nothing else in the domain branches on it.
  */
-export const ITEM_CATEGORIES = ["CROP", "SEED", "FISH"] as const;
+export const ITEM_CATEGORIES = ["CROP", "SEED", "FISH", "MATERIAL"] as const;
 
 export const ItemDefinitionSchema = z
   .object({
@@ -66,7 +66,13 @@ export const itemRegistry = createItemRegistry([
   { id: "item_fish_sardine", displayNameKey: "item.fish_sardine.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_fish_mackerel", displayNameKey: "item.fish_mackerel.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_fish_snapper", displayNameKey: "item.fish_snapper.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
-  { id: "item_fish_tuna", displayNameKey: "item.fish_tuna.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK }
+  { id: "item_fish_tuna", displayNameKey: "item.fish_tuna.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  // Raw materials: what the island's deposits give up, and what crafting and building will later
+  // consume. They are stackable like everything else and have no use yet beyond being sold.
+  { id: "item_stone", displayNameKey: "item.stone.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_copper_ore", displayNameKey: "item.copper_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_iron_ore", displayNameKey: "item.iron_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_coal", displayNameKey: "item.coal.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK }
 ]);
 
 export const items = [...itemRegistry.values()];

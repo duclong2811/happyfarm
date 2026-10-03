@@ -199,7 +199,8 @@ describe("a local database from before one-farm-per-player", () => {
     expect(applied).toEqual([
       "0014_one_farm_per_player.sql",
       "0015_player_identities.sql",
-      "0016_fishing_actions.sql"
+      "0016_fishing_actions.sql",
+      "0017_resource_nodes.sql"
     ]);
     const index = sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_farms_owner_player'")
@@ -259,7 +260,8 @@ describe("a local database from before one-farm-per-player", () => {
     expect(host.appliedMigrations).toEqual([
       "0014_one_farm_per_player.sql",
       "0015_player_identities.sql",
-      "0016_fishing_actions.sql"
+      "0016_fishing_actions.sql",
+      "0017_resource_nodes.sql"
     ]);
 
     // The API now answers, and the farm it hands back is the one that survived - the last one played,

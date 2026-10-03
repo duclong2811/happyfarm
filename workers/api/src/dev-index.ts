@@ -12,7 +12,9 @@ import { DevPlayerBootstrap, type DevBootstrapResult } from "./dev-player-reposi
 import {
   CryptoIdGenerator,
   CryptoFishingRandom,
+  CryptoResourceRandom,
   GameDataFishingCatalogue,
+  GameDataResourceCatalogue,
   GameDataCurrencyDefinitions,
   GameDataCropDefinitions,
   GameDataItemDefinitions,
@@ -100,6 +102,11 @@ export function createDevWorker(env: DevEnv) {
       catalogue: new GameDataFishingCatalogue(),
       ids,
       random: new CryptoFishingRandom()
+    },
+    resources: {
+      catalogue: new GameDataResourceCatalogue(),
+      ids,
+      random: new CryptoResourceRandom()
     },
     clock
   });

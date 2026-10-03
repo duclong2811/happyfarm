@@ -13,6 +13,10 @@ import fishSardineUrl from "../assets/models/fishing/fish_sardine.glb?url";
 import fishSnapperUrl from "../assets/models/fishing/fish_snapper.glb?url";
 import fishTilapiaUrl from "../assets/models/fishing/fish_tilapia.glb?url";
 import fishTunaUrl from "../assets/models/fishing/fish_tuna.glb?url";
+import resourceCoalUrl from "../assets/models/resources/resource_coal.glb?url";
+import resourceCopperUrl from "../assets/models/resources/resource_copper.glb?url";
+import resourceIronUrl from "../assets/models/resources/resource_iron.glb?url";
+import resourceStoneUrl from "../assets/models/resources/resource_stone.glb?url";
 import type { CropModelId } from "./assets";
 
 /**
@@ -60,4 +64,22 @@ export const FISH_MODEL_URLS: Readonly<Record<string, string>> = {
 export function fishModelUrl(modelId: string | null): string | null {
   if (modelId === null) return null;
   return FISH_MODEL_URLS[modelId] ?? null;
+}
+
+/**
+ * Resource-node models, keyed by the id the server sends with each deposit.
+ *
+ * A map with a `null` answer for an unknown id, exactly like the fish one: a deployment may define a
+ * deposit this build has never heard of, and the world then draws the fallback rather than nothing.
+ */
+export const RESOURCE_MODEL_URLS: Readonly<Record<string, string>> = {
+  resource_stone: resourceStoneUrl,
+  resource_copper: resourceCopperUrl,
+  resource_iron: resourceIronUrl,
+  resource_coal: resourceCoalUrl
+};
+
+export function resourceModelUrl(modelId: string | null): string | null {
+  if (modelId === null) return null;
+  return RESOURCE_MODEL_URLS[modelId] ?? null;
 }

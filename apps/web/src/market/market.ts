@@ -2,6 +2,7 @@ import type {
   CropDefinitionDTO,
   FishDefinitionDTO,
   InventoryEntryDTO,
+  ResourceNodeDTO,
   ShopEntryDTO,
   TreeDefinitionDTO
 } from "@happy-farm/contracts";
@@ -53,6 +54,8 @@ export interface MarketInput {
   readonly treeDefinitions: readonly TreeDefinitionDTO[];
   /** The species this deployment can catch, so a fish row draws the fish. */
   readonly fish?: readonly FishDefinitionDTO[];
+  /** The island's deposits, so a material row draws the node it came from. */
+  readonly resourceNodes?: readonly ResourceNodeDTO[];
   readonly playerLevel: number | null;
 }
 

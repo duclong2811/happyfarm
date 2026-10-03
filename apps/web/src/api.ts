@@ -26,6 +26,11 @@ import {
   StartFishingResponseSchema,
   SettleFishingResponseSchema,
   CancelFishingResponseSchema,
+  GetResourceNodesResponseSchema,
+  GetActiveResourceActionResponseSchema,
+  StartResourceActionResponseSchema,
+  SettleResourceActionResponseSchema,
+  CancelResourceActionResponseSchema,
   PlantTreeResponseSchema,
   RemoveTreeResponseSchema,
   UprootCropResponseSchema,
@@ -60,6 +65,9 @@ import type {
   FishingActionDTO,
   FishingSpotDTO,
   FishingCatchDTO,
+  ResourceActionDTO,
+  ResourceNodeDTO,
+  ResourceDropDTO,
   XpAwardDTO,
   WalletDTO,
   SessionPlayerDTO
@@ -359,6 +367,54 @@ export class ApiClient {
     body: { readonly requestId: string; readonly expectedActionVersion: number }
   ): Promise<{ readonly cancelled: true }> {
     return this.post(`/fishing/${encodeURIComponent(actionId)}/cancel`, body, CancelFishingResponseSchema);
+  }
+
+  /**
+   * Resource nodes.
+   *
+   * The catalogue folds the actor's own zone's availability into the placements, so the page draws a
+   * depleted node and counts it down locally; the server re-checks the node, the level, the clock and
+   * the drop when a gather starts or settles. Read at load, refreshed after a gather - never polled.
+   */
+  getResourceNodes(): Promise<{ readonly nodes: ResourceNodeDTO[] }> {
+    return this.get("/resource-nodes", GetResourceNodesResponseSchema);
+  }
+
+  getActiveResourceAction(): Promise<{ readonly action: ResourceActionDTO | null }> {
+    return this.get("/resource-actions/active", GetActiveResourceActionResponseSchema);
+  }
+
+  startResourceAction(body: {
+    readonly requestId: string;
+    readonly nodeId: string;
+  }): Promise<{ readonly action: ResourceActionDTO }> {
+    return this.post("/resource-actions/start", body, StartResourceActionResponseSchema);
+  }
+
+  settleResourceAction(
+    actionId: string,
+    body: { readonly requestId: string; readonly expectedActionVersion: number }
+  ): Promise<{
+    readonly drop: ResourceDropDTO;
+    readonly node: { readonly nodeId: string; readonly availableAt: string };
+    readonly progression: XpAwardDTO;
+  }> {
+    return this.post(
+      `/resource-actions/${encodeURIComponent(actionId)}/settle`,
+      body,
+      SettleResourceActionResponseSchema
+    );
+  }
+
+  cancelResourceAction(
+    actionId: string,
+    body: { readonly requestId: string; readonly expectedActionVersion: number }
+  ): Promise<{ readonly cancelled: true }> {
+    return this.post(
+      `/resource-actions/${encodeURIComponent(actionId)}/cancel`,
+      body,
+      CancelResourceActionResponseSchema
+    );
   }
 
   /** Puts one object into storage: out of the world, still the player's. */

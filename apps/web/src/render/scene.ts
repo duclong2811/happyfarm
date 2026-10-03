@@ -197,6 +197,21 @@ export interface SceneConstruction {
   readonly depthCells: number;
 }
 
+/**
+ * One resource node, as the renderer needs it: which model, where, and whether it is ready.
+ *
+ * A depleted node is not removed - it shrinks to a stub of rubble - so the place a player mined is
+ * still legible when they come back for it. The shrink is the *server's* state drawn, never a client
+ * decision: `available` comes from the node catalogue the server sent.
+ */
+export interface SceneResourceNode {
+  readonly id: string;
+  readonly modelId: string;
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly available: boolean;
+}
+
 export interface PlacementPreview {
   /** The GLB to ghost, or null for a road - which is drawn as a segment of its own surface instead. */
   readonly modelId: string | null;
@@ -395,6 +410,14 @@ export interface FarmSceneHandle {
    */
   setConstructions(constructions: readonly SceneConstruction[]): void;
   /**
+   * Draws the island's resource nodes, available and depleted alike.
+   *
+   * A separate call from `setState` for the same reason constructions have one: node availability comes
+   * from the server's own rows and changes on its own cadence (a gather settles, a regeneration
+   * completes). A depleted deposit is drawn as a smaller rubble stub, so the place stays legible.
+   */
+  setResourceNodes(nodes: readonly SceneResourceNode[]): void;
+  /**
    * Whether a click on a built thing selects it.
    *
    * Off while the player is placing or moving something: in those modes a click means "put it here",
@@ -547,6 +570,11 @@ function createSkyDome(): Mesh {
  * stand above them the way the ones around it do. The curated model is normalized to one world unit\n * across its largest dimension, so the factor is the tree's height in metres.
  */
 const TREE_MODEL_SCALE = 2.6 / 1.708;
+
+/** How tall a resource deposit is drawn, in world metres: a lump of rock, not a mountain. */
+const RESOURCE_NODE_MODEL_SCALE = 1.2;
+/** What is left of a depleted deposit: the same model, shrunk to rubble so the place stays legible. */
+const RESOURCE_NODE_DEPLETED_SCALE = 0.35;
 
 /** Fruit positions on a ready tree, in the model's own units. Decoration, never a reward count. */
 const FRUIT_OFFSETS: readonly (readonly [number, number, number])[] = [
@@ -730,6 +758,9 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const tileGroup = new Group();
   const cropGroup = new Group();
   const treeGroup = new Group();
+  // The island's resource nodes: a handful of deposits drawn from their own models, rebuilt when the
+  // server reports a depletion or a regeneration rather than every frame.
+  const resourceGroup = new Group();
   // The overlay follows progression (locked land changes when a plot is bought), so it is rebuilt
   // with the dynamic layer instead of living in the static cache.
   const overlayGroup = new Group();
@@ -811,6 +842,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     tileGroup,
     cropGroup,
     treeGroup,
+    resourceGroup,
     overlayGroup,
     overlayDetailGroup,
     interactionGroup,
@@ -1647,6 +1679,8 @@ let interactionGeometry: BufferGeometry | null = null;
 
   /** What the player has built, and the last signature drawn, so a poll that changed nothing is free. */
   let constructions: readonly SceneConstruction[] = [];
+  let resourceNodes: readonly SceneResourceNode[] = [];
+  let resourceNodeSignature: string | null = null;
   let constructionSignature = "";
   let constructionToken = 0;
   /** The built thing the player is editing, and whether a click may select one at all. */
@@ -1678,6 +1712,39 @@ let interactionGeometry: BufferGeometry | null = null;
       (worldX, worldZ) => base + terrainHeightAt(worldX, worldZ, state.world.terrain)
     );
     draw();
+  }
+
+  /**
+   * Draws the island's deposits.
+   *
+   * Each node is one clone of its own small model, placed on the terrain like any other world object.
+   * A depleted node is drawn the same way at a third of the size, which reads as rubble and keeps the
+   * spot legible; the *state* is the server's, so this only ever draws what it was told. Few enough
+   * nodes that a signature gate and a rebuild per change is cheaper than any cleverness.
+   */
+  function rebuildResourceNodes(): void {
+    const signature = resourceNodes
+      .map((node) => `${node.id}:${node.modelId}:${node.available ? "1" : "0"}`)
+      .join("|");
+    if (signature === resourceNodeSignature) return;
+    resourceNodeSignature = signature;
+    resourceGroup.clear();
+    for (const node of resourceNodes) {
+      const model = library.get(node.modelId);
+      if (model === undefined) continue;
+      const plant = model.clone(true);
+      const scale = RESOURCE_NODE_MODEL_SCALE * (node.available ? 1 : RESOURCE_NODE_DEPLETED_SCALE);
+      plant.scale.setScalar(scale);
+      plant.position.set(
+        node.worldX,
+        GROUND_SURFACE_Y + terrainHeightAt(node.worldX, node.worldZ, state.world.terrain),
+        node.worldZ
+      );
+      plant.traverse((child) => {
+        child.castShadow = node.available;
+      });
+      resourceGroup.add(plant);
+    }
   }
 
   /** A cheap identity for the construction layer: ids, models, places, and turns. */
@@ -2630,6 +2697,11 @@ let interactionGeometry: BufferGeometry | null = null;
       rebuildConstructions();
       draw();
     },
+    setResourceNodes(next: readonly SceneResourceNode[]): void {
+      resourceNodes = next;
+      rebuildResourceNodes();
+      draw();
+    },
     setObjectPicking(enabled: boolean): void {
       objectPickingEnabled = enabled;
     },
@@ -2676,6 +2748,7 @@ let interactionGeometry: BufferGeometry | null = null;
       tileGroup.clear();
       cropGroup.clear();
       treeGroup.clear();
+      resourceGroup.clear();
       overlayGroup.clear();
       interactionGroup.clear();
       interactionGeometry?.dispose();

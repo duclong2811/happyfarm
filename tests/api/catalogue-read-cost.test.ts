@@ -9,6 +9,7 @@ import {
   GameDataCropDefinitions,
   GameDataCurrencyDefinitions,
   GameDataFishingCatalogue,
+  GameDataResourceCatalogue,
   GameDataItemDefinitions,
   GameDataPlotDefinitions,
   GameDataShopEntries,
@@ -103,6 +104,17 @@ describe("static catalogue reads", () => {
           roll: () => 0
         }
       },
+      resources: {
+        catalogue: new GameDataResourceCatalogue(),
+        ids: {
+          newResourceActionId: () => {
+            throw new Error("not used");
+          }
+        },
+        random: {
+          roll: () => 0
+        }
+      },
       clock: { now: () => NOW },
       ids: {
         newFarmId: () => {
@@ -148,5 +160,27 @@ describe("static catalogue reads", () => {
         /farm_tiles|crop_instances|tree_instances|farm_constructions|inventory_items|wallets|economy_ledger|player_progression|player_identities|starter_grants|farm_members|\bfarms\b|\bplayers\b/i
       );
     }
+  });
+
+  it("reads a resource node's availability with bounded, zone-scoped statements only", async () => {
+    // Unlike the static catalogues, a node's availability is mutable state, so this one legitimately
+    // touches the database. What it must not do is read the world: the statements are the actor's own
+    // farm (to resolve the home-island zone) and the states of that zone's nodes, in that order.
+    const response = await handle(new Request("https://api.test/resource-nodes"));
+    expect(response.status).toBe(200);
+    expect(db.statements.length).toBeGreaterThan(0);
+    for (const statement of db.statements) {
+      expect(statement, `bounded node read: ${statement}`).toMatch(
+        /FROM farms WHERE owner_player_id = \?|FROM resource_node_states WHERE zone_id = \?/
+      );
+    }
+    // Nothing here scans the island, the inventory, the wallet or the ledger.
+    expect(
+      db.statements.some((statement) =>
+        /farm_tiles|crop_instances|tree_instances|farm_constructions|inventory_items|wallets|economy_ledger/i.test(
+          statement
+        )
+      )
+    ).toBe(false);
   });
 });

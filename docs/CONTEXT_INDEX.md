@@ -862,6 +862,38 @@ items, or its market prices.
   checks the shipped files. Trees share one canopy and differ by a species fruit colour.
 - Static catalogues cost no farm rows: `tests/api/catalogue-read-cost.test.ts`.
 
+### Resource nodes and mining (V15.2)
+
+Read `docs/design/RESOURCE_NODES.md` (the generic definition/placement/state lifecycle, persistence and
+forestry reuse), `docs/design/MINING.md` (gameplay, authority, position limitation) and
+`docs/design/MINING_BALANCE.md` (the computed rates) before changing a node, a drop table, a material,
+the action duration, the regeneration time, or the resource commands.
+
+- Definitions and placements: `packages/game-data/src/resources/index.ts` (4 definitions, 4 drop tables,
+  9 home-island nodes). Materials are `MATERIAL` items in `packages/game-data/src/items/index.ts`, sold
+  through the existing market rows. Derived figures: `miningBalance` in `packages/game-data/src/balance.ts`.
+- Rules: `packages/domain/src/resource.ts` (`selectResourceDrop`, `resourceQuantity`,
+  `resourceAvailableAt`, `isResourceAvailable`, `assertResourceAction`) with the shared time helpers in
+  `packages/domain/src/time.ts`. Commands: `packages/application/src/resources.ts`.
+- Server: routes in `workers/api/src/handler.ts` (`GET /resource-nodes`,
+  `GET /resource-actions/active`, `POST /resource-actions/start`,
+  `POST /resource-actions/:id/settle`, `POST /resource-actions/:id/cancel`); persistence in
+  `database/migrations/0017_resource_nodes.sql` and the `D1Resource*` classes in
+  `workers/api/src/d1-repositories.ts`; composition in `workers/api/src/runtime.ts`
+  (`GameDataResourceCatalogue`, `CryptoResourceRandom`).
+- Client: `RESOURCE_NODE` / the definition's verb in `apps/web/src/interaction/model.ts`, the node
+  adapter in `interaction/registry.ts`, activation in `interaction/selection.ts`, the gather flow and
+  walk-away cancel in `apps/web/src/main.ts`, and the node group in `apps/web/src/render/scene.ts`
+  (`setResourceNodes`). Node models are generated (`tools/asset-pipeline/node/specs.mjs` ->
+  `assets/models/resources/`, resolved by `resourceModelUrl`).
+- Tests: `tests/domain/resource.test.ts`, `tests/game-data/mining.test.ts`, `tests/api/mining-loop.test.ts`,
+  `tests/web/mining-interaction.test.ts`, plus `/resource-nodes` in `tests/api/catalogue-read-cost.test.ts`.
+
+A node is not a decorative rock: scenery stays editable scenery and a resource node is a gameplay
+entity with its own state row. A production orchard tree is not a forestry node. Never accept a
+material, quantity, reward, cooldown or zone from a client, and never let the client decide a node is
+available - the server derives it from `available_at` and its own clock.
+
 ### Fishing, the first non-farming profession (V15.1)
 
 Read `docs/design/FISHING.md` (architecture, authority, idempotency, the position-trust limitation) and

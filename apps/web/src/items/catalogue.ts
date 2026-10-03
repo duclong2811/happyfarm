@@ -2,6 +2,7 @@ import type {
   CropDefinitionDTO,
   FishDefinitionDTO,
   InventoryEntryDTO,
+  ResourceNodeDTO,
   TreeDefinitionDTO
 } from "@happy-farm/contracts";
 import { itemVisualFor, cropVisualFor, saplingVisual, seedVisual, type ItemVisual } from "./visuals";
@@ -16,13 +17,14 @@ import { itemVisualFor, cropVisualFor, saplingVisual, seedVisual, type ItemVisua
  */
 
 /** The inventory's tabs. `ALL` is a view; the others are what an item actually *is*. */
-export type InventoryCategory = "ALL" | "PRODUCE" | "FISH" | "SEEDS" | "SAPLINGS";
+export type InventoryCategory = "ALL" | "PRODUCE" | "FISH" | "MATERIALS" | "SEEDS" | "SAPLINGS";
 
 /** The order the tabs are offered in. A category with nothing in it is not offered at all. */
 export const INVENTORY_CATEGORIES: readonly InventoryCategory[] = [
   "ALL",
   "PRODUCE",
   "FISH",
+  "MATERIALS",
   "SEEDS",
   "SAPLINGS"
 ];
@@ -45,6 +47,8 @@ export interface InventoryInput {
   readonly treeDefinitions: readonly TreeDefinitionDTO[];
   /** The species this deployment can catch, so a fish card draws the fish rather than a crate. */
   readonly fish?: readonly FishDefinitionDTO[];
+  /** The island's deposits, so a material card draws the node it came from. */
+  readonly resourceNodes?: readonly ResourceNodeDTO[];
 }
 
 /**
@@ -68,6 +72,7 @@ export function inventoryCategoryOf(
     return "SAPLINGS";
   }
   if (itemCategory === "FISH") return "FISH";
+  if (itemCategory === "MATERIAL") return "MATERIALS";
   if (itemCategory === "CROP") return "PRODUCE";
   return "SEEDS";
 }
@@ -119,6 +124,7 @@ export function inventoryCategoryCounts(
     ALL: cards.length,
     PRODUCE: 0,
     FISH: 0,
+    MATERIALS: 0,
     SEEDS: 0,
     SAPLINGS: 0
   };

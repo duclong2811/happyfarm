@@ -53,6 +53,14 @@ const PALETTE = {
   fishBelly: 0xf1e8d8,
   fishFin: 0x2f4a5f,
   fishEye: 0x1a1f24,
+  // Resource nodes: a rock, and the vein that says which material it holds.
+  nodeStone: 0x8d9298,
+  nodeCopper: 0x8d9298,
+  nodeCopperVein: 0xd0703a,
+  nodeIron: 0x7f8388,
+  nodeIronVein: 0xa8552f,
+  nodeCoal: 0x3f4448,
+  nodeCoalVein: 0x24282b,
   stone: 0x9aa3ab,
   barnWall: 0xd1574a,
   barnRoof: 0x8d3f38,
@@ -204,6 +212,24 @@ function buildFish({ body, radiusX, radiusY, radiusZ, finScale }) {
   fruit(eyes, { x: 0.1, y: 0.62, z: radiusZ * 0.85 }, 0.045);
   fruit(eyes, { x: -0.1, y: 0.62, z: radiusZ * 0.85 }, 0.045);
   return [flesh, fins, belly, eyes];
+}
+
+/**
+ * A resource deposit: a lump of rock with veins of the material showing through.
+ *
+ * Deliberately unlike the island's scattered scenery rocks - taller, chunkier, and carrying a colour
+ * the decorative set never uses - so a mineable node reads as something to walk up to rather than as
+ * another stone in the grass.
+ */
+function buildResourceNode({ rock, vein, veins }) {
+  const stone = part("rock", rock);
+  lowPolyBlob(stone, { x: 0, y: 0.2, z: 0 }, { radiusX: 0.3, radiusY: 0.42, radiusZ: 0.28, segments: 8, rings: 3 });
+  lowPolyBlob(stone, { x: 0.22, y: 0.1, z: 0.12 }, { radiusX: 0.16, radiusY: 0.18, radiusZ: 0.16, segments: 7, rings: 2 });
+  lowPolyBlob(stone, { x: -0.2, y: 0.08, z: -0.1 }, { radiusX: 0.14, radiusY: 0.14, radiusZ: 0.14, segments: 6, rings: 2 });
+
+  const ore = part("vein", vein);
+  for (const spot of veins) fruit(ore, spot, 0.07);
+  return [stone, ore];
 }
 
 function buildFarmer() {
@@ -385,6 +411,78 @@ export const MODEL_SPECS = [
     envelope: { height: 1, halfFootprint: 0.5 },
     budget: { triangles: 400, materials: 4, bytes: 12000 },
     build: () => buildFish({ body: PALETTE.fishTunaBody, radiusX: 0.19, radiusY: 0.26, radiusZ: 0.28, finScale: 1.3 })
+  },
+  // Resource deposits. Rounder and taller than the island's scattered rocks, with veins of the
+  // material so a mineable node never reads as scenery.
+  {
+    id: "resource_stone",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () =>
+      buildResourceNode({
+        rock: PALETTE.nodeStone,
+        vein: PALETTE.nodeStone,
+        veins: [
+          { x: 0.1, y: 0.6, z: 0.2 },
+          { x: -0.14, y: 0.42, z: 0.1 },
+          { x: 0.2, y: 0.3, z: -0.1 }
+        ]
+      })
+  },
+  {
+    id: "resource_copper",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () =>
+      buildResourceNode({
+        rock: PALETTE.nodeCopper,
+        vein: PALETTE.nodeCopperVein,
+        veins: [
+          { x: 0.12, y: 0.62, z: 0.16 },
+          { x: -0.16, y: 0.4, z: 0.08 },
+          { x: 0.18, y: 0.28, z: -0.12 },
+          { x: -0.06, y: 0.74, z: -0.04 }
+        ]
+      })
+  },
+  {
+    id: "resource_iron",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () =>
+      buildResourceNode({
+        rock: PALETTE.nodeIron,
+        vein: PALETTE.nodeIronVein,
+        veins: [
+          { x: 0.14, y: 0.58, z: 0.14 },
+          { x: -0.12, y: 0.44, z: 0.14 },
+          { x: 0.06, y: 0.72, z: -0.06 },
+          { x: 0.2, y: 0.26, z: -0.06 }
+        ]
+      })
+  },
+  {
+    id: "resource_coal",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () =>
+      buildResourceNode({
+        rock: PALETTE.nodeCoal,
+        vein: PALETTE.nodeCoalVein,
+        veins: [
+          { x: 0.1, y: 0.64, z: 0.12 },
+          { x: -0.14, y: 0.38, z: 0.12 },
+          { x: 0.16, y: 0.3, z: -0.14 }
+        ]
+      })
   },
   {
     id: "character_farmer",

@@ -1,5 +1,6 @@
 import { DomainError } from "./errors";
 import type { FishingActionId, PlayerId } from "./ids";
+import { instantAfter, secondsUntil } from "./time";
 
 /**
  * Fishing's rules, with no database, no clock and no randomness of their own.
@@ -95,24 +96,20 @@ export function selectCatch(
 
 /** The instant an action started now becomes settle-able, from the server's own duration. */
 export function fishingReadyAt(startedAt: string, actionSeconds: number): string {
-  const startedMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedMs)) {
-    throw new DomainError("INVALID_FISHING", "Fishing start time is invalid");
+  try {
+    return instantAfter(startedAt, actionSeconds);
+  } catch {
+    throw new DomainError("INVALID_FISHING", "Fishing timing is invalid");
   }
-  if (!Number.isSafeInteger(actionSeconds) || actionSeconds <= 0) {
-    throw new DomainError("INVALID_FISHING", "Fishing action duration is invalid");
-  }
-  return new Date(startedMs + actionSeconds * 1000).toISOString();
 }
 
 /** Whole seconds until an action is ready, never negative. Zero exactly when it is ready. */
 export function secondsUntilFishingReady(readyAt: string, serverTime: string): number {
-  const readyMs = Date.parse(readyAt);
-  const serverMs = Date.parse(serverTime);
-  if (!Number.isFinite(readyMs) || !Number.isFinite(serverMs)) {
+  try {
+    return secondsUntil(readyAt, serverTime);
+  } catch {
     throw new DomainError("INVALID_FISHING", "Fishing timing is invalid");
   }
-  return Math.max(0, Math.ceil((readyMs - serverMs) / 1000));
 }
 
 /** Whether the server's clock has reached the moment this action can pay out. */

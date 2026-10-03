@@ -8,6 +8,7 @@ export * from "./items";
 export * from "./plots";
 export * from "./placement";
 export * from "./progression";
+export * from "./resources";
 export * from "./roads";
 export * from "./schema";
 export * from "./shops";

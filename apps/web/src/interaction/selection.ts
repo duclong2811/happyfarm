@@ -125,6 +125,16 @@ export type InteractionActivation =
       readonly spotId: string;
       readonly target: InteractionCandidate;
     }
+  | {
+      /**
+       * A resource node and the verb its definition carries: `MINE` today, `CHOP` for forestry. The
+       * client never names the drop, the quantity or the experience.
+       */
+      readonly kind: "GATHER";
+      readonly nodeId: string;
+      readonly verb: "MINE" | "CHOP";
+      readonly target: InteractionCandidate;
+    }
   | { readonly kind: "STALE"; readonly reason: "GONE" | "CHANGED" };
 
 export function interactionActivation(
@@ -135,6 +145,9 @@ export function interactionActivation(
   if (fresh.key !== selected.key) return { kind: "STALE", reason: "CHANGED" };
   if (fresh.action === "TRADE") return { kind: "TRADE", service: "FARM_MARKET", target: fresh };
   if (fresh.action === "FISH") return { kind: "FISH", spotId: fresh.targetId, target: fresh };
+  if (fresh.action === "MINE" || fresh.action === "CHOP") {
+    return { kind: "GATHER", nodeId: fresh.targetId, verb: fresh.action, target: fresh };
+  }
   if (fresh.action === "HARVEST") {
     return fresh.kind === "TREE"
       ? { kind: "HARVEST_TREE", treeInstanceId: fresh.targetId, expectedTreeVersion: fresh.version }

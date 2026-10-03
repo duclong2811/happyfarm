@@ -10,6 +10,8 @@ import type {
   InventoryEntryDTO,
   PlayerProgressionDTO,
   PlotDTO,
+  ResourceActionDTO,
+  ResourceNodeDTO,
   ShopEntryDTO,
   TreeDefinitionDTO,
   TreeStateDTO,
@@ -259,6 +261,15 @@ interface AppState {
    */
   fishingAction: FishingActionDTO | null;
   /**
+   * The island's resource nodes, with the actor's own zone's availability.
+   *
+   * Static placements plus mutable state, so this is read at load and re-read after a gather - a
+   * semantic event - rather than polled. A depleted node is drawn as rubble and counted down locally.
+   */
+  resourceNodes: readonly ResourceNodeDTO[];
+  /** The player's live gather, if any. Restored from the server on load, like a fishing cast. */
+  resourceAction: ResourceActionDTO | null;
+  /**
    * The catalogue entry the player is about to place, or null.
    *
    * UI state, and only UI state: it decides what the ghost draws and what the status line says. No
@@ -331,6 +342,8 @@ const state: AppState = {
   fishingSpots: [],
   fish: [],
   fishingAction: null,
+  resourceNodes: [],
+  resourceAction: null,
   buildSelection: null,
   /**
    * Which way the island is being looked at.
@@ -1296,7 +1309,8 @@ function renderInventory(): void {
     inventory: state.inventory,
     cropDefinitions: state.cropDefinitions,
     treeDefinitions: state.treeDefinitions,
-    fish: state.fish
+    fish: state.fish,
+    resourceNodes: state.resourceNodes
   });
   const tabs = inventoryTabs(cards);
   // A tab can empty out while it is open - the last seed spent on the last cell. Falling back to
@@ -1341,6 +1355,8 @@ function inventoryCategoryKey(category: InventoryCategory): MessageKey {
       return "inventory.category.produce";
     case "FISH":
       return "inventory.category.fish";
+    case "MATERIALS":
+      return "inventory.category.materials";
     case "SEEDS":
       return "inventory.category.seeds";
     case "SAPLINGS":
@@ -1434,6 +1450,7 @@ function marketCardsFor(direction: MarketDirection): MarketCard[] {
     cropDefinitions: state.cropDefinitions,
     treeDefinitions: state.treeDefinitions,
     fish: state.fish,
+    resourceNodes: state.resourceNodes,
     playerLevel: state.progression?.level ?? null
   });
 }
@@ -2011,6 +2028,29 @@ function toSceneConstruction(construction: ConstructionDTO): {
     rotationY: (visual?.baseYaw ?? 0) + (construction.rotation * Math.PI) / 2,
     widthCells: construction.footprint.widthCells,
     depthCells: construction.footprint.depthCells
+  };
+}
+
+/**
+ * A resource node, as the renderer wants it: which model, where, and whether it is ready.
+ *
+ * The position is the authored fractional tile converted with the one world frame, exactly as a
+ * fishing spot is, so the drawn deposit and the interaction target cannot disagree about where it is.
+ */
+function toSceneResourceNode(node: ResourceNodeDTO): {
+  readonly id: string;
+  readonly modelId: string;
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly available: boolean;
+} {
+  const at = tileToWorld(node.position, worldFrame());
+  return {
+    id: node.nodeId,
+    modelId: node.modelId,
+    worldX: at.worldX,
+    worldZ: at.worldZ,
+    available: node.available
   };
 }
 
@@ -3276,6 +3316,16 @@ const playerRuntime = createPlayerRuntime({
     ) {
       void cancelFishing();
     }
+    // The same rule for a gather: walk away and the swing is abandoned, leaving the node untouched.
+    if (
+      state.resourceAction !== null &&
+      gatherAnchor !== null &&
+      characterPose !== null &&
+      Math.hypot(characterPose.worldX - gatherAnchor.worldX, characterPose.worldZ - gatherAnchor.worldZ) >
+        GATHER_CANCEL_RADIUS_WORLD
+    ) {
+      void cancelGathering();
+    }
   },
   requestFrame: (tick) => {
     playerFrameHandle = window.requestAnimationFrame((timestampMs) => {
@@ -3632,6 +3682,9 @@ function refreshScene(): void {
   // rows themselves are one list - storage is a state, not a second inventory - so this filter is the
   // whole of "storage is a place objects are not drawn".
   scene.setConstructions(activeObjects(state.constructions).map(toSceneConstruction));
+  // The deposits are drawn from the server's own availability, so a settled gather shrinks its node and
+  // a regeneration restores it without either being a client decision.
+  scene.setResourceNodes(state.resourceNodes.map(toSceneResourceNode));
   // The interaction registry is rebuilt here, before the refresh gate below: a stored or removed
   // object has to leave it immediately, whatever else did or did not change. It is a few hundred map
   // inserts on a poll that already rebuilt the cell map, and it is never rebuilt per frame.
@@ -3717,6 +3770,7 @@ function rebuildInteractionIndex(): void {
     worldObjects: state.worldObjects,
     buildCatalog: state.buildCatalog,
     fishingSpots: state.fishingSpots,
+    resourceNodes: state.resourceNodes,
     nowMs: Date.now()
   });
 }
@@ -3853,6 +3907,10 @@ async function activateInteraction(): Promise<void> {
       // only said which water the player meant.
       await startFishing(decision.spotId, decision.target);
       return;
+    case "GATHER":
+      // Mining (and later chopping): one command, one wait, and a payout the server owns entirely.
+      await gatherResource(decision.nodeId, decision.verb, decision.target);
+      return;
   }
 }
 
@@ -3893,7 +3951,8 @@ function showRewardPop(
   const visual = itemVisualFor(itemDefinitionId, {
     cropDefinitions: state.cropDefinitions,
     treeDefinitions: state.treeDefinitions,
-    fish: state.fish
+    fish: state.fish,
+    resourceNodes: state.resourceNodes
   });
   itemThumbnails.apply(visual.request, image, (result) => {
     // No picture for this item: the words carry the whole message rather than a broken image.
@@ -4090,6 +4149,7 @@ async function loadFarm(farmId: string): Promise<void> {
   // Fishing first, so the static spots are in the interaction index the farm refresh rebuilds. It is
   // read once here - never polled - and a live cast is resumed rather than lost.
   await refreshFishing();
+  await refreshResources();
   await refreshFarm();
   playerRuntime.respawn();
   await refreshAccount();
@@ -4103,6 +4163,7 @@ async function createFarm(): Promise<void> {
   state.selected = null;
   localStorage.setItem(FARM_KEY, created.farm.id);
   await refreshFishing();
+  await refreshResources();
   await refreshFarm();
   playerRuntime.respawn();
   await refreshAccount();
@@ -4448,6 +4509,132 @@ async function refreshFishing(): Promise<void> {
   if (active.action !== null) {
     setStatus((translate) => translate("fishing.cast", { seconds: active.action?.secondsUntilReady ?? 0 }));
     scheduleFishingSettle();
+  }
+}
+
+/*
+ * Resource nodes: wealth out of the ground.
+ *
+ * One command starts a gather, the server answers with the instant it finishes, and the page waits
+ * locally and settles once. The node's *availability* is the server's: a depleted deposit is drawn as
+ * rubble and refused by the start route, and it comes back by the server's clock alone - no polling,
+ * no cron. Walking away cancels, and a cancelled gather leaves the node untouched.
+ */
+
+let gatherTimer: number | null = null;
+let gatherAnchor: { readonly worldX: number; readonly worldZ: number } | null = null;
+let gatherAt: { readonly x: number; readonly y: number } | null = null;
+
+/** How far the player may drift before the gather is given up, in world metres. */
+const GATHER_CANCEL_RADIUS_WORLD = 2.5;
+
+function clearGatherTimer(): void {
+  if (gatherTimer === null) return;
+  window.clearTimeout(gatherTimer);
+  gatherTimer = null;
+}
+
+async function gatherResource(
+  nodeId: string,
+  verb: "MINE" | "CHOP",
+  target: { readonly tileX: number; readonly tileY: number }
+): Promise<void> {
+  if (state.resourceAction !== null) {
+    setStatus(message("mining.alreadyGathering"), true);
+    return;
+  }
+  const result = await api().startResourceAction({ requestId: newRequestId("gather"), nodeId });
+  state.resourceAction = result.action;
+  gatherAt = { x: target.tileX, y: target.tileY };
+  gatherAnchor = characterPose === null ? null : { worldX: characterPose.worldX, worldZ: characterPose.worldZ };
+  // The swing: the shared short gesture, because this phase is foundation rather than animation.
+  scene?.playHarvestGesture();
+  setStatus((translate) =>
+    verb === "CHOP"
+      ? translate("mining.chop", { seconds: result.action.secondsUntilReady })
+      : translate("mining.mine", { seconds: result.action.secondsUntilReady })
+  );
+  scheduleGatherSettle();
+}
+
+function scheduleGatherSettle(): void {
+  clearGatherTimer();
+  const action = state.resourceAction;
+  if (action === null) return;
+  const waitMs = Math.max(0, Date.parse(action.readyAt) - Date.now());
+  gatherTimer = window.setTimeout(() => {
+    void settleGathering();
+  }, waitMs + 250);
+}
+
+async function settleGathering(): Promise<void> {
+  const action = state.resourceAction;
+  if (action === null) return;
+  clearGatherTimer();
+  const chopped = action.verb === "CHOP";
+  const result = await api().settleResourceAction(action.actionId, {
+    requestId: newRequestId("gather-settle"),
+    expectedActionVersion: action.version
+  });
+  state.resourceAction = null;
+  const at = gatherAt;
+  gatherAt = null;
+  gatherAnchor = null;
+  showRewardPop(result.drop.itemDefinitionId, result.drop.quantity, at);
+  // The material and the experience come back with the account read; the node's new availability comes
+  // from the node read. Both are semantic-event reads, never polled.
+  await Promise.all([refreshResources(), refreshAccount()]);
+  rebuildInteractionIndex();
+  refreshInteractionCandidate();
+  render();
+  setStatus((translate) => {
+    const base = translate(chopped ? "mining.chopped" : "mining.mined", {
+      quantity: result.drop.quantity,
+      item: itemLabel(result.drop.itemDefinitionId),
+      xp: result.progression.xpAwarded
+    });
+    return result.progression.leveledUp
+      ? `${base}${translate("status.levelUp", { level: result.progression.progression.level })}`
+      : base;
+  });
+}
+
+async function cancelGathering(): Promise<void> {
+  const action = state.resourceAction;
+  if (action === null) return;
+  clearGatherTimer();
+  state.resourceAction = null;
+  gatherAnchor = null;
+  gatherAt = null;
+  try {
+    await api().cancelResourceAction(action.actionId, {
+      requestId: newRequestId("gather-cancel"),
+      expectedActionVersion: action.version
+    });
+  } catch {
+    // The page has already given it up; the server will refuse a late settle either way.
+  }
+  setStatus(message("mining.cancelled"));
+}
+
+/**
+ * The island's nodes and whichever gather was already live.
+ *
+ * Two bounded reads: the static placements plus the actor's zone's state rows, and one indexed lookup
+ * for the active action. Read at load and after a gather; never polled.
+ */
+async function refreshResources(): Promise<void> {
+  const client = api();
+  const [nodes, active] = await Promise.all([client.getResourceNodes(), client.getActiveResourceAction()]);
+  state.resourceNodes = nodes.nodes;
+  state.resourceAction = active.action;
+  if (active.action !== null) {
+    setStatus((translate) =>
+      active.action?.verb === "CHOP"
+        ? translate("mining.chop", { seconds: active.action.secondsUntilReady })
+        : translate("mining.mine", { seconds: active.action?.secondsUntilReady ?? 0 })
+    );
+    scheduleGatherSettle();
   }
 }
 

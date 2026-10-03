@@ -19,6 +19,11 @@ import type {
   FarmTile,
   FishingAction,
   FishingActionId,
+  ResourceAction,
+  ResourceActionId,
+  ResourceDropEntry,
+  ResourceNodeState,
+  ResourceVerb,
   InventoryAddition,
   InventoryItem,
   InventoryMutation,
@@ -252,10 +257,19 @@ export interface FishingCataloguePort {
   readonly actionSeconds: number;
 }
 
-/** One roll in `[0, 1)`. Production uses platform entropy; a test injects a fixed sequence. */
-export interface FishingRandomPort {
+/**
+ * One roll in `[0, 1)`.
+ *
+ * Shared by every system that has to choose an outcome the server owns: fishing's catch and mining's
+ * drop both draw from this one port, so production has one entropy source and a test has one place to
+ * inject a script.
+ */
+export interface RandomPort {
   roll(): number;
 }
+
+/** The fishing-specific name, kept so V15.1 call sites keep reading the way they were written. */
+export type FishingRandomPort = RandomPort;
 
 export interface FishingActionRepository {
   findById(actionId: FishingActionId): Promise<FishingAction | null>;
@@ -272,6 +286,74 @@ export interface FishingSettlementRepository {
     idempotency: IdempotencyRecord
   ): Promise<void>;
   cancelFishingAtomically(action: FishingAction, idempotency: IdempotencyRecord): Promise<void>;
+}
+
+/**
+ * Resource nodes: the generic gather lifecycle's ports.
+ *
+ * The catalogue holds the static half (definitions, placements, drop tables); the two repositories
+ * hold the mutable half (node availability, gather attempts). Mining uses them today and forestry
+ * reuses them with `verb: "CHOP"` and a tree model - nothing in these shapes names a rock.
+ */
+export interface ResourceIdGenerator {
+  newResourceActionId(): ResourceActionId;
+}
+
+export interface ResourceDefinitionView {
+  readonly id: string;
+  readonly displayNameKey: string;
+  readonly verb: ResourceVerb;
+  readonly actionSeconds: number;
+  readonly regenerationSeconds: number;
+  readonly dropTableId: string;
+  readonly xp: number;
+  readonly modelId: string;
+  readonly requiredLevel: number;
+}
+
+/** One authored placement: which definition stands where, in which zone. */
+export interface ResourceNodePlacement {
+  readonly id: string;
+  readonly definitionId: string;
+  readonly zoneKind: string;
+  readonly position: { readonly x: number; readonly y: number };
+  readonly interactionRadiusTiles: number;
+}
+
+export interface ResourceDropTableView {
+  readonly id: string;
+  readonly entries: readonly ResourceDropEntry[];
+}
+
+export interface ResourceCataloguePort {
+  listDefinitions(): readonly ResourceDefinitionView[];
+  listNodes(): readonly ResourceNodePlacement[];
+  findDefinition(id: string): ResourceDefinitionView | null;
+  findNode(id: string): ResourceNodePlacement | null;
+  findDropTable(id: string): ResourceDropTableView | null;
+}
+
+export interface ResourceNodeStateRepository {
+  /** Every state row for one zone. Bounded by the primary key, never a scan of the world. */
+  listByZone(zoneId: string): Promise<readonly ResourceNodeState[]>;
+  find(zoneId: string, nodeId: string): Promise<ResourceNodeState | null>;
+}
+
+export interface ResourceActionRepository {
+  findById(actionId: ResourceActionId): Promise<ResourceAction | null>;
+  findActiveByActor(actorPlayerId: PlayerId): Promise<ResourceAction | null>;
+  create(action: ResourceAction, idempotency: IdempotencyRecord): Promise<void>;
+}
+
+export interface ResourceSettlementRepository {
+  settleResourceAtomically(
+    action: ResourceAction,
+    addition: InventoryAddition,
+    award: XpAward,
+    nodeState: ResourceNodeState,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+  cancelResourceAtomically(action: ResourceAction, idempotency: IdempotencyRecord): Promise<void>;
 }
 
 /** Mints the identifier of one player construction. */

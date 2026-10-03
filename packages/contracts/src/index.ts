@@ -205,7 +205,7 @@ export const HarvestResultDTOSchema = z
  * Sent to the client so it can group and label without keeping a list of which item is which: a
  * server that adds a seed does not need a client release to say so.
  */
-export const ItemCategorySchema = z.enum(["CROP", "SEED", "FISH"]);
+export const ItemCategorySchema = z.enum(["CROP", "SEED", "FISH", "MATERIAL"]);
 
 /**
  * Uprooting a crop.
@@ -943,6 +943,15 @@ export const ErrorCodeSchema = z.enum([
   "FISHING_NOT_READY",
   "FISHING_ACTION_NOT_ACTIVE",
   "FISHING_CONFLICT",
+  "RESOURCE_NODE_NOT_FOUND",
+  "RESOURCE_ACTION_NOT_FOUND",
+  "RESOURCE_ZONE_NOT_ALLOWED",
+  "RESOURCE_NODE_DEPLETED",
+  "RESOURCE_LEVEL_REQUIRED",
+  "RESOURCE_ALREADY_ACTIVE",
+  "RESOURCE_NOT_READY",
+  "RESOURCE_ACTION_NOT_ACTIVE",
+  "RESOURCE_CONFLICT",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
   "REQUEST_ALREADY_PROCESSED",
@@ -1084,6 +1093,95 @@ export type SettleFishingRequest = z.infer<typeof SettleFishingRequestSchema>;
 export type FishingCatchDTO = z.infer<typeof FishingCatchDTOSchema>;
 export type SettleFishingResponse = z.infer<typeof SettleFishingResponseSchema>;
 export type CancelFishingRequest = z.infer<typeof CancelFishingRequestSchema>;
+
+/**
+ * Resource nodes: what stands where, whether it is ready, and the gather commands.
+ *
+ * The catalogue carries both halves the client needs - the static definition and placement, and the
+ * actor's own zone's availability - because a node's *availability* is mutable state, unlike a fishing
+ * spot's position. Everything else is the server's: the drop, the quantity, the experience, the
+ * depletion and the regeneration clock.
+ */
+export const ResourceNodeDTOSchema = z
+  .object({
+    nodeId: z.string().regex(/^node_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    definitionId: z.string().regex(/^resource_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    displayNameKey: z.string().min(1).max(120),
+    verb: z.enum(["MINE", "CHOP"]),
+    zoneKind: ZoneKindSchema,
+    position: z.object({ x: z.number(), y: z.number() }).strict(),
+    interactionRadiusTiles: z.number().positive().max(12),
+    actionSeconds: z.number().int().positive().max(600),
+    modelId: z.string().min(1).max(120),
+    /** The material this node yields, so the client can draw that material with the node's art. */
+    dropItemDefinitionId: ItemDefinitionIdSchema,
+    requiredLevel: z.number().int().positive().max(MAX_PROGRESSION_LEVEL),
+    /** When this node is next available, or null when it has never been gathered. */
+    availableAt: z.iso.datetime().nullable(),
+    secondsUntilAvailable: z.number().int().nonnegative(),
+    available: z.boolean()
+  })
+  .strict();
+
+export const GetResourceNodesResponseSchema = z.object({ nodes: z.array(ResourceNodeDTOSchema) }).strict();
+
+export const ResourceActionDTOSchema = z
+  .object({
+    actionId: z.string().regex(/^resact_[0-9a-f-]{36}$/i),
+    zone: ZoneRefSchema,
+    nodeId: z.string().regex(/^node_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    definitionId: z.string().regex(/^resource_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    verb: z.enum(["MINE", "CHOP"]),
+    status: z.enum(["ACTIVE", "SETTLED", "CANCELLED"]),
+    startedAt: z.iso.datetime(),
+    readyAt: z.iso.datetime(),
+    secondsUntilReady: z.number().int().nonnegative(),
+    version: z.number().int().positive()
+  })
+  .strict();
+
+export const StartResourceActionRequestSchema = z
+  .object({ requestId: RequestIdSchema, nodeId: ResourceNodeDTOSchema.shape.nodeId })
+  .strict();
+export const StartResourceActionResponseSchema = z.object({ action: ResourceActionDTOSchema }).strict();
+
+export const GetActiveResourceActionResponseSchema = z
+  .object({ action: ResourceActionDTOSchema.nullable() })
+  .strict();
+
+export const SettleResourceActionRequestSchema = z
+  .object({ requestId: RequestIdSchema, expectedActionVersion: z.number().int().positive() })
+  .strict();
+
+export const ResourceDropDTOSchema = z
+  .object({ itemDefinitionId: ItemDefinitionIdSchema, quantity: z.number().int().positive() })
+  .strict();
+
+export const SettleResourceActionResponseSchema = z
+  .object({
+    drop: ResourceDropDTOSchema,
+    node: z
+      .object({
+        nodeId: z.string().regex(/^node_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+        availableAt: z.iso.datetime()
+      })
+      .strict(),
+    progression: XpAwardDTOSchema
+  })
+  .strict();
+
+export const CancelResourceActionRequestSchema = z
+  .object({ requestId: RequestIdSchema, expectedActionVersion: z.number().int().positive() })
+  .strict();
+export const CancelResourceActionResponseSchema = z.object({ cancelled: z.literal(true) }).strict();
+
+export type ResourceNodeDTO = z.infer<typeof ResourceNodeDTOSchema>;
+export type ResourceActionDTO = z.infer<typeof ResourceActionDTOSchema>;
+export type StartResourceActionResponse = z.infer<typeof StartResourceActionResponseSchema>;
+export type StartResourceActionRequest = z.infer<typeof StartResourceActionRequestSchema>;
+export type SettleResourceActionRequest = z.infer<typeof SettleResourceActionRequestSchema>;
+export type ResourceDropDTO = z.infer<typeof ResourceDropDTOSchema>;
+export type SettleResourceActionResponse = z.infer<typeof SettleResourceActionResponseSchema>;
 
 export type ApiSuccess<T> = { readonly ok: true; readonly data: T };
 export type ApiFailure = {

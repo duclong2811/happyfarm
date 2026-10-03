@@ -16,7 +16,9 @@ import { D1StarterGrantRepository, D1WalletRepository } from "./d1-repositories"
 import {
   CryptoIdGenerator,
   CryptoFishingRandom,
+  CryptoResourceRandom,
   GameDataFishingCatalogue,
+  GameDataResourceCatalogue,
   GameDataCurrencyDefinitions,
   GameDataCropDefinitions,
   GameDataItemDefinitions,
@@ -135,6 +137,11 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
       catalogue: new GameDataFishingCatalogue(),
       ids,
       random: new CryptoFishingRandom()
+    },
+    resources: {
+      catalogue: new GameDataResourceCatalogue(),
+      ids,
+      random: new CryptoResourceRandom()
     },
     clock
   });

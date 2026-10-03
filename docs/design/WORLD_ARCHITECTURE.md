@@ -221,3 +221,16 @@ kind, and an action that stores `zone_kind` + `zone_id`.
 
 See `docs/design/FISHING.md`. A shared fishing ground is the first thing that will need presence, and
 that is a deliberate V15.x decision rather than something V15.1 pre-built.
+
+## V15.2: resource nodes use the same vocabulary
+
+Mining adds the first *finite* place-state: a deposit is depleted and comes back. It still needs no new
+zone words.
+
+- A node's placement declares a `zoneKind` and carries no owner; the zone is resolved from the actor.
+- The mutable half is keyed by `(zone_id, node_id)`, so a node's availability is a *place's* state and
+  the same table would hold a shared ground's later.
+- Player progression, inventory and the material itself stay on the player: a place holds place-state,
+  never a player's goods.
+
+See `docs/design/RESOURCE_NODES.md` and `docs/design/MINING.md`.

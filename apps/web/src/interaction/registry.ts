@@ -4,6 +4,7 @@ import type {
   CropDefinitionDTO,
   CropStateDTO,
   FishingSpotDTO,
+  ResourceNodeDTO,
   TreeDefinitionDTO,
   TreeStateDTO
 } from "@happy-farm/contracts";
@@ -50,6 +51,13 @@ export interface InteractionWorldInput {
    * empty list is the same as "the island has no fishing spots this build knows about".
    */
   readonly fishingSpots?: readonly FishingSpotDTO[];
+  /**
+   * The island's resource nodes, with the actor's own zone's availability folded in.
+   *
+   * Unlike a fishing spot, a node's state changes, so the target says whether it is available and how
+   * long until it is; the renderer draws the depleted state and the registry stops offering the verb.
+   */
+  readonly resourceNodes?: readonly ResourceNodeDTO[];
   /** Current epoch milliseconds, used only to phrase a growing crop's countdown. */
   readonly nowMs: number;
 }
@@ -214,11 +222,43 @@ function fishingSpotTarget(spot: FishingSpotDTO): InteractableTarget {
   };
 }
 
+/**
+ * One resource node, as a target.
+ *
+ * An available node offers its own verb - `MINE` today, `CHOP` for a forestry node - and a depleted one
+ * offers `INSPECT` with the server's own countdown, exactly as a growing crop does. The verb comes from
+ * the definition, so the interaction layer never learns what a "rock" is.
+ */
+function resourceNodeTarget(node: ResourceNodeDTO): InteractableTarget {
+  const position = tileToWorld({ x: node.position.x, y: node.position.y }, worldFrame());
+  const cell = worldToCell({ worldX: position.worldX, worldZ: position.worldZ }, worldFrame());
+  const action: InteractionAction = node.available ? node.verb : "INSPECT";
+  return {
+    key: `resource:${node.nodeId}`,
+    kind: "RESOURCE_NODE",
+    action,
+    targetId: node.nodeId,
+    tileX: cell.x,
+    tileY: cell.y,
+    worldX: position.worldX,
+    worldZ: position.worldZ,
+    rangeWorld: INTERACTION_RANGE_WORLD.RESOURCE_NODE,
+    priority: INTERACTION_ACTION_PRIORITY[action],
+    nameKey: node.displayNameKey,
+    nameFallback: node.definitionId,
+    version: 0,
+    readyInSeconds: node.available ? null : node.secondsUntilAvailable
+  };
+}
+
 /** Adapts the read models into one flat list of targets. Pure: nothing here touches the network. */
 export function interactionTargets(input: InteractionWorldInput): readonly InteractableTarget[] {
   const targets: InteractableTarget[] = [];
   for (const spot of input.fishingSpots ?? []) {
     targets.push(fishingSpotTarget(spot));
+  }
+  for (const node of input.resourceNodes ?? []) {
+    targets.push(resourceNodeTarget(node));
   }
   for (const crop of input.crops) {
     targets.push(cropTarget(crop, input.cropDefinitions, input.nowMs));

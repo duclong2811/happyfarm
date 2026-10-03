@@ -10,5 +10,7 @@ export * from "./inventory";
 export * from "./player";
 export * from "./plot";
 export * from "./progression";
+export * from "./resource";
+export * from "./time";
 export * from "./tile";
 export * from "./tree";

@@ -11,6 +11,7 @@ export * from "./list-farm-tiles";
 export * from "./plot";
 export * from "./ports";
 export * from "./progression";
+export * from "./resources";
 export * from "./shop";
 export * from "./starter";
 export * from "./tile-service";
