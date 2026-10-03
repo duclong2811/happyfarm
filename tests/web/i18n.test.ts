@@ -102,8 +102,8 @@ describe("game-data display names", () => {
   it("falls back to the stable id for a key this client has never seen", () => {
     // A crop added to game data still renders: it is untranslated, not missing, and never turned
     // into an empty row.
-    expect(displayName("en", "crop.pumpkin.name", "crop_pumpkin")).toBe("crop_pumpkin");
-    expect(displayName("vi", "item.pumpkin_seed.name", "item_pumpkin_seed")).toBe("item_pumpkin_seed");
+    expect(displayName("en", "crop.radish.name", "crop_radish")).toBe("crop_radish");
+    expect(displayName("vi", "item.radish_seed.name", "item_radish_seed")).toBe("item_radish_seed");
   });
 
   it("lowercases a currency inside an English sentence but not a Vietnamese one", () => {

@@ -66,21 +66,33 @@ worth exactly one harvest, and one harvest's experience.
 
 ## XP values
 
-Values are game data, chosen against the current growth and economy data, and are deliberately
-deterministic. They track *growth duration relative to the carrot*, which is the shortest and
-cheapest crop:
+Values are game data and are deliberately deterministic. V14.5 made the rule exact: **every field
+crop pays `0.8 xp/minute`** (`xp = round(growthMinutes * 0.8)`), and every orchard tree pays
+`0.6 xp/minute`. Experience is therefore a function of the time a harvest took, not of how many
+times someone clicked plant:
 
-| Definition | Growth | Harvest XP | Rationale |
-| --- | --- | --- | --- |
-| `crop_carrot` | 300 s | 4 | the baseline: fast, cheap, low |
-| `crop_wheat` | 900 s (3x) | 12 | 3x the carrot's XP for 3x the wait |
-| `crop_corn` | 1800 s (6x) | 24 | 6x the carrot's XP for 6x the wait |
-| `tree_apple` | 3600 s first, 900 s regrow | 10 / cycle | slightly below a wheat harvest: the tree's value is the repeating gold from one sapling, not the experience |
+- A player cannot farm experience by spamming the shortest crop - carrot pays 4 for five minutes,
+  exactly as wheat pays 12 for fifteen.
+- A slow crop is never punished for being slow; the harvest it eventually pays is proportional.
+- The orchard is deliberately below the crops' rate, because a tree also pays repeating gold.
 
-A tree pays less per cycle than a crop of the same cycle length because a tree is *capital* - one
-sapling keeps producing - while experience rewards the harvest action, not the capital.
+| Definition | Growth | Harvest XP |
+| --- | --- | --- |
+| `crop_carrot` | 300 s | 4 |
+| `crop_wheat` | 900 s | 12 |
+| `crop_corn` | 1800 s | 24 |
+| `crop_potato` | 1200 s | 16 |
+| `crop_tomato` | 2700 s | 36 |
+| `crop_strawberry` | 3600 s | 48 |
+| `crop_cabbage` | 4500 s | 60 |
+| `crop_pumpkin` | 5400 s | 72 |
+| `tree_apple` | 900 s cycle | 9 |
+| `tree_orange` | 1200 s cycle | 12 |
+| `tree_peach` | 1500 s cycle | 15 |
 
-Retuning any value is a game-data change and nothing else; no use case knows these numbers.
+Retuning any value is a game-data change and nothing else; no use case knows these numbers. The full
+roster and the economy it sits in are `docs/design/FARMING_CONTENT.md` and
+`docs/design/FARMING_BALANCE.md`.
 
 ## Level curve
 
@@ -112,6 +124,17 @@ designer can find it.
 | 1 | Carrot (`crop_carrot` - no `requiredLevel`, so the starting crop) |
 | 2 | Wheat (`crop_wheat`) |
 | 3 | Corn (`crop_corn`) and Apple Tree (`tree_apple`) |
+| 4 | Potato (`crop_potato`) |
+| 5 | Tomato (`crop_tomato`) and Orange Tree (`tree_orange`) |
+| 6 | Strawberry (`crop_strawberry`) |
+| 7 | Cabbage (`crop_cabbage`) |
+| 8 | Pumpkin (`crop_pumpkin`) |
+| 9 | Peach Tree (`tree_peach`) |
+| 10 | Progress toward the next band - no unlock by design |
+
+Land runs alongside it: the plot catalogue (`packages/game-data/src/plots/index.ts`) sells eight plots
+at levels 1-8, so a level almost always brings either a crop, a tree, or land. The roster and the
+roles are `docs/design/FARMING_CONTENT.md`.
 
 Game-data validation (`tests/game-data/schema.test.ts`) keeps this sane: a requirement is a positive
 whole number inside the level ceiling, and exactly one crop is available at level 1 so a new player

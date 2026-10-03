@@ -31,6 +31,17 @@ const PALETTE = {
   cornStalk: 0x5d9c46,
   cornLeaf: 0x6fb054,
   cornCob: 0xe8c34a,
+  potatoLeaf: 0x3f7f3a,
+  potatoTuber: 0xb98a52,
+  tomatoStem: 0x4a7a3a,
+  tomatoLeaf: 0x3f8f45,
+  tomatoFruit: 0xd0392b,
+  strawberryLeaf: 0x3d7f3c,
+  strawberryBerry: 0xe0403a,
+  cabbageHead: 0xa9d17a,
+  cabbageLeaf: 0x5f9c46,
+  pumpkinShell: 0xe08a26,
+  pumpkinStem: 0x4f7f3a,
   stone: 0x9aa3ab,
   barnWall: 0xd1574a,
   barnRoof: 0x8d3f38,
@@ -94,6 +105,71 @@ function buildCorn() {
   fruit(cob, { x: 0.14, y: 0.5, z: 0.07 }, 0.075);
   fruit(cob, { x: -0.13, y: 0.62, z: -0.06 }, 0.065);
   return [stalk, leaves, cob];
+}
+
+/** Potato: a low leafy mound with a few tubers showing at the base, so it reads as a root crop. */
+function buildPotato() {
+  const leaves = part("leaf", PALETTE.potatoLeaf);
+  lowPolyBlob(leaves, { x: 0, y: 0.3, z: 0 }, { radiusX: 0.26, radiusY: 0.24, radiusZ: 0.26, segments: 8, rings: 3 });
+  leafFan(leaves, { y: 0.06 }, { count: 6, length: 0.38, width: 0.07, spread: 0.5, tilt: 0.7, droop: 0.55, seed: 41 });
+  leafFan(leaves, { y: 0.2 }, { count: 4, length: 0.28, width: 0.06, spread: 0.7, tilt: 0.95, droop: 0.5, seed: 42 });
+
+  const tuber = part("tuber", PALETTE.potatoTuber);
+  fruit(tuber, { x: -0.16, y: 0.07, z: 0.12 }, 0.085);
+  fruit(tuber, { x: 0.16, y: 0.07, z: -0.08 }, 0.075);
+  fruit(tuber, { x: 0.03, y: 0.06, z: 0.17 }, 0.07);
+  return [leaves, tuber];
+}
+
+/** Tomato: a staked bush of red fruit, taller and busier than the root crops. */
+function buildTomato() {
+  const stalk = part("stalk", PALETTE.tomatoStem);
+  taperedCylinder(stalk, { x: 0, y: 0, z: 0 }, { bottomRadius: 0.035, topRadius: 0.022, height: 0.86, segments: 6 });
+
+  const leaves = part("leaf", PALETTE.tomatoLeaf);
+  leafFan(leaves, { y: 0.18 }, { count: 5, length: 0.34, width: 0.06, spread: 0.55, tilt: 0.6, droop: 0.55, seed: 51 });
+  leafFan(leaves, { y: 0.42 }, { count: 4, length: 0.28, width: 0.055, spread: 0.7, tilt: 0.85, droop: 0.5, seed: 52 });
+
+  const tomatoes = part("fruit", PALETTE.tomatoFruit);
+  fruitCluster(tomatoes, { x: 0.08, y: 0.5, z: 0.04 }, { count: 5, radius: 0.055, spread: 0.14, seed: 53 });
+  fruitCluster(tomatoes, { x: -0.08, y: 0.68, z: -0.03 }, { count: 3, radius: 0.05, spread: 0.1, seed: 54 });
+  return [stalk, leaves, tomatoes];
+}
+
+/** Strawberry: a low leafy clump with small berries clustered at the ground. */
+function buildStrawberry() {
+  const leaves = part("leaf", PALETTE.strawberryLeaf);
+  lowPolyBlob(leaves, { x: 0, y: 0.26, z: 0 }, { radiusX: 0.22, radiusY: 0.2, radiusZ: 0.22, segments: 8, rings: 3 });
+  leafFan(leaves, { y: 0.05 }, { count: 7, length: 0.32, width: 0.07, spread: 0.4, tilt: 0.6, droop: 0.6, seed: 61 });
+  leafFan(leaves, { y: 0.16 }, { count: 5, length: 0.24, width: 0.06, spread: 0.6, tilt: 0.9, droop: 0.55, seed: 62 });
+
+  const berry = part("berry", PALETTE.strawberryBerry);
+  fruitCluster(berry, { x: -0.12, y: 0.16, z: 0.1 }, { count: 4, radius: 0.05, spread: 0.1, seed: 63 });
+  fruitCluster(berry, { x: 0.13, y: 0.14, z: -0.08 }, { count: 3, radius: 0.045, spread: 0.09, seed: 64 });
+  return [leaves, berry];
+}
+
+/** Cabbage: a single fat head with a skirt of outer leaves, unmistakably a leafy brassica. */
+function buildCabbage() {
+  const head = part("head", PALETTE.cabbageHead);
+  lowPolyBlob(head, { x: 0, y: 0.46, z: 0 }, { radiusX: 0.3, radiusY: 0.42, radiusZ: 0.3, segments: 9, rings: 3 });
+
+  const leaves = part("leaf", PALETTE.cabbageLeaf);
+  leafFan(leaves, { y: 0.04 }, { count: 6, length: 0.34, width: 0.09, spread: 0.5, tilt: 0.5, droop: 0.7, seed: 71 });
+  leafFan(leaves, { y: 0.18 }, { count: 4, length: 0.26, width: 0.08, spread: 0.7, tilt: 0.85, droop: 0.6, seed: 72 });
+  return [head, leaves];
+}
+
+/** Pumpkin: a ribbed orange globe with a stubby green stem, the season's big payoff. */
+function buildPumpkin() {
+  const shell = part("shell", PALETTE.pumpkinShell);
+  lowPolyBlob(shell, { x: 0, y: 0.34, z: 0 }, { radiusX: 0.32, radiusY: 0.34, radiusZ: 0.32, segments: 10, rings: 3 });
+  lowPolyBlob(shell, { x: 0.16, y: 0.32, z: 0 }, { radiusX: 0.16, radiusY: 0.3, radiusZ: 0.3, segments: 6, rings: 2 });
+  lowPolyBlob(shell, { x: -0.16, y: 0.32, z: 0 }, { radiusX: 0.16, radiusY: 0.3, radiusZ: 0.3, segments: 6, rings: 2 });
+
+  const stem = part("stem", PALETTE.pumpkinStem);
+  taperedCylinder(stem, { x: 0, y: 0.6, z: 0 }, { bottomRadius: 0.07, topRadius: 0.05, height: 0.22, segments: 6 });
+  return [shell, stem];
 }
 
 function buildFarmer() {
@@ -177,6 +253,46 @@ export const MODEL_SPECS = [
     envelope: { height: 1, halfFootprint: 0.5 },
     budget: { triangles: 400, materials: 4, bytes: 12000 },
     build: buildCorn
+  },
+  {
+    id: "crop_potato",
+    kind: "crop",
+    directory: "apps/web/src/assets/models",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: buildPotato
+  },
+  {
+    id: "crop_tomato",
+    kind: "crop",
+    directory: "apps/web/src/assets/models",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: buildTomato
+  },
+  {
+    id: "crop_strawberry",
+    kind: "crop",
+    directory: "apps/web/src/assets/models",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: buildStrawberry
+  },
+  {
+    id: "crop_cabbage",
+    kind: "crop",
+    directory: "apps/web/src/assets/models",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: buildCabbage
+  },
+  {
+    id: "crop_pumpkin",
+    kind: "crop",
+    directory: "apps/web/src/assets/models",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: buildPumpkin
   },
   {
     id: "character_farmer",

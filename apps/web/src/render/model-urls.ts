@@ -1,5 +1,10 @@
+import cabbageModelUrl from "../assets/models/crop_cabbage.glb?url";
 import carrotModelUrl from "../assets/models/crop_carrot.glb?url";
 import cornModelUrl from "../assets/models/crop_corn.glb?url";
+import potatoModelUrl from "../assets/models/crop_potato.glb?url";
+import pumpkinModelUrl from "../assets/models/crop_pumpkin.glb?url";
+import strawberryModelUrl from "../assets/models/crop_strawberry.glb?url";
+import tomatoModelUrl from "../assets/models/crop_tomato.glb?url";
 import wheatModelUrl from "../assets/models/crop_wheat.glb?url";
 import type { CropModelId } from "./assets";
 
@@ -20,5 +25,10 @@ import type { CropModelId } from "./assets";
 export const CROP_MODEL_URLS: Readonly<Record<CropModelId, string>> = {
   crop_carrot: carrotModelUrl,
   crop_corn: cornModelUrl,
-  crop_wheat: wheatModelUrl
+  crop_wheat: wheatModelUrl,
+  crop_potato: potatoModelUrl,
+  crop_tomato: tomatoModelUrl,
+  crop_strawberry: strawberryModelUrl,
+  crop_cabbage: cabbageModelUrl,
+  crop_pumpkin: pumpkinModelUrl
 };

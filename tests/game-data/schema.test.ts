@@ -211,7 +211,11 @@ describe("game-data validation", () => {
   it("ships a small, internally consistent development fixture set", () => {
     expect(currencies.map((currency) => currency.id)).toContain("currency_gold");
     expect(shops.length).toBeGreaterThanOrEqual(2);
-    expect(shops.length).toBeLessThanOrEqual(8);
+    // One entry per direction is all the catalogue needs: a buy row for every seed and sapling, a
+    // sell row for every produce item, and nothing else. The bound is generous because the point is
+    // that no entry is a stray, not that the catalogue is small - the per-crop and per-tree checks
+    // below are what actually hold the shape.
+    expect(shops.length).toBeLessThanOrEqual(40);
     for (const entry of shops) {
       expect(itemRegistry.has(entry.itemDefinitionId)).toBe(true);
       expect(currencyRegistry.has(entry.currencyDefinitionId)).toBe(true);

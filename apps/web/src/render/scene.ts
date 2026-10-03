@@ -569,6 +569,27 @@ function treeStageScale(tree: SceneTree): number {
 }
 
 /**
+ * The fruit colour of a ready tree, by orchard species.
+ *
+ * Every planted tree shares one canopy model, so the fruit is what tells an apple from an orange at a
+ * glance; the interaction prompt and the harvested item are the authoritative names. A species this
+ * build has no colour for draws the neutral mature-crop fruit, exactly as an unknown crop falls back
+ * to placeholder geometry.
+ */
+function treeFruitMaterial(assets: SharedAssets, definitionId: string): MeshStandardMaterial {
+  switch (definitionId) {
+    case "tree_apple":
+      return assets.fruitApple;
+    case "tree_orange":
+      return assets.fruitOrange;
+    case "tree_peach":
+      return assets.fruitPeach;
+    default:
+      return assets.cropMature;
+  }
+}
+
+/**
  * One tree on its tile.
  *
  * The model is cloned from the cache the scenery already fills; a build with no model, or one whose
@@ -597,8 +618,9 @@ function treePlant(
     plant.add(model.clone(true));
   }
   if (tree.visualStage === "READY") {
+    const fruitMaterial = treeFruitMaterial(assets, tree.definitionId);
     for (const offset of FRUIT_OFFSETS) {
-      const fruit = new Mesh(assets.octa, assets.cropMature);
+      const fruit = new Mesh(assets.octa, fruitMaterial);
       fruit.position.set(offset[0], offset[1], offset[2]);
       fruit.scale.setScalar(0.09);
       plant.add(fruit);

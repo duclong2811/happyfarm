@@ -22,7 +22,7 @@ describe("crop model manifest", () => {
   });
 
   it("resolves an unknown crop to no model instead of a guess", () => {
-    expect(cropModelId("crop_pumpkin")).toBeNull();
+    expect(cropModelId("crop_turnip")).toBeNull();
     expect(cropModelId("item_carrot")).toBeNull();
     expect(cropModelId("")).toBeNull();
   });

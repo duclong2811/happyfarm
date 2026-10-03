@@ -13,7 +13,16 @@
  * file, or ships a file the contract in `apps/web/tools/generate-placeholder-models.mjs` rejects.
  */
 
-export const CROP_MODEL_IDS = ["crop_carrot", "crop_wheat", "crop_corn"] as const;
+export const CROP_MODEL_IDS = [
+  "crop_carrot",
+  "crop_wheat",
+  "crop_corn",
+  "crop_potato",
+  "crop_tomato",
+  "crop_strawberry",
+  "crop_cabbage",
+  "crop_pumpkin"
+] as const;
 
 export type CropModelId = (typeof CROP_MODEL_IDS)[number];
 

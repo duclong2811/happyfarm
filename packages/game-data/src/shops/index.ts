@@ -70,20 +70,35 @@ export function createShopRegistry(input: unknown): ReadonlyMap<string, ShopEntr
 }
 
 export const shopRegistry = createShopRegistry([
-  // Seeds are the only thing gold buys. Every crop repays its seed price at least twice over at
-  // the listed prices -- carrot 4 gold for a 2-gold seed, wheat 9 for 3, corn 18 for 6 -- and the
-  // resulting gold per second is the same for all three, so a slower crop is never a worse crop.
+  // Seeds (and tree saplings) are the only thing gold buys. Every seed is repaid by its harvest at
+  // the listed prices, and no entry both buys and sells, so no item can be round-tripped for a
+  // profit. The prices are the balance in `docs/design/FARMING_BALANCE.md`: a longer crop repays
+  // more per seed, a shorter one turns over faster, and no single crop wins on every axis.
   { id: "shop_carrot_seed", itemDefinitionId: "item_carrot_seed", currencyDefinitionId: "currency_gold", buyPrice: 2, maxQuantityPerRequest: 1_000 },
   { id: "shop_wheat_seed", itemDefinitionId: "item_wheat_seed", currencyDefinitionId: "currency_gold", buyPrice: 3, maxQuantityPerRequest: 1_000 },
   { id: "shop_corn_seed", itemDefinitionId: "item_corn_seed", currencyDefinitionId: "currency_gold", buyPrice: 6, maxQuantityPerRequest: 1_000 },
+  { id: "shop_potato_seed", itemDefinitionId: "item_potato_seed", currencyDefinitionId: "currency_gold", buyPrice: 6, maxQuantityPerRequest: 1_000 },
+  { id: "shop_tomato_seed", itemDefinitionId: "item_tomato_seed", currencyDefinitionId: "currency_gold", buyPrice: 12, maxQuantityPerRequest: 1_000 },
+  { id: "shop_strawberry_seed", itemDefinitionId: "item_strawberry_seed", currencyDefinitionId: "currency_gold", buyPrice: 14, maxQuantityPerRequest: 1_000 },
+  { id: "shop_cabbage_seed", itemDefinitionId: "item_cabbage_seed", currencyDefinitionId: "currency_gold", buyPrice: 18, maxQuantityPerRequest: 1_000 },
+  { id: "shop_pumpkin_seed", itemDefinitionId: "item_pumpkin_seed", currencyDefinitionId: "currency_gold", buyPrice: 22, maxQuantityPerRequest: 1_000 },
   // Harvested produce never costs gold, and selling it here is the only way it turns back into gold.
   { id: "shop_carrot", itemDefinitionId: "item_carrot", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },
   { id: "shop_wheat", itemDefinitionId: "item_wheat", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
   { id: "shop_corn", itemDefinitionId: "item_corn", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 },
+  { id: "shop_potato", itemDefinitionId: "item_potato", currencyDefinitionId: "currency_gold", sellPrice: 4, maxQuantityPerRequest: 1_000 },
+  { id: "shop_tomato", itemDefinitionId: "item_tomato", currencyDefinitionId: "currency_gold", sellPrice: 4, maxQuantityPerRequest: 1_000 },
+  { id: "shop_strawberry", itemDefinitionId: "item_strawberry", currencyDefinitionId: "currency_gold", sellPrice: 5, maxQuantityPerRequest: 1_000 },
+  { id: "shop_cabbage", itemDefinitionId: "item_cabbage", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 },
+  { id: "shop_pumpkin", itemDefinitionId: "item_pumpkin", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 },
   // The repeating producer plugs into the same two directions: gold buys the sapling once, and every
   // fruit after that sells like any other produce. Nothing new is bought or sold back.
-  { id: "shop_apple_sapling", itemDefinitionId: "item_apple_sapling", currencyDefinitionId: "currency_gold", buyPrice: 20, maxQuantityPerRequest: 1_000 },
-  { id: "shop_apple", itemDefinitionId: "item_apple", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 }
+  { id: "shop_apple_sapling", itemDefinitionId: "item_apple_sapling", currencyDefinitionId: "currency_gold", buyPrice: 12, maxQuantityPerRequest: 1_000 },
+  { id: "shop_apple", itemDefinitionId: "item_apple", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },
+  { id: "shop_orange_sapling", itemDefinitionId: "item_orange_sapling", currencyDefinitionId: "currency_gold", buyPrice: 18, maxQuantityPerRequest: 1_000 },
+  { id: "shop_orange", itemDefinitionId: "item_orange", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
+  { id: "shop_peach_sapling", itemDefinitionId: "item_peach_sapling", currencyDefinitionId: "currency_gold", buyPrice: 24, maxQuantityPerRequest: 1_000 },
+  { id: "shop_peach", itemDefinitionId: "item_peach", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 }
 ]);
 
 export const shops = [...shopRegistry.values()];

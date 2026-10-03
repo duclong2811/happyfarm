@@ -455,7 +455,12 @@ describe("Worker API foundation", () => {
     expect(body.data.definitions.map((entry) => [entry.cropDefinitionId, entry.requiredLevel])).toEqual([
       ["crop_carrot", 1],
       ["crop_wheat", 2],
-      ["crop_corn", 3]
+      ["crop_corn", 3],
+      ["crop_potato", 4],
+      ["crop_tomato", 5],
+      ["crop_strawberry", 6],
+      ["crop_cabbage", 7],
+      ["crop_pumpkin", 8]
     ]);
     // The catalogue carries the seed each planting spends and the display keys the client
     // translates, and nothing that belongs to the player: no count, no level, no inventory.
@@ -1074,7 +1079,7 @@ describe("Worker API foundation", () => {
     const catalogue = await handle(new Request("https://api.test/tree-definitions"));
     expect(catalogue.status).toBe(200);
     const catalogueBody = TreeDefinitionsEnvelopeSchema.parse(await catalogue.json());
-    expect(catalogueBody.data.definitions).toHaveLength(1);
+    expect(catalogueBody.data.definitions).toHaveLength(3);
     expect(catalogueBody.data.definitions[0]).toMatchObject({
       treeDefinitionId: "tree_apple",
       saplingItemDefinitionId: "item_apple_sapling",
@@ -1082,9 +1087,11 @@ describe("Worker API foundation", () => {
       regrowSeconds: 900,
       harvestItemDefinitionId: "item_apple",
       baseQuantity: 3,
-      harvestXp: 10,
+      harvestXp: 9,
       requiredLevel: 3
     });
+    expect(catalogueBody.data.definitions[1]).toMatchObject({ treeDefinitionId: "tree_orange", requiredLevel: 5 });
+    expect(catalogueBody.data.definitions[2]).toMatchObject({ treeDefinitionId: "tree_peach", requiredLevel: 9 });
     // The catalogue carries only what the client renders from: the sapling's own id and name, and
     // never a reward, a price, or a timer the client could set.
     expect(Object.keys(catalogueBody.data.definitions[0] ?? {}).sort()).toEqual([
@@ -1182,7 +1189,7 @@ describe("Worker API foundation", () => {
     expect(await harvested.json()).toMatchObject({
       data: {
         harvest: { treeInstanceId, itemDefinitionId: "item_apple", quantityAdded: 3 },
-        progression: { xpAwarded: 10 }
+        progression: { xpAwarded: 9 }
       }
     });
     // Replaying the same request returns the same reward and pays nothing again.

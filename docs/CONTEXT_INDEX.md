@@ -842,6 +842,26 @@ with two directions** (BUY sells what the catalogue sells, SELL lists only what 
 - Tests: `tests/web/market-presentation.test.ts`, `tests/web/market-interaction.test.ts`, and the full
   loop through the real API in `tests/api/farming-loop.test.ts`.
 
+### Farming content and balance (V14.5)
+
+Read `docs/design/FARMING_CONTENT.md` (the roster and each crop's role) and
+`docs/design/FARMING_BALANCE.md` (the computed economy) before adding or retuning a crop, a tree, its
+items, or its market prices.
+
+- Definitions: `packages/game-data/src/crops/index.ts` (8 crops), `trees/index.ts` (3 trees),
+  `items/index.ts` (produce, seeds, saplings), `shops/index.ts` (one buy row per seed/sapling, one
+  sell row per produce). The derived figures are `packages/game-data/src/balance.ts`.
+- The invariants: `tests/game-data/farming-balance.test.ts` - flat `0.8 xp/min` per crop, net profit
+  strictly rising with growth time (so no shorter crop dominates), no pairwise dominance, trees
+  below the best crop's gold/min, and no item both bought and sold. `tests/game-data/trees.test.ts`
+  holds "two harvests repay the sapling".
+- The journey: `tests/api/farming-journey.test.ts` plays starter loop -> threshold -> wheat -> the
+  first orchard tree -> a repeated tree cycle -> a second species, through the real API.
+- Models: one generated `.glb` per crop (`tools/asset-pipeline/node/specs.mjs`,
+  `apps/web/src/render/assets.ts`, `model-urls.ts`); `tests/integration/crop-model-assets.test.ts`
+  checks the shipped files. Trees share one canopy and differ by a species fruit colour.
+- Static catalogues cost no farm rows: `tests/api/catalogue-read-cost.test.ts`.
+
 ### The player character (V13.4.1)
 
 The avatar is presentation, and the authority is the player runtime - never the mesh.

@@ -63,7 +63,7 @@ const migration = [
 /** The apple tree's game-data numbers, restated here so the expectations are readable. */
 const FIRST_READY_SECONDS = 3600;
 const APPLE_YIELD = 3;
-const APPLE_XP = 10;
+const APPLE_XP = 9;
 const SAPLING = "item_apple_sapling";
 const APPLE = "item_apple";
 /** Experience the level-3 fixture starts from, so the award assertions read as deltas on it. */

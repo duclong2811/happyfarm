@@ -147,6 +147,10 @@ export interface SharedAssets {
   readonly cellOwned: MeshBasicMaterial;
   readonly cropGrowing: MeshStandardMaterial;
   readonly cropMature: MeshStandardMaterial;
+  /** A ready tree's fruit, by orchard species. The canopy is shared art; the fruit says which tree. */
+  readonly fruitApple: MeshStandardMaterial;
+  readonly fruitOrange: MeshStandardMaterial;
+  readonly fruitPeach: MeshStandardMaterial;
   /** Placeholder avatar colours. Art replaces these; nothing reads them back. */
   readonly playerBody: MeshStandardMaterial;
   readonly playerLegs: MeshStandardMaterial;
@@ -295,6 +299,9 @@ export function createSharedAssets(): SharedAssets {
     cellOwned: flatMaterial(flat(0x86c96a, { opacity: 0.2, depthWrite: false })),
     cropGrowing: material(standard(0x6fbf7f)),
     cropMature: material(standard(0xe0b64a)),
+    fruitApple: material(standard(0xd4452f)),
+    fruitOrange: material(standard(0xe08a26)),
+    fruitPeach: material(standard(0xe98f5a)),
     playerBody: material(standard(0x3f6fd8)),
     playerLegs: material(standard(0x39435c)),
     playerSkin: material(standard(0xf1c7a1)),

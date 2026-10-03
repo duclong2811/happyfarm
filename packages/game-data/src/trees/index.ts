@@ -49,11 +49,18 @@ export function createTreeRegistry(input: unknown): ReadonlyMap<string, TreeDefi
 }
 
 /**
- * The starting catalogue: one fruit tree, and the pattern for every tree after it.
+ * The orchard: three species on one lifecycle.
  *
- * Numbers are a development fixture chosen to sit above the crops rather than to be balanced: a
- * sapling costs more than a corn seed because it pays repeatedly, and its first fruit takes an hour
- * before the fifteen-minute cycle starts. Every number here is game data; no use case knows them.
+ * A tree is a long-term investment, not a better crop: its sapling costs more than any seed, its
+ * first fruit takes one to two hours, and every fruit after that repeats on a cycle. Its gold per
+ * minute sits at or just below the best field crop, because it pays without replanting; its XP per
+ * minute is deliberately lower (0.6 against the crops' 0.8), so the orchard is not the XP path.
+ *
+ * Every species obeys `two harvests repay the sapling` - the rule `tests/game-data/trees.test.ts`
+ * enforces - so a sapling can never be a trap. Later species are longer bets: more sapling, a longer
+ * first wait, a longer cycle, and a larger cycle payoff.
+ *
+ * `docs/design/FARMING_BALANCE.md` carries the numbers; no use case knows them.
  */
 export const treeRegistry = createTreeRegistry([
   {
@@ -64,7 +71,27 @@ export const treeRegistry = createTreeRegistry([
     regrowSeconds: 900,
     growthStages: 4,
     requiredLevel: 3,
-    harvest: { itemDefinitionId: "item_apple", baseQuantity: 3, xp: 10 }
+    harvest: { itemDefinitionId: "item_apple", baseQuantity: 3, xp: 9 }
+  },
+  {
+    id: "tree_orange",
+    displayNameKey: "tree.orange.name",
+    saplingItemDefinitionId: "item_orange_sapling",
+    firstReadySeconds: 5400,
+    regrowSeconds: 1200,
+    growthStages: 4,
+    requiredLevel: 5,
+    harvest: { itemDefinitionId: "item_orange", baseQuantity: 3, xp: 12 }
+  },
+  {
+    id: "tree_peach",
+    displayNameKey: "tree.peach.name",
+    saplingItemDefinitionId: "item_peach_sapling",
+    firstReadySeconds: 7200,
+    regrowSeconds: 1500,
+    growthStages: 4,
+    requiredLevel: 9,
+    harvest: { itemDefinitionId: "item_peach", baseQuantity: 4, xp: 15 }
   }
 ]);
 

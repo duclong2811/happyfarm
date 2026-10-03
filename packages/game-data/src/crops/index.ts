@@ -53,6 +53,18 @@ export function createCropRegistry(input: unknown): ReadonlyMap<string, CropDefi
 }
 
 export const cropRegistry = createCropRegistry([
+  // An alpha economy, hand-tuned around two invariants a test then holds:
+  //
+  //   xp        = 0.8 x growth minutes  (a harvest is worth the time it took, so no crop is an XP
+  //                                      exploit and none is XP-poor)
+  //   net profit strictly rises with growth time (so a shorter crop can never dominate a longer one
+  //                                      on every axis at once)
+  //
+  // Within that shape each crop has a role: carrot is the fast starter, wheat the dependable
+  // workhorse, corn the mid-value staple, potato the gold-per-minute bulk crop, tomato a steady
+  // premium, strawberry and cabbage the capital-efficient long crops, and pumpkin the long bet.
+  // `docs/design/FARMING_BALANCE.md` carries the table and `tests/game-data/farming-balance.test.ts`
+  // recomputes it from these definitions.
   {
     id: "crop_carrot",
     displayNameKey: "crop.carrot.name",
@@ -78,6 +90,51 @@ export const cropRegistry = createCropRegistry([
     requiredLevel: 3,
     seedItemDefinitionId: "item_corn_seed",
     harvest: { itemDefinitionId: "item_corn", baseQuantity: 3, xp: 24 }
+  },
+  {
+    id: "crop_potato",
+    displayNameKey: "crop.potato.name",
+    growthDurationSeconds: 1200,
+    growthStages: 4,
+    requiredLevel: 4,
+    seedItemDefinitionId: "item_potato_seed",
+    harvest: { itemDefinitionId: "item_potato", baseQuantity: 4, xp: 16 }
+  },
+  {
+    id: "crop_tomato",
+    displayNameKey: "crop.tomato.name",
+    growthDurationSeconds: 2700,
+    growthStages: 5,
+    requiredLevel: 5,
+    seedItemDefinitionId: "item_tomato_seed",
+    harvest: { itemDefinitionId: "item_tomato", baseQuantity: 7, xp: 36 }
+  },
+  {
+    id: "crop_strawberry",
+    displayNameKey: "crop.strawberry.name",
+    growthDurationSeconds: 3600,
+    growthStages: 5,
+    requiredLevel: 6,
+    seedItemDefinitionId: "item_strawberry_seed",
+    harvest: { itemDefinitionId: "item_strawberry", baseQuantity: 8, xp: 48 }
+  },
+  {
+    id: "crop_cabbage",
+    displayNameKey: "crop.cabbage.name",
+    growthDurationSeconds: 4500,
+    growthStages: 4,
+    requiredLevel: 7,
+    seedItemDefinitionId: "item_cabbage_seed",
+    harvest: { itemDefinitionId: "item_cabbage", baseQuantity: 8, xp: 60 }
+  },
+  {
+    id: "crop_pumpkin",
+    displayNameKey: "crop.pumpkin.name",
+    growthDurationSeconds: 5400,
+    growthStages: 4,
+    requiredLevel: 8,
+    seedItemDefinitionId: "item_pumpkin_seed",
+    harvest: { itemDefinitionId: "item_pumpkin", baseQuantity: 10, xp: 72 }
   }
 ]);
 

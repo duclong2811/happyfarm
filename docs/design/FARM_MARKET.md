@@ -32,14 +32,10 @@ catalogue's number, and the server charges or pays its own. Nothing in the clien
 no request carries one - a buy or sell names the entry and a quantity, and the settlement comes back
 with the amount and the new balance.
 
-Current values (unchanged in V14.3; the loop is positive by design):
-
-| Item | Buy | Sell | One planting yields |
-| --- | --- | --- | --- |
-| Carrot seed / carrot | 2 | 2 | 2 carrots (4 gold for 2) |
-| Wheat seed / wheat | 3 | 3 | 3 wheat (9 gold for 3) |
-| Corn seed / corn | 6 | 6 | 3 corn (18 gold for 6) |
-| Apple sapling / apple | 20 | 6 | 3 apples per cycle (18 gold), repeating |
+Every crop and tree has exactly two entries - a buy row for its seed or sapling, a sell row for its
+produce - and the values are the balance in `docs/design/FARMING_BALANCE.md`, not repeated here. V14.5
+expanded the shelf from three crops and one tree to eight crops and three trees; the market itself
+did not change, because it renders whatever the catalogue serves.
 
 Only seeds and saplings can be bought and only harvested produce can be sold - enforced structurally
 when the catalogue is built, so no entry can create a buy-low-sell-high loop. Static prices only:
