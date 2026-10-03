@@ -3,20 +3,21 @@ import {
   CAPACITY_FIELD,
   DEVELOPMENT_STEPS,
   ELEMENT_PROFILES,
+  RESOURCE_CAPACITY_FIELD,
   islandCapacity,
   starterCapacity,
   type ElementId,
-  type Profession
+  type Profession,
+  type ResourceProfession
 } from "./elements";
 
 /**
  * The model: every number the simulation moves, in one place.
  *
- * The rule the phase sets is that balance constants never live in the simulation logic, so this file is
- * the *only* place a future number is written down. Everything is provisional - the whole point of the
- * phase is to expose structure, not to fix prices - and the docs label it so. V16.1 adds the
- * development cost curve, workplace slots and a progression-scaled storage model, and keeps the
- * physical capacities in `elements.ts` where geography is described.
+ * V16.1.1 simplifies the model around the canonical five-resource mapping (Earth agriculture, Water
+ * fishing, Wood forestry, Metal mining, Fire livestock) and moves all value-added activity to a shared,
+ * element-neutral industrial track. It also steepens the Home Island development cost curve so that
+ * late upgrades stop being a 1-2 day payback, and gives hardwood and resin real demand channels.
  */
 
 export interface ProfessionRates {
@@ -33,49 +34,55 @@ export interface ProfessionRates {
   readonly itemPerAction: number;
 }
 
-/** The progression stages the brief names, from a starter island to the endgame. */
+/** The progression stages, from a starter island to the endgame. */
 export type StageId = "EARLY" | "DEVELOPING" | "MID" | "INDUSTRIAL" | "WORLD";
 export const STAGE_IDS: readonly StageId[] = ["EARLY", "DEVELOPING", "MID", "INDUSTRIAL", "WORLD"];
 
 export interface ActorProfile {
-  readonly id: "CASUAL" | "NORMAL" | "HARDCORE" | "AUTOMATED";
+  readonly id: "CASUAL" | "NORMAL" | "HARDCORE" | "AUTOMATED" | "INDUSTRIALIST";
   /** Seconds of deliberate play per day. */
   readonly activeSecondsPerDay: number;
   /** Share of the island's capacity the player actually keeps working, 0..1. */
   readonly capacityUsage: number;
   /** How many NPC workers this profile hires, once workers exist. */
   readonly workers: number;
-  /** How far this profile pushes Home Island development, 0..1 (a modelling intent, reported). */
+  /** How far this profile pushes Home Island development, 0..1. */
   readonly developmentTendency: number;
   /** How readily this profile buys from the market, 0..1. */
   readonly marketTendency: number;
   /** How strongly this profile leans on its element's own profession, 0..1. */
   readonly specialisationTendency: number;
+  /**
+   * What the profile aims its workforce at. INDUSTRIALIST is deliberately element-agnostic: it buys raw
+   * inputs and runs the shared workshops, whatever island it stands on.
+   */
+  readonly professionFocus: "RESOURCE" | "INDUSTRIAL";
 }
 
 export const ACTOR_PROFILES: Readonly<Record<ActorProfile["id"], ActorProfile>> = {
-  CASUAL: { id: "CASUAL", activeSecondsPerDay: 20 * 60, capacityUsage: 0.25, workers: 0, developmentTendency: 0.3, marketTendency: 0.3, specialisationTendency: 0.5 },
-  NORMAL: { id: "NORMAL", activeSecondsPerDay: 60 * 60, capacityUsage: 0.5, workers: 2, developmentTendency: 0.55, marketTendency: 0.55, specialisationTendency: 0.7 },
-  HARDCORE: { id: "HARDCORE", activeSecondsPerDay: 3 * 60 * 60, capacityUsage: 0.85, workers: 8, developmentTendency: 0.8, marketTendency: 0.7, specialisationTendency: 0.85 },
-  AUTOMATED: { id: "AUTOMATED", activeSecondsPerDay: 10 * 60, capacityUsage: 0.95, workers: 45, developmentTendency: 0.95, marketTendency: 0.85, specialisationTendency: 0.9 }
+  CASUAL: { id: "CASUAL", activeSecondsPerDay: 20 * 60, capacityUsage: 0.25, workers: 0, developmentTendency: 0.3, marketTendency: 0.3, specialisationTendency: 0.5, professionFocus: "RESOURCE" },
+  NORMAL: { id: "NORMAL", activeSecondsPerDay: 60 * 60, capacityUsage: 0.5, workers: 2, developmentTendency: 0.55, marketTendency: 0.55, specialisationTendency: 0.7, professionFocus: "RESOURCE" },
+  HARDCORE: { id: "HARDCORE", activeSecondsPerDay: 3 * 60 * 60, capacityUsage: 0.85, workers: 8, developmentTendency: 0.8, marketTendency: 0.7, specialisationTendency: 0.85, professionFocus: "RESOURCE" },
+  AUTOMATED: { id: "AUTOMATED", activeSecondsPerDay: 10 * 60, capacityUsage: 0.95, workers: 45, developmentTendency: 0.95, marketTendency: 0.85, specialisationTendency: 0.9, professionFocus: "RESOURCE" },
+  // Buys raw materials, runs workshops, sells finished goods. No element owns this business model.
+  INDUSTRIALIST: { id: "INDUSTRIALIST", activeSecondsPerDay: 30 * 60, capacityUsage: 0.5, workers: 30, developmentTendency: 0.9, marketTendency: 0.95, specialisationTendency: 0.2, professionFocus: "INDUSTRIAL" }
 };
 
 /**
- * How far each profession develops at a stage, as a share of the stage's headline tier.
+ * How far each resource profession develops at a stage, as a share of the stage's headline tier.
  *
- * The element changes the *emphasis*: an Earth island pushes farming, a Metal island pushes mining, and
- * Fire pushes pens and workshops. The weights are why a mature Fire island runs 18 lanes while its
- * extraction stays at a starter's handful of nodes.
+ * Only resource professions appear here. The shared workshop track has no element weight: every island
+ * develops it at the same rate (see `developmentTiers`).
  */
-export const PROFESSION_DEVELOPMENT_WEIGHT: Readonly<Record<ElementId, Readonly<Record<Profession, number>>>> = {
-  EARTH: { FARMING: 1.0, FISHING: 0.6, MINING: 0.5, FORESTRY: 0.6, LIVESTOCK: 0.7, PROCESSING: 0.5 },
-  WATER: { FARMING: 0.6, FISHING: 1.0, MINING: 0.5, FORESTRY: 0.5, LIVESTOCK: 0.6, PROCESSING: 0.6 },
-  WOOD: { FARMING: 0.6, FISHING: 0.5, MINING: 0.5, FORESTRY: 1.0, LIVESTOCK: 0.6, PROCESSING: 0.8 },
-  METAL: { FARMING: 0.55, FISHING: 0.5, MINING: 1.0, FORESTRY: 0.5, LIVESTOCK: 0.6, PROCESSING: 0.85 },
-  FIRE: { FARMING: 0.4, FISHING: 0.5, MINING: 0.45, FORESTRY: 0.35, LIVESTOCK: 1.0, PROCESSING: 1.0 }
+export const PROFESSION_DEVELOPMENT_WEIGHT: Readonly<Record<ElementId, Readonly<Record<ResourceProfession, number>>>> = {
+  EARTH: { FARMING: 1.0, FISHING: 0.6, MINING: 0.5, FORESTRY: 0.6, LIVESTOCK: 0.7 },
+  WATER: { FARMING: 0.6, FISHING: 1.0, MINING: 0.5, FORESTRY: 0.5, LIVESTOCK: 0.6 },
+  WOOD: { FARMING: 0.6, FISHING: 0.5, MINING: 0.5, FORESTRY: 1.0, LIVESTOCK: 0.6 },
+  METAL: { FARMING: 0.55, FISHING: 0.5, MINING: 1.0, FORESTRY: 0.5, LIVESTOCK: 0.6 },
+  FIRE: { FARMING: 0.5, FISHING: 0.5, MINING: 0.5, FORESTRY: 0.5, LIVESTOCK: 1.0 }
 };
 
-/** The stage's headline tiers: extraction/farming develops slower than industry, as the brief wants. */
+/** The stage's headline tiers: resource development slower than the shared industrial track. */
 export const STAGE_TIERS: Readonly<Record<StageId, { readonly extraction: number; readonly processing: number }>> = {
   EARLY: { extraction: 0, processing: 0 },
   DEVELOPING: { extraction: 1, processing: 1 },
@@ -84,11 +91,7 @@ export const STAGE_TIERS: Readonly<Record<StageId, { readonly extraction: number
   WORLD: { extraction: 5, processing: 5 }
 };
 
-/**
- * The character-level band each stage sits in (the brief's L1-10 / 10-20 / 20-35 / 35-50 hypothesis).
- * The simulator uses it to pick which crop a stage actually grows, so early capacity is measured
- * against the crops a starter can plant rather than against the endgame's best crop.
- */
+/** The character-level band each stage sits in; used to pick which crop a stage actually grows. */
 export const STAGE_LEVEL_MAX: Readonly<Record<StageId, number>> = {
   EARLY: 10,
   DEVELOPING: 20,
@@ -97,48 +100,60 @@ export const STAGE_LEVEL_MAX: Readonly<Record<StageId, number>> = {
   WORLD: 50
 };
 
+/** A managed farm harvests a tile at most this often in a day, however fast the crop grows. */
+export const MANAGED_CYCLES_PER_DAY = 2;
+/** A worked fishing spot supports one worker's casts per day, and no more. */
+export const CASTS_PER_SPOT_PER_DAY = 240;
+
 export function developmentTiers(element: ElementId, stage: StageId): Readonly<Record<Profession, number>> {
   const headline = STAGE_TIERS[stage];
   const weight = PROFESSION_DEVELOPMENT_WEIGHT[element];
-  const tier = (profession: Profession): number => {
-    const base = profession === "PROCESSING" ? headline.processing : headline.extraction;
-    return Math.max(0, Math.min(DEVELOPMENT_STEPS, Math.round(base * weight[profession])));
-  };
+  const tier = (profession: ResourceProfession): number =>
+    Math.max(0, Math.min(DEVELOPMENT_STEPS, Math.round(headline.extraction * weight[profession])));
   return {
     FARMING: tier("FARMING"),
     FISHING: tier("FISHING"),
     MINING: tier("MINING"),
     FORESTRY: tier("FORESTRY"),
     LIVESTOCK: tier("LIVESTOCK"),
-    PROCESSING: tier("PROCESSING")
+    // The shared workshop track: identical for every element.
+    PROCESSING: Math.max(0, Math.min(DEVELOPMENT_STEPS, headline.processing))
   };
 }
 
 /**
  * What expanding a Home Island profession costs.
  *
- * Each step is more expensive than the last in both gold and materials, and the late steps start to
- * consume industrial goods (timber, steel) rather than only wood and stone. That is the structural
- * reason a mature island eventually prefers to trade or expand instead of pouring everything into
- * another engineering tier.
+ * The cost is defined **relative to the output the upgrade adds**: step `n` costs
+ * `paybackDaysByStep[n]` days of that added output, in gold-equivalent terms. A farm tile adds little
+ * value, so a farm upgrade is cheap; a mine adds a lot, so a mine upgrade is expensive. That is what
+ * keeps payback comparable across professions and lets the late steps become genuinely slow (the V16.1
+ * model paid a near-max upgrade back in ~1.5 days).
+ *
+ * The cost is paid in gold **and** real goods: half gold, a quarter wood/stone, and - from step three -
+ * a quarter industrial goods (timber, steel, tools, provisions), so late development pulls on every
+ * other profession's output.
  */
 export interface DevelopmentModel {
   readonly steps: number;
-  readonly baseGoldCost: number;
-  readonly goldExponent: number;
-  readonly baseMaterials: Readonly<Record<string, number>>;
-  readonly materialExponent: number;
-  readonly industrialMaterials: Readonly<Record<string, number>>;
+  /** Target payback in days for steps 1..5: early quick, near-max slow. */
+  readonly paybackDaysByStep: readonly number[];
+  readonly goldShare: number;
+  readonly materialShare: number;
+  readonly materialMix: Readonly<Record<string, number>>;
+  readonly industrialShare: number;
+  readonly industrialMix: Readonly<Record<string, number>>;
   readonly industrialFromStep: number;
 }
 
 export const DEVELOPMENT_MODEL: DevelopmentModel = {
   steps: DEVELOPMENT_STEPS,
-  baseGoldCost: 300,
-  goldExponent: 1.9,
-  baseMaterials: { item_wood: 25, item_stone: 25 },
-  materialExponent: 1.6,
-  industrialMaterials: { item_timber: 4, item_steel: 2 },
+  paybackDaysByStep: [2, 5, 12, 30, 70],
+  goldShare: 0.5,
+  materialShare: 0.25,
+  materialMix: { item_wood: 0.5, item_stone: 0.5 },
+  industrialShare: 0.25,
+  industrialMix: { item_timber: 0.3, item_steel: 0.3, item_tools: 0.15, item_provisions: 0.25 },
   industrialFromStep: 3
 };
 
@@ -148,45 +163,143 @@ export interface DevelopmentCost {
   readonly materials: Readonly<Record<string, number>>;
 }
 
-export function developmentCost(step: number, model: DevelopmentModel = DEVELOPMENT_MODEL): DevelopmentCost {
-  const s = Math.max(1, step);
-  const materials: Record<string, number> = {};
-  for (const [item, quantity] of Object.entries(model.baseMaterials)) {
-    materials[item] = Math.ceil(quantity * Math.pow(s, model.materialExponent));
-  }
-  if (s >= model.industrialFromStep) {
-    for (const [item, quantity] of Object.entries(model.industrialMaterials)) {
-      materials[item] = (materials[item] ?? 0) + Math.ceil(quantity * (s - model.industrialFromStep + 1));
-    }
-  }
-  return {
-    step: s,
-    gold: Math.round(model.baseGoldCost * Math.pow(s, model.goldExponent)),
-    materials
-  };
+function paybackTarget(step: number, model: DevelopmentModel): number {
+  const index = Math.max(0, Math.min(model.paybackDaysByStep.length - 1, step - 1));
+  return model.paybackDaysByStep[index] ?? 1;
 }
 
 /**
- * The gold-equivalent cost of adding one more unit of capacity, which is the number the brief wants:
- * "should I develop this island, or buy the good from someone else?".
+ * The gold value one developed unit of a resource profession adds per day, at the physical ceiling:
+ * a farm tile, a fishing spot, a mining node, a forestry node, or a livestock pen.
+ */
+export function capacityOutputPerUnitPerDay(
+  baseline: EconomyBaseline,
+  element: ElementId,
+  profession: Profession,
+  prices: Readonly<Record<string, number>> = {}
+): number {
+  if (profession === "PROCESSING") return 0;
+  if (profession === "LIVESTOCK") {
+    const weights = LIVESTOCK_MODEL.outputMix;
+    const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+    const perUnit =
+      total <= 0
+        ? 0
+        : Object.entries(weights).reduce((sum, [item, weight]) => sum + (weight / total) * (prices[item] ?? 1), 0);
+    return LIVESTOCK_MODEL.stablePerPenPerDay * perUnit;
+  }
+  switch (profession) {
+    case "FARMING": {
+      const crop = pickBest(baseline.crops, (entry) => entry.goldPerMinute);
+      if (crop === undefined) return 0;
+      const cycles = Math.min(1440 / Math.max(1, crop.growthSeconds / 60), MANAGED_CYCLES_PER_DAY);
+      return cycles * crop.netProfit;
+    }
+    case "FISHING": {
+      const table = pickBest(baseline.fishingTables, (entry) => entry.goldPerMinute);
+      if (table === undefined) return 0;
+      const casts = Math.min(86400 / Math.max(1, table.actionSeconds), CASTS_PER_SPOT_PER_DAY);
+      return casts * table.expectedGoldPerAction;
+    }
+    case "MINING": {
+      const total = sum(baseline.mining).sustainedGoldPerMinute;
+      const nodes = baseline.mining.reduce((count, resource) => count + resource.nodeCount, 0);
+      return nodes <= 0 ? 0 : (total / nodes) * 1440;
+    }
+    case "FORESTRY": {
+      const total = sum(baseline.forestry).sustainedGoldPerMinute;
+      const nodes = baseline.forestry.reduce((count, resource) => count + resource.nodeCount, 0);
+      return nodes <= 0 ? 0 : (total / nodes) * 1440;
+    }
+  }
+}
+
+/** The gold value one development step adds per day. */
+export function addedOutputPerDay(
+  element: ElementId,
+  profession: Profession,
+  step: number,
+  baseline: EconomyBaseline,
+  prices: Readonly<Record<string, number>> = {}
+): number {
+  const gain = Math.max(
+    0,
+    developedUnits(element, profession, step) - developedUnits(element, profession, step - 1)
+  );
+  return gain * capacityOutputPerUnitPerDay(baseline, element, profession, prices);
+}
+
+/** The gold-equivalent value of one development step, from the payback target and the added output. */
+export function developmentCostValue(
+  element: ElementId,
+  profession: Profession,
+  step: number,
+  baseline: EconomyBaseline,
+  prices: Readonly<Record<string, number>>,
+  model: DevelopmentModel = DEVELOPMENT_MODEL
+): number {
+  const clamped = Math.max(1, Math.min(model.steps, Math.round(step)));
+  return paybackTarget(clamped, model) * addedOutputPerDay(element, profession, clamped, baseline, prices);
+}
+
+/** The upgrade's cost split into gold and real goods, using the market prices for the materials. */
+export function developmentCost(
+  element: ElementId,
+  profession: Profession,
+  step: number,
+  baseline: EconomyBaseline,
+  prices: Readonly<Record<string, number>>,
+  model: DevelopmentModel = DEVELOPMENT_MODEL
+): DevelopmentCost {
+  const clamped = Math.max(1, Math.min(model.steps, Math.round(step)));
+  const total = developmentCostValue(element, profession, clamped, baseline, prices, model);
+  const materials: Record<string, number> = {};
+  for (const [item, weight] of Object.entries(model.materialMix)) {
+    materials[item] = Math.max(0, Math.ceil((total * model.materialShare * weight) / Math.max(1e-9, prices[item] ?? 1)));
+  }
+  if (clamped >= model.industrialFromStep) {
+    for (const [item, weight] of Object.entries(model.industrialMix)) {
+      materials[item] =
+        (materials[item] ?? 0) + Math.max(0, Math.ceil((total * model.industrialShare * weight) / Math.max(1e-9, prices[item] ?? 1)));
+    }
+  }
+  return { step: clamped, gold: Math.round(total * model.goldShare), materials };
+}
+
+/**
+ * The gold-equivalent cost of adding one more unit of capacity: "should I develop this island, or buy
+ * the good from someone else?".
  */
 export function marginalCapacityCost(
   element: ElementId,
   profession: Profession,
   nextStep: number,
+  baseline: EconomyBaseline,
   prices: Readonly<Record<string, number>>,
   model: DevelopmentModel = DEVELOPMENT_MODEL
 ): number {
-  const step = Math.max(1, Math.min(model.steps, Math.round(nextStep)));
-  const from = developedUnits(element, profession, step - 1);
-  const to = developedUnits(element, profession, step);
-  const gained = Math.max(1, to - from);
-  const cost = developmentCost(step, model);
-  let goldEquivalent = cost.gold;
-  for (const [item, quantity] of Object.entries(cost.materials)) {
-    goldEquivalent += quantity * (prices[item] ?? 1);
-  }
-  return goldEquivalent / gained;
+  const clamped = Math.max(1, Math.min(model.steps, Math.round(nextStep)));
+  const gain = Math.max(1e-9, developedUnits(element, profession, clamped) - developedUnits(element, profession, clamped - 1));
+  return developmentCostValue(element, profession, clamped, baseline, prices, model) / gain;
+}
+
+/**
+ * How many days of a profession's added output repay one development step. It rises by construction -
+ * the cost of a step is defined as a growing number of days of the output it adds - which is what
+ * eventually makes importing cheaper than another upgrade.
+ */
+export function capacityPaybackDays(
+  element: ElementId,
+  profession: Profession,
+  step: number,
+  baseline: EconomyBaseline,
+  prices: Readonly<Record<string, number>>,
+  model: DevelopmentModel = DEVELOPMENT_MODEL
+): number {
+  const clamped = Math.max(1, Math.min(model.steps, Math.round(step)));
+  const added = addedOutputPerDay(element, profession, clamped, baseline, prices);
+  if (added <= 0) return Number.POSITIVE_INFINITY;
+  return developmentCostValue(element, profession, clamped, baseline, prices, model) / added;
 }
 
 function developedUnits(element: ElementId, profession: Profession, step: number): number {
@@ -194,34 +307,25 @@ function developedUnits(element: ElementId, profession: Profession, step: number
   const starter = starterCapacity(element)[field];
   const ceiling = islandCapacity(element)[field];
   const clamped = Math.max(0, Math.min(DEVELOPMENT_STEPS, step));
-  // Fractional on purpose: a step's capacity *gain* is what makes the marginal cost curve monotonic,
-  // and rounding each step first would put a false dip in it.
+  // Fractional on purpose: a step's capacity *gain* is what makes the marginal cost curve monotonic.
   return Math.max(1, starter + ((ceiling - starter) * clamped) / DEVELOPMENT_STEPS);
 }
 
 /** What storage holds, and what expanding it costs. Storage scales with progression, not one big cap. */
 export interface StorageModel {
   readonly enabled: boolean;
-  /** Units of one resource a player may hold at tier 0 - enough for the first sessions. */
   readonly baseCapacityPerResource: number;
-  /** Each upgrade multiplies capacity, with a rising Gold-and-materials cost. */
   readonly tierMultiplier: number;
   readonly baseUpgradeGoldCost: number;
   readonly upgradeCostExponent: number;
-  /** Upgrades are built, not bought: wood and stone, then industrial goods. */
   readonly upgradeMaterials: Readonly<Record<string, number>>;
-  /** A cohort upgrades when its fullest store passes this share of capacity. */
   readonly upgradeFillThreshold: number;
 }
 
 export const STORAGE_MODEL: StorageModel = {
   enabled: true,
-  // Starter storage is deliberately roomy against a starter island's daily output, so the first
-  // sessions are not a Tetris game; it becomes a decision once industrial throughput arrives.
   // Roomier than one starter island's daily output, so the opening sessions are not a storage-tetris;
   // upgrades then have to keep up with production, which is where the strategic decision appears.
-  // Calibrated to roughly a month of a starter island's daily output, so the first sessions are
-  // comfortable and the pressure arrives with industrial throughput rather than on day one.
   baseCapacityPerResource: 40000,
   tierMultiplier: 2,
   baseUpgradeGoldCost: 1500,
@@ -233,22 +337,16 @@ export const STORAGE_MODEL: StorageModel = {
 /** NPC workers: throughput in exchange for food and gold, bounded by workplace slots and capacity. */
 export interface WorkerModel {
   readonly enabled: boolean;
-  /** Actions per worker per day against whatever workplace they are assigned to. */
   readonly actionsPerWorkerPerDay: number;
-  /** Housing, from buildings, limits the workforce. */
   readonly housingCapacityPerIsland: number;
   /**
-   * Workplace slots one developed capacity unit supports. A mine with five slots cannot be worked by
-   * twenty miners: the extra workers add nothing, which is exactly what the brief asks the model to
-   * enforce. A worker can only work capacity that already exists.
+   * Workplace slots one developed capacity unit supports. A worker can only work capacity that already
+   * exists; extra workers on a full site add nothing.
    */
   readonly slotsPerUnit: Readonly<Record<Profession, number>>;
-  /** Food the worker eats per day: staple plus protein, in units. */
   readonly staplePerWorkerPerDay: number;
   readonly proteinPerWorkerPerDay: number;
-  /** Gold upkeep per worker per day. */
   readonly goldUpkeepPerWorkerPerDay: number;
-  /** A worker with no food or no storage produces at this share. */
   readonly starvedProductivity: number;
 }
 
@@ -263,55 +361,44 @@ export const WORKER_MODEL: WorkerModel = {
   starvedProductivity: 0.35
 };
 
-/** One processing recipe: inputs in, one output out. */
+/** One processing recipe: inputs in, one output out. Recipes belong to the shared system, not Fire. */
 export interface Recipe {
   readonly id: string;
   readonly inputs: Readonly<Record<string, number>>;
   readonly output: string;
   readonly outputQuantity: number;
-  /** Seconds one batch occupies a processing lane. */
   readonly secondsPerBatch: number;
-  /**
-   * The batches a lane is actually *asked* to run in a day.
-   *
-   * This is what stops an industrial island declaring infinite demand for finished goods: it wants as
-   * much as its economy can absorb, not as many batches as a lane could physically stamp out.
-   */
   readonly targetPerLanePerDay: number;
 }
 
 export const PROCESSING_MODEL: {
   readonly enabled: boolean;
-  /**
-   * A lane's practical ceiling. The recipe time says a lane *could* run thousands of batches a day;
-   * a managed workshop does not, and the cap is what keeps an industrial island's raw demand within
-   * the range where local extraction can still cover part of it.
-   */
   readonly maxBatchesPerLanePerDay: number;
   readonly recipes: readonly Recipe[];
 } = {
   enabled: true,
   maxBatchesPerLanePerDay: 8,
   recipes: [
-    // Metal + fuel becomes a material worth several times its inputs, which is what makes Fire's
-    // imports worthwhile and what the Fire-dependency check watches.
+    // Shared smelting: Metal + fuel becomes steel. Every island may smelt; none gets a bonus.
     { id: "recipe_steel", inputs: { item_iron_ore: 2, item_coal: 1 }, output: "item_steel", outputQuantity: 1, secondsPerBatch: 30, targetPerLanePerDay: 6 },
+    // Wood -> timber. Hardwood is now a required input to tools, so Wood has a strategic channel.
     { id: "recipe_timber", inputs: { item_wood: 3 }, output: "item_timber", outputQuantity: 1, secondsPerBatch: 20, targetPerLanePerDay: 5 },
-    // Copper needs a sink; without one it is a dead material in the flow graph.
     { id: "recipe_components", inputs: { item_copper_ore: 2, item_coal: 1 }, output: "item_components", outputQuantity: 1, secondsPerBatch: 40, targetPerLanePerDay: 3 },
-    { id: "recipe_tools", inputs: { item_steel: 1, item_timber: 1 }, output: "item_tools", outputQuantity: 1, secondsPerBatch: 60, targetPerLanePerDay: 1 },
-    { id: "recipe_provisions", inputs: { item_fish_snapper: 2, item_potato: 2 }, output: "item_provisions", outputQuantity: 1, secondsPerBatch: 25, targetPerLanePerDay: 1 }
+    // Tools want hardwood; machinery wants resin (a sealant) and copper. Both strengthen Wood.
+    { id: "recipe_tools", inputs: { item_steel: 1, item_timber: 1, item_hardwood: 1 }, output: "item_tools", outputQuantity: 1, secondsPerBatch: 60, targetPerLanePerDay: 1 },
+    { id: "recipe_machinery", inputs: { item_steel: 2, item_copper_ore: 1, item_timber: 1, item_resin: 1 }, output: "item_machinery", outputQuantity: 1, secondsPerBatch: 90, targetPerLanePerDay: 1 },
+    { id: "recipe_provisions", inputs: { item_fish_snapper: 2, item_potato: 2 }, output: "item_provisions", outputQuantity: 1, secondsPerBatch: 25, targetPerLanePerDay: 1 },
+    // Animal products become leather and textiles - shared, not Fire's monopoly.
+    { id: "recipe_leather", inputs: { item_hide: 2, item_resin: 1 }, output: "item_leather", outputQuantity: 1, secondsPerBatch: 35, targetPerLanePerDay: 1 },
+    { id: "recipe_textiles", inputs: { item_wool: 2 }, output: "item_textiles", outputQuantity: 1, secondsPerBatch: 35, targetPerLanePerDay: 1 }
   ]
 };
 
 /** The player market, when it exists: a clearing price and the fees that make it a Gold sink. */
 export interface MarketModel {
   readonly enabled: boolean;
-  /** Fraction of a trade's Gold value destroyed as a fee. */
   readonly feeRate: number;
-  /** How strongly a shortage moves the clearing price above the base value. */
   readonly scarcitySensitivity: number;
-  /** A trade happens only when the buyer's valuation is at least this above the seller's. */
   readonly minimumSpread: number;
 }
 
@@ -325,18 +412,15 @@ export const MARKET_MODEL: MarketModel = {
 /** The NPC shop's safety-net rule: how much of one item a player may buy per day. */
 export interface NpcShopModel {
   readonly dailyPurchaseCapPerItem: number;
-  /** The shop charges this much more than the base value for anything it supplies. */
   readonly markup: number;
 }
 
-// Capped and marked up: ten wood is possible, five thousand is not how a large economy is fed.
 export const NPC_SHOP_MODEL: NpcShopModel = { dailyPurchaseCapPerItem: 50, markup: 1.4 };
 
 /** A recurring demand that consumes goods without producing any: the army, the fleet, the voyage. */
 export interface SinkModel {
   readonly id: string;
   readonly enabled: boolean;
-  /** Per player per day, in units of each item. */
   readonly itemsPerPlayerPerDay: Readonly<Record<string, number>>;
   readonly goldPerPlayerPerDay: number;
 }
@@ -352,35 +436,34 @@ export const SINKS: readonly SinkModel[] = [
   {
     id: "military",
     enabled: true,
-    // Soldiers eat, are paid, and wear out equipment. Deliberately modest: the bible's rule is that
-    // military demand must be plausible, not a number invented to absorb inflation.
-    itemsPerPlayerPerDay: { item_provisions: 3, item_steel: 2, item_components: 1, item_tools: 0.5 },
+    // Soldiers eat, are paid, and wear out equipment.
+    itemsPerPlayerPerDay: { item_provisions: 3, item_steel: 2, item_components: 1, item_tools: 0.5, item_machinery: 0.2, item_leather: 0.3 },
     goldPerPlayerPerDay: 25
   }
 ];
 
-/** Livestock, modelled as a conversion economy that consumes feed. */
+/** Livestock, modelled as a conversion economy that turns feed into animal products. */
 export interface LivestockModel {
   readonly enabled: boolean;
   /** Staples one pen eats per day. Feed is the Earth->Fire dependency. */
   readonly staplesPerPenPerDay: number;
-  /** Output units one fully fed pen produces per day (split across products). */
+  /** Output units one fully fed pen produces per day, split across the animal products. */
   readonly stablePerPenPerDay: number;
+  /** The split of a pen's output across its products (weights are normalised at use). */
+  readonly outputMix: Readonly<Record<string, number>>;
   readonly xpPerPenPerDay: number;
 }
 
 export const LIVESTOCK_MODEL: LivestockModel = {
   enabled: true,
-  // A pen is a real feed bill: Fire's industrial livestock has to buy staples when its own fields
-  // cannot cover the herd, which is the Earth->Fire dependency the brief asks the model to show.
   staplesPerPenPerDay: 12,
   stablePerPenPerDay: 5,
+  outputMix: { item_eggs: 0.3, item_milk: 0.25, item_meat: 0.25, item_hide: 0.1, item_wool: 0.1 },
   xpPerPenPerDay: 3
 };
 
 export interface LandModel {
   readonly enabled: boolean;
-  /** Gold a plot costs, and the level it needs, come from the baseline catalogue. */
   readonly expansionEnabled: boolean;
 }
 
@@ -424,7 +507,6 @@ export function professionRates(baseline: EconomyBaseline, element: ElementId): 
   const forestry = sum(baseline.forestry);
   const bestMining = pickBest(baseline.mining, (resource) => resource.sustainedGoldPerMinute);
   const bestForestry = pickBest(baseline.forestry, (resource) => resource.sustainedGoldPerMinute);
-  // Capacity gold/day uses the physical ceiling so the number reads "an island fully built out".
   return {
     FARMING: {
       goldPerAction: bestCrop?.netProfit ?? 0,
@@ -466,14 +548,20 @@ export function professionRates(baseline: EconomyBaseline, element: ElementId): 
 }
 
 /**
- * The element's *physical* specialisation: how much more of a profession its ceiling holds than an
- * ordinary island's. This is deliberately separate from the efficiency modifier, so a report can say
- * which one produced an advantage.
+ * The element's *physical* specialisation in a resource profession: its ceiling over the five-element
+ * average. The shared workshop track is element-neutral, so it always returns 1.
  */
 export function physicalCapacityMultiplier(element: ElementId, profession: Profession): number {
-  const values = Object.values(ELEMENT_PROFILES).map((profile) => profile.physicalMax[CAPACITY_FIELD[profession]]);
+  if (profession === "PROCESSING") return 1;
+  const field = RESOURCE_CAPACITY_FIELD[profession];
+  const values = Object.values(ELEMENT_PROFILES).map((profile) => profile.physicalMax[field]);
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  return average <= 0 ? 1 : ELEMENT_PROFILES[element].physicalMax[CAPACITY_FIELD[profession]] / average;
+  return average <= 0 ? 1 : ELEMENT_PROFILES[element].physicalMax[field] / average;
+}
+
+/** The element's primary resource advantage: its own profession's physical multiplier. */
+export function rawResourceSpecializationAdvantage(element: ElementId): number {
+  return physicalCapacityMultiplier(element, ELEMENT_PROFILES[element].primaryProfession) - 1;
 }
 
 function pickBest<T>(entries: readonly T[], score: (entry: T) => number): T | undefined {
@@ -490,3 +578,4 @@ function sum(resources: readonly ResourceBaseline[]): { sustainedGoldPerMinute: 
     sustainedXpPerMinute: resources.reduce((total, resource) => total + resource.sustainedXpPerMinute, 0)
   };
 }
+

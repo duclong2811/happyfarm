@@ -3,6 +3,7 @@ import {
   ELEMENT_IDS,
   ELEMENT_PROFILES,
   PROFESSIONS,
+  efficiencyFor,
   islandCapacity,
   type ElementId,
   type Profession
@@ -135,14 +136,14 @@ export function analyse(result: SimulationResult, model: EconomyModel): readonly
     verdict: workplace > 1.0001 ? "RISK" : "HEALTHY",
     detail: `Peak workplace fill ${(workplace * 100).toFixed(0)}% of the island's worker slots.`
   });
+  checks.push(processingNeutrality());
+  checks.push(upgradeCrossover(result));
   return checks;
 }
 
 /**
- * Fire must never get a *raw* advantage, and its industry must actually depend on imports.
- *
- * The first half is a property of the physical table, so it is checked directly; the second half is
- * read from the run, because a Fire island that happens to import nothing is a finding, not a rule.
+ * Fire is a livestock specialist now, not an industrial one. Its extraction ceilings stay below the
+ * specialists', and - the V16.1.1 rule - it gets no industrial advantage of any kind.
  */
 function fireDominance(result: SimulationResult, fire: SimulationResult["perElement"][number] | undefined): DominanceCheck {
   const rawProfessions: readonly Profession[] = ["FARMING", "FISHING", "MINING", "FORESTRY"];
@@ -150,9 +151,7 @@ function fireDominance(result: SimulationResult, fire: SimulationResult["perElem
     const best = Math.max(...ELEMENT_IDS.map((id) => islandCapacity(id)[CAPACITY_FIELD[profession]]));
     return islandCapacity("FIRE")[CAPACITY_FIELD[profession]] >= best;
   });
-  const fireProcessingBest =
-    islandCapacity("FIRE").processingLanes >= Math.max(...ELEMENT_IDS.map((id) => islandCapacity(id).processingLanes));
-  const rawItems = new Set(["item_iron_ore", "item_coal", "item_wood", "item_hardwood", "item_resin"]);
+  const rawItems = new Set(["item_iron_ore", "item_coal", "item_wood", "item_hardwood", "item_resin", "item_potato", "item_fish_sardine"]);
   const rawDependencies = fire?.importDependency.filter((entry) => rawItems.has(entry.itemDefinitionId)) ?? [];
   const rawDependency =
     rawDependencies.length === 0
@@ -160,13 +159,44 @@ function fireDominance(result: SimulationResult, fire: SimulationResult["perElem
       : rawDependencies.reduce((sum, entry) => sum + entry.importDependency, 0) / rawDependencies.length;
   return {
     id: "FIRE_DOMINANCE",
-    question: "Can Fire out-produce the raw elements, or does it depend on them?",
+    question: "Can Fire out-produce the resource specialists, or claim an industrial advantage?",
     verdict: fireIsRawBest ? "RISK" : "HEALTHY",
     detail: fireIsRawBest
       ? "Fire matches or beats the best raw element in at least one gathering profession."
-      : `Fire's extraction ceilings are below every specialist's, its industry is ${fireProcessingBest ? "the largest" : "large"}, and it ran at ${
+      : `Fire's extraction ceilings are below every specialist's, it holds no industrial advantage, and it ran at ${
           rawDependency === null ? "n/a" : `${(rawDependency * 100).toFixed(0)}%`
-        } mean import dependency on raw inputs.`
+        } mean import dependency on raw inputs and feed.`
+  };
+}
+
+/**
+ * The shared processing system must be element-neutral: the same workshop ceiling and no efficiency
+ * modifier for every island. This is the rule that removes V16.1's Fire industrial specialisation.
+ */
+function processingNeutrality(): DominanceCheck {
+  const lanes = ELEMENT_IDS.map((id) => islandCapacity(id).processingLanes);
+  const efficiency = ELEMENT_IDS.map((id) => efficiencyFor(id, "PROCESSING"));
+  const neutral = new Set(lanes).size === 1 && efficiency.every((value) => value === 1);
+  return {
+    id: "PROCESSING_NEUTRALITY",
+    question: "Is manufacturing a shared system, with no element receiving a throughput bonus?",
+    verdict: neutral ? "HEALTHY" : "RISK",
+    detail: neutral
+      ? `Every element may develop ${String(lanes[0])} workshop lanes with no efficiency modifier.`
+      : `Processing differs by element: lanes ${lanes.join("/")}, efficiency ${efficiency.join("/")}.`
+  };
+}
+
+/** Late Home Island development should no longer be a 1-2 day payback. */
+function upgradeCrossover(result: SimulationResult): DominanceCheck {
+  const paybacks = result.perElement.map((entry) => entry.capacityPaybackDays[4] ?? 0).filter((value) => Number.isFinite(value));
+  const worst = paybacks.length === 0 ? 0 : Math.max(...paybacks);
+  const best = paybacks.length === 0 ? 0 : Math.min(...paybacks);
+  return {
+    id: "UPGRADE_CROSSOVER",
+    question: "Does a near-max Home Island upgrade pay back over weeks, not days?",
+    verdict: best < 10 ? "RISK" : best < 20 ? "WATCH" : "HEALTHY",
+    detail: `Step-5 payback ranges ${best.toFixed(0)}-${worst.toFixed(0)} days across elements (target 45-90 for near-max).`
   };
 }
 

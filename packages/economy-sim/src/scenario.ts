@@ -1,4 +1,4 @@
-import type { ActorProfile, StageId } from "./model";
+﻿import type { ActorProfile, StageId } from "./model";
 import { ELEMENT_IDS, type ElementId } from "./elements";
 
 /**
@@ -56,6 +56,8 @@ const FIRE_HEAVY: Readonly<Record<ElementId, number>> = { EARTH: 0.2, WATER: 0.1
 const METAL_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.25, WATER: 0.25, WOOD: 0.25, METAL: 0.1, FIRE: 0.15 };
 const WOOD_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.25, WATER: 0.25, WOOD: 0.1, METAL: 0.2, FIRE: 0.2 };
 const EARTH_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.1, WATER: 0.25, WOOD: 0.25, METAL: 0.2, FIRE: 0.2 };
+const WATER_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.25, WATER: 0.1, WOOD: 0.25, METAL: 0.2, FIRE: 0.2 };
+const FIRE_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.25, WATER: 0.25, WOOD: 0.2, METAL: 0.2, FIRE: 0.1 };
 
 function only(element: ElementId): Readonly<Record<ElementId, number>> {
   return Object.fromEntries(ELEMENT_IDS.map((id) => [id, id === element ? 1 : 0])) as Record<ElementId, number>;
@@ -65,21 +67,49 @@ const ONE_NORMAL_PLAYER: Readonly<Record<ActorProfile["id"], number>> = {
   CASUAL: 0,
   NORMAL: 1,
   HARDCORE: 0,
-  AUTOMATED: 0
+  AUTOMATED: 0,
+  INDUSTRIALIST: 0
 };
 
 const REALISTIC_MIX: Readonly<Record<ActorProfile["id"], number>> = {
   CASUAL: 0.5,
   NORMAL: 0.4,
   HARDCORE: 0.09,
-  AUTOMATED: 0.01
+  AUTOMATED: 0.01,
+  INDUSTRIALIST: 0
 };
 
 const WORKER_HEAVY_MIX: Readonly<Record<ActorProfile["id"], number>> = {
   CASUAL: 0.05,
   NORMAL: 0.15,
   HARDCORE: 0.3,
-  AUTOMATED: 0.5
+  AUTOMATED: 0.5,
+  INDUSTRIALIST: 0
+};
+
+const ONE_AUTOMATED: Readonly<Record<ActorProfile["id"], number>> = {
+  CASUAL: 0,
+  NORMAL: 0,
+  HARDCORE: 0,
+  AUTOMATED: 1,
+  INDUSTRIALIST: 0
+};
+
+const ONE_INDUSTRIALIST: Readonly<Record<ActorProfile["id"], number>> = {
+  CASUAL: 0,
+  NORMAL: 0,
+  HARDCORE: 0,
+  AUTOMATED: 0,
+  INDUSTRIALIST: 1
+};
+
+/** Half resource players, half element-agnostic industrialists - the vertically integrated island. */
+const VERTICAL_MIX: Readonly<Record<ActorProfile["id"], number>> = {
+  CASUAL: 0.2,
+  NORMAL: 0.3,
+  HARDCORE: 0.1,
+  AUTOMATED: 0,
+  INDUSTRIALIST: 0.4
 };
 
 const NO_FEATURES: ScenarioFeatures = {
@@ -160,8 +190,8 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "F",
-    name: "Fire industrialisation",
-    question: "Does a mature Fire island import its raw inputs, or feed itself?",
+    name: "Fire livestock specialisation",
+    question: "Does a mature Fire island stand on animal husbandry and buy feed, or feed itself?",
     days: 30,
     actors: 200,
     stage: "INDUSTRIAL",
@@ -227,7 +257,7 @@ export const SCENARIOS: readonly Scenario[] = [
     stage: "INDUSTRIAL",
     mixLabel: "one automated Earth player",
     elementMix: SINGLE_ELEMENT,
-    archetypeMix: { CASUAL: 0, NORMAL: 0, HARDCORE: 0, AUTOMATED: 1 },
+    archetypeMix: ONE_AUTOMATED,
     features: features({ storage: true, upgrades: true, workers: true, processing: true, livestock: true, npcShop: true })
   },
   {
@@ -239,7 +269,7 @@ export const SCENARIOS: readonly Scenario[] = [
     stage: "INDUSTRIAL",
     mixLabel: "one automated Fire player",
     elementMix: only("FIRE"),
-    archetypeMix: { CASUAL: 0, NORMAL: 0, HARDCORE: 0, AUTOMATED: 1 },
+    archetypeMix: ONE_AUTOMATED,
     features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
   },
   {
@@ -325,6 +355,79 @@ export const SCENARIOS: readonly Scenario[] = [
     elementMix: EARTH_SHORTAGE,
     archetypeMix: REALISTIC_MIX,
     features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "T",
+    name: "Resource producer selling raw materials",
+    question: "Does a Metal island that never builds a workshop still earn a living selling ore?",
+    days: 30,
+    actors: 200,
+    stage: "INDUSTRIAL",
+    mixLabel: "100% Metal, raw exporter",
+    elementMix: only("METAL"),
+    archetypeMix: REALISTIC_MIX,
+    // No processing: the island sells raw ore, coal, copper and stone on the market.
+    features: features({ storage: true, upgrades: true, workers: true, market: true, npcShop: true })
+  },
+  {
+    id: "U",
+    name: "Generic processor buying raw materials",
+    question: "Does the element-agnostic industrialist business model work on every island?",
+    days: 30,
+    actors: 250,
+    stage: "INDUSTRIAL",
+    mixLabel: "balanced, all industrialist",
+    elementMix: EVEN_SPREAD,
+    archetypeMix: ONE_INDUSTRIALIST,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "V",
+    name: "Vertically integrated producer",
+    question: "Is owning both the resource capacity and the workshops better than doing only one?",
+    days: 30,
+    actors: 400,
+    stage: "INDUSTRIAL",
+    mixLabel: "balanced, half industrialist",
+    elementMix: EVEN_SPREAD,
+    archetypeMix: VERTICAL_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "W",
+    name: "Water shortage",
+    question: "With at most 10% Water, does protein become scarce and does Fire livestock fill the gap?",
+    days: 30,
+    actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "Water-shortage",
+    elementMix: WATER_SHORTAGE,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "X",
+    name: "Fire / livestock shortage",
+    question: "With at most 10% Fire, does animal protein, hide or wool become scarce?",
+    days: 30,
+    actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "Fire-shortage",
+    elementMix: FIRE_SHORTAGE,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "Y",
+    name: "Ten-thousand-player balanced economy",
+    question: "Does the model hold at population scale over a long horizon?",
+    days: 90,
+    actors: 10_000,
+    stage: "WORLD",
+    mixLabel: "balanced, realistic",
+    elementMix: EVEN_SPREAD,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, sinks: true, npcShop: true })
   }
 ];
 
@@ -353,3 +456,4 @@ export function assertScenario(scenario: Scenario): void {
 }
 
 for (const scenario of SCENARIOS) assertScenario(scenario);
+

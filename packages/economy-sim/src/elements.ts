@@ -1,31 +1,38 @@
 /**
- * The five-element island economy, modelled as **physical capacity first, numeric efficiency second**.
+ * The five-element model, V16.1.1: **five resource specialisations**, plus a shared industrial system.
  *
- * V16.0 described an element as a bundle of production multipliers (0.6x-1.9x). That made every island
- * the same island with different stats, and the simulation showed the consequence: no element ever
- * needed a neighbour, because a better multiplier is not the same as *having more ground*. V16.1
- * replaces the multiplier table with a **physical island profile** - how many agricultural cells, how
- * much coastline, how many deposits, pens and workshops an island's geography can ever support - and
- * keeps only a small efficiency modifier (0.9x-1.15x) on top of it.
+ * The canonical mapping is now one profession per element and nothing else:
  *
- * The element belongs to the **Home Island**, not to the player. Every island can still run every
- * profession; the element decides how far a profession can be *developed*, never whether it is allowed.
- * There is no respec: an island's geography is what it is. See `docs/economy/FIVE_ELEMENT_CAPACITY_MODEL.md`.
+ *   Earth  -> Agriculture        Water -> Fishing / Aquaculture
+ *   Wood   -> Forestry           Metal -> Mining
+ *   Fire   -> Livestock / Animal Husbandry
+ *
+ * Processing, refining, crafting, cooking, manufacturing, shipbuilding and every other value-added
+ * activity are **shared economic systems** that any island can build. They are not an element, and no
+ * element gets a throughput bonus for them. The brief that changed this is V16.1.1; before it, Fire was
+ * modelled as a refining specialist, and that rule is removed here and in the docs.
+ *
+ * The element still belongs to the **Home Island**, never the player, and it remains a comparative
+ * advantage rather than a lock: every island can run every resource profession. Geography (physical
+ * capacity) is the primary differentiation; the efficiency modifier is a small second.
  */
 
 export const ELEMENT_IDS = ["EARTH", "WATER", "WOOD", "METAL", "FIRE"] as const;
 export type ElementId = (typeof ELEMENT_IDS)[number];
 
-/** The professions a Home Island can develop, in the order the economy bible describes them. */
-export const PROFESSIONS = ["FARMING", "FISHING", "MINING", "FORESTRY", "LIVESTOCK", "PROCESSING"] as const;
-export type Profession = (typeof PROFESSIONS)[number];
+/** The five resource professions. One per element; every island can run all five. */
+export const RESOURCE_PROFESSIONS = ["FARMING", "FISHING", "MINING", "FORESTRY", "LIVESTOCK"] as const;
+export type ResourceProfession = (typeof RESOURCE_PROFESSIONS)[number];
 
 /**
- * A developed Home Island's capacity, in the unit each profession is bounded by: tiles, spots, nodes,
- * wild trees, pens and lanes. It is the *developed* capacity, so it grows with investment but can
- * never pass the physical ceiling (`ELEMENT_PROFILES[...].physicalMax`).
+ * The capacity keys the engine tracks. The five resource professions above, plus the shared workshop
+ * capacity ("PROCESSING"), which is a horizontal system rather than a profession.
  */
-export interface IslandCapacity {
+export const PROFESSIONS = [...RESOURCE_PROFESSIONS, "PROCESSING"] as const;
+export type Profession = (typeof PROFESSIONS)[number];
+
+/** The resource capacities a Home Island's geography bounds. */
+export interface ResourceCapacity {
   /** Farm tiles under cultivation. */
   readonly farmTiles: number;
   /** Fishable spots (coastline and pond). */
@@ -36,7 +43,15 @@ export interface IslandCapacity {
   readonly forestryNodes: number;
   /** Livestock pens. */
   readonly livestockPens: number;
-  /** Processing/workshop lanes. */
+}
+
+/**
+ * A developed Home Island's capacity: the five resource capacities plus the shared workshop lanes.
+ * Workshop lanes are element-neutral (see `INDUSTRIAL_PROFILE`), so two islands of different elements
+ * with the same investment run the same number of workshops.
+ */
+export interface IslandCapacity extends ResourceCapacity {
+  /** Shared workshop/processing lanes. Element-neutral. */
   readonly processingLanes: number;
 }
 
@@ -50,25 +65,33 @@ export const CAPACITY_FIELD: Readonly<Record<Profession, keyof IslandCapacity>> 
   PROCESSING: "processingLanes"
 };
 
+/** The resource-only mapping, for indexing `ResourceCapacity` without the workshop lane. */
+export const RESOURCE_CAPACITY_FIELD: Readonly<Record<ResourceProfession, keyof ResourceCapacity>> = {
+  FARMING: "farmTiles",
+  FISHING: "fishingSpots",
+  MINING: "miningNodes",
+  FORESTRY: "forestryNodes",
+  LIVESTOCK: "livestockPens"
+};
+
 export interface ElementProfile {
   readonly id: ElementId;
   readonly displayName: string;
   readonly identity: string;
-  /** The immediate profession the island's geography favours, used only as a modelling weight. */
-  readonly primaryProfession: Profession;
-  /** The physical ceiling: the most of each profession the island's ground, coast and rock can hold. */
-  readonly physicalMax: IslandCapacity;
-  /** A small modifier (0.9-1.15) on top of the physical profile. Geography does most of the work. */
-  readonly efficiency: Readonly<Record<Profession, number>>;
+  /** The resource profession the island's geography favours. */
+  readonly primaryProfession: ResourceProfession;
+  /** The physical ceiling for the five resource professions. */
+  readonly physicalMax: ResourceCapacity;
+  /** A small modifier (0.90-1.15) on the *resource* professions. Industry has no modifier. */
+  readonly efficiency: Readonly<Record<ResourceProfession, number>>;
 }
 
 /**
- * The five physical profiles.
+ * The five physical resource profiles.
  *
- * The numbers are model values, not map edits: nothing in `apps/` or `workers/` reads them. They are
- * calibrated so that (a) each element has a clear physical ceiling in one profession, (b) every element
- * has a real, if small, second best, and (c) Fire's extraction ceilings sit below the raw specialists'
- * so its industry has to be fed from elsewhere.
+ * Each element has the highest ceiling in exactly one resource profession and usable (if lower)
+ * ceilings in the rest. There is deliberately no processing lane here: V16.1.1 moved industry to a
+ * shared, element-neutral track.
  */
 export const ELEMENT_PROFILES: Readonly<Record<ElementId, ElementProfile>> = {
   EARTH: {
@@ -76,43 +99,40 @@ export const ELEMENT_PROFILES: Readonly<Record<ElementId, ElementProfile>> = {
     displayName: "Earth",
     identity: "Agriculture: the widest fields, feed and staples",
     primaryProfession: "FARMING",
-    physicalMax: { farmTiles: 160, fishingSpots: 4, miningNodes: 6, forestryNodes: 10, livestockPens: 12, processingLanes: 4 },
-    efficiency: { FARMING: 1.12, FISHING: 0.95, MINING: 0.9, FORESTRY: 0.95, LIVESTOCK: 1.0, PROCESSING: 0.95 }
+    physicalMax: { farmTiles: 160, fishingSpots: 4, miningNodes: 6, forestryNodes: 10, livestockPens: 8 },
+    efficiency: { FARMING: 1.12, FISHING: 0.95, MINING: 0.9, FORESTRY: 0.95, LIVESTOCK: 1.0 }
   },
   WATER: {
     id: "WATER",
     displayName: "Water",
-    identity: "Fishing and maritime: coastline, aquaculture, harbour and fleets",
+    identity: "Fishing and aquaculture: coastline, ponds and maritime protein",
     primaryProfession: "FISHING",
-    physicalMax: { farmTiles: 96, fishingSpots: 12, miningNodes: 5, forestryNodes: 9, livestockPens: 9, processingLanes: 5 },
-    efficiency: { FARMING: 0.95, FISHING: 1.12, MINING: 0.95, FORESTRY: 0.95, LIVESTOCK: 0.95, PROCESSING: 0.98 }
+    physicalMax: { farmTiles: 80, fishingSpots: 12, miningNodes: 5, forestryNodes: 9, livestockPens: 9 },
+    efficiency: { FARMING: 0.95, FISHING: 1.12, MINING: 0.95, FORESTRY: 0.95, LIVESTOCK: 0.95 }
   },
   WOOD: {
     id: "WOOD",
     displayName: "Wood",
-    identity: "Forestry: renewable timber, hardwood, resin, buildings and ships",
+    identity: "Forestry: renewable timber, hardwood and resin",
     primaryProfession: "FORESTRY",
-    physicalMax: { farmTiles: 120, fishingSpots: 6, miningNodes: 7, forestryNodes: 20, livestockPens: 10, processingLanes: 7 },
-    efficiency: { FARMING: 0.98, FISHING: 0.95, MINING: 0.95, FORESTRY: 1.12, LIVESTOCK: 0.98, PROCESSING: 1.05 }
+    physicalMax: { farmTiles: 100, fishingSpots: 6, miningNodes: 7, forestryNodes: 20, livestockPens: 9 },
+    efficiency: { FARMING: 0.98, FISHING: 0.95, MINING: 0.95, FORESTRY: 1.12, LIVESTOCK: 0.98 }
   },
   METAL: {
     id: "METAL",
     displayName: "Metal",
-    identity: "Extraction: mineral deposits, stone, coal and ore",
+    identity: "Mining: mineral deposits, stone, coal, copper and iron",
     primaryProfession: "MINING",
-    physicalMax: { farmTiles: 96, fishingSpots: 5, miningNodes: 18, forestryNodes: 10, livestockPens: 8, processingLanes: 9 },
-    efficiency: { FARMING: 0.95, FISHING: 0.95, MINING: 1.12, FORESTRY: 0.95, LIVESTOCK: 0.95, PROCESSING: 1.06 }
+    physicalMax: { farmTiles: 80, fishingSpots: 5, miningNodes: 18, forestryNodes: 10, livestockPens: 8 },
+    efficiency: { FARMING: 0.95, FISHING: 0.95, MINING: 1.12, FORESTRY: 0.95, LIVESTOCK: 0.95 }
   },
   FIRE: {
     id: "FIRE",
     displayName: "Fire",
-    identity: "Livestock and industry: pens first, refining and manufacture at scale",
+    identity: "Livestock and animal husbandry: eggs, milk, meat, hide and wool",
     primaryProfession: "LIVESTOCK",
-    // Fire's raw extraction ceilings are deliberately ordinary: 6 deposits against Metal's 24, 12
-    // trees against Wood's 26. Its industry (18 lanes) is the largest, and it cannot feed that from
-    // its own ground.
-    physicalMax: { farmTiles: 72, fishingSpots: 5, miningNodes: 6, forestryNodes: 12, livestockPens: 20, processingLanes: 14 },
-    efficiency: { FARMING: 1.0, FISHING: 0.95, MINING: 0.9, FORESTRY: 0.92, LIVESTOCK: 1.1, PROCESSING: 1.15 }
+    physicalMax: { farmTiles: 72, fishingSpots: 5, miningNodes: 6, forestryNodes: 12, livestockPens: 20 },
+    efficiency: { FARMING: 1.0, FISHING: 0.95, MINING: 0.9, FORESTRY: 0.92, LIVESTOCK: 1.12 }
   }
 };
 
@@ -120,19 +140,24 @@ export const ELEMENT_PROFILES: Readonly<Record<ElementId, ElementProfile>> = {
 export const DEVELOPMENT_STEPS = 5;
 
 /**
- * Where a profession starts, as a fraction of the physical ceiling.
- *
- * A player does not begin with the island developed to its maximum: a Metal island begins with a
- * handful of deposits and has to clear and open the rest. The element's primary profession starts a
- * little further along (the settlers chose that ground first), never above 60%.
+ * The shared industrial track. Every island starts with one workshop and can develop up to twelve,
+ * whatever its element - the same ceiling, the same development cost, no bonus.
  */
-export const STARTER_FRACTION: Readonly<Record<Profession, number>> = {
+export const INDUSTRIAL_PROFILE: { readonly starterLanes: number; readonly maxLanes: number } = {
+  starterLanes: 1,
+  maxLanes: 12
+};
+
+/**
+ * Where a resource profession starts, as a fraction of the physical ceiling. The element's primary
+ * profession starts a little further along (the settlers chose that ground first), never above 60%.
+ */
+export const STARTER_FRACTION: Readonly<Record<ResourceProfession, number>> = {
   FARMING: 0.25,
   FISHING: 0.3,
   MINING: 0.18,
   FORESTRY: 0.2,
-  LIVESTOCK: 0.25,
-  PROCESSING: 0.15
+  LIVESTOCK: 0.25
 };
 
 const PRIMARY_STARTER_BONUS = 1.4;
@@ -141,10 +166,10 @@ const MAX_STARTER_FRACTION = 0.6;
 /** The developed capacity an island begins with, before any investment. */
 export function starterCapacity(element: ElementId): IslandCapacity {
   const profile = ELEMENT_PROFILES[element];
-  const scale = (profession: Profession): number => {
+  const scale = (profession: ResourceProfession): number => {
     const bonus = profession === profile.primaryProfession ? PRIMARY_STARTER_BONUS : 1;
     const fraction = Math.min(MAX_STARTER_FRACTION, STARTER_FRACTION[profession] * bonus);
-    return Math.max(1, Math.round(profile.physicalMax[CAPACITY_FIELD[profession]] * fraction));
+    return Math.max(1, Math.round(profile.physicalMax[RESOURCE_CAPACITY_FIELD[profession]] * fraction));
   };
   return {
     farmTiles: scale("FARMING"),
@@ -152,20 +177,21 @@ export function starterCapacity(element: ElementId): IslandCapacity {
     miningNodes: scale("MINING"),
     forestryNodes: scale("FORESTRY"),
     livestockPens: scale("LIVESTOCK"),
-    processingLanes: scale("PROCESSING")
+    processingLanes: INDUSTRIAL_PROFILE.starterLanes
   };
 }
 
-/** The physical ceiling. Kept under the V16.0 name so callers read "the island's full capacity". */
+/** The physical ceiling. Workshop lanes come from the shared industrial profile, not the element. */
 export function islandCapacity(element: ElementId): IslandCapacity {
-  return ELEMENT_PROFILES[element].physicalMax;
+  return { ...ELEMENT_PROFILES[element].physicalMax, processingLanes: INDUSTRIAL_PROFILE.maxLanes };
 }
 
 /**
- * Interpolate developed capacity between the starter and the physical ceiling.
+ * Interpolate developed capacity between the starter and the ceiling.
  *
  * `tiers[profession]` is a development step in `[0, DEVELOPMENT_STEPS]`; the result never exceeds the
- * physical ceiling, whatever the caller passes, and never falls below the starter.
+ * ceiling, whatever the caller passes, and never falls below the starter. The processing tier is
+ * element-independent.
  */
 export function developedCapacity(
   element: ElementId,
@@ -190,7 +216,11 @@ export function developedCapacity(
   };
 }
 
-/** The small efficiency modifier, clamped so a data edit can never turn it into a dominant buff. */
+/**
+ * The small efficiency modifier. Resource professions only; the shared workshop system has **no**
+ * element modifier (1.0 for every element), which is the rule V16.1.1 locks in.
+ */
 export function efficiencyFor(element: ElementId, profession: Profession): number {
+  if (profession === "PROCESSING") return 1;
   return Math.max(0.9, Math.min(1.15, ELEMENT_PROFILES[element].efficiency[profession]));
 }

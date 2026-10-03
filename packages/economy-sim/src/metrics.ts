@@ -84,8 +84,16 @@ export interface ElementMetrics {
   readonly physicalCapacityAdvantage: number;
   readonly efficiencyAdvantage: number;
   readonly totalSpecializationAdvantage: number;
+  /** The element's primary *resource* advantage, separate from whole-economy value per player. */
+  readonly rawResourceSpecializationAdvantage: number;
   /** Gold-equivalent cost of the next +1 unit of the element's primary capacity. */
   readonly marginalCapacityCost: number;
+  /** Days of a development step's added output that repay it, for steps 1..5 (Infinity if none). */
+  readonly capacityPaybackDays: readonly number[];
+  /** Value of processed output over value of processed input. >1 means the workshop adds value. */
+  readonly processingMargin: number;
+  /** Payback of the next primary step against a 30-day import horizon: >1 means importing is competitive. */
+  readonly upgradeVsImportRatio: number;
 }
 
 export interface ItemMetrics {

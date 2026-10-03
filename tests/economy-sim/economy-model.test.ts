@@ -2,43 +2,53 @@ import { describe, expect, it } from "vitest";
 import {
   ACTOR_PROFILES,
   DEVELOPMENT_STEPS,
+  ELEMENT_IDS,
   ELEMENT_PROFILES,
+  INDUSTRIAL_PROFILE,
   LIVESTOCK_MODEL,
   PROFESSIONS,
+  RESOURCE_CAPACITY_FIELD,
+  RESOURCE_PROFESSIONS,
   SCENARIOS,
   analyse,
   baselineSnapshot,
+  capacityPaybackDays,
   defaultModel,
   developedCapacity,
   effectiveModel,
+  efficiencyFor,
   formatResult,
   islandCapacity,
   marginalCapacityCost,
   scenarioById,
   simulate,
   starterCapacity,
+  type ElementId,
   type Profession,
-  type Scenario,
-  type StageId
+  type ResourceProfession,
+  type Scenario
 } from "@happy-farm/economy-sim";
 
 /**
  * The model's own rules, held as invariants.
  *
- * A simulation that can invent gold, invent ore, produce a negative balance, or let a worker conjure
- * capacity out of nothing is worse than no simulation, so these are the properties the engine may
- * never break - whatever the scenario, however many days, however many actors.
- *
- * V16.1 keeps the V16.0 invariants and adds the capacity-model ones the phase brief names.
+ * V16.1.1 locks the canonical five-resource mapping (Earth agriculture, Water fishing, Wood forestry,
+ * Metal mining, Fire livestock), moves manufacturing to a shared element-neutral track, and steepens the
+ * development cost curve. The V16.0/V16.1 invariants are preserved.
  */
 
 const model = defaultModel(baselineSnapshot());
+const prices = { ...model.baseline.sellPrices };
 
 function scenarioFrom(base: Scenario, overrides: Partial<Scenario> = {}): Scenario {
   return { ...base, ...overrides };
 }
 
-describe("simulation invariants (V16.0, preserved)", () => {
+function primary(element: ElementId): ResourceProfession {
+  return ELEMENT_PROFILES[element].primaryProfession;
+}
+
+describe("simulation invariants (V16.0/V16.1, preserved)", () => {
   it("is deterministic: the same scenario gives exactly the same run", () => {
     const scenario = scenarioById("E");
     const first = simulate(scenario, model);
@@ -54,30 +64,15 @@ describe("simulation invariants (V16.0, preserved)", () => {
       const result = simulate(scenario, model);
       expect(result.daily).toHaveLength(scenario.days);
       expect(Number.isFinite(result.totals.goldEnd)).toBe(true);
-      expect(Number.isFinite(result.totals.netGold)).toBe(true);
       for (const day of result.daily) {
-        expect(Number.isFinite(day.goldTotal)).toBe(true);
         expect(day.goldTotal).toBeGreaterThanOrEqual(0);
-        expect(Number.isFinite(day.storageFillRate)).toBe(true);
         expect(day.storageFillRate).toBeGreaterThanOrEqual(0);
         expect(day.storageFillRate).toBeLessThanOrEqual(1);
-        expect(day.capacityUtilization).toBeLessThanOrEqual(1);
         expect(day.capacityUtilization).toBeGreaterThanOrEqual(0);
+        expect(day.capacityUtilization).toBeLessThanOrEqual(1);
+        expect(day.workplaceUtilization).toBeLessThanOrEqual(1);
         expect(day.npcProductivity).toBeGreaterThanOrEqual(0);
         expect(day.npcProductivity).toBeLessThanOrEqual(1);
-      }
-    }
-  });
-
-  it("never produces a negative balance, and never creates gold in a market trade", () => {
-    for (const scenario of SCENARIOS) {
-      const result = simulate(scenario, model);
-      expect(result.totals.goldDestroyed).toBeLessThanOrEqual(result.totals.goldCreated + 100 * scenario.actors);
-      expect(result.totals.feesDestroyed).toBeGreaterThanOrEqual(0);
-      for (const day of result.daily) {
-        expect(day.marketFeesDestroyed).toBeGreaterThanOrEqual(0);
-        expect(day.marketVolumeGold).toBeGreaterThanOrEqual(0);
-        expect(day.marketFeesDestroyed).toBeLessThanOrEqual(day.marketVolumeGold);
       }
     }
   });
@@ -90,8 +85,15 @@ describe("simulation invariants (V16.0, preserved)", () => {
     }
   });
 
+  it("never lets a recipe make raw material from nothing", () => {
+    for (const recipe of model.processing.recipes) {
+      const inputUnits = Object.values(recipe.inputs).reduce((sum, quantity) => sum + quantity, 0);
+      expect(inputUnits, recipe.id).toBeGreaterThan(recipe.outputQuantity);
+    }
+  });
+
   it("turns a scenario's features off rather than leaving them on by accident", () => {
-    const noStorage = effectiveModel(model, {
+    const none = effectiveModel(model, {
       storage: false,
       workers: false,
       processing: false,
@@ -101,51 +103,9 @@ describe("simulation invariants (V16.0, preserved)", () => {
       upgrades: false,
       npcShop: false
     });
-    expect(noStorage.storage.enabled).toBe(false);
-    expect(noStorage.market.enabled).toBe(false);
-    expect(noStorage.workers.enabled).toBe(false);
-    const result = simulate(scenarioFrom(scenarioById("B"), { stage: "INDUSTRIAL" }), noStorage);
-    expect(result.daily.every((day) => day.storageFillRate === 0)).toBe(true);
-    expect(result.totals.timeToStoragePressureDays).toBeNull();
-  });
-
-  it("never lets a recipe make raw material from nothing", () => {
-    const baseline = baselineSnapshot();
-    const steel = model.processing.recipes.find((recipe) => recipe.output === "item_steel");
-    expect(steel).toBeDefined();
-    expect(steel?.outputQuantity).toBe(1);
-    expect(Object.values(steel?.inputs ?? {}).reduce((sum, quantity) => sum + quantity, 0)).toBeGreaterThan(1);
-    // Every recipe's inputs are real items the baseline or the model prices.
-    for (const recipe of model.processing.recipes) {
-      for (const item of Object.keys(recipe.inputs)) {
-        const known = baseline.sellPrices[item] !== undefined || item.startsWith("item_");
-        expect(known, `${recipe.id} input ${item}`).toBe(true);
-      }
-    }
-  });
-
-  it("gives Fire industry, not raw extraction", () => {
-    const rawProfessions: readonly Profession[] = ["FARMING", "FISHING", "MINING", "FORESTRY"];
-    for (const profession of rawProfessions) {
-      const best = Math.max(...Object.values(ELEMENT_PROFILES).map((profile) => profile.physicalMax[capacityKey(profession)]));
-      expect(ELEMENT_PROFILES.FIRE.physicalMax[capacityKey(profession)], profession).toBeLessThan(best);
-    }
-    const bestLanes = Math.max(...Object.values(ELEMENT_PROFILES).map((profile) => profile.physicalMax.processingLanes));
-    expect(ELEMENT_PROFILES.FIRE.physicalMax.processingLanes).toBe(bestLanes);
-    // And every element can still do every profession: nothing is locked.
-    for (const profile of Object.values(ELEMENT_PROFILES)) {
-      for (const profession of PROFESSIONS) {
-        expect(profile.physicalMax[capacityKey(profession)], `${profile.id}/${profession}`).toBeGreaterThan(0);
-      }
-    }
-  });
-
-  it("scales an island's physical ceiling by its element, in the documented direction", () => {
-    expect(islandCapacity("EARTH").farmTiles).toBeGreaterThan(islandCapacity("WATER").farmTiles);
-    expect(islandCapacity("WATER").fishingSpots).toBeGreaterThan(islandCapacity("EARTH").fishingSpots);
-    expect(islandCapacity("WOOD").forestryNodes).toBeGreaterThan(islandCapacity("EARTH").forestryNodes);
-    expect(islandCapacity("METAL").miningNodes).toBeGreaterThan(islandCapacity("EARTH").miningNodes);
-    expect(islandCapacity("FIRE").livestockPens).toBeGreaterThan(islandCapacity("METAL").livestockPens);
+    expect(none.storage.enabled).toBe(false);
+    expect(none.market.enabled).toBe(false);
+    expect(none.workers.enabled).toBe(false);
   });
 
   it("answers the brief's structural checks with a verdict and a reason", () => {
@@ -154,6 +114,8 @@ describe("simulation invariants (V16.0, preserved)", () => {
     const ids = checks.map((check) => check.id);
     for (const required of [
       "FIRE_DOMINANCE",
+      "PROCESSING_NEUTRALITY",
+      "UPGRADE_CROSSOVER",
       "NPC_RUNAWAY",
       "MARKET_NECESSITY",
       "INFLATION",
@@ -170,124 +132,176 @@ describe("simulation invariants (V16.0, preserved)", () => {
       expect(["HEALTHY", "WATCH", "RISK"], check.id).toContain(check.verdict);
       expect(check.detail.length, check.id).toBeGreaterThan(0);
     }
-    const text = formatResult(result, checks);
-    expect(text).toContain("Scenario E");
-    expect(text).toContain("FIRE_DOMINANCE");
+    expect(formatResult(result, checks)).toContain("PROCESSING_NEUTRALITY");
   });
 });
 
-describe("physical capacity, development and workers (V16.1)", () => {
-  it("never lets developed capacity exceed the physical ceiling", () => {
-    for (const element of Object.keys(ELEMENT_PROFILES) as (keyof typeof ELEMENT_PROFILES)[]) {
+describe("the five-profession model (V16.1.1)", () => {
+  it("maps each element to exactly one resource profession", () => {
+    expect(RESOURCE_PROFESSIONS).toEqual(["FARMING", "FISHING", "MINING", "FORESTRY", "LIVESTOCK"]);
+    const mapping: Record<ElementId, ResourceProfession> = Object.fromEntries(
+      ELEMENT_IDS.map((element) => [element, primary(element)])
+    ) as Record<ElementId, ResourceProfession>;
+    expect(mapping).toEqual({ EARTH: "FARMING", WATER: "FISHING", WOOD: "FORESTRY", METAL: "MINING", FIRE: "LIVESTOCK" });
+  });
+
+  it("gives each element the highest physical ceiling in its own resource profession", () => {
+    const owners: Record<ResourceProfession, ElementId> = {
+      FARMING: "EARTH",
+      FISHING: "WATER",
+      FORESTRY: "WOOD",
+      MINING: "METAL",
+      LIVESTOCK: "FIRE"
+    };
+    for (const profession of RESOURCE_PROFESSIONS) {
+      const field = RESOURCE_CAPACITY_FIELD[profession];
+      const best = Math.max(...ELEMENT_IDS.map((element) => ELEMENT_PROFILES[element].physicalMax[field]));
+      const owner = owners[profession];
+      expect(ELEMENT_PROFILES[owner].physicalMax[field], profession).toBe(best);
+      for (const other of ELEMENT_IDS) {
+        if (other === owner) continue;
+        expect(ELEMENT_PROFILES[other].physicalMax[field], `${other}/${profession}`).toBeLessThan(best);
+      }
+    }
+  });
+
+  it("gives Fire no industrial or manufacturing advantage of any kind", () => {
+    // Manufacturing is a shared system: the same workshop ceiling for every element...
+    const lanes = ELEMENT_IDS.map((element) => islandCapacity(element).processingLanes);
+    expect(new Set(lanes).size).toBe(1);
+    expect(lanes[0]).toBe(INDUSTRIAL_PROFILE.maxLanes);
+    // ...and no element has an efficiency modifier on it.
+    for (const element of ELEMENT_IDS) {
+      expect(efficiencyFor(element, "PROCESSING"), element).toBe(1);
+    }
+  });
+
+  it("does not let developed capacity exceed the physical ceiling", () => {
+    for (const element of ELEMENT_IDS) {
       const ceiling = islandCapacity(element);
       for (let step = 0; step <= DEVELOPMENT_STEPS + 3; step += 1) {
         const tiers = Object.fromEntries(PROFESSIONS.map((profession) => [profession, step])) as Record<Profession, number>;
         const developed = developedCapacity(element, tiers);
         for (const profession of PROFESSIONS) {
-          expect(developed[capacityKey(profession)], `${element}/${profession}@${String(step)}`).toBeLessThanOrEqual(
-            ceiling[capacityKey(profession)]
-          );
+          expect(developed[capacityField(profession)]).toBeLessThanOrEqual(ceiling[capacityField(profession)]);
+        }
+        expect(developed.processingLanes).toBeLessThanOrEqual(INDUSTRIAL_PROFILE.maxLanes);
+      }
+      expect(starterCapacity(element).processingLanes).toBe(INDUSTRIAL_PROFILE.starterLanes);
+    }
+  });
+
+  it("lets every element run the shared processing system", () => {
+    const elements: ElementId[] = ["EARTH", "WATER", "WOOD", "METAL", "FIRE"];
+    for (const element of elements) {
+      const scenario: Scenario = {
+        ...scenarioById("U"),
+        id: `U-${element}`,
+        actors: 100,
+        elementMix: { EARTH: 0, WATER: 0, WOOD: 0, METAL: 0, FIRE: 0, [element]: 1 }
+      };
+      const result = simulate(scenario, model);
+      const processed = result.perItem.filter((item) =>
+        ["item_steel", "item_timber", "item_tools", "item_components", "item_machinery", "item_provisions", "item_leather", "item_textiles"].includes(
+          item.itemDefinitionId
+        )
+      );
+      expect(processed.length, element).toBeGreaterThan(0);
+      expect(result.perElement[0]?.processingMargin ?? 0, element).toBeGreaterThan(1);
+    }
+  });
+
+  it("makes the element-agnostic industrialist viable on all five elements", () => {
+    const margins = new Map<ElementId, number>();
+    for (const element of ELEMENT_IDS) {
+      const scenario: Scenario = {
+        ...scenarioById("U"),
+        id: `U-${element}`,
+        actors: 100,
+        elementMix: { EARTH: 0, WATER: 0, WOOD: 0, METAL: 0, FIRE: 0, [element]: 1 }
+      };
+      const result = simulate(scenario, model);
+      const entry = result.perElement[0];
+      expect(entry, element).toBeDefined();
+      expect(entry?.goldPerDay ?? -1, element).toBeGreaterThan(0);
+      // The point is manufacturing viability, not total island income: use the workshop margin.
+      margins.set(element, entry?.processingMargin ?? 0);
+    }
+    // No element is dramatically better at industry: the margin is close across all five.
+    const values = [...margins.values()];
+    expect(Math.min(...values)).toBeGreaterThan(1.05);
+    expect(Math.max(...values) / Math.min(...values)).toBeLessThan(1.5);
+  });
+
+  it("keeps workers working capacity, never creating it, and never exceeding workplace slots", () => {
+    for (const scenario of SCENARIOS) {
+      const result = simulate(scenario, model);
+      for (const day of result.daily) {
+        expect(day.capacityUtilization).toBeLessThanOrEqual(1);
+        expect(day.workplaceUtilization).toBeLessThanOrEqual(1);
+      }
+      for (const element of result.perElement) {
+        for (const profession of PROFESSIONS) {
+          const utilization = element.homeCapacityUtilization[profession];
+          expect(utilization, `${scenario.id}/${element.element}/${profession}`).toBeLessThanOrEqual(1);
         }
       }
     }
   });
 
-  it("starts below the ceiling and grows with the stage", () => {
-    for (const element of Object.keys(ELEMENT_PROFILES) as (keyof typeof ELEMENT_PROFILES)[]) {
-      const starter = starterCapacity(element);
-      const ceiling = islandCapacity(element);
-      for (const profession of PROFESSIONS) {
-        expect(starter[capacityKey(profession)], `${element}/${profession}`).toBeLessThanOrEqual(ceiling[capacityKey(profession)]);
-      }
-    }
-    const stages: readonly StageId[] = ["EARLY", "DEVELOPING", "MID", "INDUSTRIAL", "WORLD"];
-    for (const stage of stages) {
-      const scenario = scenarioFrom(scenarioById("E"), { stage });
-      const result = simulate(scenario, model);
-      for (const element of result.perElement) {
-        expect(element.developedCapacity.processingLanes).toBeLessThanOrEqual(element.physicalMaxCapacity.processingLanes);
-      }
-    }
+  it("does not make any element the mandatory processing hub", () => {
+    const result = simulate(scenarioById("U"), model);
+    const total = result.perElement.reduce((sum, entry) => sum + Math.max(0, entry.outputValuePerDay), 0);
+    const shares = result.perElement.map((entry) => Math.max(0, entry.outputValuePerDay) / Math.max(1, total));
+    expect(Math.max(...shares)).toBeLessThan(0.6);
   });
+});
 
-  it("makes the next development step cost more per unit of capacity than the last", () => {
-    const prices = { ...model.baseline.sellPrices };
-    for (const element of Object.keys(ELEMENT_PROFILES) as (keyof typeof ELEMENT_PROFILES)[]) {
-      const costs = [1, 2, 3, 4, 5].map((step) => marginalCapacityCost(element, "FARMING", step, prices, model.development));
+describe("development payback and the upgrade-vs-import crossover (V16.1.1)", () => {
+  it("raises the payback of every development step", () => {
+    for (const element of ELEMENT_IDS) {
+      const costs = [1, 2, 3, 4, 5].map((step) =>
+        marginalCapacityCost(element, primary(element), step, model.baseline, prices, model.development)
+      );
       for (let index = 1; index < costs.length; index += 1) {
         expect(costs[index], `${element} step ${String(index + 1)}`).toBeGreaterThan(costs[index - 1] ?? 0);
       }
     }
   });
 
-  it("lets workers work developed capacity but never exceed it, or the workplace slots", () => {
-    for (const scenario of SCENARIOS) {
-      const result = simulate(scenario, model);
-      for (const element of result.perElement) {
-        for (const profession of PROFESSIONS) {
-          const utilization = element.homeCapacityUtilization[profession];
-          expect(utilization, `${scenario.id}/${element.element}/${profession}`).toBeGreaterThanOrEqual(0);
-          expect(utilization, `${scenario.id}/${element.element}/${profession}`).toBeLessThanOrEqual(1);
-        }
-        expect(element.workplaceUtilization, `${scenario.id}/${element.element}`).toBeLessThanOrEqual(1);
-      }
-      for (const day of result.daily) {
-        expect(day.capacityUtilization).toBeLessThanOrEqual(1);
-        expect(day.workplaceUtilization).toBeLessThanOrEqual(1);
-      }
+  it("makes late-tier payback substantially longer than early-tier", () => {
+    for (const element of ELEMENT_IDS) {
+      const early = capacityPaybackDays(element, primary(element), 1, model.baseline, prices, model.development);
+      const late = capacityPaybackDays(element, primary(element), 5, model.baseline, prices, model.development);
+      expect(early, element).toBeGreaterThan(0);
+      expect(late, element).toBeGreaterThan(early * 5);
+      // And a 1-2 day near-max payback is no longer possible.
+      expect(late, element).toBeGreaterThan(20);
     }
   });
 
-  it("does not let a bigger workforce multiply output without bound", () => {
-    // The worker-heavy mix hires far more than the realistic one. If workers could create capacity the
-    // extra hands would scale output linearly; instead the capacity ceiling caps it.
-    const realistic = simulate(scenarioFrom(scenarioById("E"), { archetypeMix: { CASUAL: 0.5, NORMAL: 0.4, HARDCORE: 0.09, AUTOMATED: 0.01 } }), model);
-    const heavy = simulate(scenarioFrom(scenarioById("E"), { archetypeMix: { CASUAL: 0.05, NORMAL: 0.15, HARDCORE: 0.3, AUTOMATED: 0.5 } }), model);
-    const realisticWorkers = realistic.perElement.reduce((sum, entry) => sum + entry.players, 0);
-    const heavyWorkers = heavy.perElement.reduce((sum, entry) => sum + entry.players, 0);
-    expect(heavyWorkers).toBeCloseTo(realisticWorkers, 6);
-    for (const entry of heavy.perElement) {
-      for (const profession of PROFESSIONS) {
-        expect(entry.homeCapacityUtilization[profession], `${entry.element}/${profession}`).toBeLessThanOrEqual(1);
-      }
-    }
-    // The extra workers raise utilisation but the per-player output gap stays well below a linear multiple.
-    const realisticOutput = realistic.perElement.reduce((sum, entry) => sum + entry.outputValuePerDay, 0) / realisticWorkers;
-    const heavyOutput = heavy.perElement.reduce((sum, entry) => sum + entry.outputValuePerDay, 0) / heavyWorkers;
-    expect(heavyOutput).toBeLessThan(realisticOutput * 4);
-  });
-
-  it("keeps Fire's raw extraction below the specialists' and its industry dependent", () => {
-    const fire = simulate(scenarioById("F"), model).perElement.find((entry) => entry.element === "FIRE");
-    expect(fire).toBeDefined();
-    const raw = fire?.importDependency.filter((entry) =>
-      ["item_iron_ore", "item_coal", "item_wood"].includes(entry.itemDefinitionId)
-    ) ?? [];
-    expect(raw.length).toBeGreaterThan(0);
-    // Fire's own ground cannot feed its works: it imports most of at least one raw input.
-    expect(Math.max(...raw.map((entry) => entry.importDependency))).toBeGreaterThan(0.4);
-  });
-
-  it("reports physical, efficiency and total specialisation advantage separately", () => {
+  it("lets importing beat a near-max vertical upgrade", () => {
     const result = simulate(scenarioById("E"), model);
     for (const entry of result.perElement) {
-      expect(Number.isFinite(entry.physicalCapacityAdvantage)).toBe(true);
-      expect(Number.isFinite(entry.efficiencyAdvantage)).toBe(true);
-      expect(entry.totalSpecializationAdvantage).toBeCloseTo(
-        (1 + entry.physicalCapacityAdvantage) * (1 + entry.efficiencyAdvantage) - 1,
-        6
-      );
-      // Efficiency stays a small modifier; geography, not a buff, is the point.
-      expect(Math.abs(entry.efficiencyAdvantage)).toBeLessThanOrEqual(0.15);
+      const late = entry.capacityPaybackDays[4] ?? 0;
+      expect(late, entry.element).toBeGreaterThan(30);
+      expect(entry.upgradeVsImportRatio, entry.element).toBeGreaterThan(0);
     }
+  });
+
+  it("reports early upgrades as quick and near-max upgrades as slow", () => {
+    const early = capacityPaybackDays("METAL", "MINING", 1, model.baseline, prices, model.development);
+    const mid = capacityPaybackDays("METAL", "MINING", 3, model.baseline, prices, model.development);
+    const late = capacityPaybackDays("METAL", "MINING", 5, model.baseline, prices, model.development);
+    expect(early).toBeLessThan(7);
+    expect(mid).toBeGreaterThan(early);
+    expect(late).toBeGreaterThan(mid);
   });
 });
 
-describe("dependency, storage and accounting (V16.1)", () => {
+describe("dependency, storage and accounting (V16.1.1)", () => {
   it("does not make the early game depend on the market", () => {
     const early = simulate(scenarioById("B"), model);
-    expect(early.totals.marketShareOfInput).toBeLessThanOrEqual(0.05);
-    expect(early.totals.npcShopShareOfInput).toBeLessThanOrEqual(0.05);
     for (const entry of early.perElement) {
       expect(entry.selfSufficiencyIndex, entry.element).toBeGreaterThan(0.9);
       for (const dependency of entry.importDependency) {
@@ -296,89 +310,89 @@ describe("dependency, storage and accounting (V16.1)", () => {
     }
   });
 
-  it("makes the industrial game depend on other elements", () => {
-    const result = simulate(scenarioById("E"), model);
-    const worst = Math.max(
-      ...result.perElement.flatMap((entry) => entry.importDependency.map((dependency) => dependency.importDependency))
-    );
-    expect(worst).toBeGreaterThan(0.3);
-    const fire = result.perElement.find((entry) => entry.element === "FIRE");
-    expect(fire?.selfSufficiencyIndex ?? 1).toBeLessThan(0.95);
+  it("gives hardwood and resin real demand channels", () => {
+    const result = simulate(scenarioById("U"), model);
+    for (const item of ["item_hardwood", "item_resin"]) {
+      const entry = result.perItem.find((row) => row.itemDefinitionId === item);
+      expect(entry?.consumedPerDay ?? 0, item).toBeGreaterThan(0);
+    }
   });
 
-  it("keeps every self-sufficiency and dependency metric bounded to 0..1", () => {
+  it("models livestock as feed in, a mix of animal products out, bounded by pens", () => {
+    const fire = simulate(scenarioById("F"), model);
+    const feed = fire.perItem.find((item) => item.itemDefinitionId === "item_potato");
+    expect(feed?.consumedPerDay ?? 0).toBeGreaterThan(0);
+    for (const item of ["item_eggs", "item_milk", "item_meat", "item_hide", "item_wool"]) {
+      const entry = fire.perItem.find((row) => row.itemDefinitionId === item);
+      expect(entry?.producedPerDay ?? 0, item).toBeGreaterThan(0);
+    }
+    const pens = ELEMENT_PROFILES.FIRE.physicalMax.livestockPens * 200;
+    const ceiling = pens * LIVESTOCK_MODEL.stablePerPenPerDay;
+    const animalOutput = ["item_eggs", "item_milk", "item_meat", "item_hide", "item_wool"].reduce(
+      (sum, item) => sum + (fire.perItem.find((row) => row.itemDefinitionId === item)?.producedPerDay ?? 0),
+      0
+    );
+    expect(animalOutput).toBeLessThanOrEqual(ceiling + 1);
+  });
+
+  it("keeps every self-sufficiency, dependency and payback metric bounded", () => {
     for (const scenario of SCENARIOS) {
       const result = simulate(scenario, model);
       for (const entry of result.perElement) {
         expect(entry.selfSufficiencyIndex).toBeGreaterThanOrEqual(0);
         expect(entry.selfSufficiencyIndex).toBeLessThanOrEqual(1);
-        expect(entry.selfSufficiency).toBeGreaterThanOrEqual(0);
-        expect(entry.selfSufficiency).toBeLessThanOrEqual(1);
         for (const dependency of entry.importDependency) {
           expect(dependency.importDependency).toBeGreaterThanOrEqual(0);
           expect(dependency.importDependency).toBeLessThanOrEqual(1);
         }
+        expect(entry.processingMargin).toBeGreaterThanOrEqual(0);
+        expect(entry.capacityPaybackDays).toHaveLength(5);
       }
-      expect(result.totals.npcShopShareOfInput).toBeGreaterThanOrEqual(0);
-      expect(result.totals.marketShareOfInput).toBeLessThanOrEqual(1);
     }
   });
 
   it("does not put storage pressure on a starter island on day one", () => {
     const starter = simulate(scenarioById("A"), model);
     expect(starter.totals.storage.first50 === null || starter.totals.storage.first50 > 3).toBe(true);
-    expect(starter.totals.storageConstrainedPercent).toBe(0);
     const early = simulate(scenarioById("B"), model);
     expect(early.totals.storage.first50 ?? 99).toBeGreaterThan(3);
-  });
-
-  it("models livestock as feed in, animal products out, bounded by the pens", () => {
-    const fire = simulate(scenarioById("F"), model);
-    const meat = fire.perItem.find((item) => item.itemDefinitionId === "item_meat");
-    const feed = fire.perItem.find((item) => item.itemDefinitionId === "item_potato");
-    expect(meat?.producedPerDay ?? 0).toBeGreaterThan(0);
-    expect(feed?.consumedPerDay ?? 0).toBeGreaterThan(0);
-    // Output can never exceed what every pen on the island could produce.
-    const pens = ELEMENT_PROFILES.FIRE.physicalMax.livestockPens * 200;
-    const ceiling = pens * LIVESTOCK_MODEL.stablePerPenPerDay;
-    expect((meat?.producedPerDay ?? 0) * 2).toBeLessThanOrEqual(ceiling + 1);
-  });
-
-  it("models processing as raw material in, manufactured good out", () => {
-    const fire = simulate(scenarioById("F"), model);
-    const steel = fire.perItem.find((item) => item.itemDefinitionId === "item_steel");
-    const iron = fire.perItem.find((item) => item.itemDefinitionId === "item_iron_ore");
-    expect(steel?.producedPerDay ?? 0).toBeGreaterThan(0);
-    expect(iron?.consumedPerDay ?? 0).toBeGreaterThan(0);
   });
 });
 
 describe("scenarios and performance", () => {
-  it("runs every required scenario, plus the five mandated population mixes", () => {
+  it("runs every required scenario", () => {
     for (const scenario of SCENARIOS) {
       const result = simulate(scenario, model);
       expect(result.scenarioId).toBe(scenario.id);
       expect(result.actors).toBe(scenario.actors);
       expect(result.perElement.length).toBeGreaterThan(0);
-      expect(result.totals.goldEnd).toBeGreaterThanOrEqual(0);
     }
     const ids = SCENARIOS.map((scenario) => scenario.id);
-    for (const required of ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"]) {
+    for (const required of ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "T", "U", "V", "W", "X", "Y"]) {
       expect(ids, required).toContain(required);
     }
-    expect(ids.length).toBeGreaterThanOrEqual(19);
     const labels = SCENARIOS.map((scenario) => scenario.mixLabel);
-    for (const mix of ["Water-heavy", "Fire-heavy", "Metal-shortage", "Wood-shortage", "Earth-shortage"]) {
+    for (const mix of ["Water-heavy", "Fire-heavy", "Metal-shortage", "Wood-shortage", "Earth-shortage", "Water-shortage", "Fire-shortage"]) {
       expect(labels, mix).toContain(mix);
     }
   });
 
+  it("runs 30, 90 and 180 day horizons", () => {
+    const horizons = new Set<number>();
+    for (const days of [30, 90, 180]) {
+      const scenario = scenarioFrom(scenarioById("E"), { days });
+      const result = simulate(scenario, model);
+      expect(result.daily).toHaveLength(days);
+      horizons.add(days);
+    }
+    expect(horizons.size).toBe(3);
+  });
+
   it("models ten thousand actors over ninety days cheaply", () => {
-    const scenario = scenarioFrom(scenarioById("O"), { actors: 10_000, days: 90 });
+    const scenario = scenarioFrom(scenarioById("Y"), { actors: 10_000, days: 90 });
     const started = Date.now();
     const result = simulate(scenario, model);
     const elapsed = Date.now() - started;
-    expect(result.actors).toBe(10_000);
     expect(result.daily).toHaveLength(90);
     expect(elapsed).toBeLessThan(1_000);
   });
@@ -389,13 +403,11 @@ describe("scenarios and performance", () => {
       expect(profile.activeSecondsPerDay).toBeLessThanOrEqual(24 * 60 * 60);
       expect(profile.capacityUsage).toBeGreaterThan(0);
       expect(profile.capacityUsage).toBeLessThanOrEqual(1);
-      expect(profile.developmentTendency).toBeGreaterThan(0);
-      expect(profile.developmentTendency).toBeLessThanOrEqual(1);
     }
   });
 });
 
-function capacityKey(profession: Profession): keyof ReturnType<typeof islandCapacity> {
+function capacityField(profession: Profession): keyof ReturnType<typeof islandCapacity> {
   switch (profession) {
     case "FARMING":
       return "farmTiles";

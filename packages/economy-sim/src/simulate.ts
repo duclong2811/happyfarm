@@ -2,6 +2,7 @@ import type { EconomyBaseline, ResourceBaseline } from "./baseline";
 import {
   CAPACITY_FIELD,
   ELEMENT_IDS,
+  ELEMENT_PROFILES,
   PROFESSIONS,
   developedCapacity,
   efficiencyFor,
@@ -12,11 +13,15 @@ import {
 } from "./elements";
 import {
   ACTOR_PROFILES,
+  CASTS_PER_SPOT_PER_DAY,
+  MANAGED_CYCLES_PER_DAY,
   STAGE_LEVEL_MAX,
+  capacityPaybackDays,
   developmentTiers,
   marginalCapacityCost,
   physicalCapacityMultiplier,
   professionRates,
+  rawResourceSpecializationAdvantage,
   type ActorProfile,
   type EconomyModel,
   type Recipe,
@@ -55,8 +60,11 @@ export const MODEL_ITEM_VALUES: Readonly<Record<string, number>> = {
   item_steel: 14,
   item_timber: 4,
   item_tools: 30,
-  item_provisions: 10,
+  item_provisions: 24,
   item_components: 12,
+  item_machinery: 40,
+  item_leather: 22,
+  item_textiles: 16,
   item_meat: 6,
   item_eggs: 4,
   item_milk: 5,
@@ -89,23 +97,32 @@ const TIME_SHARE: Readonly<Record<ElementId, Readonly<Partial<Record<Profession,
   FIRE: { FARMING: 0.45, FISHING: 0.15, MINING: 0.15, FORESTRY: 0.25 }
 };
 
-/** How an element's hired workers are assigned. Fire is a pen-and-workshop economy, not a quarry. */
-const WORKER_FOCUS: Readonly<Record<ElementId, Readonly<Partial<Record<Profession, number>>>>> = {
+/** How a resource-oriented island's hired workers are assigned: mostly to its own specialisation. */
+const WORKER_FOCUS_RESOURCE: Readonly<Record<ElementId, Readonly<Partial<Record<Profession, number>>>>> = {
   EARTH: { FARMING: 0.7, FORESTRY: 0.15, MINING: 0.1, FISHING: 0.05 },
   WATER: { FISHING: 0.8, FARMING: 0.1, FORESTRY: 0.05, MINING: 0.05 },
   WOOD: { FORESTRY: 0.8, FARMING: 0.1, MINING: 0.05, FISHING: 0.05 },
   METAL: { MINING: 0.85, FORESTRY: 0.08, FARMING: 0.05, FISHING: 0.02 },
-  FIRE: { LIVESTOCK: 0.45, PROCESSING: 0.35, FARMING: 0.15, FORESTRY: 0.05 }
+  FIRE: { LIVESTOCK: 0.6, FARMING: 0.2, FISHING: 0.1, FORESTRY: 0.05, MINING: 0.05 }
+};
+
+/**
+ * How the element-agnostic industrialist assigns its workforce: mostly to the shared workshops. The
+ * same focus is used on every island, which is what keeps manufacturing element-neutral.
+ */
+const WORKER_FOCUS_INDUSTRIAL: Readonly<Partial<Record<Profession, number>>> = {
+  PROCESSING: 0.6,
+  FARMING: 0.1,
+  MINING: 0.1,
+  FORESTRY: 0.1,
+  FISHING: 0.05,
+  LIVESTOCK: 0.05
 };
 
 const GATHER_PROFESSIONS = ["FARMING", "FISHING", "MINING", "FORESTRY"] as const;
 
 /** What a player keeps on hand before selling the rest: a working stock, not a hoard. */
 const RESERVE_PER_PLAYER = 20;
-/** A managed farm harvests a tile at most this often in a day, however fast the crop grows. */
-const MANAGED_CYCLES_PER_DAY = 2;
-/** A worked fishing spot supports one worker's casts per day, and no more. */
-const CASTS_PER_SPOT_PER_DAY = 240;
 
 type ProfessionTally = Record<Profession, number>;
 
@@ -139,6 +156,8 @@ interface CohortDay {
   marketImportGold: number;
   lostValue: number;
   workerProductivity: number;
+  processingInputValue: number;
+  processingOutputValue: number;
   readonly produced: Map<string, number>;
   readonly consumed: Map<string, number>;
   readonly wasted: Map<string, number>;
@@ -159,6 +178,8 @@ interface ElementTally {
   slots: number;
   productivityWeighted: number;
   productivityWorkers: number;
+  processingInputValue: number;
+  processingOutputValue: number;
   readonly produced: Map<string, number>;
   readonly consumed: Map<string, number>;
   /** What the element could not cover locally and had to look for outside its own ground. */
@@ -184,6 +205,8 @@ function emptyDay(): CohortDay {
     marketImportGold: 0,
     lostValue: 0,
     workerProductivity: 0,
+    processingInputValue: 0,
+    processingOutputValue: 0,
     produced: new Map(),
     consumed: new Map(),
     wasted: new Map(),
@@ -204,6 +227,8 @@ function emptyElementTally(): ElementTally {
     slots: 0,
     productivityWeighted: 0,
     productivityWorkers: 0,
+    processingInputValue: 0,
+    processingOutputValue: 0,
     produced: new Map(),
     consumed: new Map(),
     needed: new Map(),
@@ -439,7 +464,8 @@ function wantedBatches(model: EconomyModel, recipe: Recipe): number {
 function workTheLand(cohort: Cohort, model: EconomyModel, day: CohortDay): void {
   const rates = professionRates(model.baseline, cohort.element);
   const shares = TIME_SHARE[cohort.element];
-  const focus = WORKER_FOCUS[cohort.element];
+  const focus =
+    cohort.archetype.professionFocus === "INDUSTRIAL" ? WORKER_FOCUS_INDUSTRIAL : WORKER_FOCUS_RESOURCE[cohort.element];
   const players = cohort.players;
   const workers = cohort.workers;
 
@@ -573,12 +599,16 @@ function runFacilities(cohort: Cohort, model: EconomyModel, day: CohortDay): voi
     add(day.consumed, "item_potato", feed);
     const fedShare = feedWanted <= 0 ? 1 : Math.min(1, feed / feedWanted);
     const output = pens * model.livestock.stablePerPenPerDay * util * fedShare;
-    const half = output / 2;
-    add(day.produced, "item_meat", half);
-    add(day.produced, "item_eggs", half);
-    give(cohort, model, "item_meat", half, day.wasted);
-    give(cohort, model, "item_eggs", half, day.wasted);
-    day.producedValue += half * (baseValue("item_meat", model.baseline) + baseValue("item_eggs", model.baseline));
+    // One pen yields a mix of animal products - eggs, milk, meat, hide and wool - not one generic food.
+    const weights = model.livestock.outputMix;
+    const weightTotal = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+    for (const [item, weight] of Object.entries(weights)) {
+      const quantity = weightTotal <= 0 ? 0 : (output * weight) / weightTotal;
+      if (quantity <= 0) continue;
+      add(day.produced, item, quantity);
+      give(cohort, model, item, quantity, day.wasted);
+      day.producedValue += quantity * baseValue(item, model.baseline);
+    }
     cohort.xp += pens * model.livestock.xpPerPenPerDay * util * fedShare;
   }
 
@@ -589,13 +619,18 @@ function runFacilities(cohort: Cohort, model: EconomyModel, day: CohortDay): voi
       const wanted = Math.floor(lanes * wantedBatches(model, recipe) * util);
       const batches = affordableBatches(cohort, recipe, wanted);
       if (batches <= 0) continue;
+      let inputValue = 0;
       for (const [item, quantity] of Object.entries(recipe.inputs)) {
-        add(day.consumed, item, take(cohort, item, quantity * batches));
+        const used = take(cohort, item, quantity * batches);
+        add(day.consumed, item, used);
+        inputValue += used * baseValue(item, model.baseline);
       }
       const output = recipe.outputQuantity * batches;
       add(day.produced, recipe.output, output);
       give(cohort, model, recipe.output, output, day.wasted);
       day.producedValue += output * baseValue(recipe.output, model.baseline);
+      day.processingInputValue += inputValue;
+      day.processingOutputValue += output * baseValue(recipe.output, model.baseline);
     }
   }
 }
@@ -898,6 +933,8 @@ export function simulate(scenario: Scenario, model: EconomyModel): SimulationRes
       marketImportsValue += day.marketImportGold;
       lostValue += day.lostValue;
       spentValue += day.goldSpent;
+      tally.processingInputValue += day.processingInputValue;
+      tally.processingOutputValue += day.processingOutputValue;
       tally.outputValue += day.producedValue;
       tally.imports += day.importedGold;
       tally.exports += day.exportedGold;
@@ -952,6 +989,11 @@ export function simulate(scenario: Scenario, model: EconomyModel): SimulationRes
     const cohort = cohorts.find((entry) => entry.element === element);
     const workAverage = scaleTally(tally.work, scenario.days);
     const productivity = tally.productivityWorkers <= 0 ? 0 : tally.productivityWeighted / tally.productivityWorkers;
+    const primary = primaryProfession(element);
+    const payback = [1, 2, 3, 4, 5].map((step) =>
+      capacityPaybackDays(element, primary, step, model.baseline, priceMap, model.development)
+    );
+    const nextStep = Math.min(5, (cohort?.tier[primary] ?? 0) + 1);
     return {
       element,
       players: tally.players,
@@ -972,7 +1014,11 @@ export function simulate(scenario: Scenario, model: EconomyModel): SimulationRes
       workerProductivity: productivity,
       importDependency: itemDependency(tally.produced, tally.needed, tally.consumed, scenario.days),
       ...advantageSplit(element),
-      marginalCapacityCost: primaryMarginalCost(element, model, cohort, priceMap)
+      rawResourceSpecializationAdvantage: rawResourceSpecializationAdvantage(element),
+      marginalCapacityCost: primaryMarginalCost(element, model, cohort, priceMap),
+      capacityPaybackDays: payback,
+      processingMargin: tally.processingInputValue <= 0 ? 1 : tally.processingOutputValue / tally.processingInputValue,
+      upgradeVsImportRatio: (payback[nextStep - 1] ?? 0) / 30
     };
   });
 
@@ -1117,20 +1163,12 @@ function primaryMarginalCost(
 ): number {
   const primary = primaryProfession(element);
   const nextStep = (cohort?.tier[primary] ?? 0) + 1;
-  return marginalCapacityCost(element, primary, nextStep, prices, model.development);
+  return marginalCapacityCost(element, primary, nextStep, model.baseline, prices, model.development);
 }
 
 function primaryProfession(element: ElementId): Profession {
-  return ELEMENT_PRIMARY[element];
+  return ELEMENT_PROFILES[element].primaryProfession;
 }
-
-const ELEMENT_PRIMARY: Readonly<Record<ElementId, Profession>> = {
-  EARTH: "FARMING",
-  WATER: "FISHING",
-  WOOD: "FORESTRY",
-  METAL: "MINING",
-  FIRE: "PROCESSING"
-};
 
 function consumptionValue(elementTallies: Map<ElementId, ElementTally>, model: EconomyModel): number {
   let total = 0;

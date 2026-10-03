@@ -1,6 +1,6 @@
 # HappyFarm economy bible
 
-Status: V16.1. This is the map of the economy: what is **implemented today**, what is **proposed and
+Status: V16.1.1. This is the map of the economy: what is **implemented today**, what is **proposed and
 modelled** by `packages/economy-sim`, and what is **future** and deliberately undecided. It does not
 declare the economy balanced, and it does not authorise any gameplay change.
 
@@ -50,7 +50,9 @@ structure is visible rather than felt.
    profession.
 4. **Food is categories, not one resource** (staples, vegetables, protein, provisions), so the cheapest
    crop cannot feed an army.
-5. **Fire creates value, not raw resources.** It is the best processor and never the best extractor.
+5. **The five elements are five resource specialisations** (Earth agriculture, Water fishing, Wood
+   forestry, Metal mining, Fire livestock). Processing and manufacturing are **shared systems** that any
+   island can run; no element gets an industrial bonus.
 6. **Automation adds demand.** A worker eats, is paid, needs a home, and stops when the store is full.
 7. **The NPC shop is a safety net**, capped in quantity and priced above market, never a wholesaler.
 8. **Nobody's progress depends on another player.** Trade and logistics are how a *large* economy grows,
@@ -93,7 +95,7 @@ someone running an industrial island.
 
 - The exact physical ceilings, starter fractions and development costs (calibrated again once the future
   systems exist).
-- Whether hardwood and resin gain a Fire process channel (today they leave only through the logistic sink).
+- The exact animals and per-animal livestock recipes (the model uses one representative pen).
 - Whether the backpack and the Island Warehouse are separate, and where direct-from-warehouse production
   is allowed (assumed yes for the model, not implemented).
 - The exact durability/listing rules of the market; the model uses a conceptual buy/sell order book with a
@@ -104,15 +106,17 @@ someone running an industrial island.
 
 ## Locked design decisions (V16.1)
 
-- The element belongs to the **Home Island**, not the player.
-- Specialisation is a comparative advantage, **never a profession lock**.
-- **Physical capacity first**; numeric efficiency is a small modifier (0.90x-1.15x).
+- The canonical mapping is **Earth = Agriculture, Water = Fishing/Aquaculture, Wood = Forestry,
+  Metal = Mining, Fire = Livestock** (V16.1.1).
+- **Processing / refining / crafting / manufacturing are shared systems**; no element owns them.
+- The element belongs to the **Home Island**, not the player, and specialisation is a comparative
+  advantage, **never a profession lock**.
+- **Physical capacity first**; numeric efficiency is a small resource-only modifier (0.90x-1.15x).
 - There is **no hard daily extraction cap**; ceilings come from deposits, regeneration, land, lanes,
   labour, storage and inputs.
-- The Home Island has a **finite practical ceiling**, and upgrades get more expensive per unit.
+- The Home Island has a **finite practical ceiling**, and upgrades get more expensive per unit; a
+  near-max upgrade pays back over ~70 days of its added output, so importing eventually wins.
 - The market becomes useful through scale, not a prerequisite for a small island.
-- Fire starts with **livestock**, then develops refining/manufacturing.
-- Fire must **import raw resources at industrial scale**.
 - The NPC shop is a **safety net**, capped and marked up.
 - Workers **consume economic inputs** and **cannot create physical capacity**.
 

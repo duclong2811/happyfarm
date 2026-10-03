@@ -862,7 +862,7 @@ items, or its market prices.
   checks the shipped files. Trees share one canopy and differ by a species fruit colour.
 - Static catalogues cost no farm rows: `tests/api/catalogue-read-cost.test.ts`.
 
-### The economy model (V16.1)
+### The economy model (V16.1.1)
 
 Read `docs/economy/ECONOMY_BIBLE.md` first: it separates **implemented today** (`ECONOMY_BASELINE.md`),
 **proposed and modelled** (`FIVE_ELEMENT_ECONOMY.md`, `FIVE_ELEMENT_CAPACITY_MODEL.md`,
@@ -872,17 +872,21 @@ it.
 
 - The baseline (`packages/economy-sim/src/baseline.ts`) is *read* from `@happy-farm/game-data`, never
   retyped, so a price change in the game changes the next simulation.
-- The five-element model is **physical capacity first, numeric efficiency second**: the island profiles,
-  starter/ceiling capacities, developed-capacity interpolation and efficiency modifiers live in
-  `src/elements.ts`; the development cost curve, workplace slots, storage progression, recipes, market,
-  NPC shop, sinks and livestock live in `src/model.ts`. Scenarios A-O plus the mandated population mixes
-  are in `src/scenario.ts`; the deterministic cohort engine is `src/simulate.ts`; the structural checks
-  are `src/report.ts`. `docs/economy/FIVE_ELEMENT_CAPACITY_MODEL.md` prints the tables.
-- V16.1 findings: Fire's raw import dependency rises with its industry (iron 50->91%, coal 0->61%,
-  self-sufficiency 91->65%); mature specialisation advantage is ~40% (was +177%); workers cannot exceed
-  developed capacity or workplace slots; storage is investment pressure, not day-one pressure; the Home
-  Island ceiling binds only for heavily hired islands (an automated single island reaches ~35%). Gold
-  created / destroyed / transferred are now reported separately.
+- **Five resource professions, one per element**, are canonical (V16.1.1): Earth = Agriculture,
+  Water = Fishing/Aquaculture, Wood = Forestry, Metal = Mining, Fire = Livestock/Animal Husbandry.
+  Processing/refining/manufacturing is a **shared, element-neutral system** - no element gets a
+  throughput or efficiency bonus. Do not reintroduce a Fire industrial specialisation.
+- The five resource profiles, starter/ceiling capacities, developed-capacity interpolation, the neutral
+  industrial track and efficiency modifiers live in `src/elements.ts`; the development cost curve
+  (payback-relative), workplace slots, storage, recipes, market, NPC shop, sinks and livestock live in
+  `src/model.ts`. Scenarios A-Y are in `src/scenario.ts`; the deterministic cohort engine is
+  `src/simulate.ts`; the structural checks are `src/report.ts`. `docs/economy/FIVE_ELEMENT_CAPACITY_MODEL.md`
+  prints the tables.
+- V16.1.1 findings: no element holds an industrial bonus (`PROCESSING_NEUTRALITY`); the industrialist
+  archetype is viable on all five elements; development payback is 2/5/12/30/70 days for steps 1-5, so
+  importing beats a near-max upgrade within a month; hardwood and resin now feed tools/machinery/leather;
+  storage first fills on day 46 over a 90-day run; the World whole-economy specialisation figure (+54%) is
+  reported, not normalised.
 - **No gameplay value may change from a simulator finding without an explicit later phase.** The
   simulator informs; it does not rebalance.
 
