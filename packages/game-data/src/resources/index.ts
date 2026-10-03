@@ -61,6 +61,14 @@ export const ResourceDefinitionSchema = z
     xp: z.number().int().positive().max(1_000_000),
     /** The generated model drawn in the world. */
     modelId: z.string().regex(/^resource_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    /**
+     * What a *depleted* node draws instead, when the type has a better answer than shrinking.
+     *
+     * A tree becomes a stump; a rock has nothing better than a smaller rock, so mining definitions
+     * leave this absent and the renderer shrinks them. Optional on purpose: the field is the extension
+     * point, not a requirement.
+     */
+    depletedModelId: z.string().regex(/^resource_[a-z0-9]+(?:_[a-z0-9]+)*$/).optional(),
     requiredLevel: z.number().int().positive().max(10_000).optional()
   })
   .strict();
@@ -100,6 +108,11 @@ export const resourceDropTableRegistry = registry(
     { id: "resourcetable_copper", displayNameKey: "resourcetable.copper.name", entries: [{ itemDefinitionId: "item_copper_ore", minQuantity: 2, maxQuantity: 2, weight: 1 }] },
     { id: "resourcetable_iron", displayNameKey: "resourcetable.iron.name", entries: [{ itemDefinitionId: "item_iron_ore", minQuantity: 2, maxQuantity: 2, weight: 1 }] },
     { id: "resourcetable_coal", displayNameKey: "resourcetable.coal.name", entries: [{ itemDefinitionId: "item_coal", minQuantity: 3, maxQuantity: 3, weight: 1 }] }
+    // Forestry. One material per tree for the alpha: a predictable yield is easier to balance and to
+    // test, and mixed or probabilistic drops wait for the economy phase.
+    ,{ id: "resourcetable_wood", displayNameKey: "resourcetable.wood.name", entries: [{ itemDefinitionId: "item_wood", minQuantity: 2, maxQuantity: 2, weight: 1 }] }
+    ,{ id: "resourcetable_resin", displayNameKey: "resourcetable.resin.name", entries: [{ itemDefinitionId: "item_resin", minQuantity: 2, maxQuantity: 2, weight: 1 }] }
+    ,{ id: "resourcetable_hardwood", displayNameKey: "resourcetable.hardwood.name", entries: [{ itemDefinitionId: "item_hardwood", minQuantity: 2, maxQuantity: 2, weight: 1 }] }
   ]),
   "resource drop table"
 );
@@ -112,6 +125,12 @@ export const resourceDefinitionRegistry = registry(
     { id: "resource_copper", displayNameKey: "resource.copper.name", verb: "MINE", actionSeconds: 8, regenerationSeconds: 300, dropTableId: "resourcetable_copper", xp: 6, modelId: "resource_copper", requiredLevel: 2 },
     { id: "resource_coal", displayNameKey: "resource.coal.name", verb: "MINE", actionSeconds: 10, regenerationSeconds: 420, dropTableId: "resourcetable_coal", xp: 9, modelId: "resource_coal", requiredLevel: 4 },
     { id: "resource_iron", displayNameKey: "resource.iron.name", verb: "MINE", actionSeconds: 13, regenerationSeconds: 600, dropTableId: "resourcetable_iron", xp: 14, modelId: "resource_iron", requiredLevel: 6 }
+    // Forestry: the same lifecycle as mining with a different verb, longer waits and a stump instead
+    // of a smaller rock. Wildwood is the early, quick, bulk material; pine is the intermediate one
+    // with its own identity; hardwood is the slow, valuable one.
+    ,{ id: "resource_wildwood", displayNameKey: "resource.wildwood.name", verb: "CHOP", actionSeconds: 5, regenerationSeconds: 120, dropTableId: "resourcetable_wood", xp: 2, modelId: "resource_wildwood", depletedModelId: "resource_wildwood_stump" }
+    ,{ id: "resource_pine", displayNameKey: "resource.pine.name", verb: "CHOP", actionSeconds: 7, regenerationSeconds: 240, dropTableId: "resourcetable_resin", xp: 6, modelId: "resource_pine", depletedModelId: "resource_pine_stump", requiredLevel: 3 }
+    ,{ id: "resource_hardwood", displayNameKey: "resource.hardwood.name", verb: "CHOP", actionSeconds: 11, regenerationSeconds: 480, dropTableId: "resourcetable_hardwood", xp: 12, modelId: "resource_hardwood", depletedModelId: "resource_hardwood_stump", requiredLevel: 5 }
   ]),
   "resource"
 );
@@ -134,6 +153,21 @@ export const resourceNodeRegistry = registry(
     { id: "node_coal_deep", definitionId: "resource_coal", zoneKind: "HOME_ISLAND", position: { x: -3, y: -27 }, interactionRadiusTiles: 3 },
     { id: "node_iron_west", definitionId: "resource_iron", zoneKind: "HOME_ISLAND", position: { x: -2, y: -28 }, interactionRadiusTiles: 3 },
     { id: "node_iron_north", definitionId: "resource_iron", zoneKind: "HOME_ISLAND", position: { x: 12, y: -10 }, interactionRadiusTiles: 3 }
+    // Wild forestry trees, in the island's two woods. Positions are fixed, checked against the real
+    // terrain for walkable ground, and kept clear of the mining deposits so a player never finds two
+    // different kinds of node inside one interaction range.
+    ,{ id: "node_wildwood_north_1", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: -1, y: -19 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_2", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 3, y: -20 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_3", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 7, y: -24 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_4", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 10, y: -21 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_5", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 14, y: -23 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_pine_north_1", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 16, y: -25 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_pine_north_2", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 17, y: -20 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_pine_north_3", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 20, y: -21 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_hardwood_east_1", definitionId: "resource_hardwood", zoneKind: "HOME_ISLAND", position: { x: 44, y: -16 }, interactionRadiusTiles: 3.4 }
+    ,{ id: "node_hardwood_east_2", definitionId: "resource_hardwood", zoneKind: "HOME_ISLAND", position: { x: 48, y: -20 }, interactionRadiusTiles: 3.4 }
+    ,{ id: "node_hardwood_east_3", definitionId: "resource_hardwood", zoneKind: "HOME_ISLAND", position: { x: 52, y: -16 }, interactionRadiusTiles: 3.4 }
+    ,{ id: "node_pine_east_4", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 56, y: -20 }, interactionRadiusTiles: 3.2 }
   ]),
   "resource node"
 );

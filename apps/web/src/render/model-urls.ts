@@ -17,6 +17,12 @@ import resourceCoalUrl from "../assets/models/resources/resource_coal.glb?url";
 import resourceCopperUrl from "../assets/models/resources/resource_copper.glb?url";
 import resourceIronUrl from "../assets/models/resources/resource_iron.glb?url";
 import resourceStoneUrl from "../assets/models/resources/resource_stone.glb?url";
+import resourceHardwoodStumpUrl from "../assets/models/resources/resource_hardwood_stump.glb?url";
+import resourceHardwoodUrl from "../assets/models/resources/resource_hardwood.glb?url";
+import resourcePineStumpUrl from "../assets/models/resources/resource_pine_stump.glb?url";
+import resourcePineUrl from "../assets/models/resources/resource_pine.glb?url";
+import resourceWildwoodStumpUrl from "../assets/models/resources/resource_wildwood_stump.glb?url";
+import resourceWildwoodUrl from "../assets/models/resources/resource_wildwood.glb?url";
 import type { CropModelId } from "./assets";
 
 /**
@@ -76,7 +82,13 @@ export const RESOURCE_MODEL_URLS: Readonly<Record<string, string>> = {
   resource_stone: resourceStoneUrl,
   resource_copper: resourceCopperUrl,
   resource_iron: resourceIronUrl,
-  resource_coal: resourceCoalUrl
+  resource_coal: resourceCoalUrl,
+  resource_wildwood: resourceWildwoodUrl,
+  resource_pine: resourcePineUrl,
+  resource_hardwood: resourceHardwoodUrl,
+  resource_wildwood_stump: resourceWildwoodStumpUrl,
+  resource_pine_stump: resourcePineStumpUrl,
+  resource_hardwood_stump: resourceHardwoodStumpUrl
 };
 
 export function resourceModelUrl(modelId: string | null): string | null {

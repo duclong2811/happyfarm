@@ -69,6 +69,7 @@ export interface ResourceNodeView {
   readonly interactionRadiusTiles: number;
   readonly actionSeconds: number;
   readonly modelId: string;
+  readonly depletedModelId: string | null;
   /** The material this node yields. Sent so the client can draw the material with the node's own art. */
   readonly dropItemDefinitionId: string;
   readonly requiredLevel: number;
@@ -161,6 +162,7 @@ export class ListResourceNodes {
         interactionRadiusTiles: node.interactionRadiusTiles,
         actionSeconds: definition.actionSeconds,
         modelId: definition.modelId,
+        depletedModelId: definition.depletedModelId,
         dropItemDefinitionId: dropItem,
         requiredLevel: definition.requiredLevel,
         availableAt,

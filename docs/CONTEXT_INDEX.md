@@ -862,16 +862,19 @@ items, or its market prices.
   checks the shipped files. Trees share one canopy and differ by a species fruit colour.
 - Static catalogues cost no farm rows: `tests/api/catalogue-read-cost.test.ts`.
 
-### Resource nodes and mining (V15.2)
+### Resource nodes, mining and forestry (V15.2 / V15.3)
 
 Read `docs/design/RESOURCE_NODES.md` (the generic definition/placement/state lifecycle, persistence and
 forestry reuse), `docs/design/MINING.md` (gameplay, authority, position limitation) and
-`docs/design/MINING_BALANCE.md` (the computed rates) before changing a node, a drop table, a material,
-the action duration, the regeneration time, or the resource commands.
+`docs/design/MINING_BALANCE.md` (the computed rates), plus `docs/design/FORESTRY.md` (the three kinds of
+tree, and the warehouse/NPC/economy boundaries) and `docs/design/FORESTRY_BALANCE.md` (provisional
+numbers) before changing a node, a drop table, a material, the action duration, the regeneration time,
+or the resource commands.
 
-- Definitions and placements: `packages/game-data/src/resources/index.ts` (4 definitions, 4 drop tables,
-  9 home-island nodes). Materials are `MATERIAL` items in `packages/game-data/src/items/index.ts`, sold
-  through the existing market rows. Derived figures: `miningBalance` in `packages/game-data/src/balance.ts`.
+- Definitions and placements: `packages/game-data/src/resources/index.ts` (7 definitions - 4 MINE, 3
+  CHOP - 7 drop tables, 21 home-island placements). Materials are `MATERIAL` items in
+  `packages/game-data/src/items/index.ts`, sold through the existing market rows. Derived figures:
+  `miningBalance` / `forestryBalance` in `packages/game-data/src/balance.ts`.
 - Rules: `packages/domain/src/resource.ts` (`selectResourceDrop`, `resourceQuantity`,
   `resourceAvailableAt`, `isResourceAvailable`, `assertResourceAction`) with the shared time helpers in
   `packages/domain/src/time.ts`. Commands: `packages/application/src/resources.ts`.
@@ -884,14 +887,20 @@ the action duration, the regeneration time, or the resource commands.
 - Client: `RESOURCE_NODE` / the definition's verb in `apps/web/src/interaction/model.ts`, the node
   adapter in `interaction/registry.ts`, activation in `interaction/selection.ts`, the gather flow and
   walk-away cancel in `apps/web/src/main.ts`, and the node group in `apps/web/src/render/scene.ts`
-  (`setResourceNodes`). Node models are generated (`tools/asset-pipeline/node/specs.mjs` ->
-  `assets/models/resources/`, resolved by `resourceModelUrl`).
-- Tests: `tests/domain/resource.test.ts`, `tests/game-data/mining.test.ts`, `tests/api/mining-loop.test.ts`,
-  `tests/web/mining-interaction.test.ts`, plus `/resource-nodes` in `tests/api/catalogue-read-cost.test.ts`.
+  (`setResourceNodes`, which draws a depleted node's `depletedModelId` when a definition names one -
+  a stump - and shrinks it otherwise). Node models are generated
+  (`tools/asset-pipeline/node/specs.mjs` -> `assets/models/resources/`, resolved by `resourceModelUrl`).
+- Tests: `tests/domain/resource.test.ts`, `tests/game-data/mining.test.ts`,
+  `tests/game-data/forestry.test.ts`, `tests/api/mining-loop.test.ts`,
+  `tests/api/forestry-loop.test.ts` (which drives a MINE and a CHOP node through the same commands, and
+  pins that an orchard tree or a decorative object cannot be chopped),
+  `tests/web/mining-interaction.test.ts`, `tests/web/forestry-interaction.test.ts`, plus
+  `/resource-nodes` in `tests/api/catalogue-read-cost.test.ts`.
 
 A node is not a decorative rock: scenery stays editable scenery and a resource node is a gameplay
-entity with its own state row. A production orchard tree is not a forestry node. Never accept a
-material, quantity, reward, cooldown or zone from a client, and never let the client decide a node is
+entity with its own state row. A production orchard tree is neither a forestry node nor a decorative
+one, and a wild tree is not an editable object. Never accept a material, quantity, reward, cooldown or
+zone from a client, never let the client choose the verb, and never let the client decide a node is
 available - the server derives it from `available_at` and its own clock.
 
 ### Fishing, the first non-farming profession (V15.1)

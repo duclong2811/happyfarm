@@ -1113,6 +1113,8 @@ export const ResourceNodeDTOSchema = z
     interactionRadiusTiles: z.number().positive().max(12),
     actionSeconds: z.number().int().positive().max(600),
     modelId: z.string().min(1).max(120),
+    /** What a depleted node draws instead, or null when the renderer shrinks the full model. */
+    depletedModelId: z.string().min(1).max(120).nullable(),
     /** The material this node yields, so the client can draw that material with the node's art. */
     dropItemDefinitionId: ItemDefinitionIdSchema,
     requiredLevel: z.number().int().positive().max(MAX_PROGRESSION_LEVEL),

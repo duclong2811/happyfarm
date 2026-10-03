@@ -207,6 +207,11 @@ export interface SceneConstruction {
 export interface SceneResourceNode {
   readonly id: string;
   readonly modelId: string;
+  /**
+   * What a depleted node draws instead, when the definition has a better answer than shrinking.
+   * A wild tree names its stump here; a rock leaves it null and the renderer shrinks the deposit.
+   */
+  readonly depletedModelId: string | null;
   readonly worldX: number;
   readonly worldZ: number;
   readonly available: boolean;
@@ -1724,16 +1729,20 @@ let interactionGeometry: BufferGeometry | null = null;
    */
   function rebuildResourceNodes(): void {
     const signature = resourceNodes
-      .map((node) => `${node.id}:${node.modelId}:${node.available ? "1" : "0"}`)
+      .map((node) => `${node.id}:${node.modelId}:${node.depletedModelId ?? ""}:${node.available ? "1" : "0"}`)
       .join("|");
     if (signature === resourceNodeSignature) return;
     resourceNodeSignature = signature;
     resourceGroup.clear();
     for (const node of resourceNodes) {
-      const model = library.get(node.modelId);
+      // A tree names its stump; a rock has nothing better than a smaller rock, so it shrinks.
+      const depleted = !node.available && node.depletedModelId !== null;
+      const modelId = depleted ? node.depletedModelId : node.modelId;
+      const model = library.get(modelId);
       if (model === undefined) continue;
       const plant = model.clone(true);
-      const scale = RESOURCE_NODE_MODEL_SCALE * (node.available ? 1 : RESOURCE_NODE_DEPLETED_SCALE);
+      const scale =
+        RESOURCE_NODE_MODEL_SCALE * (node.available || depleted ? 1 : RESOURCE_NODE_DEPLETED_SCALE);
       plant.scale.setScalar(scale);
       plant.position.set(
         node.worldX,

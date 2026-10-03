@@ -61,6 +61,14 @@ const PALETTE = {
   nodeIronVein: 0xa8552f,
   nodeCoal: 0x3f4448,
   nodeCoalVein: 0x24282b,
+  // Wild forestry trees: a trunk, a canopy, and a stump where the trunk used to be.
+  treeWildTrunk: 0x7a5a3a,
+  treeWildCanopy: 0x4f9b52,
+  treePineTrunk: 0x6b4f36,
+  treePineCanopy: 0x2f6b45,
+  treeHardwoodTrunk: 0x5f4630,
+  treeHardwoodCanopy: 0x3b7a45,
+  stumpWood: 0x9a7350,
   stone: 0x9aa3ab,
   barnWall: 0xd1574a,
   barnRoof: 0x8d3f38,
@@ -230,6 +238,53 @@ function buildResourceNode({ rock, vein, veins }) {
   const ore = part("vein", vein);
   for (const spot of veins) fruit(ore, spot, 0.07);
   return [stone, ore];
+}
+
+/**
+ * A wild tree: a trunk and a canopy, sized so it reads as a tree beside the player rather than as a
+ * bush. Deliberately lusher and darker than the orchard's cultivated models, so a player can tell a
+ * wild resource tree from a farming tree at a glance.
+ */
+function buildWildTree({ trunk, canopy, trunkHeight, trunkRadius, canopyY, canopyRadius, lobes }) {
+  const wood = part("trunk", trunk);
+  taperedCylinder(wood, { x: 0, y: 0, z: 0 }, { bottomRadius: trunkRadius, topRadius: trunkRadius * 0.62, height: trunkHeight, segments: 6 });
+
+  const leaves = part("canopy", canopy);
+  lowPolyBlob(leaves, { x: 0, y: canopyY, z: 0 }, { radiusX: canopyRadius, radiusY: canopyRadius * 0.95, radiusZ: canopyRadius, segments: 8, rings: 3 });
+  for (let index = 0; index < lobes; index += 1) {
+    const angle = (index / lobes) * Math.PI * 2;
+    lowPolyBlob(
+      leaves,
+      { x: Math.cos(angle) * canopyRadius * 0.55, y: canopyY - canopyRadius * 0.35, z: Math.sin(angle) * canopyRadius * 0.55 },
+      { radiusX: canopyRadius * 0.55, radiusY: canopyRadius * 0.5, radiusZ: canopyRadius * 0.55, segments: 6, rings: 2 }
+    );
+  }
+  return [wood, leaves];
+}
+
+/** A conifer: the same trunk with stacked cones instead of a broad canopy. */
+function buildPineTree({ trunk, canopy, trunkHeight, trunkRadius }) {
+  const wood = part("trunk", trunk);
+  taperedCylinder(wood, { x: 0, y: 0, z: 0 }, { bottomRadius: trunkRadius, topRadius: trunkRadius * 0.5, height: trunkHeight, segments: 6 });
+
+  const needles = part("canopy", canopy);
+  const tiers = [
+    { y: trunkHeight * 0.45, radius: 0.52, height: 0.5 },
+    { y: trunkHeight * 0.75, radius: 0.42, height: 0.46 },
+    { y: trunkHeight * 1.0, radius: 0.3, height: 0.42 }
+  ];
+  for (const tier of tiers) {
+    taperedCylinder(needles, { x: 0, y: tier.y, z: 0 }, { bottomRadius: tier.radius, topRadius: 0.02, height: tier.height, segments: 8 });
+  }
+  return [wood, needles];
+}
+
+/** A stump: what a chopped tree leaves behind, so the place it stood stays legible. */
+function buildStump({ wood, radius, height }) {
+  const stump = part("stump", wood);
+  taperedCylinder(stump, { x: 0, y: 0, z: 0 }, { bottomRadius: radius, topRadius: radius * 1.05, height, segments: 8 });
+  softBox(stump, { x: radius * 0.7, y: 0.02, z: 0 }, { width: radius * 0.8, depth: radius * 0.6, height: height * 0.35 });
+  return [stump];
 }
 
 function buildFarmer() {
@@ -483,6 +538,80 @@ export const MODEL_SPECS = [
           { x: 0.16, y: 0.3, z: -0.14 }
         ]
       })
+  },
+  // Wild forestry trees, and the stumps they leave. Trees are tall and leafy; a stump is a short
+  // trunk with a cut notched into it, so a chopped place still reads as a place.
+  {
+    id: "resource_wildwood",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () =>
+      buildWildTree({
+        trunk: PALETTE.treeWildTrunk,
+        canopy: PALETTE.treeWildCanopy,
+        trunkHeight: 0.9,
+        trunkRadius: 0.09,
+        canopyY: 1.1,
+        canopyRadius: 0.55,
+        lobes: 3
+      })
+  },
+  {
+    id: "resource_pine",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () =>
+      buildPineTree({
+        trunk: PALETTE.treePineTrunk,
+        canopy: PALETTE.treePineCanopy,
+        trunkHeight: 1,
+        trunkRadius: 0.08
+      })
+  },
+  {
+    id: "resource_hardwood",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () =>
+      buildWildTree({
+        trunk: PALETTE.treeHardwoodTrunk,
+        canopy: PALETTE.treeHardwoodCanopy,
+        trunkHeight: 1,
+        trunkRadius: 0.11,
+        canopyY: 1.25,
+        canopyRadius: 0.6,
+        lobes: 4
+      })
+  },
+  {
+    id: "resource_wildwood_stump",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildStump({ wood: PALETTE.stumpWood, radius: 0.15, height: 0.42 })
+  },
+  {
+    id: "resource_pine_stump",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildStump({ wood: PALETTE.treePineTrunk, radius: 0.14, height: 0.4 })
+  },
+  {
+    id: "resource_hardwood_stump",
+    kind: "resource",
+    directory: "apps/web/src/assets/models/resources",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildStump({ wood: PALETTE.treeHardwoodTrunk, radius: 0.17, height: 0.45 })
   },
   {
     id: "character_farmer",

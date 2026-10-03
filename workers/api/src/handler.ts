@@ -313,6 +313,7 @@ function toResourceNodeDTO(node: ResourceNodeView): ResourceNodeDTO {
     interactionRadiusTiles: node.interactionRadiusTiles,
     actionSeconds: node.actionSeconds,
     modelId: node.modelId,
+    depletedModelId: node.depletedModelId,
     dropItemDefinitionId: node.dropItemDefinitionId,
     requiredLevel: node.requiredLevel,
     availableAt: node.availableAt,

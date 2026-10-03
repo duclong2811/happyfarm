@@ -247,5 +247,14 @@ export function resourceEconomics(definitionId: string): ResourceEconomics {
 }
 
 export const miningBalance = {
-  resources: [...resourceDefinitionRegistry.keys()].map(resourceEconomics)
+  resources: [...resourceDefinitionRegistry.values()]
+    .filter((definition) => definition.verb === "MINE")
+    .map((definition) => resourceEconomics(definition.id))
+} as const;
+
+/** The forestry half of the same computation: the same shape, filtered by verb. */
+export const forestryBalance = {
+  resources: [...resourceDefinitionRegistry.values()]
+    .filter((definition) => definition.verb === "CHOP")
+    .map((definition) => resourceEconomics(definition.id))
 } as const;

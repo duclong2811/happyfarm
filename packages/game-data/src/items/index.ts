@@ -73,6 +73,12 @@ export const itemRegistry = createItemRegistry([
   { id: "item_copper_ore", displayNameKey: "item.copper_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_iron_ore", displayNameKey: "item.iron_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_coal", displayNameKey: "item.coal.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK }
+  ,
+  // Forestry materials. Like the ores, they are raw inputs for the construction and crafting systems
+  // that do not exist yet, so they are stored and sold like any other material.
+  { id: "item_wood", displayNameKey: "item.wood.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_hardwood", displayNameKey: "item.hardwood.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_resin", displayNameKey: "item.resin.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK }
 ]);
 
 export const items = [...itemRegistry.values()];

@@ -32,19 +32,25 @@ describe("the mining catalogue", () => {
     expect(new Set(materials).size).toBe(4);
   });
 
-  it("ships four node definitions and nine placements, all in the home island zone", () => {
-    expect(resourceDefinitions).toHaveLength(4);
-    expect(new Set(resourceDefinitions.map((definition) => definition.id)).size).toBe(4);
-    expect(resourceNodes.length).toBeGreaterThanOrEqual(6);
-    expect(resourceNodes.length).toBeLessThanOrEqual(12);
+  it("ships four mining definitions and nine mining placements, all in the home island zone", () => {
+    const mining = resourceDefinitions.filter((definition) => definition.verb === "MINE");
+    const miningNodes = resourceNodes.filter((node) =>
+      mining.some((definition) => definition.id === node.definitionId)
+    );
+    expect(mining).toHaveLength(4);
+    expect(new Set(resourceDefinitions.map((definition) => definition.id)).size).toBe(
+      resourceDefinitions.length
+    );
+    expect(miningNodes.length).toBeGreaterThanOrEqual(6);
+    expect(miningNodes.length).toBeLessThanOrEqual(12);
     expect(new Set(resourceNodes.map((node) => node.id)).size).toBe(resourceNodes.length);
-    for (const node of resourceNodes) {
+    for (const node of miningNodes) {
       expect(node.zoneKind, node.id).toBe("HOME_ISLAND");
       expect(resourceDefinitionRegistry.has(node.definitionId), node.id).toBe(true);
       expect(Number.isFinite(node.position.x), node.id).toBe(true);
       expect(node.interactionRadiusTiles, node.id).toBeGreaterThan(0);
     }
-    for (const definition of resourceDefinitions) {
+    for (const definition of mining) {
       expect(definition.verb, definition.id).toBe("MINE");
       expect(definition.actionSeconds, definition.id).toBeGreaterThan(0);
       expect(definition.actionSeconds, definition.id).toBeLessThanOrEqual(60);
@@ -56,7 +62,10 @@ describe("the mining catalogue", () => {
   });
 
   it("keeps one definition per material so the catalogue reads as production, not luck", () => {
-    const dropped = resourceDropTables.flatMap((table) => table.entries.map((entry) => entry.itemDefinitionId));
+    const miningTables = resourceDropTables.filter((table) =>
+      resourceDefinitions.some((definition) => definition.verb === "MINE" && definition.dropTableId === table.id)
+    );
+    const dropped = miningTables.flatMap((table) => table.entries.map((entry) => entry.itemDefinitionId));
     expect([...new Set(dropped)].sort()).toEqual(
       ["item_coal", "item_copper_ore", "item_iron_ore", "item_stone"].sort()
     );

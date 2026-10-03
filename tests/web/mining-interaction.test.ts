@@ -36,6 +36,7 @@ function node(overrides: Partial<ResourceNodeDTO> = {}): ResourceNodeDTO {
     interactionRadiusTiles: 3,
     actionSeconds: 6,
     modelId: "resource_stone",
+    depletedModelId: null,
     dropItemDefinitionId: "item_stone",
     requiredLevel: 1,
     availableAt: null,

@@ -234,3 +234,11 @@ zone words.
   never a player's goods.
 
 See `docs/design/RESOURCE_NODES.md` and `docs/design/MINING.md`.
+
+## V15.3: forestry is the node lifecycle's second consumer
+
+Wild trees are resource nodes with `verb: "CHOP"`, so the vocabulary did not change at all: the same
+place-state table, the same explicit `zoneKind`, the same actor-resolved zone. What forestry makes
+explicit is that a *tree* in this world can be three different things - an orchard entity on a farm, a
+piece of editable scenery, or a wild resource node - and none of them is inferred from how it looks.
+`docs/design/FORESTRY.md` draws that line.

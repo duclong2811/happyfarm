@@ -1,7 +1,8 @@
 # Resource nodes
 
-Status: V15.2. The generic gather lifecycle that mining introduces and forestry reuses. `docs/design/MINING.md`
-is the mining-specific view; `docs/design/MINING_BALANCE.md` is the numbers.
+Status: V15.2, with V15.3 as its second consumer. The generic gather lifecycle that mining introduces
+and forestry reuses. `docs/design/MINING.md` and `docs/design/FORESTRY.md` are the two professions'
+views; `docs/design/MINING_BALANCE.md` and `docs/design/FORESTRY_BALANCE.md` are their numbers.
 
 ## Definition, instance, state
 
@@ -81,15 +82,19 @@ A placement declares its `zoneKind`; the server resolves the actor's own zone
 
 ## Forestry reuse
 
-The whole point of the abstraction is that `CHOP` is a value, not a second system:
+This is no longer a prediction: forestry ships on exactly this lifecycle, and its arrival needed **no
+new domain rule, table, use case, route or settlement**. The verb is a value, not a system:
 
 | Mining | Forestry |
 | --- | --- |
-| `verb: "MINE"` | `verb: "CHOP"` |
-| a rock model | a tree model |
-| drops stone/copper/iron/coal | drops wood, saplings, fruit |
-| same start/settle/cancel commands | same commands |
-| same node-state table and guards | same table and guards |
+| `verb: "MINE"`, a rock model, drops stone/copper/iron/coal, shrinks when depleted | `verb: "CHOP"`, a tree model, drops wood/hardwood/resin, draws a named stump when felled |
+| same start/settle/cancel commands | same commands, same bodies, same guards |
+| same node-state table | same table, same `(zone_id, node_id)` key |
+
+What forestry added was data (three definitions, three drop tables, twelve placements, three tree
+models and three stumps), one optional field (`depletedModelId`, because a tree has a better depleted
+picture than a smaller tree) and its own tests. `tests/api/forestry-loop.test.ts` drives a `CHOP` node
+and a `MINE` node through the same commands in one file.
 
 The domain, the use cases, the routes, the interaction layer and the settlement are verb-agnostic today;
 `tests/web/mining-interaction.test.ts` exercises a `CHOP` node that no shipped content declares, to

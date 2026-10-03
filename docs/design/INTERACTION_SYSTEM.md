@@ -2,7 +2,7 @@
 
 Status: implemented in V14.1 for `INSPECT` and `HARVEST` on crops, production trees and built things,
 extended in V14.3 with `TRADE` on a service object, in V15.1 with `FISH` on a fishing spot, and in V15.2
-with the node's own verb - `MINE`, and `CHOP` for a definition that declares it - on a resource node.
+with the node's own verb - `MINE`, and `CHOP`, which V15.3's wild trees now declare - on a resource node.
 Read this before adding an action, changing what is "in reach", or wiring a new kind of
 target into character view.
 

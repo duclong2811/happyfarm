@@ -308,6 +308,8 @@ export interface ResourceDefinitionView {
   readonly dropTableId: string;
   readonly xp: number;
   readonly modelId: string;
+  /** What a depleted node draws instead, when the type has a better answer than shrinking. */
+  readonly depletedModelId: string | null;
   readonly requiredLevel: number;
 }
 

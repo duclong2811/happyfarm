@@ -2040,6 +2040,7 @@ function toSceneConstruction(construction: ConstructionDTO): {
 function toSceneResourceNode(node: ResourceNodeDTO): {
   readonly id: string;
   readonly modelId: string;
+  readonly depletedModelId: string | null;
   readonly worldX: number;
   readonly worldZ: number;
   readonly available: boolean;
@@ -2048,6 +2049,7 @@ function toSceneResourceNode(node: ResourceNodeDTO): {
   return {
     id: node.nodeId,
     modelId: node.modelId,
+    depletedModelId: node.depletedModelId,
     worldX: at.worldX,
     worldZ: at.worldZ,
     available: node.available

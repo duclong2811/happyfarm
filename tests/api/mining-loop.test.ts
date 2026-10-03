@@ -289,7 +289,8 @@ describe("the mining loop", () => {
     const response = await get("/resource-nodes");
     expect(response.status).toBe(200);
     const list = await nodes();
-    expect(list).toHaveLength(9);
+    // Nine mining deposits and twelve wild forestry trees share one catalogue and one state table.
+    expect(list).toHaveLength(21);
     expect(list.every((node) => node.available)).toBe(true);
     expect(list.map((node) => node.nodeId)).toContain(STONE.node);
     expect(list.map((node) => node.nodeId)).toContain(IRON.node);

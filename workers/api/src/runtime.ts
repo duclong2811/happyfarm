@@ -284,6 +284,7 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
       dropTableId: definition.dropTableId,
       xp: definition.xp,
       modelId: definition.modelId,
+      depletedModelId: definition.depletedModelId ?? null,
       requiredLevel: definition.requiredLevel ?? 1
     }));
   }
@@ -310,6 +311,7 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
       dropTableId: definition.dropTableId,
       xp: definition.xp,
       modelId: definition.modelId,
+      depletedModelId: definition.depletedModelId ?? null,
       requiredLevel: definition.requiredLevel ?? 1
     };
   }

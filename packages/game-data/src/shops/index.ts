@@ -123,6 +123,12 @@ export const shopRegistry = createShopRegistry([
   ,{ id: "shop_copper_ore", itemDefinitionId: "item_copper_ore", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 }
   ,{ id: "shop_iron_ore", itemDefinitionId: "item_iron_ore", currencyDefinitionId: "currency_gold", sellPrice: 4, maxQuantityPerRequest: 1_000 }
   ,{ id: "shop_coal", itemDefinitionId: "item_coal", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 }
+  // Forestry materials, priced provisionally: wood is the construction backbone and will be wanted in
+  // bulk, so selling it is early liquidity rather than its purpose. See
+  // `docs/design/FORESTRY_BALANCE.md`.
+  ,{ id: "shop_wood", itemDefinitionId: "item_wood", currencyDefinitionId: "currency_gold", sellPrice: 1, maxQuantityPerRequest: 1_000 }
+  ,{ id: "shop_hardwood", itemDefinitionId: "item_hardwood", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 }
+  ,{ id: "shop_resin", itemDefinitionId: "item_resin", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 }
 ]);
 
 export const shops = [...shopRegistry.values()];
