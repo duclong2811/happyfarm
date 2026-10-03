@@ -205,7 +205,7 @@ export const HarvestResultDTOSchema = z
  * Sent to the client so it can group and label without keeping a list of which item is which: a
  * server that adds a seed does not need a client release to say so.
  */
-export const ItemCategorySchema = z.enum(["CROP", "SEED"]);
+export const ItemCategorySchema = z.enum(["CROP", "SEED", "FISH"]);
 
 /**
  * Uprooting a crop.
@@ -935,6 +935,14 @@ export const ErrorCodeSchema = z.enum([
   "CONSTRUCTION_NOT_STORED",
   "CONSTRUCTION_CONFLICT",
   "OBJECT_NOT_OWNED",
+  "FISHING_SPOT_NOT_FOUND",
+  "FISHING_ACTION_NOT_FOUND",
+  "FISHING_ZONE_NOT_ALLOWED",
+  "FISHING_SPOT_DISABLED",
+  "FISHING_ALREADY_ACTIVE",
+  "FISHING_NOT_READY",
+  "FISHING_ACTION_NOT_ACTIVE",
+  "FISHING_CONFLICT",
   "INSUFFICIENT_ITEMS",
   "INSUFFICIENT_FUNDS",
   "REQUEST_ALREADY_PROCESSED",
@@ -985,6 +993,97 @@ export type TreeHarvestResultDTO = z.infer<typeof TreeHarvestResultDTOSchema>;
 export type HarvestTreeResponse = z.infer<typeof HarvestTreeResponseSchema>;
 export type RemoveTreeRequest = z.infer<typeof RemoveTreeRequestSchema>;
 export type RemoveTreeResponse = z.infer<typeof RemoveTreeResponseSchema>;
+
+/**
+ * Fishing: the water, the species, and the action.
+ *
+ * Reading the catalogue is a pure projection of game data (the client draws the spots and names the
+ * fish from it), while starting and settling an action are commands the server settles. Nothing a
+ * client sends ever names a fish, a price, or a reward: a start names a *spot*, and a settle names the
+ * server's own action id.
+ */
+export const FishingSpotDTOSchema = z
+  .object({
+    spotId: z.string().regex(/^spot_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    displayNameKey: z.string().min(1).max(120),
+    /** The zone kind the spot stands in. Today always `HOME_ISLAND`; the field is what keeps it explicit. */
+    zoneKind: ZoneKindSchema,
+    /** Fractional tile coordinates: the client converts them with the same frame as every other thing. */
+    position: z.object({ x: z.number(), y: z.number() }).strict(),
+    interactionRadiusTiles: z.number().positive().max(12),
+    tableId: z.string().regex(/^fishtable_[a-z0-9]+(?:_[a-z0-9]+)*$/)
+  })
+  .strict();
+
+export const FishDefinitionDTOSchema = z
+  .object({
+    fishDefinitionId: z.string().regex(/^fish_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    displayNameKey: z.string().min(1).max(120),
+    itemDefinitionId: ItemDefinitionIdSchema,
+    itemDisplayNameKey: z.string().min(1).max(120),
+    /** The generated model the inventory card renders; `null` when this build has no art for it. */
+    modelId: z.string().min(1).max(120).nullable(),
+    sellPrice: z.number().int().positive().max(1_000_000),
+    xp: z.number().int().positive().max(1_000_000),
+    requiredLevel: z.number().int().positive().max(MAX_PROGRESSION_LEVEL)
+  })
+  .strict();
+
+export const GetFishingResponseSchema = z
+  .object({ spots: z.array(FishingSpotDTOSchema), fish: z.array(FishDefinitionDTOSchema) })
+  .strict();
+
+export const StartFishingRequestSchema = z
+  .object({ requestId: RequestIdSchema, spotId: FishingSpotDTOSchema.shape.spotId })
+  .strict();
+
+export const FishingActionDTOSchema = z
+  .object({
+    actionId: z.string().regex(/^fishact_[0-9a-f-]{36}$/i),
+    zone: ZoneRefSchema,
+    spotId: z.string().regex(/^spot_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    tableId: z.string().regex(/^fishtable_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    status: z.enum(["ACTIVE", "SETTLED", "CANCELLED"]),
+    startedAt: z.iso.datetime(),
+    readyAt: z.iso.datetime(),
+    secondsUntilReady: z.number().int().nonnegative(),
+    version: z.number().int().positive()
+  })
+  .strict();
+
+export const StartFishingResponseSchema = z.object({ action: FishingActionDTOSchema }).strict();
+export const GetActiveFishingResponseSchema = z
+  .object({ action: FishingActionDTOSchema.nullable() })
+  .strict();
+
+export const SettleFishingRequestSchema = z
+  .object({ requestId: RequestIdSchema, expectedActionVersion: z.number().int().positive() })
+  .strict();
+
+export const FishingCatchDTOSchema = z
+  .object({ itemDefinitionId: ItemDefinitionIdSchema, quantity: z.number().int().positive() })
+  .strict();
+
+export const SettleFishingResponseSchema = z
+  .object({ catch: FishingCatchDTOSchema, progression: XpAwardDTOSchema })
+  .strict();
+
+export const CancelFishingRequestSchema = z
+  .object({ requestId: RequestIdSchema, expectedActionVersion: z.number().int().positive() })
+  .strict();
+
+export const CancelFishingResponseSchema = z.object({ cancelled: z.literal(true) }).strict();
+
+export type FishingSpotDTO = z.infer<typeof FishingSpotDTOSchema>;
+export type FishDefinitionDTO = z.infer<typeof FishDefinitionDTOSchema>;
+export type GetFishingResponse = z.infer<typeof GetFishingResponseSchema>;
+export type FishingActionDTO = z.infer<typeof FishingActionDTOSchema>;
+export type StartFishingRequest = z.infer<typeof StartFishingRequestSchema>;
+export type StartFishingResponse = z.infer<typeof StartFishingResponseSchema>;
+export type SettleFishingRequest = z.infer<typeof SettleFishingRequestSchema>;
+export type FishingCatchDTO = z.infer<typeof FishingCatchDTOSchema>;
+export type SettleFishingResponse = z.infer<typeof SettleFishingResponseSchema>;
+export type CancelFishingRequest = z.infer<typeof CancelFishingRequestSchema>;
 
 export type ApiSuccess<T> = { readonly ok: true; readonly data: T };
 export type ApiFailure = {

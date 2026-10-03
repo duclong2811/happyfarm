@@ -3,6 +3,7 @@ export * from "./crop";
 export * from "./construction";
 export * from "./economy";
 export * from "./farm";
+export * from "./fishing";
 export * from "./identity";
 export * from "./ids";
 export * from "./inventory";

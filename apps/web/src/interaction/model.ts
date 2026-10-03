@@ -22,7 +22,7 @@ import type { CropStateDTO, TreeStateDTO } from "@happy-farm/contracts";
  * ENTER, USE) is deliberately absent rather than declared and unimplemented: an action exists here when
  * there is a handler for it, and adding one is a case in `interactionActionPriority` plus an executor.
  */
-export type InteractionAction = "INSPECT" | "HARVEST" | "TRADE";
+export type InteractionAction = "INSPECT" | "HARVEST" | "TRADE" | "FISH";
 
 /**
  * What the target *is*, for range, priority and the adapter that reads it.
@@ -31,7 +31,7 @@ export type InteractionAction = "INSPECT" | "HARVEST" | "TRADE";
  * production tree stays a production tree, and a world object stays a construction. The interaction
  * layer adapts them into one candidate shape and never merges them into one table.
  */
-export type InteractableKind = "CROP" | "TREE" | "WORLD_OBJECT";
+export type InteractableKind = "CROP" | "TREE" | "WORLD_OBJECT" | "FISHING_SPOT";
 
 /**
  * How close the player has to be, in world metres, by kind.
@@ -45,7 +45,10 @@ export type InteractableKind = "CROP" | "TREE" | "WORLD_OBJECT";
 export const INTERACTION_RANGE_WORLD: Readonly<Record<InteractableKind, number>> = {
   CROP: 2.6,
   TREE: 2.8,
-  WORLD_OBJECT: 3.6
+  WORLD_OBJECT: 3.6,
+  // A fishing spot is a patch of water just off the bank, so the player stands on the shore and
+  // reaches it: the same order as a building, and generous enough for a bank that curves.
+  FISHING_SPOT: 3
 };
 
 /**
@@ -59,6 +62,7 @@ export const INTERACTION_ACTION_PRIORITY: Readonly<Record<InteractionAction, num
   // separated by distance; looking at a thing is worth less than acting on one.
   TRADE: 2,
   HARVEST: 2,
+  FISH: 2,
   INSPECT: 1
 };
 
@@ -127,7 +131,11 @@ export interface InteractionCandidate extends InteractableTarget {
  */
 export interface InteractionPrompt {
   readonly key: string;
-  readonly actionKey: "interaction.harvest" | "interaction.inspect" | "interaction.trade";
+  readonly actionKey:
+    | "interaction.harvest"
+    | "interaction.inspect"
+    | "interaction.trade"
+    | "interaction.fish";
   readonly nameKey: string | null;
   readonly nameFallback: string;
   readonly readyInSeconds: number | null;
@@ -146,12 +154,14 @@ export function interactionPromptFor(candidate: InteractionCandidate): Interacti
 /** The action's own word, as a translation key. One table, so a new action is one row. */
 export function interactionActionKey(
   action: InteractionAction
-): "interaction.harvest" | "interaction.inspect" | "interaction.trade" {
+): "interaction.harvest" | "interaction.inspect" | "interaction.trade" | "interaction.fish" {
   switch (action) {
     case "HARVEST":
       return "interaction.harvest";
     case "TRADE":
       return "interaction.trade";
+    case "FISH":
+      return "interaction.fish";
     case "INSPECT":
       return "interaction.inspect";
   }

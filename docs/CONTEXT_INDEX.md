@@ -862,6 +862,36 @@ items, or its market prices.
   checks the shipped files. Trees share one canopy and differ by a species fruit colour.
 - Static catalogues cost no farm rows: `tests/api/catalogue-read-cost.test.ts`.
 
+### Fishing, the first non-farming profession (V15.1)
+
+Read `docs/design/FISHING.md` (architecture, authority, idempotency, the position-trust limitation) and
+`docs/design/FISHING_BALANCE.md` (tables and rates) before changing a spot, a catch table, a fish, the
+action duration, or the fishing commands.
+
+- Definitions: `packages/game-data/src/fishing/index.ts` (7 species, 2 catch tables, 4 static spots,
+  `FISHING_ACTION_SECONDS`). Items are `FISH` in `packages/game-data/src/items/index.ts` and are sold
+  through the existing market rows in `shops/index.ts`. Derived figures: `fishingBalance` in
+  `packages/game-data/src/balance.ts`.
+- Rules: `packages/domain/src/fishing.ts` (`selectCatch` over integer weights, `fishingReadyAt`,
+  `isFishingReady`, `assertFishingAction`). Commands: `packages/application/src/fishing.ts`.
+- Server: routes in `workers/api/src/handler.ts` (`GET /fishing`, `GET /fishing/active`,
+  `POST /fishing/start`, `POST /fishing/:id/settle`, `POST /fishing/:id/cancel`); persistence in
+  `database/migrations/0016_fishing_actions.sql` and `D1Fishing*` in `workers/api/src/d1-repositories.ts`;
+  composition in `workers/api/src/runtime.ts` (`GameDataFishingCatalogue`, `CryptoFishingRandom`,
+  `D1HomeIslandZoneResolver`).
+- Client: `FISHING_SPOT` / `FISH` in `apps/web/src/interaction/model.ts`, the spot adapter in
+  `interaction/registry.ts`, activation in `interaction/selection.ts`, and the cast/wait/settle/cancel
+  flow plus the walk-away cancel in `apps/web/src/main.ts`. Fish models are generated per species
+  (`tools/asset-pipeline/node/specs.mjs` -> `assets/models/fishing/`, resolved by
+  `fishModelUrl` in `model-urls.ts`).
+- Tests: `tests/domain/fishing.test.ts`, `tests/game-data/fishing.test.ts`,
+  `tests/api/fishing-loop.test.ts`, `tests/web/fishing-interaction.test.ts`, plus `/fishing` in
+  `tests/api/catalogue-read-cost.test.ts`.
+
+Never accept a fish, a reward, a price, a duration or a zone from a client; never poll for a fishing
+state (one targeted read at load and one settle request are the whole cost); and never authorize a spot
+from the farm that happens to contain it.
+
 ### The player character (V13.4.1)
 
 The avatar is presentation, and the authority is the player runtime - never the mesh.

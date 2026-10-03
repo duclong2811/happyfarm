@@ -42,6 +42,17 @@ const PALETTE = {
   cabbageLeaf: 0x5f9c46,
   pumpkinShell: 0xe08a26,
   pumpkinStem: 0x4f7f3a,
+  // Fish: a body, a fin, and an eye. Colour is the species' identity at thumbnail size.
+  fishTilapiaBody: 0x8fa8b8,
+  fishCarpBody: 0xb08a4a,
+  fishCatfishBody: 0x5f6b6f,
+  fishSardineBody: 0xb9c7d0,
+  fishMackerelBody: 0x4f7f8f,
+  fishSnapperBody: 0xd0604a,
+  fishTunaBody: 0x3f5f8f,
+  fishBelly: 0xf1e8d8,
+  fishFin: 0x2f4a5f,
+  fishEye: 0x1a1f24,
   stone: 0x9aa3ab,
   barnWall: 0xd1574a,
   barnRoof: 0x8d3f38,
@@ -172,6 +183,29 @@ function buildPumpkin() {
   return [shell, stem];
 }
 
+/**
+ * A fish, drawn the way the inventory draws the crops: a compact upright silhouette whose tail, fin
+ * and colour say which species it is at thumbnail size. Proportions are the species' own, so a
+ * deep-bodied snapper does not read as a slender sardine.
+ */
+function buildFish({ body, radiusX, radiusY, radiusZ, finScale }) {
+  const flesh = part("body", body);
+  lowPolyBlob(flesh, { x: 0, y: 0.34, z: 0 }, { radiusX, radiusY, radiusZ, segments: 8, rings: 3 });
+
+  const fins = part("fin", PALETTE.fishFin);
+  leafBlade(fins, { x: 0, y: 0.92, z: 0 }, { length: 0.26 * finScale, width: 0.16 * finScale, yaw: 0, tilt: 0.15, droop: 0 });
+  leafBlade(fins, { x: radiusX * 0.7, y: 0.5, z: -radiusZ * 0.2 }, { length: 0.2 * finScale, width: 0.09 * finScale, yaw: Math.PI / 2, tilt: 0.9, droop: 0.3 });
+  leafBlade(fins, { x: -radiusX * 0.7, y: 0.5, z: -radiusZ * 0.2 }, { length: 0.2 * finScale, width: 0.09 * finScale, yaw: -Math.PI / 2, tilt: 0.9, droop: 0.3 });
+
+  const belly = part("belly", PALETTE.fishBelly);
+  softBox(belly, { x: 0, y: 0.34, z: radiusZ * 0.55 }, { width: radiusX * 0.7, depth: radiusZ * 0.3, height: radiusY * 0.5 });
+
+  const eyes = part("eye", PALETTE.fishEye);
+  fruit(eyes, { x: 0.1, y: 0.62, z: radiusZ * 0.85 }, 0.045);
+  fruit(eyes, { x: -0.1, y: 0.62, z: radiusZ * 0.85 }, 0.045);
+  return [flesh, fins, belly, eyes];
+}
+
 function buildFarmer() {
   const legs = part("legs", PALETTE.playerLegs);
   taperedCylinder(legs, { x: -0.09, y: 0.1, z: 0 }, { bottomRadius: 0.06, topRadius: 0.07, height: 0.5, segments: 6 });
@@ -293,6 +327,64 @@ export const MODEL_SPECS = [
     envelope: { height: 1, halfFootprint: 0.5 },
     budget: { triangles: 400, materials: 4, bytes: 12000 },
     build: buildPumpkin
+  },
+  // Fish, one small model per species. Same 1 x 1 envelope as a crop so the shared thumbnail renderer
+  // treats them identically; the species is told apart by body colour and proportion.
+  {
+    id: "fish_tilapia",
+    kind: "fish",
+    directory: "apps/web/src/assets/models/fishing",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildFish({ body: PALETTE.fishTilapiaBody, radiusX: 0.2, radiusY: 0.24, radiusZ: 0.2, finScale: 1 })
+  },
+  {
+    id: "fish_carp",
+    kind: "fish",
+    directory: "apps/web/src/assets/models/fishing",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildFish({ body: PALETTE.fishCarpBody, radiusX: 0.18, radiusY: 0.22, radiusZ: 0.24, finScale: 1.2 })
+  },
+  {
+    id: "fish_catfish",
+    kind: "fish",
+    directory: "apps/web/src/assets/models/fishing",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildFish({ body: PALETTE.fishCatfishBody, radiusX: 0.17, radiusY: 0.2, radiusZ: 0.26, finScale: 1.4 })
+  },
+  {
+    id: "fish_sardine",
+    kind: "fish",
+    directory: "apps/web/src/assets/models/fishing",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildFish({ body: PALETTE.fishSardineBody, radiusX: 0.13, radiusY: 0.26, radiusZ: 0.16, finScale: 0.8 })
+  },
+  {
+    id: "fish_mackerel",
+    kind: "fish",
+    directory: "apps/web/src/assets/models/fishing",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildFish({ body: PALETTE.fishMackerelBody, radiusX: 0.15, radiusY: 0.25, radiusZ: 0.2, finScale: 0.9 })
+  },
+  {
+    id: "fish_snapper",
+    kind: "fish",
+    directory: "apps/web/src/assets/models/fishing",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildFish({ body: PALETTE.fishSnapperBody, radiusX: 0.22, radiusY: 0.26, radiusZ: 0.2, finScale: 1.1 })
+  },
+  {
+    id: "fish_tuna",
+    kind: "fish",
+    directory: "apps/web/src/assets/models/fishing",
+    envelope: { height: 1, halfFootprint: 0.5 },
+    budget: { triangles: 400, materials: 4, bytes: 12000 },
+    build: () => buildFish({ body: PALETTE.fishTunaBody, radiusX: 0.19, radiusY: 0.26, radiusZ: 0.28, finScale: 1.3 })
   },
   {
     id: "character_farmer",

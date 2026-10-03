@@ -1,5 +1,6 @@
 import type {
   CropDefinitionDTO,
+  FishDefinitionDTO,
   InventoryEntryDTO,
   ShopEntryDTO,
   TreeDefinitionDTO
@@ -50,6 +51,8 @@ export interface MarketInput {
   readonly inventory: readonly InventoryEntryDTO[];
   readonly cropDefinitions: readonly CropDefinitionDTO[];
   readonly treeDefinitions: readonly TreeDefinitionDTO[];
+  /** The species this deployment can catch, so a fish row draws the fish. */
+  readonly fish?: readonly FishDefinitionDTO[];
   readonly playerLevel: number | null;
 }
 

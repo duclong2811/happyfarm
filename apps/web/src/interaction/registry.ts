@@ -3,6 +3,7 @@ import type {
   ConstructionDTO,
   CropDefinitionDTO,
   CropStateDTO,
+  FishingSpotDTO,
   TreeDefinitionDTO,
   TreeStateDTO
 } from "@happy-farm/contracts";
@@ -42,6 +43,13 @@ export interface InteractionWorldInput {
   readonly treeDefinitions: readonly TreeDefinitionDTO[];
   readonly worldObjects: WorldObjectDefinitions;
   readonly buildCatalog: readonly BuildCatalogEntryDTO[];
+  /**
+   * The water the player may fish: static game data, served with the catalogue.
+   *
+   * Optional so a host that has not wired fishing (or an older test fixture) simply has none; an
+   * empty list is the same as "the island has no fishing spots this build knows about".
+   */
+  readonly fishingSpots?: readonly FishingSpotDTO[];
   /** Current epoch milliseconds, used only to phrase a growing crop's countdown. */
   readonly nowMs: number;
 }
@@ -56,11 +64,9 @@ export const EMPTY_INTERACTION_INDEX: InteractionIndex = { buckets: new Map(), t
 
 /** The furthest a target may be, used to size the neighbourhood rather than to filter by it. */
 export function maxInteractionRangeWorld(): number {
-  return Math.max(
-    INTERACTION_RANGE_WORLD.CROP,
-    INTERACTION_RANGE_WORLD.TREE,
-    INTERACTION_RANGE_WORLD.WORLD_OBJECT
-  );
+  // Derived from the table rather than listed, so adding a kind with a longer reach cannot silently
+  // make an in-range target unreachable.
+  return Math.max(...Object.values(INTERACTION_RANGE_WORLD));
 }
 
 /**
@@ -179,9 +185,41 @@ function constructionTarget(
   };
 }
 
+/**
+ * One fishing spot, as a target.
+ *
+ * The spot is a *place*: its position is authored in fractional tiles and converted with the same
+ * frame every other world thing uses, and it is bucketed by the cell it falls in so the bounded
+ * neighbourhood search finds it like anything else. It carries no revision - the water does not
+ * move - and the server re-checks the spot, the zone and the wait when the intent arrives.
+ */
+function fishingSpotTarget(spot: FishingSpotDTO): InteractableTarget {
+  const position = tileToWorld({ x: spot.position.x, y: spot.position.y }, worldFrame());
+  const cell = worldToCell({ worldX: position.worldX, worldZ: position.worldZ }, worldFrame());
+  return {
+    key: `fishing:${spot.spotId}`,
+    kind: "FISHING_SPOT",
+    action: "FISH",
+    targetId: spot.spotId,
+    tileX: cell.x,
+    tileY: cell.y,
+    worldX: position.worldX,
+    worldZ: position.worldZ,
+    rangeWorld: INTERACTION_RANGE_WORLD.FISHING_SPOT,
+    priority: INTERACTION_ACTION_PRIORITY.FISH,
+    nameKey: spot.displayNameKey,
+    nameFallback: spot.spotId,
+    version: 0,
+    readyInSeconds: null
+  };
+}
+
 /** Adapts the read models into one flat list of targets. Pure: nothing here touches the network. */
 export function interactionTargets(input: InteractionWorldInput): readonly InteractableTarget[] {
   const targets: InteractableTarget[] = [];
+  for (const spot of input.fishingSpots ?? []) {
+    targets.push(fishingSpotTarget(spot));
+  }
   for (const crop of input.crops) {
     targets.push(cropTarget(crop, input.cropDefinitions, input.nowMs));
   }

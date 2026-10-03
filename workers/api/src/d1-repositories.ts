@@ -26,6 +26,8 @@ import type {
   TileState,
   TreeInstance,
   TreeInstanceId,
+  FishingAction,
+  FishingActionId,
   QuarterTurns,
   XpAward,
   Wallet
@@ -38,6 +40,7 @@ import {
   parseEconomyReferenceId,
   parseEconomyTransactionId,
   parseFarmId,
+  parseFishingActionId,
   parseItemDefinitionId,
   parsePlayerId,
   parseTreeInstanceId,
@@ -53,7 +56,10 @@ import type {
   ConstructionSeed,
   CropInstanceRepository,
   FarmExpansionRepository,
+  FishingActionRepository,
+  FishingSettlementRepository,
   FarmMemberRepository,
+  HomeIslandZoneResolver,
   FarmRepository,
   FarmTileRepository,
   PlayerRepository,
@@ -72,6 +78,7 @@ import type {
   WalletRepository
 } from "@happy-farm/application";
 import { ApplicationError } from "@happy-farm/application";
+import { homeIslandZoneRef } from "@happy-farm/contracts";
 import type { D1DatabaseLike, D1PreparedStatementLike } from "./d1-types";
 
 interface PlayerRow {
@@ -1759,6 +1766,280 @@ export class D1TreeHarvestSettlementRepository implements TreeHarvestSettlementR
           error.message.includes("completed tree harvest idempotency requires settlement"))
       ) {
         throw new ApplicationError("PROGRESSION_CONFLICT", "Player progression changed concurrently");
+      }
+      throw error;
+    }
+  }
+}
+
+interface FishingActionRow {
+  action_id: string;
+  actor_player_id: string;
+  zone_kind: string;
+  zone_id: string;
+  spot_id: string;
+  table_id: string;
+  status: string;
+  started_at: string;
+  ready_at: string;
+  settled_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function toFishingAction(row: FishingActionRow): FishingAction {
+  return {
+    actionId: parseFishingActionId(row.action_id),
+    actorPlayerId: parsePlayerId(row.actor_player_id),
+    zoneKind: row.zone_kind,
+    zoneId: row.zone_id,
+    spotId: row.spot_id,
+    tableId: row.table_id,
+    status: row.status as FishingAction["status"],
+    startedAt: row.started_at,
+    readyAt: row.ready_at,
+    settledAt: row.settled_at,
+    version: row.version,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+const FISHING_ACTION_COLUMNS =
+  "action_id, actor_player_id, zone_kind, zone_id, spot_id, table_id, status, started_at, ready_at, settled_at, version, created_at, updated_at";
+
+/**
+ * The actor's home island, as a zone.
+ *
+ * One farm is one `HOME_ISLAND` zone today, and the derivation lives in the contracts package; this
+ * adapter is the only place the two meet. A future shared fishing ground resolves a different zone
+ * through a different adapter, and the fishing use case does not change.
+ */
+export class D1HomeIslandZoneResolver implements HomeIslandZoneResolver {
+  constructor(private readonly farms: FarmRepository) {}
+
+  async resolveForPlayer(
+    actorPlayerId: PlayerId
+  ): Promise<{ readonly kind: string; readonly id: string } | null> {
+    const farm = await this.farms.findByOwner(actorPlayerId);
+    if (farm === null) return null;
+    const zone = homeIslandZoneRef(farm.id);
+    return { kind: zone.kind, id: zone.zoneId };
+  }
+}
+
+/**
+ * The fishing action store: one durable row per attempt.
+ *
+ * Reading is a primary-key lookup or the actor's single active row (the partial unique index makes
+ * that a point query). Starting is one batch of two statements - the action and the receipt that
+ * claims it - so a receipt can never exist without the attempt it describes.
+ */
+export class D1FishingActionRepository implements FishingActionRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async findById(actionId: FishingActionId): Promise<FishingAction | null> {
+    const row = await this.db
+      .prepare(`SELECT ${FISHING_ACTION_COLUMNS} FROM fishing_actions WHERE action_id = ?`)
+      .bind(actionId)
+      .first<FishingActionRow>();
+    return row === null ? null : toFishingAction(row);
+  }
+
+  async findActiveByActor(actorPlayerId: PlayerId): Promise<FishingAction | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT ${FISHING_ACTION_COLUMNS} FROM fishing_actions WHERE actor_player_id = ? AND status = 'ACTIVE' LIMIT 1`
+      )
+      .bind(actorPlayerId)
+      .first<FishingActionRow>();
+    return row === null ? null : toFishingAction(row);
+  }
+
+  async create(action: FishingAction, idempotency: IdempotencyRecord): Promise<void> {
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "INSERT INTO fishing_actions (action_id, actor_player_id, zone_kind, zone_id, spot_id, table_id, status, started_at, ready_at, settled_at, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            action.zoneKind,
+            action.zoneId,
+            action.spotId,
+            action.tableId,
+            action.status,
+            action.startedAt,
+            action.readyAt,
+            action.settledAt,
+            action.version,
+            action.createdAt,
+            action.updatedAt
+          ),
+        // The receipt commits only if the attempt it claims is actually live, and the unique partial
+        // index on the actor is what stops two concurrent starts from both being live.
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM fishing_actions WHERE action_id = ? AND actor_player_id = ? AND status = 'ACTIVE') THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 2 || results.some((result) => !result.success)) {
+        throw new Error("Atomic fishing start failed");
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("UNIQUE constraint failed: fishing_actions") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys"))
+      ) {
+        throw new ApplicationError("FISHING_ALREADY_ACTIVE", "A fishing attempt is already in progress");
+      }
+      throw error;
+    }
+  }
+}
+
+/**
+ * The one write boundary for settling or giving up a fishing attempt.
+ *
+ * Both settle and cancel move the same row with the same guard, so the interesting part is what the
+ * receipt depends on. For a settle that is: the action actually transitioned to `SETTLED` at the
+ * version the caller expected, the experience row is still where the caller read it, and the catch
+ * fits in the stack. If any of those is false the receipt's actor evaluates to NULL and the batch
+ * aborts, so the fish, the experience and the transition are all-or-nothing - exactly the crop and
+ * tree harvest's shape, one table lighter.
+ */
+export class D1FishingSettlementRepository implements FishingSettlementRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async settleFishingAtomically(
+    action: FishingAction,
+    addition: InventoryAddition,
+    award: XpAward,
+    idempotency: IdempotencyRecord
+  ): Promise<void> {
+    if (award.playerId !== idempotency.actorPlayerId || award.playerId !== addition.playerId) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Settlement ownership does not match");
+    }
+    const expectedVersion = action.version - 1;
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "UPDATE fishing_actions SET status = 'SETTLED', settled_at = ?, version = version + 1, updated_at = ? WHERE action_id = ? AND actor_player_id = ? AND status = 'ACTIVE' AND version = ?"
+          )
+          .bind(action.settledAt, action.updatedAt, action.actionId, action.actorPlayerId, expectedVersion),
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 0, 1, ?, ?)"
+          )
+          .bind(award.playerId, award.timestamp, award.timestamp),
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM fishing_actions WHERE action_id = ? AND actor_player_id = ? AND status = 'SETTLED' AND version = ? AND settled_at = ?) AND EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?) AND COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) <= ? - ? THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            action.version,
+            action.settledAt,
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion,
+            addition.playerId,
+            addition.itemDefinitionId,
+            addition.maxQuantity,
+            addition.quantity,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          ),
+        this.db
+          .prepare(
+            "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = inventory_items.quantity + excluded.quantity, updated_at = excluded.updated_at, version = inventory_items.version + 1"
+          )
+          .bind(addition.playerId, addition.itemDefinitionId, addition.quantity, addition.timestamp),
+        this.db
+          .prepare(
+            "UPDATE player_progression SET level = ?, xp = ?, progression_version = progression_version + 1, updated_at = ? WHERE player_id = ? AND xp = ? AND progression_version = ?"
+          )
+          .bind(
+            award.levelAfter,
+            award.xpAfter,
+            award.timestamp,
+            award.playerId,
+            award.xpBefore,
+            award.expectedProgressionVersion
+          )
+      ]);
+      if (results.length !== 5 || results.some((result) => !result.success)) {
+        throw new Error("Atomic fishing settlement failed");
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("player progression") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys"))
+      ) {
+        throw new ApplicationError("FISHING_CONFLICT", "Fishing settlement changed concurrently");
+      }
+      throw error;
+    }
+  }
+
+  async cancelFishingAtomically(action: FishingAction, idempotency: IdempotencyRecord): Promise<void> {
+    const expectedVersion = action.version - 1;
+    try {
+      const results = await this.db.batch([
+        this.db
+          .prepare(
+            "UPDATE fishing_actions SET status = 'CANCELLED', version = version + 1, updated_at = ? WHERE action_id = ? AND actor_player_id = ? AND status = 'ACTIVE' AND version = ?"
+          )
+          .bind(action.updatedAt, action.actionId, action.actorPlayerId, expectedVersion),
+        this.db
+          .prepare(
+            "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM fishing_actions WHERE action_id = ? AND actor_player_id = ? AND status = 'CANCELLED' AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(
+            action.actionId,
+            action.actorPlayerId,
+            action.version,
+            idempotency.actorPlayerId,
+            idempotency.operation,
+            idempotency.requestId,
+            idempotency.payloadFingerprint,
+            idempotency.status,
+            idempotency.resourceId,
+            idempotency.responseJson,
+            idempotency.createdAt
+          )
+      ]);
+      if (results.length !== 2 || results.some((result) => !result.success)) {
+        throw new Error("Atomic fishing cancel failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("NOT NULL constraint failed: idempotency_keys")) {
+        throw new ApplicationError("FISHING_CONFLICT", "Fishing action changed concurrently");
       }
       throw error;
     }

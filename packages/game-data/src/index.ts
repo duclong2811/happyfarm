@@ -3,7 +3,7 @@ export * from "./balance";
 export * from "./buildings";
 export * from "./crops";
 export * from "./economy";
-export * from "./fish";
+export * from "./fishing";
 export * from "./items";
 export * from "./plots";
 export * from "./placement";

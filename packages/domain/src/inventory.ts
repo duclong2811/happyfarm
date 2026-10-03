@@ -10,7 +10,8 @@ export const MAX_INVENTORY_QUANTITY = 2_147_483_647;
  * what the shop buys back. Keeping both in one inventory is deliberate: a player's holdings are one
  * list, and the category only decides what may be done with a stack.
  */
-export type ItemCategory = "CROP" | "SEED";
+/** A `FISH` is a catch: stored and sold like produce, and never planted or fed to anything. */
+export type ItemCategory = "CROP" | "SEED" | "FISH";
 
 export interface ItemDefinition {
   readonly id: ItemDefinitionId;

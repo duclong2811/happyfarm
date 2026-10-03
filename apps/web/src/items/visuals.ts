@@ -1,5 +1,6 @@
-import type { CropDefinitionDTO, TreeDefinitionDTO } from "@happy-farm/contracts";
+import type { CropDefinitionDTO, FishDefinitionDTO, TreeDefinitionDTO } from "@happy-farm/contracts";
 import { cropModelId } from "../render/assets";
+import { fishModelUrl } from "../render/model-urls";
 import type { ThumbnailRequest } from "../render/thumbnail";
 
 /**
@@ -55,6 +56,11 @@ export function saplingVisual(): ItemVisual {
   return modelVisual(null, "SAPLING");
 }
 
+/** A fish: the species' own model when this build ships one, and produce fallback otherwise. */
+export function fishVisualFor(modelId: string | null): ItemVisual {
+  return modelVisual(fishModelUrl(modelId), "PRODUCE");
+}
+
 /** Anything this build has no definition for: a plain crate, sized like every other card. */
 export function unknownItemVisual(): ItemVisual {
   return modelVisual(null, "ITEM");
@@ -63,6 +69,8 @@ export function unknownItemVisual(): ItemVisual {
 export interface ItemVisualCatalogues {
   readonly cropDefinitions: readonly CropDefinitionDTO[];
   readonly treeDefinitions: readonly TreeDefinitionDTO[];
+  /** The species this deployment can catch, so a fish item draws its own species rather than a crate. */
+  readonly fish?: readonly FishDefinitionDTO[];
 }
 
 /**
@@ -80,6 +88,10 @@ export function itemVisualFor(
     (definition) => definition.harvestItemDefinitionId === itemDefinitionId
   );
   if (producer !== undefined) return cropVisualFor(producer.cropDefinitionId);
+  const caught = (catalogues.fish ?? []).find(
+    (definition) => definition.itemDefinitionId === itemDefinitionId
+  );
+  if (caught !== undefined) return fishVisualFor(caught.modelId);
   const seedOf = catalogues.cropDefinitions.find(
     (definition) => definition.seedItemDefinitionId === itemDefinitionId
   );

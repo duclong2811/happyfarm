@@ -21,6 +21,11 @@ import {
   ConstructionEditResponseSchema,
   RemoveConstructionResponseSchema,
   GetWorldObjectsResponseSchema,
+  GetFishingResponseSchema,
+  GetActiveFishingResponseSchema,
+  StartFishingResponseSchema,
+  SettleFishingResponseSchema,
+  CancelFishingResponseSchema,
   PlantTreeResponseSchema,
   RemoveTreeResponseSchema,
   UprootCropResponseSchema,
@@ -51,6 +56,10 @@ import type {
   RemoveTreeResponse,
   RemoveConstructionResponse,
   WorldObjectDefinitionDTO,
+  FishDefinitionDTO,
+  FishingActionDTO,
+  FishingSpotDTO,
+  FishingCatchDTO,
   XpAwardDTO,
   WalletDTO,
   SessionPlayerDTO
@@ -316,6 +325,40 @@ export class ApiClient {
    */
   getWorldObjects(): Promise<{ readonly objects: WorldObjectDefinitionDTO[] }> {
     return this.get("/world-objects", GetWorldObjectsResponseSchema);
+  }
+
+  /**
+   * Fishing.
+   *
+   * The catalogue is static game data: the client draws the spots and names the species from it. The
+   * three commands are the same server-authoritative shape as everything else - start names a spot,
+   * settle names the server's own action, and cancel gives it up. In between there is no request at
+   * all: the wait is served by the server's clock and the client's own countdown.
+   */
+  getFishing(): Promise<{ readonly spots: FishingSpotDTO[]; readonly fish: FishDefinitionDTO[] }> {
+    return this.get("/fishing", GetFishingResponseSchema);
+  }
+
+  getActiveFishing(): Promise<{ readonly action: FishingActionDTO | null }> {
+    return this.get("/fishing/active", GetActiveFishingResponseSchema);
+  }
+
+  startFishing(body: { readonly requestId: string; readonly spotId: string }): Promise<{ readonly action: FishingActionDTO }> {
+    return this.post("/fishing/start", body, StartFishingResponseSchema);
+  }
+
+  settleFishing(
+    actionId: string,
+    body: { readonly requestId: string; readonly expectedActionVersion: number }
+  ): Promise<{ readonly catch: FishingCatchDTO; readonly progression: XpAwardDTO }> {
+    return this.post(`/fishing/${encodeURIComponent(actionId)}/settle`, body, SettleFishingResponseSchema);
+  }
+
+  cancelFishing(
+    actionId: string,
+    body: { readonly requestId: string; readonly expectedActionVersion: number }
+  ): Promise<{ readonly cancelled: true }> {
+    return this.post(`/fishing/${encodeURIComponent(actionId)}/cancel`, body, CancelFishingResponseSchema);
   }
 
   /** Puts one object into storage: out of the world, still the player's. */

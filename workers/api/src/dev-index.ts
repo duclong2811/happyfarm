@@ -11,6 +11,8 @@ import {
 import { DevPlayerBootstrap, type DevBootstrapResult } from "./dev-player-repository";
 import {
   CryptoIdGenerator,
+  CryptoFishingRandom,
+  GameDataFishingCatalogue,
   GameDataCurrencyDefinitions,
   GameDataCropDefinitions,
   GameDataItemDefinitions,
@@ -78,10 +80,11 @@ export function createDevWorker(env: DevEnv) {
   const config = readDevAuthConfig(env);
   const authenticator = new DevAuthenticator(config);
   const clock = new SystemClock();
+  const ids = new CryptoIdGenerator();
   const core = createHandler({
     db: env.DB,
     authenticator,
-    ids: new CryptoIdGenerator(),
+    ids,
     fingerprints: new Sha256Fingerprint(),
     cropDefinitions: new GameDataCropDefinitions(),
     itemDefinitions: new GameDataItemDefinitions(),
@@ -93,6 +96,11 @@ export function createDevWorker(env: DevEnv) {
     progressionDefinition: gameDataProgressionDefinition,
     starterWorld: gameDataStarterWorld,
     terrain: gameDataTileTerrain,
+    fishing: {
+      catalogue: new GameDataFishingCatalogue(),
+      ids,
+      random: new CryptoFishingRandom()
+    },
     clock
   });
   const bootstrap = new DevPlayerBootstrap(env.DB);

@@ -27,8 +27,13 @@ import {
   UprootCrop,
   ApplicationError,
   BuyItem,
+  CancelFishing,
   EconomyService,
+  GetActiveFishing,
+  ListFishingCatalogue,
   SellItem,
+  SettleFishing,
+  StartFishing,
   ExpandFarm,
   type ActorContext,
   type AuthenticationPort,
@@ -49,6 +54,12 @@ import {
   ,type ConstructionIdGenerator
   ,type StarterWorldDefinition
   ,type TileTerrainLookup
+  ,type FishingCataloguePort
+  ,type FishingIdGenerator
+  ,type FishingRandomPort
+  ,type FishView
+  ,type FishingActionView
+  ,type FishingSpotView
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
@@ -71,6 +82,14 @@ import {
   StoreConstructionRequestSchema,
   RestoreConstructionRequestSchema,
   UprootCropRequestSchema,
+  StartFishingRequestSchema,
+  SettleFishingRequestSchema,
+  CancelFishingRequestSchema,
+  type FishingActionDTO,
+  type FishingSpotDTO,
+  type FishDefinitionDTO,
+  type StartFishingResponse,
+  type SettleFishingResponse,
   type ApiFailure,
   type ApiSuccess,
   type ErrorCode,
@@ -117,6 +136,9 @@ import {
   D1CropRepository,
   D1HarvestSettlementRepository,
   D1EconomySettlementRepository,
+  D1FishingActionRepository,
+  D1FishingSettlementRepository,
+  D1HomeIslandZoneResolver,
   D1FarmExpansionRepository,
   D1TreeRepository,
   D1ConstructionRepository,
@@ -163,6 +185,17 @@ export interface HandlerDependencies {
   readonly starterWorld: StarterWorldDefinition;
   /** The island's geography, as the placement rules read it. */
   readonly terrain: TileTerrainLookup;
+  /**
+   * Fishing: the catalogue, the id source, and the entropy.
+   *
+   * Optional so a host that has not wired fishing answers `RESOURCE_NOT_FOUND` on its routes rather
+   * than refusing to build - the same treatment `session` gets.
+   */
+  readonly fishing?: {
+    readonly catalogue: FishingCataloguePort;
+    readonly ids: FishingIdGenerator;
+    readonly random: FishingRandomPort;
+  };
   readonly clock: Clock;
 }
 
@@ -193,6 +226,48 @@ function toConstructionDTO(construction: ConstructionInstance): ConstructionDTO 
     createdAt: construction.createdAt,
     storedAt: construction.storedAt,
     version: construction.version
+  };
+}
+
+/** One fishing spot, as the client draws it. A pure projection of the definition. */
+function toFishingSpotDTO(spot: FishingSpotView): FishingSpotDTO {
+  return {
+    spotId: spot.spotId,
+    displayNameKey: spot.displayNameKey,
+    zoneKind: spot.zoneKind as FishingSpotDTO["zoneKind"],
+    position: { x: spot.position.x, y: spot.position.y },
+    interactionRadiusTiles: spot.interactionRadiusTiles,
+    tableId: spot.tableId
+  };
+}
+
+function toFishDefinitionDTO(definition: FishView): FishDefinitionDTO {
+  return {
+    fishDefinitionId: definition.fishDefinitionId,
+    displayNameKey: definition.displayNameKey,
+    itemDefinitionId: definition.itemDefinitionId,
+    itemDisplayNameKey: definition.itemDisplayNameKey,
+    modelId: definition.modelId,
+    sellPrice: definition.sellPrice,
+    xp: definition.xp,
+    requiredLevel: definition.requiredLevel
+  };
+}
+
+function toFishingActionDTO(action: FishingActionView): FishingActionDTO {
+  return {
+    actionId: action.actionId,
+    zone: {
+      kind: action.zone.kind as FishingActionDTO["zone"]["kind"],
+      zoneId: action.zone.id
+    },
+    spotId: action.spotId,
+    tableId: action.tableId,
+    status: action.status,
+    startedAt: action.startedAt,
+    readyAt: action.readyAt,
+    secondsUntilReady: action.secondsUntilReady,
+    version: action.version
   };
 }
 
@@ -329,6 +404,7 @@ function errorStatus(code: ErrorCode): number {
     case "CONSTRUCTION_NOT_REMOVABLE":
     case "CONSTRUCTION_NOT_STORABLE":
     case "CONSTRUCTION_NOT_STORED":
+    case "FISHING_ZONE_NOT_ALLOWED":
       return 403;
     case "RESOURCE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
@@ -339,6 +415,8 @@ function errorStatus(code: ErrorCode): number {
     case "TREE_DEFINITION_NOT_FOUND":
     case "TREE_NOT_FOUND":
     case "CONSTRUCTION_NOT_FOUND":
+    case "FISHING_SPOT_NOT_FOUND":
+    case "FISHING_ACTION_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
     case "REQUEST_ALREADY_PROCESSED":
@@ -357,6 +435,11 @@ function errorStatus(code: ErrorCode): number {
     case "TREE_NOT_READY":
     case "CONSTRUCTION_OCCUPIED":
     case "CONSTRUCTION_CONFLICT":
+    case "FISHING_SPOT_DISABLED":
+    case "FISHING_ALREADY_ACTIVE":
+    case "FISHING_NOT_READY":
+    case "FISHING_ACTION_NOT_ACTIVE":
+    case "FISHING_CONFLICT":
       return 409;
     case "CONSTRUCTION_UNSUITABLE_GROUND":
     case "CONSTRUCTION_BLOCKED":
@@ -618,6 +701,53 @@ export function createHandler(dependencies: HandlerDependencies) {
     clock: dependencies.clock
   });
 
+  /**
+   * Fishing, when the host wired it.
+   *
+   * The action store and the settlement boundary are D1 adapters built from the same binding as the
+   * rest; the catalogue, id source and entropy come from the caller, because the values belong to
+   * game data and the randomness belongs to the platform.
+   */
+  const fishing = dependencies.fishing;
+  const fishingActions = new D1FishingActionRepository(dependencies.db);
+  const fishingSettlement = new D1FishingSettlementRepository(dependencies.db);
+  const fishingCatalogue =
+    fishing === undefined
+      ? null
+      : {
+          list: new ListFishingCatalogue(fishing.catalogue),
+          active: new GetActiveFishing(fishingActions, dependencies.clock),
+          start: new StartFishing(
+            new D1HomeIslandZoneResolver(farms),
+            fishingActions,
+            new D1IdempotencyRepository(dependencies.db),
+            fishing.catalogue,
+            fishing.ids,
+            dependencies.fingerprints,
+            dependencies.clock
+          ),
+          settle: new SettleFishing(
+            fishingActions,
+            fishingSettlement,
+            fishing.catalogue,
+            inventory,
+            new InventoryService(dependencies.itemDefinitions, dependencies.clock),
+            progressions,
+            dependencies.progressionDefinition,
+            new D1IdempotencyRepository(dependencies.db),
+            fishing.random,
+            dependencies.fingerprints,
+            dependencies.clock
+          ),
+          cancel: new CancelFishing(
+            fishingActions,
+            fishingSettlement,
+            new D1IdempotencyRepository(dependencies.db),
+            dependencies.fingerprints,
+            dependencies.clock
+          )
+        };
+
   return async function handle(request: Request): Promise<Response> {
     const requestId = crypto.randomUUID();
     const url = new URL(request.url);
@@ -752,6 +882,73 @@ export function createHandler(dependencies: HandlerDependencies) {
         if (actor === null) return failure("NOT_AUTHENTICATED", requestId);
         const objects: WorldObjectDefinitionDTO[] = [...listWorldObjectDefinitions()];
         const body: ApiSuccess<{ objects: WorldObjectDefinitionDTO[] }> = { ok: true, data: { objects } };
+        return jsonResponse(body);
+      }
+
+      /**
+       * Fishing.
+       *
+       * The catalogue is a pure projection of game data - the client draws the water and names the
+       * species from it without the server reading a row. Starting names a spot and settles nothing;
+       * settling names the server's own action and lets it choose the catch, the reward and the time.
+       * A host that has not wired fishing answers `RESOURCE_NOT_FOUND`, like `/session`.
+       */
+      if (fishingCatalogue !== null && request.method === "GET" && url.pathname === "/fishing") {
+        const catalogue = fishingCatalogue.list.execute(actor);
+        const body: ApiSuccess<{ spots: FishingSpotDTO[]; fish: FishDefinitionDTO[] }> = {
+          ok: true,
+          data: {
+            spots: catalogue.spots.map(toFishingSpotDTO),
+            fish: catalogue.fish.map(toFishDefinitionDTO)
+          }
+        };
+        return jsonResponse(body);
+      }
+
+      if (fishingCatalogue !== null && request.method === "GET" && url.pathname === "/fishing/active") {
+        const action = await fishingCatalogue.active.execute(actor);
+        const body: ApiSuccess<{ action: FishingActionDTO | null }> = {
+          ok: true,
+          data: { action: action === null ? null : toFishingActionDTO(action) }
+        };
+        return jsonResponse(body);
+      }
+
+      if (fishingCatalogue !== null && request.method === "POST" && url.pathname === "/fishing/start") {
+        const parsed = StartFishingRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const action = await fishingCatalogue.start.execute(actor, parsed.data);
+        const body: ApiSuccess<StartFishingResponse> = { ok: true, data: { action: toFishingActionDTO(action) } };
+        return jsonResponse(body, 201);
+      }
+
+      const fishingSettleRoute = /^\/fishing\/([^/]+)\/settle$/.exec(url.pathname);
+      if (fishingCatalogue !== null && request.method === "POST" && fishingSettleRoute?.[1] !== undefined) {
+        const decodedActionId = decodePathSegment(fishingSettleRoute[1]);
+        if (decodedActionId === null) return failure("INVALID_INPUT", requestId);
+        const parsed = SettleFishingRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const result = await fishingCatalogue.settle.execute(actor, {
+          actionId: decodedActionId,
+          expectedActionVersion: parsed.data.expectedActionVersion,
+          requestId: parsed.data.requestId
+        });
+        const body: ApiSuccess<SettleFishingResponse> = { ok: true, data: result };
+        return jsonResponse(body);
+      }
+
+      const fishingCancelRoute = /^\/fishing\/([^/]+)\/cancel$/.exec(url.pathname);
+      if (fishingCatalogue !== null && request.method === "POST" && fishingCancelRoute?.[1] !== undefined) {
+        const decodedActionId = decodePathSegment(fishingCancelRoute[1]);
+        if (decodedActionId === null) return failure("INVALID_INPUT", requestId);
+        const parsed = CancelFishingRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const result = await fishingCatalogue.cancel.execute(actor, {
+          actionId: decodedActionId,
+          expectedActionVersion: parsed.data.expectedActionVersion,
+          requestId: parsed.data.requestId
+        });
+        const body: ApiSuccess<{ cancelled: true }> = { ok: true, data: result };
         return jsonResponse(body);
       }
 

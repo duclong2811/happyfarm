@@ -54,14 +54,15 @@ export function createShopRegistry(input: unknown): ReadonlyMap<string, ShopEntr
     if (!currencyRegistry.has(definition.currencyDefinitionId)) {
       throw new Error(`Unknown shop currency definition: ${definition.currencyDefinitionId}`);
     }
-    // The product decision, made structural: gold buys seeds and only seeds, and harvested produce
-    // can only be sold. A catalogue that let a player buy produce directly would bypass planting,
-    // and one that let a seed be sold back would price the loop against itself.
+    // The product decision, made structural: gold buys planting inputs (seeds and saplings) and
+    // nothing else, and only gathered produce (a harvested crop or a caught fish) can be sold. A
+    // catalogue that let a player buy produce directly would bypass the activity that made it, and
+    // one that let a seed be sold back would price the loop against itself.
     const item = itemRegistry.get(definition.itemDefinitionId);
     if (definition.buyPrice !== undefined && item?.category !== "SEED") {
       throw new Error(`Only seeds can be bought: ${definition.itemDefinitionId}`);
     }
-    if (definition.sellPrice !== undefined && item?.category !== "CROP") {
+    if (definition.sellPrice !== undefined && item?.category !== "CROP" && item?.category !== "FISH") {
       throw new Error(`Only harvested produce can be sold: ${definition.itemDefinitionId}`);
     }
     registry.set(definition.id, definition);
@@ -98,7 +99,17 @@ export const shopRegistry = createShopRegistry([
   { id: "shop_orange_sapling", itemDefinitionId: "item_orange_sapling", currencyDefinitionId: "currency_gold", buyPrice: 18, maxQuantityPerRequest: 1_000 },
   { id: "shop_orange", itemDefinitionId: "item_orange", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
   { id: "shop_peach_sapling", itemDefinitionId: "item_peach_sapling", currencyDefinitionId: "currency_gold", buyPrice: 24, maxQuantityPerRequest: 1_000 },
-  { id: "shop_peach", itemDefinitionId: "item_peach", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 }
+  { id: "shop_peach", itemDefinitionId: "item_peach", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
+  // Fish reach the same two directions through the same settlement: a catch is sold exactly like a
+  // harvest, and the harbour will one day be its own market rather than this shelf. See
+  // `docs/design/FISHING.md`.
+  { id: "shop_fish_tilapia", itemDefinitionId: "item_fish_tilapia", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },
+  { id: "shop_fish_carp", itemDefinitionId: "item_fish_carp", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
+  { id: "shop_fish_catfish", itemDefinitionId: "item_fish_catfish", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 },
+  { id: "shop_fish_sardine", itemDefinitionId: "item_fish_sardine", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },
+  { id: "shop_fish_mackerel", itemDefinitionId: "item_fish_mackerel", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
+  { id: "shop_fish_snapper", itemDefinitionId: "item_fish_snapper", currencyDefinitionId: "currency_gold", sellPrice: 5, maxQuantityPerRequest: 1_000 },
+  { id: "shop_fish_tuna", itemDefinitionId: "item_fish_tuna", currencyDefinitionId: "currency_gold", sellPrice: 15, maxQuantityPerRequest: 1_000 }
 ]);
 
 export const shops = [...shopRegistry.values()];

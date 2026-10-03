@@ -3,6 +3,7 @@ import {
   economyTransactionIdFromUuid,
   constructionIdFromUuid,
   farmIdFromUuid,
+  fishingActionIdFromUuid,
   parseCropDefinitionId,
   parseCurrencyDefinitionId,
   parseItemDefinitionId,
@@ -16,6 +17,7 @@ import {
   type ConstructionDefinition,
   type ConstructionId,
   type FarmId,
+  type FishingActionId,
   type CurrencyDefinition,
   type CurrencyDefinitionId,
   type EconomyTransactionId,
@@ -39,6 +41,12 @@ import type {
   CropIdGenerator,
   CurrencyDefinitionRepository,
   EconomyTransactionIdGenerator,
+  FishDefinition,
+  FishingCataloguePort,
+  FishingIdGenerator,
+  FishingRandomPort,
+  FishingSpotDefinition,
+  FishingTableDefinition,
   IdGenerator,
   ItemDefinitionRepository,
   PlotDefinitionRepository,
@@ -52,6 +60,10 @@ import type {
 import {
   cropRegistry,
   currencyRegistry,
+  FISHING_ACTION_SECONDS,
+  fishRegistry,
+  fishingSpotRegistry,
+  fishingTableRegistry,
   gameplayFor,
   itemRegistry,
   placementEntries,
@@ -178,7 +190,7 @@ export class SystemClock implements Clock {
 }
 
 export class CryptoIdGenerator
-  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator, ConstructionIdGenerator
+  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator, ConstructionIdGenerator, FishingIdGenerator
 {
   newFarmId(): FarmId {
     return farmIdFromUuid(crypto.randomUUID());
@@ -198,6 +210,93 @@ export class CryptoIdGenerator
 
   newConstructionId(): ConstructionId {
     return constructionIdFromUuid(crypto.randomUUID());
+  }
+
+  newFishingActionId(): FishingActionId {
+    return fishingActionIdFromUuid(crypto.randomUUID());
+  }
+}
+
+/**
+ * The production catch roll.
+ *
+ * Platform entropy rather than `Math.random`, and rejection-sampled so the value is uniform over
+ * `[0, 1)`: taking a fraction of a full 32-bit word would leave the top of the range slightly more
+ * likely, which is exactly the kind of bias a reward table must not have.
+ */
+export class CryptoFishingRandom implements FishingRandomPort {
+  roll(): number {
+    const word = new Uint32Array(1);
+    let value = 0;
+    do {
+      crypto.getRandomValues(word);
+      value = word[0] ?? 0;
+    } while (value === 0xffffffff);
+    return value / 0x1_0000_0000;
+  }
+}
+
+/**
+ * The fishing catalogue as the application layer reads it.
+ *
+ * Pure game data: no database, no player state. A spot, a table and a species are all module
+ * constants for the life of a deployment, which is what lets the client draw the water and the server
+ * settle a catch without either of them reading a row.
+ */
+export class GameDataFishingCatalogue implements FishingCataloguePort {
+  readonly actionSeconds = FISHING_ACTION_SECONDS;
+
+  listSpots(): readonly FishingSpotDefinition[] {
+    return [...fishingSpotRegistry.values()].map((spot) => ({
+      id: spot.id,
+      displayNameKey: spot.displayNameKey,
+      zoneKind: spot.zoneKind,
+      position: { x: spot.position.x, y: spot.position.y },
+      interactionRadiusTiles: spot.interactionRadiusTiles,
+      tableId: spot.tableId,
+      enabled: spot.enabled
+    }));
+  }
+
+  findSpot(spotId: string): FishingSpotDefinition | null {
+    const spot = fishingSpotRegistry.get(spotId);
+    return spot === undefined
+      ? null
+      : {
+          id: spot.id,
+          displayNameKey: spot.displayNameKey,
+          zoneKind: spot.zoneKind,
+          position: { x: spot.position.x, y: spot.position.y },
+          interactionRadiusTiles: spot.interactionRadiusTiles,
+          tableId: spot.tableId,
+          enabled: spot.enabled
+        };
+  }
+
+  findTable(tableId: string): FishingTableDefinition | null {
+    const table = fishingTableRegistry.get(tableId);
+    return table === undefined
+      ? null
+      : { id: table.id, entries: table.entries.map((entry) => ({ fishId: entry.fishId, weight: entry.weight })) };
+  }
+
+  findFish(fishId: string): FishDefinition | null {
+    const definition = fishRegistry.get(fishId);
+    if (definition === undefined) return null;
+    const item = itemRegistry.get(definition.itemDefinitionId);
+    // Game data refuses a fish whose item is missing, so a miss here means the deployment is
+    // internally inconsistent; returning null makes the caller refuse rather than invent a name.
+    if (item === undefined) return null;
+    return {
+      id: definition.id,
+      displayNameKey: definition.displayNameKey,
+      itemDefinitionId: parseItemDefinitionId(definition.itemDefinitionId),
+      itemDisplayNameKey: item.displayNameKey,
+      modelId: definition.modelId,
+      sellPrice: definition.sellPrice,
+      xp: definition.xp,
+      requiredLevel: definition.requiredLevel ?? 1
+    };
   }
 }
 

@@ -4,6 +4,9 @@ import type {
   CropDefinitionDTO,
   CropStateDTO,
   FarmTileDTO,
+  FishDefinitionDTO,
+  FishingActionDTO,
+  FishingSpotDTO,
   InventoryEntryDTO,
   PlayerProgressionDTO,
   PlotDTO,
@@ -240,6 +243,22 @@ interface AppState {
    */
   worldObjects: WorldObjectDefinitions;
   /**
+   * The water the player may fish, and the species they may catch.
+   *
+   * Static game data served with the catalogue: the client draws the spots and names the catch from
+   * it, and the server decides everything else. Read once at load, never polled.
+   */
+  fishingSpots: readonly FishingSpotDTO[];
+  fish: readonly FishDefinitionDTO[];
+  /**
+   * The player's live fishing attempt, if any.
+   *
+   * Set by a start, cleared by a settle or a cancel, and restored from the server on load so a
+   * refresh resumes the wait rather than losing it. The client shows a countdown; the server owns
+   * whether the catch is actually ready.
+   */
+  fishingAction: FishingActionDTO | null;
+  /**
    * The catalogue entry the player is about to place, or null.
    *
    * UI state, and only UI state: it decides what the ghost draws and what the status line says. No
@@ -309,6 +328,9 @@ const state: AppState = {
   treeDefinitions: [],
   buildCatalog: [],
   worldObjects: indexWorldObjects([]),
+  fishingSpots: [],
+  fish: [],
+  fishingAction: null,
   buildSelection: null,
   /**
    * Which way the island is being looked at.
@@ -1273,7 +1295,8 @@ function renderInventory(): void {
   const cards = inventoryCards({
     inventory: state.inventory,
     cropDefinitions: state.cropDefinitions,
-    treeDefinitions: state.treeDefinitions
+    treeDefinitions: state.treeDefinitions,
+    fish: state.fish
   });
   const tabs = inventoryTabs(cards);
   // A tab can empty out while it is open - the last seed spent on the last cell. Falling back to
@@ -1316,6 +1339,8 @@ function inventoryCategoryKey(category: InventoryCategory): MessageKey {
       return "inventory.category.all";
     case "PRODUCE":
       return "inventory.category.produce";
+    case "FISH":
+      return "inventory.category.fish";
     case "SEEDS":
       return "inventory.category.seeds";
     case "SAPLINGS":
@@ -1408,6 +1433,7 @@ function marketCardsFor(direction: MarketDirection): MarketCard[] {
     inventory: state.inventory,
     cropDefinitions: state.cropDefinitions,
     treeDefinitions: state.treeDefinitions,
+    fish: state.fish,
     playerLevel: state.progression?.level ?? null
   });
 }
@@ -3239,6 +3265,17 @@ const playerRuntime = createPlayerRuntime({
     // The character moved, so what is in reach may have changed. This is the pose stream, which only
     // ticks while they are moving, so a standing character costs no scans at all.
     refreshInteractionCandidate();
+    // Walking away gives up the cast. Same stream, so this is one distance check per moving frame and
+    // nothing at all while the player stands still and fishes.
+    if (
+      state.fishingAction !== null &&
+      fishingAnchor !== null &&
+      characterPose !== null &&
+      Math.hypot(characterPose.worldX - fishingAnchor.worldX, characterPose.worldZ - fishingAnchor.worldZ) >
+        FISHING_CANCEL_RADIUS_WORLD
+    ) {
+      void cancelFishing();
+    }
   },
   requestFrame: (tick) => {
     playerFrameHandle = window.requestAnimationFrame((timestampMs) => {
@@ -3679,6 +3716,7 @@ function rebuildInteractionIndex(): void {
     treeDefinitions: state.treeDefinitions,
     worldObjects: state.worldObjects,
     buildCatalog: state.buildCatalog,
+    fishingSpots: state.fishingSpots,
     nowMs: Date.now()
   });
 }
@@ -3810,6 +3848,11 @@ async function activateInteraction(): Promise<void> {
       scene?.playHarvestGesture();
       await harvestTree(decision.treeInstanceId, decision.expectedTreeVersion);
       return;
+    case "FISH":
+      // Fishing is one command and then a wait the server owns. The spot is the server's; the client
+      // only said which water the player meant.
+      await startFishing(decision.spotId, decision.target);
+      return;
   }
 }
 
@@ -3849,7 +3892,8 @@ function showRewardPop(
   image.alt = "";
   const visual = itemVisualFor(itemDefinitionId, {
     cropDefinitions: state.cropDefinitions,
-    treeDefinitions: state.treeDefinitions
+    treeDefinitions: state.treeDefinitions,
+    fish: state.fish
   });
   itemThumbnails.apply(visual.request, image, (result) => {
     // No picture for this item: the words carry the whole message rather than a broken image.
@@ -4043,6 +4087,9 @@ async function loadFarm(farmId: string): Promise<void> {
   // creating a farm already does.
   state.selected = null;
   localStorage.setItem(FARM_KEY, result.farm.id);
+  // Fishing first, so the static spots are in the interaction index the farm refresh rebuilds. It is
+  // read once here - never polled - and a live cast is resumed rather than lost.
+  await refreshFishing();
   await refreshFarm();
   playerRuntime.respawn();
   await refreshAccount();
@@ -4055,6 +4102,7 @@ async function createFarm(): Promise<void> {
   state.farmName = created.farm.name;
   state.selected = null;
   localStorage.setItem(FARM_KEY, created.farm.id);
+  await refreshFishing();
   await refreshFarm();
   playerRuntime.respawn();
   await refreshAccount();
@@ -4268,6 +4316,139 @@ async function harvestSelectedTree(): Promise<void> {
   }
   element<HTMLButtonElement>("harvest-tree").disabled = true;
   await harvestTree(selection.tree.treeInstanceId, selection.tree.version);
+}
+
+/*
+ * Fishing.
+ *
+ * One command starts an attempt; the server answers with the instant the catch becomes claimable. The
+ * page then does nothing at all until that moment - no polling, no per-second request, no writes - and
+ * sends exactly one settle, which the server validates against its own clock and its own catch table.
+ * Walking away cancels the attempt, and a cancelled attempt can never be paid.
+ */
+
+/** The last attempt's timer, so a second start or a cancel cannot leave one running. */
+let fishingTimer: number | null = null;
+/** Where the player stood when they cast, so "walked away" is a distance and not an input check. */
+let fishingAnchor: { readonly worldX: number; readonly worldZ: number } | null = null;
+/** The spot's cell, so the catch rises from the water it came out of. */
+let fishingAt: { readonly x: number; readonly y: number } | null = null;
+
+/** How far the player may drift before the attempt is given up, in world metres. */
+const FISHING_CANCEL_RADIUS_WORLD = 2.5;
+
+function clearFishingTimer(): void {
+  if (fishingTimer === null) return;
+  window.clearTimeout(fishingTimer);
+  fishingTimer = null;
+}
+
+async function startFishing(
+  spotId: string,
+  target: { readonly tileX: number; readonly tileY: number }
+): Promise<void> {
+  if (state.fishingAction !== null) {
+    setStatus(message("fishing.alreadyFishing"), true);
+    return;
+  }
+  const result = await api().startFishing({ requestId: newRequestId("fish"), spotId });
+  state.fishingAction = result.action;
+  fishingAt = { x: target.tileX, y: target.tileY };
+  fishingAnchor = characterPose === null ? null : { worldX: characterPose.worldX, worldZ: characterPose.worldZ };
+  // The cast: the same short bow the harvest uses, because it is the same gesture vocabulary and this
+  // phase is foundation, not animation.
+  scene?.playHarvestGesture();
+  setStatus((translate) => translate("fishing.cast", { seconds: result.action.secondsUntilReady }));
+  scheduleFishingSettle();
+}
+
+/**
+ * Waits out the server's countdown, locally, and then settles once.
+ *
+ * The timer is the page's own, so it costs nothing and reads nothing; the server re-checks the clock
+ * when the settle arrives, which is what makes it authoritative rather than this timeout. The extra
+ * quarter second is slack for clock skew, not a rule.
+ */
+function scheduleFishingSettle(): void {
+  clearFishingTimer();
+  const action = state.fishingAction;
+  if (action === null) return;
+  const waitMs = Math.max(0, Date.parse(action.readyAt) - Date.now());
+  fishingTimer = window.setTimeout(() => {
+    void settleFishing();
+  }, waitMs + 250);
+}
+
+async function settleFishing(): Promise<void> {
+  const action = state.fishingAction;
+  if (action === null) return;
+  clearFishingTimer();
+  const result = await api().settleFishing(action.actionId, {
+    requestId: newRequestId("catch"),
+    expectedActionVersion: action.version
+  });
+  state.fishingAction = null;
+  const at = fishingAt;
+  fishingAt = null;
+  fishingAnchor = null;
+  showRewardPop(result.catch.itemDefinitionId, result.catch.quantity, at);
+  // The catch and the experience come back with the account refresh, which is also what redraws the
+  // inventory card; the award is used for the message only.
+  await refreshAccount();
+  render();
+  setStatus((translate) => {
+    const base = translate("fishing.caught", {
+      quantity: result.catch.quantity,
+      item: itemLabel(result.catch.itemDefinitionId),
+      xp: result.progression.xpAwarded
+    });
+    return result.progression.leveledUp
+      ? `${base}${translate("status.levelUp", { level: result.progression.progression.level })}`
+      : base;
+  });
+}
+
+/**
+ * Gives the attempt up. No fish, no experience: the server refuses to settle a cancelled action.
+ *
+ * Best-effort on purpose - if the cancel request fails, the attempt simply stays live until it is
+ * settled or it is cancelled on the next walk - and never surfaces as an error, because walking away
+ * is not a mistake.
+ */
+async function cancelFishing(): Promise<void> {
+  const action = state.fishingAction;
+  if (action === null) return;
+  clearFishingTimer();
+  state.fishingAction = null;
+  fishingAnchor = null;
+  fishingAt = null;
+  try {
+    await api().cancelFishing(action.actionId, {
+      requestId: newRequestId("cancel-fish"),
+      expectedActionVersion: action.version
+    });
+  } catch {
+    // The attempt is already gone from this page; the server will refuse a late settle either way.
+  }
+  setStatus(message("fishing.cancelled"));
+}
+
+/**
+ * The water and species, plus whichever attempt was already live.
+ *
+ * Read once at load, never polled: the catalogue is static game data and the active attempt is one
+ * targeted row. A refresh therefore resumes a cast instead of losing it, and costs two requests.
+ */
+async function refreshFishing(): Promise<void> {
+  const client = api();
+  const [catalogue, active] = await Promise.all([client.getFishing(), client.getActiveFishing()]);
+  state.fishingSpots = catalogue.spots;
+  state.fish = catalogue.fish;
+  state.fishingAction = active.action;
+  if (active.action !== null) {
+    setStatus((translate) => translate("fishing.cast", { seconds: active.action?.secondsUntilReady ?? 0 }));
+    scheduleFishingSettle();
+  }
 }
 
 /**

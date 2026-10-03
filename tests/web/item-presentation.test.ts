@@ -117,7 +117,13 @@ describe("the inventory shelf", () => {
       treeDefinitions: TREES
     });
     expect(inventoryTabs(seedsOnly)).toEqual(["ALL", "SEEDS"]);
-    expect(inventoryCategoryCounts(seedsOnly)).toEqual({ ALL: 1, PRODUCE: 0, SEEDS: 1, SAPLINGS: 0 });
+    expect(inventoryCategoryCounts(seedsOnly)).toEqual({
+      ALL: 1,
+      PRODUCE: 0,
+      FISH: 0,
+      SEEDS: 1,
+      SAPLINGS: 0
+    });
   });
 
   it("filters to a category without changing what the cards say", () => {

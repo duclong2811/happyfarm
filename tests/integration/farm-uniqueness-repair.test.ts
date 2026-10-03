@@ -196,7 +196,11 @@ describe("a local database from before one-farm-per-player", () => {
 
     // And now the migration applies, which is the whole point.
     const applied = applyMigrations(sqlite, migrationsUpTo(withOneFarmPerPlayer()));
-    expect(applied).toEqual(["0014_one_farm_per_player.sql", "0015_player_identities.sql"]);
+    expect(applied).toEqual([
+      "0014_one_farm_per_player.sql",
+      "0015_player_identities.sql",
+      "0016_fishing_actions.sql"
+    ]);
     const index = sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_farms_owner_player'")
       .get() as { readonly name: string } | undefined;
@@ -252,7 +256,11 @@ describe("a local database from before one-farm-per-player", () => {
       farmsRemoved: 2,
       keptFarmIds: [NEWEST_FARM]
     });
-    expect(host.appliedMigrations).toEqual(["0014_one_farm_per_player.sql", "0015_player_identities.sql"]);
+    expect(host.appliedMigrations).toEqual([
+      "0014_one_farm_per_player.sql",
+      "0015_player_identities.sql",
+      "0016_fishing_actions.sql"
+    ]);
 
     // The API now answers, and the farm it hands back is the one that survived - the last one played,
     // not a fresh world and not an abandoned duplicate.

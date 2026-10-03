@@ -1,4 +1,5 @@
 import type {
+  CatchTableEntry,
   CellBounds,
   ConstructionDefinition,
   ConstructionId,
@@ -16,6 +17,8 @@ import type {
   FarmId,
   FarmMember,
   FarmTile,
+  FishingAction,
+  FishingActionId,
   InventoryAddition,
   InventoryItem,
   InventoryMutation,
@@ -190,6 +193,85 @@ export interface IdempotencyRecord {
 
 export interface IdempotencyRepository {
   find(actorPlayerId: PlayerId, operation: string, requestId: string): Promise<IdempotencyRecord | null>;
+}
+
+/**
+ * Fishing: the catalogue, the randomness, and the one write boundary.
+ *
+ * The catalogue and the random source are ports because the *rules* live in the domain and the
+ * *values* live in game data: the use case must be testable with a table and a fixed roll, and the
+ * production roll must come from the platform's own entropy rather than from `Math.random` scattered
+ * through a command.
+ */
+export interface FishingIdGenerator {
+  newFishingActionId(): FishingActionId;
+}
+
+/**
+ * Where the actor's home island is, as a zone.
+ *
+ * A port rather than a `FarmRepository` call because fishing is not farm-scoped: the use case needs
+ * the *zone*, and the derivation from a farm to a `HOME_ISLAND` zone belongs to whoever owns that
+ * vocabulary. It returns null when the actor has no island yet, which the caller refuses.
+ */
+export interface HomeIslandZoneResolver {
+  resolveForPlayer(actorPlayerId: PlayerId): Promise<{ readonly kind: string; readonly id: string } | null>;
+}
+
+export interface FishingSpotDefinition {
+  readonly id: string;
+  readonly displayNameKey: string;
+  readonly zoneKind: string;
+  readonly position: { readonly x: number; readonly y: number };
+  readonly interactionRadiusTiles: number;
+  readonly tableId: string;
+  readonly enabled: boolean;
+}
+
+export interface FishingTableDefinition {
+  readonly id: string;
+  readonly entries: readonly CatchTableEntry[];
+}
+
+export interface FishDefinition {
+  readonly id: string;
+  readonly displayNameKey: string;
+  readonly itemDefinitionId: ItemDefinitionId;
+  readonly itemDisplayNameKey: string;
+  readonly modelId: string | null;
+  readonly sellPrice: number;
+  readonly xp: number;
+  readonly requiredLevel: number;
+}
+
+export interface FishingCataloguePort {
+  listSpots(): readonly FishingSpotDefinition[];
+  findSpot(spotId: string): FishingSpotDefinition | null;
+  findTable(tableId: string): FishingTableDefinition | null;
+  findFish(fishId: string): FishDefinition | null;
+  readonly actionSeconds: number;
+}
+
+/** One roll in `[0, 1)`. Production uses platform entropy; a test injects a fixed sequence. */
+export interface FishingRandomPort {
+  roll(): number;
+}
+
+export interface FishingActionRepository {
+  findById(actionId: FishingActionId): Promise<FishingAction | null>;
+  /** The actor's one live attempt, if any. Indexed, and the only read a refresh performs. */
+  findActiveByActor(actorPlayerId: PlayerId): Promise<FishingAction | null>;
+  create(action: FishingAction, idempotency: IdempotencyRecord): Promise<void>;
+}
+
+export interface FishingSettlementRepository {
+  settleFishingAtomically(
+    action: FishingAction,
+    addition: InventoryAddition,
+    award: XpAward,
+    idempotency: IdempotencyRecord
+  ): Promise<void>;
+  cancelFishingAtomically(action: FishingAction, idempotency: IdempotencyRecord): Promise<void>;
 }
 
 /** Mints the identifier of one player construction. */

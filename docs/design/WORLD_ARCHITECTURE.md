@@ -207,3 +207,17 @@ Client-side, never authoritative:
 
 No world map, no region table, no zone persistence, no travel, no boats, no shared fishing, no
 resource spawning, no contest, no combat, no presence sync, no matchmaking, no seasons.
+
+## V15.1: fishing uses this vocabulary without extending it
+
+Fishing is the first system to *use* the hierarchy rather than just describe it, and it needed no new
+words: four static spots in the player's `HOME_ISLAND` zone, a `FishingSpot` that declares its zone
+kind, and an action that stores `zone_kind` + `zone_id`.
+
+- The zone is resolved from the **actor** (`HomeIslandZoneResolver`), never sent by the client.
+- No shared, contested, port or event zone exists; the enum is still a contract and nothing more.
+- The fishing action row lives on the player, not the farm: the zone *describes where*, it never owns
+  the catch.
+
+See `docs/design/FISHING.md`. A shared fishing ground is the first thing that will need presence, and
+that is a deliberate V15.x decision rather than something V15.1 pre-built.

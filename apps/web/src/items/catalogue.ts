@@ -1,4 +1,9 @@
-import type { CropDefinitionDTO, InventoryEntryDTO, TreeDefinitionDTO } from "@happy-farm/contracts";
+import type {
+  CropDefinitionDTO,
+  FishDefinitionDTO,
+  InventoryEntryDTO,
+  TreeDefinitionDTO
+} from "@happy-farm/contracts";
 import { itemVisualFor, cropVisualFor, saplingVisual, seedVisual, type ItemVisual } from "./visuals";
 
 /**
@@ -11,12 +16,13 @@ import { itemVisualFor, cropVisualFor, saplingVisual, seedVisual, type ItemVisua
  */
 
 /** The inventory's tabs. `ALL` is a view; the others are what an item actually *is*. */
-export type InventoryCategory = "ALL" | "PRODUCE" | "SEEDS" | "SAPLINGS";
+export type InventoryCategory = "ALL" | "PRODUCE" | "FISH" | "SEEDS" | "SAPLINGS";
 
 /** The order the tabs are offered in. A category with nothing in it is not offered at all. */
 export const INVENTORY_CATEGORIES: readonly InventoryCategory[] = [
   "ALL",
   "PRODUCE",
+  "FISH",
   "SEEDS",
   "SAPLINGS"
 ];
@@ -37,6 +43,8 @@ export interface InventoryInput {
   readonly inventory: readonly InventoryEntryDTO[];
   readonly cropDefinitions: readonly CropDefinitionDTO[];
   readonly treeDefinitions: readonly TreeDefinitionDTO[];
+  /** The species this deployment can catch, so a fish card draws the fish rather than a crate. */
+  readonly fish?: readonly FishDefinitionDTO[];
 }
 
 /**
@@ -59,6 +67,7 @@ export function inventoryCategoryOf(
   ) {
     return "SAPLINGS";
   }
+  if (itemCategory === "FISH") return "FISH";
   if (itemCategory === "CROP") return "PRODUCE";
   return "SEEDS";
 }
@@ -106,7 +115,13 @@ export function inventoryCards(input: InventoryInput): InventoryCard[] {
 export function inventoryCategoryCounts(
   cards: readonly InventoryCard[]
 ): Readonly<Record<InventoryCategory, number>> {
-  const counts: Record<InventoryCategory, number> = { ALL: cards.length, PRODUCE: 0, SEEDS: 0, SAPLINGS: 0 };
+  const counts: Record<InventoryCategory, number> = {
+    ALL: cards.length,
+    PRODUCE: 0,
+    FISH: 0,
+    SEEDS: 0,
+    SAPLINGS: 0
+  };
   for (const card of cards) counts[card.category] += 1;
   return counts;
 }

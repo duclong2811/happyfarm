@@ -8,6 +8,7 @@ import {
   GameDataConstructionDefinitions,
   GameDataCropDefinitions,
   GameDataCurrencyDefinitions,
+  GameDataFishingCatalogue,
   GameDataItemDefinitions,
   GameDataPlotDefinitions,
   GameDataShopEntries,
@@ -91,6 +92,17 @@ describe("static catalogue reads", () => {
       progressionDefinition: gameDataProgressionDefinition,
       starterWorld: gameDataStarterWorld,
       terrain: gameDataTileTerrain,
+      fishing: {
+        catalogue: new GameDataFishingCatalogue(),
+        ids: {
+          newFishingActionId: () => {
+            throw new Error("not used");
+          }
+        },
+        random: {
+          roll: () => 0
+        }
+      },
       clock: { now: () => NOW },
       ids: {
         newFarmId: () => {
@@ -121,6 +133,7 @@ describe("static catalogue reads", () => {
       "/shop",
       "/crop-definitions",
       "/tree-definitions",
+      "/fishing",
       "/build-catalog",
       "/world-objects"
     ]) {

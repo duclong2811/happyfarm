@@ -186,7 +186,8 @@ describe("the catalogue and the market stay consistent", () => {
     for (const entry of shops) {
       const category = itemRegistry.get(entry.itemDefinitionId)?.category;
       if (entry.buyPrice !== undefined) expect(category, entry.id).toBe("SEED");
-      if (entry.sellPrice !== undefined) expect(category, entry.id).toBe("CROP");
+      // What the market buys is gathered produce: a harvested crop or a caught fish.
+      if (entry.sellPrice !== undefined) expect(["CROP", "FISH"], entry.id).toContain(category);
     }
   });
 

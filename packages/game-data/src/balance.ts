@@ -1,4 +1,12 @@
 import { cropRegistry, type CropDefinitionData } from "./crops";
+import {
+  FISHING_ACTION_SECONDS,
+  fish,
+  fishingSpots,
+  fishingTables,
+  type FishDefinitionData,
+  type FishingTableData
+} from "./fishing";
 import { shopRegistry } from "./shops";
 import { treeRegistry, type TreeDefinitionData } from "./trees";
 
@@ -115,4 +123,62 @@ export function treeEconomics(tree: TreeDefinitionData): TreeEconomics {
 export const farmingBalance = {
   crops: [...cropRegistry.values()].map(cropEconomics),
   trees: [...treeRegistry.values()].map(treeEconomics)
+} as const;
+
+export interface FishEconomics extends FishDefinitionData {
+  /** This species' share of its table, 0..1. */
+  readonly probability: number;
+  /** sellPrice x probability - the gold this species contributes to one action's expectation. */
+  readonly goldContribution: number;
+  readonly xpContribution: number;
+}
+
+export interface FishingTableEconomics {
+  readonly id: string;
+  /** The spots that pull from this table. A spot is the *place*; the table is the *odds*. */
+  readonly spotIds: readonly string[];
+  readonly entries: readonly FishEconomics[];
+  readonly expectedGoldPerAction: number;
+  readonly expectedXpPerAction: number;
+  readonly goldPerMinute: number;
+  readonly xpPerMinute: number;
+}
+
+/**
+ * The fishing economy, computed from the catch tables exactly as the crops are computed from theirs.
+ *
+ * `goldPerMinute` divides by the server's own action duration, so retuning the wait retunes the rate
+ * without touching a fish's value; the fishing balance test holds the result against the farming
+ * numbers in `farmingBalance`.
+ */
+export function fishingTableEconomics(table: FishingTableData): FishingTableEconomics {
+  const totalWeight = table.entries.reduce((sum, entry) => sum + entry.weight, 0);
+  const entries: FishEconomics[] = table.entries.map((entry) => {
+    const definition = fish.find((candidate) => candidate.id === entry.fishId);
+    if (definition === undefined) throw new Error(`Unknown fish in table ${table.id}: ${entry.fishId}`);
+    const probability = entry.weight / totalWeight;
+    return {
+      ...definition,
+      probability,
+      goldContribution: definition.sellPrice * probability,
+      xpContribution: definition.xp * probability
+    };
+  });
+  const expectedGoldPerAction = entries.reduce((sum, entry) => sum + entry.goldContribution, 0);
+  const expectedXpPerAction = entries.reduce((sum, entry) => sum + entry.xpContribution, 0);
+  const minutesPerAction = FISHING_ACTION_SECONDS / 60;
+  return {
+    id: table.id,
+    spotIds: fishingSpots.filter((spot) => spot.tableId === table.id).map((spot) => spot.id),
+    entries,
+    expectedGoldPerAction,
+    expectedXpPerAction,
+    goldPerMinute: expectedGoldPerAction / minutesPerAction,
+    xpPerMinute: expectedXpPerAction / minutesPerAction
+  };
+}
+
+export const fishingBalance = {
+  actionSeconds: FISHING_ACTION_SECONDS,
+  tables: fishingTables.map(fishingTableEconomics)
 } as const;

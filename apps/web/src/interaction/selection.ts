@@ -119,6 +119,12 @@ export type InteractionActivation =
       readonly service: "FARM_MARKET";
       readonly target: InteractionCandidate;
     }
+  | {
+      /** Water the player can cast into. The server owns the spot, the wait and the catch. */
+      readonly kind: "FISH";
+      readonly spotId: string;
+      readonly target: InteractionCandidate;
+    }
   | { readonly kind: "STALE"; readonly reason: "GONE" | "CHANGED" };
 
 export function interactionActivation(
@@ -128,6 +134,7 @@ export function interactionActivation(
   if (selected === null || fresh === null) return { kind: "STALE", reason: "GONE" };
   if (fresh.key !== selected.key) return { kind: "STALE", reason: "CHANGED" };
   if (fresh.action === "TRADE") return { kind: "TRADE", service: "FARM_MARKET", target: fresh };
+  if (fresh.action === "FISH") return { kind: "FISH", spotId: fresh.targetId, target: fresh };
   if (fresh.action === "HARVEST") {
     return fresh.kind === "TREE"
       ? { kind: "HARVEST_TREE", treeInstanceId: fresh.targetId, expectedTreeVersion: fresh.version }

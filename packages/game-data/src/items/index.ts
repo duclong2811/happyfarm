@@ -5,11 +5,11 @@ export const MAX_ITEM_STACK = 2_147_483_647;
 /**
  * The item kinds this build knows how to sell and store.
  *
- * `SEED` is the planting input and `CROP` is the harvested produce. The distinction is what lets the
- * shop offer seeds for sale and produce for sale only, instead of letting a single price list drift
- * into an arbitrage loop; nothing else in the domain branches on it.
+ * `SEED` is the planting input, `CROP` is the harvested produce, and `FISH` is a catch. The
+ * distinction is what lets the shop sell seeds and saplings while buying produce and fish, instead of
+ * letting a single price list drift into an arbitrage loop; nothing else in the domain branches on it.
  */
-export const ITEM_CATEGORIES = ["CROP", "SEED"] as const;
+export const ITEM_CATEGORIES = ["CROP", "SEED", "FISH"] as const;
 
 export const ItemDefinitionSchema = z
   .object({
@@ -57,7 +57,16 @@ export const itemRegistry = createItemRegistry([
   { id: "item_orange_sapling", displayNameKey: "item.orange_sapling.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_orange", displayNameKey: "item.orange.name", category: "CROP", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_peach_sapling", displayNameKey: "item.peach_sapling.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
-  { id: "item_peach", displayNameKey: "item.peach.name", category: "CROP", stackable: true, maxStack: MAX_ITEM_STACK }
+  { id: "item_peach", displayNameKey: "item.peach.name", category: "CROP", stackable: true, maxStack: MAX_ITEM_STACK },
+  // A caught fish is produce of the water: it is stored and sold like any crop, and it is never
+  // planted or fed to anything. The category exists so the market's sell rule can name it.
+  { id: "item_fish_tilapia", displayNameKey: "item.fish_tilapia.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_fish_carp", displayNameKey: "item.fish_carp.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_fish_catfish", displayNameKey: "item.fish_catfish.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_fish_sardine", displayNameKey: "item.fish_sardine.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_fish_mackerel", displayNameKey: "item.fish_mackerel.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_fish_snapper", displayNameKey: "item.fish_snapper.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_fish_tuna", displayNameKey: "item.fish_tuna.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK }
 ]);
 
 export const items = [...itemRegistry.values()];
