@@ -890,6 +890,42 @@ export const ExpandFarmResultDTOSchema = z
 
 export const ExpandFarmResponseSchema = z.object({ expansion: ExpandFarmResultDTOSchema }).strict();
 
+/** One material the next warehouse upgrade consumes. */
+export const WarehouseMaterialCostSchema = z
+  .object({
+    itemDefinitionId: z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    quantity: z.number().int().positive()
+  })
+  .strict();
+
+export const WarehouseUpgradeCostDTOSchema = z
+  .object({
+    currencyId: z.string().regex(/^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    gold: z.number().int().nonnegative(),
+    materials: z.array(WarehouseMaterialCostSchema)
+  })
+  .strict();
+
+/**
+ * The warehouse as the client sees it. Capacity, usage and the next cost are all server values; the
+ * client only draws them.
+ */
+export const WarehouseStatusDTOSchema = z
+  .object({
+    tier: z.number().int().min(0),
+    capacity: z.number().int().nonnegative(),
+    used: z.number().int().nonnegative(),
+    available: z.number().int().nonnegative(),
+    overCapacity: z.boolean(),
+    nextTier: z.number().int().min(0).nullable(),
+    nextUpgrade: WarehouseUpgradeCostDTOSchema.nullable()
+  })
+  .strict();
+
+export const GetWarehouseResponseSchema = z.object({ warehouse: WarehouseStatusDTOSchema }).strict();
+
+export const UpgradeWarehouseRequestSchema = z.object({ requestId: z.string().min(8).max(100) }).strict();
+
 export const ErrorCodeSchema = z.enum([
   "INVALID_INPUT",
   "NOT_AUTHENTICATED",
@@ -906,6 +942,8 @@ export const ErrorCodeSchema = z.enum([
   "CROP_LEVEL_REQUIRED",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
+  "WAREHOUSE_FULL",
+  "WAREHOUSE_MAX_TIER",
   "CURRENCY_DEFINITION_NOT_FOUND",
   "SHOP_ENTRY_NOT_FOUND",
   "SHOP_ENTRY_NOT_ALLOWED",
@@ -966,6 +1004,9 @@ export type FarmDTO = z.infer<typeof FarmDTOSchema>;
 export type FarmMemberDTO = z.infer<typeof FarmMemberDTOSchema>;
 export type FarmTileDTO = z.infer<typeof FarmTileDTOSchema>;
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
+export type WarehouseStatusDTO = z.infer<typeof WarehouseStatusDTOSchema>;
+export type GetWarehouseResponse = z.infer<typeof GetWarehouseResponseSchema>;
+export type UpgradeWarehouseRequest = z.infer<typeof UpgradeWarehouseRequestSchema>;
 export type IdentityKindDTO = z.infer<typeof IdentityKindSchema>;
 export type SessionPlayerDTO = z.infer<typeof SessionPlayerDTOSchema>;
 export type GetSessionResponse = z.infer<typeof GetSessionResponseSchema>;

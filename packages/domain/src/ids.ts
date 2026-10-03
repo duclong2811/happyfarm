@@ -14,6 +14,7 @@ declare const economyTransactionIdBrand: unique symbol;
 declare const constructionIdBrand: unique symbol;
 declare const fishingActionIdBrand: unique symbol;
 declare const resourceActionIdBrand: unique symbol;
+declare const warehouseIdBrand: unique symbol;
 
 export type PlayerId = string & { readonly [playerIdBrand]: true };
 export type FarmId = string & { readonly [farmIdBrand]: true };
@@ -29,6 +30,7 @@ export type EconomyTransactionId = string & { readonly [economyTransactionIdBran
 export type ConstructionId = string & { readonly [constructionIdBrand]: true };
 export type FishingActionId = string & { readonly [fishingActionIdBrand]: true };
 export type ResourceActionId = string & { readonly [resourceActionIdBrand]: true };
+export type WarehouseId = string & { readonly [warehouseIdBrand]: true };
 
 const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const PLAYER_ID_PATTERN = new RegExp(`^player_${UUID_PATTERN}$`, "i");
@@ -44,6 +46,7 @@ const TREE_DEFINITION_ID_PATTERN = /^tree_[a-z0-9]+(?:_[a-z0-9]+)*$/;
 const ECONOMY_TRANSACTION_ID_PATTERN = new RegExp(`^econ_${UUID_PATTERN}$`, "i");
 const FISHING_ACTION_ID_PATTERN = new RegExp(`^fishact_${UUID_PATTERN}$`, "i");
 const RESOURCE_ACTION_ID_PATTERN = new RegExp(`^resact_${UUID_PATTERN}$`, "i");
+const WAREHOUSE_ID_PATTERN = new RegExp(`^warehouse_${UUID_PATTERN}$`, "i");
 
 export function parsePlayerId(value: string): PlayerId {
   if (!PLAYER_ID_PATTERN.test(value)) {
@@ -203,4 +206,22 @@ export function parseConstructionId(value: string): ConstructionId {
 
 export function constructionIdFromUuid(uuid: string): ConstructionId {
   return parseConstructionId(`construct_${uuid}`);
+}
+
+/**
+ * The stable id of a Home Island warehouse.
+ *
+ * Derived from the owner's id rather than generated, so a player has exactly one Home Island
+ * warehouse and a replayed upgrade cites the same reference. A future expansion island would be a
+ * different derived id in its own zone.
+ */
+export function parseWarehouseId(value: string): WarehouseId {
+  if (!WAREHOUSE_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid warehouse ID");
+  }
+  return value as WarehouseId;
+}
+
+export function warehouseIdFromUuid(uuid: string): WarehouseId {
+  return parseWarehouseId(`warehouse_${uuid}`);
 }

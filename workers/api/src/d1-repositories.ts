@@ -34,7 +34,8 @@ import type {
   ResourceVerb,
   QuarterTurns,
   XpAward,
-  Wallet
+  Wallet,
+  WarehouseState
 } from "@happy-farm/domain";
 import {
   parseConstructionId,
@@ -58,6 +59,8 @@ import type {
   ConstructionRepository,
   ConstructionRelocation,
   ConstructionRemoval,
+  WarehouseRepository,
+  WarehouseUpgrade,
   ConstructionSeed,
   CropInstanceRepository,
   FarmExpansionRepository,
@@ -216,6 +219,141 @@ export class D1PlayerRepository implements PlayerRepository {
           createdAt: row.created_at,
           updatedAt: row.updated_at
         };
+  }
+}
+
+/**
+ * The Island Warehouse's persistence: the capacity row, the used-capacity aggregate, and the one
+ * atomic upgrade.
+ *
+ * `upgradeAtomically` writes the ledger row (which the ledger triggers validate against the wallet and
+ * apply to it), the materials consumed, the tier and capacity change, and the receipt - all in one
+ * batch. The warehouse update is guarded by the tier and version the caller read, and the receipt is
+ * written only if the resulting state exists, so two racing upgrades cannot both win and the cap can
+ * never rise without being paid for.
+ */
+export class D1WarehouseRepository implements WarehouseRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async find(playerId: PlayerId): Promise<WarehouseState | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT tier, capacity, version, (SELECT COALESCE(SUM(quantity), 0) FROM inventory_items WHERE player_id = warehouse.owner_player_id) AS used FROM home_island_warehouses AS warehouse WHERE owner_player_id = ?"
+      )
+      .bind(playerId)
+      .first<{ tier: number; capacity: number; version: number; used: number }>();
+    if (row === null) return null;
+    return { tier: row.tier, capacity: row.capacity, version: row.version, used: row.used };
+  }
+
+  async usedCapacity(playerId: PlayerId): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COALESCE(SUM(quantity), 0) AS used FROM inventory_items WHERE player_id = ?")
+      .bind(playerId)
+      .first<{ used: number }>();
+    return row?.used ?? 0;
+  }
+
+  async upgradeAtomically(upgrade: WarehouseUpgrade, idempotency: IdempotencyRecord): Promise<void> {
+    if (
+      upgrade.playerId !== idempotency.actorPlayerId ||
+      upgrade.economy.playerId !== upgrade.playerId ||
+      upgrade.economy.reason !== "WAREHOUSE_UPGRADE"
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Warehouse upgrade ownership does not match");
+    }
+    if (upgrade.expectedInventory.length !== upgrade.removals.length) {
+      throw new ApplicationError("INVALID_INPUT", "Warehouse upgrade materials do not match");
+    }
+
+    const statements: D1PreparedStatementLike[] = [
+      this.db
+        .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+        .bind(upgrade.economy.playerId, upgrade.economy.currencyDefinitionId, upgrade.createdAt, upgrade.createdAt),
+      this.db
+        .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(
+          upgrade.economy.transactionId,
+          upgrade.economy.playerId,
+          upgrade.economy.currencyDefinitionId,
+          upgrade.economy.delta,
+          upgrade.economy.balanceBefore,
+          upgrade.economy.balanceAfter,
+          upgrade.economy.expectedWalletVersion,
+          upgrade.economy.reason,
+          upgrade.economy.referenceType,
+          upgrade.economy.referenceId,
+          upgrade.economy.requestId,
+          upgrade.economy.createdAt
+        ),
+      ...upgrade.removals.map((removal, index) => {
+        const expected = upgrade.expectedInventory[index];
+        return this.db
+          .prepare(
+            "UPDATE inventory_items SET quantity = quantity - ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity >= ?"
+          )
+          .bind(
+            removal.quantity,
+            removal.timestamp,
+            removal.playerId,
+            removal.itemDefinitionId,
+            expected?.quantity ?? -1,
+            expected?.version ?? -1,
+            removal.quantity
+          );
+      }),
+      this.db
+        .prepare(
+          "INSERT INTO home_island_warehouses (owner_player_id, zone_kind, zone_id, tier, capacity, version, created_at, updated_at) VALUES (?, 'HOME_ISLAND', NULL, ?, ?, 1, ?, ?) ON CONFLICT(owner_player_id) DO UPDATE SET tier = excluded.tier, capacity = excluded.capacity, version = home_island_warehouses.version + 1, updated_at = excluded.updated_at WHERE home_island_warehouses.tier = ? AND home_island_warehouses.version = ?"
+        )
+        .bind(
+          upgrade.playerId,
+          upgrade.toTier,
+          upgrade.capacity,
+          upgrade.createdAt,
+          upgrade.createdAt,
+          upgrade.expectedFromTier,
+          upgrade.expectedVersion
+        ),
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM home_island_warehouses WHERE owner_player_id = ? AND tier = ? AND version = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          upgrade.economy.playerId,
+          upgrade.economy.currencyDefinitionId,
+          upgrade.economy.balanceAfter,
+          upgrade.economy.expectedWalletVersion + 1,
+          upgrade.economy.transactionId,
+          upgrade.economy.playerId,
+          upgrade.playerId,
+          upgrade.toTier,
+          upgrade.expectedVersion + 1,
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        )
+    ];
+
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) {
+        throw new Error("Atomic warehouse upgrade failed");
+      }
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("economy conflict") || error.message.includes("idempotency_keys.actor_player_id"))
+      ) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "Warehouse or economy state changed concurrently");
+      }
+      throw error;
+    }
   }
 }
 

@@ -1013,6 +1013,24 @@ control the same world, not separate game states.**
 - Tests: `tests/web/camera-mode.test.ts`, `tests/web/character-camera.test.ts`,
   `tests/web/character-movement.test.ts`, and the clear/run cases in `tests/web/player-input.test.ts`.
 
+## Island Warehouse (V16.2)
+
+Read `docs/design/WAREHOUSE.md` before changing storage, inventory grants, the warehouse tier table,
+the upgrade route, or anything that adds items to a player.
+
+- Capacity is a database-enforced budget over `inventory_items`: the triggers
+  `warehouse_capacity_guard_insert`/`_update` in `database/migrations/0018_island_warehouses.sql` refuse
+  any row that would push the player's total past their capacity, so every grant path is constrained
+  atomically. Do not add a second storage system or a parallel inventory.
+- Rules: `packages/domain/src/warehouse.ts` (`assertStorageDeltaFits` - the net-delta primitive,
+  `warehouseAvailable`, `nextWarehouseTier`). Tiers and costs: `packages/game-data/src/warehouse`.
+- Application: `packages/application/src/warehouse.ts` (`GetWarehouseStatus`, `UpgradeWarehouse`), the
+  `WarehouseRepository` port, and `D1WarehouseRepository` in `workers/api/src/d1-repositories.ts`.
+  Routes: `GET /warehouse`, `POST /warehouse/upgrade`. The upgrade pays through the ledger under the
+  `WAREHOUSE_UPGRADE` reason.
+- The API maps the guard's `warehouse_full` error to `WAREHOUSE_FULL` (409). Never let a grant fail
+  with a generic 500, and never accept capacity, tier or cost from a client.
+
 ## Staging deployment foundation
 
 ### D1 read cost and remote safety (V14.3.2)

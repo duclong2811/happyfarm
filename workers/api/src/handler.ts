@@ -70,6 +70,10 @@ import {
   ,type ResourceCataloguePort
   ,type ResourceIdGenerator
   ,type ResourceNodeView
+  ,GetWarehouseStatus
+  ,UpgradeWarehouse
+  ,type WarehouseTierRepository
+  ,type WarehouseStatusView
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
@@ -135,6 +139,8 @@ import {
   ,type RemoveConstructionResponse
   ,type WorldObjectDefinitionDTO
   ,type GetSessionResponse
+  ,type WarehouseStatusDTO
+  ,UpgradeWarehouseRequestSchema
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
 import { listWorldObjectDefinitions } from "./runtime";
@@ -170,7 +176,8 @@ import {
   D1FarmRepository,
   D1FarmTileRepository,
   D1PlayerRepository,
-  D1ProgressionRepository
+  D1ProgressionRepository,
+  D1WarehouseRepository
 } from "./d1-repositories";
 
 const MAX_JSON_BODY_BYTES = 16_384;
@@ -227,11 +234,38 @@ export interface HandlerDependencies {
     readonly ids: ResourceIdGenerator;
     readonly random: RandomPort;
   };
+  /**
+   * The Island Warehouse's tier catalogue. Optional like fishing and gathering: a host that has not
+   * wired it answers `RESOURCE_NOT_FOUND` on `/warehouse` rather than refusing to build.
+   */
+  readonly warehouse?: {
+    readonly tiers: WarehouseTierRepository;
+  };
   readonly clock: Clock;
 }
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
+}
+
+/** The warehouse, as the wire carries it: every field the server decided, nothing derived. */
+function toWarehouseDTO(status: WarehouseStatusView): WarehouseStatusDTO {
+  return {
+    tier: status.tier,
+    capacity: status.capacity,
+    used: status.used,
+    available: status.available,
+    overCapacity: status.overCapacity,
+    nextTier: status.nextTier,
+    nextUpgrade:
+      status.nextUpgrade === null
+        ? null
+        : {
+            currencyId: status.nextUpgrade.currencyId,
+            gold: status.nextUpgrade.gold,
+            materials: status.nextUpgrade.materials.map((entry) => ({ ...entry }))
+          }
+  };
 }
 
 /** One persisted construction, as the client reads it. Pure projection: nothing is derived here. */
@@ -496,6 +530,8 @@ function errorStatus(code: ErrorCode): number {
     case "CROP_NOT_MATURE":
     case "CROP_ALREADY_HARVESTED":
     case "INVENTORY_LIMIT_EXCEEDED":
+    case "WAREHOUSE_FULL":
+    case "WAREHOUSE_MAX_TIER":
     case "INSUFFICIENT_ITEMS":
     case "INSUFFICIENT_FUNDS":
     case "WALLET_LIMIT_EXCEEDED":
@@ -620,6 +656,25 @@ export function createHandler(dependencies: HandlerDependencies) {
   };
   const buyItem = new BuyItem(shopDependencies);
   const sellItem = new SellItem(shopDependencies);
+  // The Island Warehouse: status is a read, upgrade is a ledgered sink. Both are optional wiring.
+  const warehouseRepository = new D1WarehouseRepository(dependencies.db);
+  const warehouseStatus =
+    dependencies.warehouse === undefined ? null : new GetWarehouseStatus(warehouseRepository, dependencies.warehouse.tiers);
+  const warehouseUpgrade =
+    dependencies.warehouse === undefined
+      ? null
+      : new UpgradeWarehouse(
+          warehouseRepository,
+          dependencies.warehouse.tiers,
+          wallets,
+          dependencies.currencyDefinitions,
+          inventory,
+          new EconomyService(dependencies.ids, dependencies.clock),
+          inventoryService,
+          new D1IdempotencyRepository(dependencies.db),
+          dependencies.fingerprints,
+          dependencies.clock
+        );
   const listPlots = new ListPlots(dependencies.plotDefinitions, farms, members, tiles);
   const treeProjector = new TreeStateProjector(dependencies.treeDefinitions, dependencies.clock);
   const treeIdempotency = new D1IdempotencyRepository(dependencies.db);
@@ -945,6 +1000,28 @@ export function createHandler(dependencies: HandlerDependencies) {
           );
         const body: ApiSuccess<{ entries: ShopEntryDTO[] }> = { ok: true, data: { entries } };
         return jsonResponse(body);
+      }
+
+      // The Island Warehouse. Status is a bounded read; the upgrade is the ledgered sink.
+      if (warehouseStatus !== null && warehouseUpgrade !== null) {
+        if (request.method === "GET" && url.pathname === "/warehouse") {
+          const status = await warehouseStatus.execute(actor);
+          const body: ApiSuccess<{ warehouse: WarehouseStatusDTO }> = {
+            ok: true,
+            data: { warehouse: toWarehouseDTO(status) }
+          };
+          return jsonResponse(body);
+        }
+        if (request.method === "POST" && url.pathname === "/warehouse/upgrade") {
+          const parsed = UpgradeWarehouseRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          const status = await warehouseUpgrade.execute(actor, parsed.data);
+          const body: ApiSuccess<{ warehouse: WarehouseStatusDTO }> = {
+            ok: true,
+            data: { warehouse: toWarehouseDTO(status) }
+          };
+          return jsonResponse(body);
+        }
       }
 
       if (request.method === "GET" && url.pathname === "/wallet") {
@@ -1470,6 +1547,12 @@ export function createHandler(dependencies: HandlerDependencies) {
     } catch (error: unknown) {
       if (error instanceof ApplicationError) {
         return failure(error.code, requestId);
+      }
+      // The inventory capacity guard raises a database error, not an application one, so every
+      // grant path (harvest, tree, fishing, gathering, shop buy, starter package) gets the same
+      // stable code here rather than a generic 500.
+      if (error instanceof Error && error.message.includes("warehouse_full")) {
+        return failure("WAREHOUSE_FULL", requestId);
       }
       // An unexpected error is a bug, and the response deliberately says nothing about it. Without
       // this line it would leave no trace anywhere at all. The error itself is logged, never the

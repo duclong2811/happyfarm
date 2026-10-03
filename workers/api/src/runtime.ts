@@ -63,6 +63,7 @@ import type {
   StarterPackageDefinition,
   TreeDefinitionRepository,
   TreeIdGenerator,
+  WarehouseTierRepository,
   TileTerrainLookup
 } from "@happy-farm/application";
 import {
@@ -83,6 +84,7 @@ import {
   shopRegistry,
   starterPackage,
   treeRegistry,
+  warehouseTiers,
   STARTER_WORLD_PLACEMENTS,
   STARTER_WORLD_VERSION,
   classifyTile,
@@ -485,6 +487,25 @@ export class GameDataShopEntries implements ShopEntryRepository {
   findById(id: ShopEntryId): ShopEntry | null {
     const entry = shopRegistry.get(id);
     return entry === undefined ? null : toShopEntry(entry);
+  }
+}
+
+/** The warehouse tier table, straight from game data. Capacity lives here; the row stores it. */
+export class GameDataWarehouseTiers implements WarehouseTierRepository {
+  list() {
+    return warehouseTiers.map((tier) => ({
+      tier: tier.tier,
+      displayNameKey: tier.displayNameKey,
+      capacity: tier.capacity,
+      upgrade:
+        tier.upgrade === null
+          ? null
+          : {
+              currencyDefinitionId: tier.upgrade.currencyDefinitionId,
+              gold: tier.upgrade.gold,
+              materials: { ...tier.upgrade.materials }
+            }
+    }));
   }
 }
 

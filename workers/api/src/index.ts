@@ -24,6 +24,7 @@ import {
   GameDataItemDefinitions,
   GameDataPlotDefinitions,
   GameDataShopEntries,
+  GameDataWarehouseTiers,
   GameDataTreeDefinitions,
   GameDataConstructionDefinitions,
   Sha256Fingerprint,
@@ -143,6 +144,7 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
       ids,
       random: new CryptoResourceRandom()
     },
+    warehouse: { tiers: new GameDataWarehouseTiers() },
     clock
   });
 

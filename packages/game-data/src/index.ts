@@ -14,4 +14,5 @@ export * from "./schema";
 export * from "./shops";
 export * from "./starter";
 export * from "./trees";
+export * from "./warehouse";
 export * from "./world";

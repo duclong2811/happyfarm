@@ -40,6 +40,8 @@ import type {
   TreeDefinitionId,
   TreeInstance,
   TreeInstanceId,
+  WarehouseState,
+  WarehouseTierDefinition,
   XpAward,
   Wallet
 } from "@happy-farm/domain";
@@ -198,6 +200,40 @@ export interface IdempotencyRecord {
 
 export interface IdempotencyRepository {
   find(actorPlayerId: PlayerId, operation: string, requestId: string): Promise<IdempotencyRecord | null>;
+}
+
+/**
+ * The Island Warehouse: finite Home Island storage, as capacity over the existing inventory.
+ *
+ * It is a port rather than a domain `InventoryRepository` method because it is a different axis: the
+ * inventory answers "how much of this item does the player hold", and the warehouse answers "how many
+ * units may the island hold in total". The upgrade is one atomic boundary, so the tier change, the
+ * gold debit, the materials consumed and the receipt are all or nothing.
+ */
+export interface WarehouseUpgrade {
+  readonly playerId: PlayerId;
+  /** The warehouse id the ledger row cites. */
+  readonly warehouseId: string;
+  readonly expectedFromTier: number;
+  readonly expectedVersion: number;
+  readonly toTier: number;
+  readonly capacity: number;
+  readonly economy: EconomyMutation;
+  readonly removals: readonly InventoryRemoval[];
+  readonly expectedInventory: readonly InventoryItem[];
+  readonly createdAt: string;
+}
+
+export interface WarehouseRepository {
+  find(playerId: PlayerId): Promise<WarehouseState | null>;
+  /** The sum of every stored item's quantity: the warehouse's used capacity. */
+  usedCapacity(playerId: PlayerId): Promise<number>;
+  /** Writes the tier, capacity, gold debit, consumed materials and the receipt in one transaction. */
+  upgradeAtomically(upgrade: WarehouseUpgrade, idempotency: IdempotencyRecord): Promise<void>;
+}
+
+export interface WarehouseTierRepository {
+  list(): readonly WarehouseTierDefinition[];
 }
 
 /**

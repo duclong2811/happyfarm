@@ -14,3 +14,4 @@ export * from "./resource";
 export * from "./time";
 export * from "./tile";
 export * from "./tree";
+export * from "./warehouse";

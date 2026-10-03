@@ -6,9 +6,10 @@ import type {
   ItemDefinitionId,
   PlayerId,
   PlotId,
-  ShopEntryId
+  ShopEntryId,
+  WarehouseId
 } from "./ids";
-import { parseConstructionId, parsePlayerId, parsePlotId, parseShopEntryId } from "./ids";
+import { parseConstructionId, parsePlayerId, parsePlotId, parseShopEntryId, parseWarehouseId } from "./ids";
 
 export const MAX_WALLET_BALANCE = Number.MAX_SAFE_INTEGER;
 export const MAX_SHOP_QUANTITY = 1_000_000;
@@ -56,8 +57,15 @@ export type EconomyReason =
    * balance moved, and "I built this" and "I dismantled this" are different facts about the same
    * object. Both point at the construction, so the pair reads as the object's whole financial life.
    */
-  | "CONSTRUCTION_REFUND";
-export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION";
+  | "CONSTRUCTION_REFUND"
+  /**
+   * Buying the next warehouse tier.
+   *
+   * A currency sink like any other: the row says the money left to make the island hold more, which
+   * is why it is its own reason rather than a negative sale or a construction.
+   */
+  | "WAREHOUSE_UPGRADE";
+export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION" | "WAREHOUSE";
 
 /**
  * What a ledger row points at: the shop entry that was traded, the land that was bought, or the
@@ -69,7 +77,7 @@ export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCT
  * audit: `reason`, `reference_type`, and `reference_id` agree by construction rather than by
  * convention.
  */
-export type EconomyReferenceId = ShopEntryId | PlotId | PlayerId | ConstructionId;
+export type EconomyReferenceId = ShopEntryId | PlotId | PlayerId | ConstructionId | WarehouseId;
 
 const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   SHOP_BUY: "SHOP_ENTRY",
@@ -80,7 +88,9 @@ const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   // the construction row against each other.
   CONSTRUCTION: "CONSTRUCTION",
   // A refund points at the same object, from the other side: the ledger pair is the object's life.
-  CONSTRUCTION_REFUND: "CONSTRUCTION"
+  CONSTRUCTION_REFUND: "CONSTRUCTION",
+  // The upgrade points at the warehouse it made bigger.
+  WAREHOUSE_UPGRADE: "WAREHOUSE"
 };
 
 /** The one reference kind a reason may carry. The mapping is total, or the reason is not one. */
@@ -97,7 +107,8 @@ export function parseEconomyReferenceId(value: string): EconomyReferenceId {
   const shopEntry = parseOrNull(parseShopEntryId, value);
   const plot = parseOrNull(parsePlotId, value);
   const construction = parseOrNull(parseConstructionId, value);
-  const reference = shopEntry ?? plot ?? construction ?? parseOrNull(parsePlayerId, value);
+  const warehouse = parseOrNull(parseWarehouseId, value);
+  const reference = shopEntry ?? plot ?? construction ?? warehouse ?? parseOrNull(parsePlayerId, value);
   if (reference === null) {
     throw new DomainError("INVALID_ID", "Invalid economy reference ID");
   }
@@ -123,6 +134,7 @@ function assertReferenceMatchesType(referenceType: EconomyReferenceType, referen
     if (referenceType === "SHOP_ENTRY") parseShopEntryId(referenceId);
     else if (referenceType === "PLOT") parsePlotId(referenceId);
     else if (referenceType === "CONSTRUCTION") parseConstructionId(referenceId);
+    else if (referenceType === "WAREHOUSE") parseWarehouseId(referenceId);
     else parsePlayerId(referenceId);
   } catch {
     throw new DomainError("INVALID_ECONOMY_MUTATION", "Economy reference does not match its reason");

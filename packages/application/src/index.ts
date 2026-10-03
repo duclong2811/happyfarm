@@ -16,3 +16,4 @@ export * from "./shop";
 export * from "./starter";
 export * from "./tile-service";
 export * from "./trees";
+export * from "./warehouse";

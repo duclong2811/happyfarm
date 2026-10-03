@@ -20,6 +20,7 @@ import {
   GameDataItemDefinitions,
   GameDataPlotDefinitions,
   GameDataShopEntries,
+  GameDataWarehouseTiers,
   GameDataTreeDefinitions,
   GameDataConstructionDefinitions,
   Sha256Fingerprint,
@@ -108,6 +109,7 @@ export function createDevWorker(env: DevEnv) {
       ids,
       random: new CryptoResourceRandom()
     },
+    warehouse: { tiers: new GameDataWarehouseTiers() },
     clock
   });
   const bootstrap = new DevPlayerBootstrap(env.DB);
