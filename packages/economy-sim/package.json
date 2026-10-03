@@ -1,0 +1,10 @@
+{
+  "name": "@happy-farm/economy-sim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@happy-farm/game-data": "0.1.0"
+  }
+}

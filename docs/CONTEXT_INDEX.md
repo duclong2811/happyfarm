@@ -862,6 +862,25 @@ items, or its market prices.
   checks the shipped files. Trees share one canopy and differ by a species fruit colour.
 - Static catalogues cost no farm rows: `tests/api/catalogue-read-cost.test.ts`.
 
+### The economy model (V16.0)
+
+Read `docs/economy/ECONOMY_BIBLE.md` first: it separates **implemented today** (`ECONOMY_BASELINE.md`),
+**proposed and modelled** (`FIVE_ELEMENT_ECONOMY.md`, `ECONOMY_SIMULATION.md`) and **future**. The
+simulator is a design tool: `packages/economy-sim` may not be imported by `apps/` or `workers/`, and
+`tests/economy-sim/isolation.test.ts` walks both trees to prove it.
+
+- The baseline (`packages/economy-sim/src/baseline.ts`) is *read* from `@happy-farm/game-data`, never
+  retyped, so a price change in the game changes the next simulation.
+- The model's constants all live in `src/model.ts`; scenarios A-H in `src/scenario.ts`; the deterministic
+  cohort engine in `src/simulate.ts`; the structural checks in `src/report.ts`.
+- Findings so far: gold inflation is structural (faucets without sinks); elements are too self-sufficient
+  for trade to matter (99-100%); the modelled storage is far too small (pressure on day 1); workers push
+  specialisation to +177%, well past the 20-40% target; eggs, meat and stone are the first bottlenecks.
+  Home Island capacity utilisation stays under 2%, because the scenarios have no land-purchase step -
+  reported as a modelling gap rather than faked.
+- **No gameplay value may change from a V16.0 finding without an explicit later phase.** The simulator
+  informs; it does not rebalance.
+
 ### Resource nodes, mining and forestry (V15.2 / V15.3)
 
 Read `docs/design/RESOURCE_NODES.md` (the generic definition/placement/state lifecycle, persistence and
