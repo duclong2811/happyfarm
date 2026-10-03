@@ -1,11 +1,13 @@
-import type { ActorProfile } from "./model";
+import type { ActorProfile, StageId } from "./model";
 import { ELEMENT_IDS, type ElementId } from "./elements";
 
 /**
- * Scenarios A-H from the phase brief, as data.
+ * The required scenarios A-O, plus the five mandated population mixes, as data.
  *
- * A scenario says who is in the world, how many, how they play, and which future systems are switched
- * on. Nothing about the *rules* lives here, so a scenario is a readable answer to "what are we testing".
+ * A scenario says who is in the world, how many, how they play, which stage of the island they are at,
+ * and which future systems are switched on. Nothing about the *rules* lives here, so a scenario is a
+ * readable answer to "what are we testing". `stage` drives development tiers; `elementMix` and
+ * `archetypeMix` drive who is playing.
  */
 
 export interface ScenarioFeatures {
@@ -16,6 +18,7 @@ export interface ScenarioFeatures {
   readonly livestock: boolean;
   readonly sinks: boolean;
   readonly upgrades: boolean;
+  readonly npcShop: boolean;
 }
 
 export interface Scenario {
@@ -24,13 +27,15 @@ export interface Scenario {
   readonly question: string;
   readonly days: number;
   readonly actors: number;
+  readonly stage: StageId;
+  /** A human label for the population mix, printed by the report. */
+  readonly mixLabel: string;
   readonly elementMix: Readonly<Record<ElementId, number>>;
   readonly archetypeMix: Readonly<Record<ActorProfile["id"], number>>;
   readonly features: ScenarioFeatures;
 }
 
-const PURE_FARM_ISLAND: Readonly<Record<ElementId, number>> = {
-  // Scenario A is today's game: one island, one player, no elements.
+const SINGLE_ELEMENT: Readonly<Record<ElementId, number>> = {
   EARTH: 1,
   WATER: 0,
   WOOD: 0,
@@ -46,6 +51,16 @@ const EVEN_SPREAD: Readonly<Record<ElementId, number>> = {
   FIRE: 0.2
 };
 
+const WATER_HEAVY: Readonly<Record<ElementId, number>> = { EARTH: 0.2, WATER: 0.4, WOOD: 0.15, METAL: 0.1, FIRE: 0.15 };
+const FIRE_HEAVY: Readonly<Record<ElementId, number>> = { EARTH: 0.2, WATER: 0.15, WOOD: 0.15, METAL: 0.1, FIRE: 0.4 };
+const METAL_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.25, WATER: 0.25, WOOD: 0.25, METAL: 0.1, FIRE: 0.15 };
+const WOOD_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.25, WATER: 0.25, WOOD: 0.1, METAL: 0.2, FIRE: 0.2 };
+const EARTH_SHORTAGE: Readonly<Record<ElementId, number>> = { EARTH: 0.1, WATER: 0.25, WOOD: 0.25, METAL: 0.2, FIRE: 0.2 };
+
+function only(element: ElementId): Readonly<Record<ElementId, number>> {
+  return Object.fromEntries(ELEMENT_IDS.map((id) => [id, id === element ? 1 : 0])) as Record<ElementId, number>;
+}
+
 const ONE_NORMAL_PLAYER: Readonly<Record<ActorProfile["id"], number>> = {
   CASUAL: 0,
   NORMAL: 1,
@@ -60,6 +75,13 @@ const REALISTIC_MIX: Readonly<Record<ActorProfile["id"], number>> = {
   AUTOMATED: 0.01
 };
 
+const WORKER_HEAVY_MIX: Readonly<Record<ActorProfile["id"], number>> = {
+  CASUAL: 0.05,
+  NORMAL: 0.15,
+  HARDCORE: 0.3,
+  AUTOMATED: 0.5
+};
+
 const NO_FEATURES: ScenarioFeatures = {
   storage: false,
   workers: false,
@@ -67,7 +89,8 @@ const NO_FEATURES: ScenarioFeatures = {
   market: false,
   livestock: false,
   sinks: false,
-  upgrades: false
+  upgrades: false,
+  npcShop: false
 };
 
 function features(overrides: Partial<ScenarioFeatures>): ScenarioFeatures {
@@ -77,94 +100,231 @@ function features(overrides: Partial<ScenarioFeatures>): ScenarioFeatures {
 export const SCENARIOS: readonly Scenario[] = [
   {
     id: "A",
-    name: "Current economy baseline",
-    question: "What does one normal player earn today, and how fast does a single island fill up?",
+    name: "Starter island, no player trade, no workers",
+    question: "What does one starter island produce, and can it live without the player market?",
     days: 30,
     actors: 1,
-    elementMix: PURE_FARM_ISLAND,
+    stage: "EARLY",
+    mixLabel: "one normal Earth player",
+    elementMix: SINGLE_ELEMENT,
     archetypeMix: ONE_NORMAL_PLAYER,
-    features: features({})
+    features: features({ npcShop: true })
   },
   {
     id: "B",
-    name: "Five elements, no automation",
-    question: "Do comparative advantages alone create trade pressure, or is every island self-sufficient?",
+    name: "Early progression with the NPC safety net",
+    question: "Can 100 early players progress on self-production plus the NPC shop alone?",
     days: 30,
     actors: 100,
+    stage: "EARLY",
+    mixLabel: "balanced, realistic",
     elementMix: EVEN_SPREAD,
     archetypeMix: REALISTIC_MIX,
-    // The player market exists here even though automation does not: the question is whether
-    // comparative advantage alone creates trade, and a scenario with no market could only answer "no".
-    features: features({ market: true })
+    features: features({ storage: true, upgrades: true, npcShop: true })
   },
   {
     id: "C",
-    name: "Five elements + storage constraints",
-    question: "When does finite storage start costing production, and does upgrading beat trading?",
+    name: "Developing island with a small player market",
+    question: "Once the market opens, does it save meaningful time and resources?",
     days: 30,
     actors: 100,
+    stage: "DEVELOPING",
+    mixLabel: "balanced, realistic",
     elementMix: EVEN_SPREAD,
     archetypeMix: REALISTIC_MIX,
-    features: features({ storage: true, upgrades: true })
+    features: features({ storage: true, upgrades: true, market: true, npcShop: true })
   },
   {
     id: "D",
-    name: "Five elements + NPC workers",
-    question: "Do hired workers pay for their food and wages, and do they compound?",
+    name: "Mid game with the first workers",
+    question: "Do hired workers raise utilisation, and do they stop at the island's capacity?",
     days: 30,
-    actors: 100,
+    actors: 200,
+    stage: "MID",
+    mixLabel: "balanced, realistic",
     elementMix: EVEN_SPREAD,
     archetypeMix: REALISTIC_MIX,
-    features: features({ storage: true, upgrades: true, workers: true })
+    features: features({ storage: true, upgrades: true, workers: true, market: true, npcShop: true })
   },
   {
     id: "E",
-    name: "Workers + processing + trade",
-    question: "Does processing and player trade make specialisation clearly better than self-sufficiency?",
+    name: "Mature specialised Home Island",
+    question: "At industrial scale, does specialisation create real cross-element dependency?",
     days: 30,
     actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "balanced, realistic",
     elementMix: EVEN_SPREAD,
     archetypeMix: REALISTIC_MIX,
-    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true })
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
   },
   {
     id: "F",
-    name: "Mature economy with logistics and military sinks",
-    question: "Can plausible military and voyage consumption absorb a mature economy's output?",
-    days: 90,
-    actors: 1000,
-    elementMix: EVEN_SPREAD,
+    name: "Fire industrialisation",
+    question: "Does a mature Fire island import its raw inputs, or feed itself?",
+    days: 30,
+    actors: 200,
+    stage: "INDUSTRIAL",
+    mixLabel: "100% Fire",
+    elementMix: only("FIRE"),
     archetypeMix: REALISTIC_MIX,
-    features: features({
-      storage: true,
-      upgrades: true,
-      workers: true,
-      processing: true,
-      market: true,
-      livestock: true,
-      sinks: true
-    })
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
   },
   {
     id: "G",
-    name: "Element population imbalance",
-    question: "When the population leans to one element, what becomes scarce and how hard does the price move?",
+    name: "Metal extraction specialisation",
+    question: "How much ore and coal can a Metal island supply the world with?",
     days: 30,
-    actors: 500,
-    elementMix: { EARTH: 0.1, WATER: 0.4, WOOD: 0.1, METAL: 0.1, FIRE: 0.3 },
+    actors: 200,
+    stage: "INDUSTRIAL",
+    mixLabel: "100% Metal",
+    elementMix: only("METAL"),
     archetypeMix: REALISTIC_MIX,
-    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true })
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
   },
   {
     id: "H",
-    name: "Self-sufficient island vs specialised trader",
-    question: "How much does a balanced island give up against one that buys what it lacks?",
+    name: "Water maritime specialisation",
+    question: "Does a Water island become a fish and provisions exporter, and a timber importer?",
     days: 30,
     actors: 200,
-    // Every element, but half the population plays a single element as its only source of everything.
+    stage: "INDUSTRIAL",
+    mixLabel: "100% Water",
+    elementMix: only("WATER"),
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "I",
+    name: "Wood forestry specialisation",
+    question: "Does a Wood island become the world's timber, hardwood and resin supplier?",
+    days: 30,
+    actors: 200,
+    stage: "INDUSTRIAL",
+    mixLabel: "100% Wood",
+    elementMix: only("WOOD"),
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "J",
+    name: "Earth agricultural specialisation",
+    question: "Can an Earth island feed a world and still need its neighbours?",
+    days: 30,
+    actors: 200,
+    stage: "INDUSTRIAL",
+    mixLabel: "100% Earth",
+    elementMix: only("EARTH"),
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "K",
+    name: "Self-sufficient player",
+    question: "What does one island give up when it refuses the market entirely?",
+    days: 30,
+    actors: 1,
+    stage: "INDUSTRIAL",
+    mixLabel: "one automated Earth player",
+    elementMix: SINGLE_ELEMENT,
+    archetypeMix: { CASUAL: 0, NORMAL: 0, HARDCORE: 0, AUTOMATED: 1 },
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "L",
+    name: "Specialised trader",
+    question: "How much better is a Fire island that buys what it cannot make?",
+    days: 30,
+    actors: 1,
+    stage: "INDUSTRIAL",
+    mixLabel: "one automated Fire player",
+    elementMix: only("FIRE"),
+    archetypeMix: { CASUAL: 0, NORMAL: 0, HARDCORE: 0, AUTOMATED: 1 },
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "M",
+    name: "Worker-heavy economy",
+    question: "If most players hire heavily, do workers saturate the island or stop at its capacity?",
+    days: 30,
+    actors: 300,
+    stage: "INDUSTRIAL",
+    mixLabel: "balanced, worker-heavy",
+    elementMix: EVEN_SPREAD,
+    archetypeMix: WORKER_HEAVY_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "N",
+    name: "Population imbalance (Water and Fire heavy)",
+    question: "When the world leans to Water and Fire, what becomes scarce and how hard does the price move?",
+    days: 30,
+    actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "Water-heavy",
+    elementMix: WATER_HEAVY,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "O",
+    name: "Mature economy with abstract ships, army and naval sinks",
+    question: "Do the future military and naval sinks have plausible demand channels?",
+    days: 60,
+    actors: 1000,
+    stage: "WORLD",
+    mixLabel: "balanced, realistic",
     elementMix: EVEN_SPREAD,
     archetypeMix: REALISTIC_MIX,
-    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true })
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, sinks: true, npcShop: true })
+  },
+  {
+    id: "P",
+    name: "Fire-heavy world",
+    question: "What happens when 40% of players run Fire industry?",
+    days: 30,
+    actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "Fire-heavy",
+    elementMix: FIRE_HEAVY,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "Q",
+    name: "Metal shortage",
+    question: "With at most 10% Metal, do ore and steel become the bottleneck?",
+    days: 30,
+    actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "Metal-shortage",
+    elementMix: METAL_SHORTAGE,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "R",
+    name: "Wood shortage",
+    question: "With at most 10% Wood, does timber stall the industrial economies?",
+    days: 30,
+    actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "Wood-shortage",
+    elementMix: WOOD_SHORTAGE,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
+  },
+  {
+    id: "S",
+    name: "Earth shortage",
+    question: "With at most 10% Earth, does food become the thing everyone needs?",
+    days: 30,
+    actors: 500,
+    stage: "INDUSTRIAL",
+    mixLabel: "Earth-shortage",
+    elementMix: EARTH_SHORTAGE,
+    archetypeMix: REALISTIC_MIX,
+    features: features({ storage: true, upgrades: true, workers: true, processing: true, market: true, livestock: true, npcShop: true })
   }
 ];
 
@@ -191,3 +351,5 @@ export function assertScenario(scenario: Scenario): void {
     throw new Error(`Scenario ${scenario.id} needs a positive whole number of actors`);
   }
 }
+
+for (const scenario of SCENARIOS) assertScenario(scenario);

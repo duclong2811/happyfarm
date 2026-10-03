@@ -1,27 +1,30 @@
 # The five-element economy (proposed, modelled)
 
-Status: **proposed and modelled, not implemented.** No gameplay reads this. The numbers live in
-`packages/economy-sim/src/elements.ts` and are tested there.
+Status: **V16.1, proposed and modelled - not implemented.** No gameplay reads this. The numbers live in
+`packages/economy-sim/src/elements.ts` and are tested there. The full capacity model - physical profiles,
+starter vs maximum capacity, development costs, workplace slots and the storage curve - is in
+`docs/economy/FIVE_ELEMENT_CAPACITY_MODEL.md`.
 
 ## The idea
 
 Future Home Islands carry one of five element identities. The element is a **comparative advantage**, not
-a profession lock: every island can farm, fish, mine, forest, keep animals and run a workshop. The
-differences are *capacity* multipliers on one shared island baseline, each between 0.6 and 1.9 on
-purpose - geography and logistics should create specialisation pressure, not a stat buff.
+a profession lock: every island can farm, fish, mine, forest, keep animals and run a workshop. Where
+V16.0 described the difference as a bare multiplier (0.6x-1.9x), V16.1 describes it as **physical
+capacity first**: how many tiles, spots, deposits, trees, pens and lanes the island's geography can ever
+hold, with a small efficiency modifier (0.90x-1.15x) on top. The element belongs to the Home Island, not
+the player, and there is no ordinary respec.
 
-| Element | Identity | Strongest at | Weakest at |
+| Element | Identity | Physical advantage | What it ends up buying |
 | --- | --- | --- | --- |
-| **Earth** | Agriculture | Crops, feed, provisions | Fishing, mining |
-| **Water** | Fishing and maritime | Coastline, aquaculture, harbour, fleets | Land expansion, raw terrestrial goods |
-| **Wood** | Forestry | Timber, hardwood, resin, ships | Ore, fish |
-| **Metal** | Extraction | Ore and stone capacity | Farming, livestock |
-| **Fire** | Livestock and industry | Eggs, milk, meat, hide; refining and manufacture | Every raw extraction profession |
+| **Earth** | Agriculture | The widest fields (160 tiles) and the most feed | Protein (fish, meat), metals, tools |
+| **Water** | Fishing and maritime | The longest coastline (12 spots) | Timber, metals, machinery, farm supplies |
+| **Wood** | Forestry | The most forest (20 nodes) | Food, protein, metal tools, industrial goods |
+| **Metal** | Extraction | The most deposits (18 nodes) | Food, protein, timber, tools |
+| **Fire** | Livestock and industry | The best pens (20) and the most lanes (14) | Ore, coal, wood, feed, fish/protein |
 
-The capacity table (`ELEMENT_PROFILES`) applies those multipliers to the *current island's own counts*
-(144 tiles, 4 fishing spots, 9 deposits, 12 wild trees, plus modelled pens and processing lanes), which
-is what makes Scenario B - the same world seen as five different elements - directly comparable to
-Scenario A.
+An island does not begin at its ceiling: each profession starts at a fraction of it and develops in five
+steps, with a cost curve that rises per unit at every step. That is what turns "one island supports an
+endgame economy" from a modelling gap (the V16.0 ceiling never bound) into a calibrated question.
 
 ## Fire's two identities
 
@@ -30,22 +33,29 @@ Fire has the livestock profession *and* the processing advantage, and it must no
 - livestock produces meat and eggs but eats staples, so it depends on Earth's grain and potatoes;
 - steel consumes iron ore and coal, so it depends on Metal's extraction;
 - timber consumes wood, and tools consume steel and timber, so industry depends on Wood as well;
-- a Fire island can therefore refine and manufacture, but it cannot *feed* the process from its own
-  ground, which is the dependency the simulator measures as achieved self-sufficiency.
+- a Fire island can therefore refine and manufacture, but it cannot feed the process from its own ground.
 
-The element table enforces the structural half of that promise directly (Fire is the best processor and
-is below the best at every raw profession), and `report.ts` reports it as the `FIRE_DOMINANCE` check.
+The simulated progression, from `docs/economy/ECONOMY_SIMULATION.md`:
+
+| Fire stage | Self-sufficiency index | Iron ore | Coal | Feed | Fish/protein | Wood |
+| --- | --- | --- | --- | --- | --- | --- |
+| Early | 91% | 50% | 0% | 23% | 18% | 0% |
+| Developing | 83% | 71% | 2% | 34% | 18% | 0% |
+| Mid | 75% | 86% | 37% | 26% | 15% | 7% |
+| Industrial | 65% | 91% | 61% | 34% | 15% | 14% |
+
+Fire starts as a pen economy and becomes a buyer of ore, coal, feed and protein as its workshops grow.
 
 ## Food is not one resource
 
-The model separates **staples** (potato, wheat, corn, cabbage, pumpkin) from **protein** (fish, meat,
-eggs). Workers eat both; livestock eat staples; a future voyage eats provisions. That is what stops the
-cheapest crop from satisfying every requirement in the game, and it is why an Earth island cannot feed an
-army without a Water or Fire partner.
+The model separates **staples and vegetables** (potato, wheat, corn, cabbage, pumpkin, tomato,
+strawberry) from **protein** (fish, meat, eggs). Workers eat both; livestock eat staples; the provisions
+recipe eats fish and potato. That is what stops the cheapest crop from satisfying every requirement in
+the game, and it is why an Earth island cannot feed an army without a Water or Fire partner.
 
 ## What is deliberately not decided
 
-- The exact multipliers, which the simulator now shows are **too mild to create real trade pressure**
-  (see `ECONOMY_SIMULATION.md`: elements still run at 99-100% self-sufficiency).
-- Whether the element is a property of the island at creation, of the player, or both.
-- Whether an island can change element, and at what cost.
+- The exact ceilings, starter fractions and development costs (calibrated again once the future systems
+  are implemented).
+- Whether hardwood and resin should feed a Fire process recipe instead of only the logistic sink.
+- Region and logistics economics - the simulator assumes one clearing market today.
