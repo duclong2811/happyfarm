@@ -14,6 +14,7 @@ import fingerlingTilapiaUrl from "../assets/items/fish_tilapia_fingerling.svg?ur
 import materialWoodUrl from "../assets/items/material_wood.svg?url";
 import materialHardwoodUrl from "../assets/items/material_hardwood.svg?url";
 import materialResinUrl from "../assets/items/material_resin.svg?url";
+import materialOreUrl from "../assets/items/material_ore.svg?url";
 import produceAppleUrl from "../assets/items/produce_apple.svg?url";
 import produceOrangeUrl from "../assets/items/produce_orange.svg?url";
 import producePeachUrl from "../assets/items/produce_peach.svg?url";
@@ -35,6 +36,7 @@ export const ITEM_THUMBNAIL_URLS: Readonly<Record<string, string>> = {
   material_wood: materialWoodUrl,
   material_hardwood: materialHardwoodUrl,
   material_resin: materialResinUrl,
+  material_ore: materialOreUrl,
   produce_apple: produceAppleUrl,
   produce_orange: produceOrangeUrl,
   produce_peach: producePeachUrl

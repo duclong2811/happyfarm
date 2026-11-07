@@ -268,6 +268,7 @@ import { renderItemCard, type ItemCardState } from "./items/card";
 import {
   createActionButton,
   decorateGameUi,
+  isModernUi,
   renderCapacityBar,
   renderCategoryTabs,
   renderInventorySlot
@@ -308,6 +309,8 @@ import "@fontsource-variable/nunito/index.css";
 import "./styles.css";
 import "./build-shop/shop.css";
 import "./ui/warm-harvest.css";
+// Modern B is the active presentation system; it is opt-in via <html class="ui-b"> and loaded last.
+import "./ui/modern-b.css";
 
 bootPerfMark("app_started");
 
@@ -3473,7 +3476,7 @@ function renderWorkers(): void {
     note.hidden = false;
     note.textContent = t("workers.empty");
   } else {
-    // D1's honesty rule: the panel shows a plan, and says there is no work behind it yet.
+    // Auto executes these assignments now; the note explains the order, not a promise of future work.
     note.hidden = false;
     note.textContent = t("workers.planNote");
   }
@@ -4112,6 +4115,8 @@ function marketCardNode(card: MarketCard): HTMLElement {
       }
     }
   );
+  // Modern B draws the card itself; the decorative corner artwork belongs to the legacy skin only.
+  if (isModernUi()) return node;
   // Market-only decorative corners use independent alpha artwork. The card renderer keeps its own
   // thumbnail/fallback and every interactive behaviour; this layer is deliberately pointer-inert.
   node.classList.add("market-vibrant-product-card");
@@ -6327,6 +6332,7 @@ function renderChrome(): void {
   element<HTMLElement>("build-rail").setAttribute("aria-label", t("build.categories"));
   element<HTMLElement>("build-search").setAttribute("aria-label", t("build.search"));
   element<HTMLElement>("market-title").textContent = t("panel.market");
+  element<HTMLElement>("work-areas-title").textContent = t("workAreas.title");
   element<HTMLElement>("module-rail").setAttribute("aria-label", t("hud.modules"));
   renderMarketTabs();
   setLabel("plant", t("dock.plant"));
@@ -7054,11 +7060,11 @@ async function travelToNeighbor(destination: "HOME_ISLAND" | "NEIGHBOR_ISLAND", 
     const result = await api().travelNeighbor({ requestId: newRequestId("neighbor-travel"), expectedVersion: state.neighbor.visit.version, destination, ...(islandId === undefined ? {} : { islandId }) });
     state.neighbor = result.neighbor;
     clearSelectionsForIslandTravel();
-    neighborSelectedTarget = "DOCK";
+    neighborSelectedTarget = destination === "NEIGHBOR_ISLAND" ? "NPC" : null;
     applyNeighborPresentation(true);
     if (destination === "HOME_ISLAND") refreshScene();
     render();
-  } catch { setStatus(() => "Không thể sang đảo lúc này", true); }
+  } catch { setStatus(() => t("neighbor.travelFailed"), true); }
 }
 
 async function talkToNeighbor(): Promise<void> {
@@ -8315,7 +8321,8 @@ async function loadFarm(farmId: string): Promise<FarmBootContext> {
   state.farmId = result.farm.id;
   state.farmName = result.farm.name;
   state.neighbor = (await client.getNeighbor()).neighbor;
-  neighborSelectedTarget = state.neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "NPC" : "DOCK";
+  // On the home island the ferry panel opens only when the player taps the dock, never on boot.
+  neighborSelectedTarget = state.neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "NPC" : null;
   accountReady = false;
   reconciliationPending = true;
   returnPopupShown = false;
@@ -8443,7 +8450,7 @@ async function createFarm(): Promise<FarmBootContext> {
   state.farmId = created.farm.id;
   state.farmName = created.farm.name;
   state.neighbor = (await client.getNeighbor()).neighbor;
-  neighborSelectedTarget = "DOCK";
+  neighborSelectedTarget = null;
   accountReady = false;
   reconciliationPending = false;
   returnPopupShown = false;

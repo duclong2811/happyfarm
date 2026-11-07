@@ -1,0 +1,677 @@
+/*
+ * Modern B — the one presentation system for the HUD and every module panel.
+ *
+ * Bright, flat, rounded: white cards on the 3D world, one green for actions, gold only for money,
+ * line icons, readable type. It is opt-in through `<html class="ui-b">` and loaded last, so the
+ * older art-frame layers (styles.css, warm-harvest.css, the market "vibrant" skin) stay in the tree
+ * as a rollback but no longer draw: their border-image / art backgrounds are neutralised below.
+ *
+ * Layout ownership is unchanged (panels keep their positions and the renderers keep their DOM);
+ * this file only decides how things look.
+ */
+
+html.ui-b {
+  --b-bg: #f6f7f4;
+  --b-surface: #ffffff;
+  --b-surface-2: #f3f5f1;
+  --b-surface-3: #e9ede6;
+  --b-line: #e3e8e0;
+  --b-line-strong: #cfd8cb;
+  --b-ink: #1d2b22;
+  --b-ink-2: #46544a;
+  --b-muted: #758178;
+  --b-primary: #22a05a;
+  --b-primary-hover: #1b8a4c;
+  --b-primary-soft: #e3f5ea;
+  --b-primary-ink: #ffffff;
+  --b-gold: #f2b230;
+  --b-gold-soft: #fff4d6;
+  --b-gold-ink: #7a5300;
+  --b-danger: #e0503b;
+  --b-danger-soft: #fdecea;
+  --b-info-soft: #e8f1fd;
+  --b-radius-sm: 10px;
+  --b-radius: 14px;
+  --b-radius-lg: 20px;
+  --b-shadow-sm: 0 1px 2px rgba(20, 35, 25, .08);
+  --b-shadow: 0 2px 6px rgba(20, 35, 25, .08), 0 8px 24px rgba(20, 35, 25, .10);
+  --b-shadow-lg: 0 4px 12px rgba(20, 35, 25, .10), 0 18px 48px rgba(20, 35, 25, .18);
+  --b-font: "Nunito Variable", "Nunito", "Noto Sans", system-ui, sans-serif;
+  --b-font-display: "Baloo 2 Variable", "Nunito Variable", system-ui, sans-serif;
+  --b-focus: 0 0 0 3px rgba(34, 160, 90, .35);
+}
+
+/* ---------------------------------------------------------------- reset of the art-frame layers */
+html.ui-b body *,
+html.ui-b body *::before,
+html.ui-b body *::after {
+  border-image: none !important;
+}
+html.ui-b .market-vibrant-frame,
+html.ui-b .market-vibrant-card-frame,
+html.ui-b #market-panel::before,
+html.ui-b .ui-top-hud-bar .brand::after { display: none !important; }
+
+html.ui-b body { font-family: var(--b-font); color: var(--b-ink); }
+html.ui-b body :focus-visible { outline: none; box-shadow: var(--b-focus); }
+
+/* ---------------------------------------------------------------- buttons */
+html.ui-b body button {
+  font-family: var(--b-font);
+  -webkit-text-stroke: 0;
+  text-shadow: none;
+}
+html.ui-b body button.primary,
+html.ui-b body .object-action.primary {
+  min-height: 2.5rem;
+  padding: .55rem 1.1rem;
+  border: 0;
+  border-radius: 999px;
+  color: var(--b-primary-ink);
+  background: var(--b-primary);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .06), 0 4px 12px rgba(34, 160, 90, .28);
+  font-weight: 800;
+  font-size: .9rem;
+  letter-spacing: .01em;
+  filter: none;
+}
+html.ui-b body button.primary:hover:not(:disabled),
+html.ui-b body .object-action.primary:hover:not(:disabled) { background: var(--b-primary-hover); }
+html.ui-b body button.primary:disabled {
+  color: var(--b-muted);
+  background: var(--b-surface-3);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+html.ui-b body button.secondary,
+html.ui-b body button.compact:not(.primary):not(.danger),
+html.ui-b body .object-action:not(.primary):not(.danger) {
+  min-height: 2.25rem;
+  padding: .45rem .95rem;
+  border: 1px solid var(--b-line-strong);
+  border-radius: 999px;
+  color: var(--b-ink);
+  background: var(--b-surface);
+  box-shadow: var(--b-shadow-sm);
+  font-weight: 700;
+  font-size: .86rem;
+}
+html.ui-b body button.secondary:hover:not(:disabled),
+html.ui-b body button.compact:not(.primary):not(.danger):hover:not(:disabled),
+html.ui-b body .object-action:not(.primary):not(.danger):hover:not(:disabled) { background: var(--b-surface-2); }
+html.ui-b body button.danger,
+html.ui-b body .object-action.danger {
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--b-danger);
+  font-weight: 800;
+}
+html.ui-b body button.compact { min-height: 2.1rem; padding: .4rem .9rem; font-size: .84rem; }
+
+/* Inside a module panel the legacy skins style buttons by panel id; repeat the look with the id. */
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.primary {
+  min-height: 2.5rem;
+  padding: .55rem 1.1rem;
+  border: 0;
+  border-radius: 999px;
+  color: var(--b-primary-ink);
+  background: var(--b-primary);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .06), 0 4px 12px rgba(34, 160, 90, .28);
+  font-weight: 800;
+  font-size: .9rem;
+  filter: none;
+}
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.primary:hover:not(:disabled) { color: var(--b-primary-ink); background: var(--b-primary-hover); }
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button:where(:not(.primary, .danger, .panel-close, .item-card, .item-tab, .market-tab, .shop-card, .shop-rail-item, .shop-place)) {
+  min-height: 2.25rem;
+  padding: .45rem .95rem;
+  border: 1px solid var(--b-line-strong);
+  border-radius: 999px;
+  color: var(--b-ink);
+  background: var(--b-surface);
+  box-shadow: var(--b-shadow-sm);
+  font-weight: 700;
+  font-size: .86rem;
+  filter: none;
+}
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button:where(:not(.primary, .danger, .panel-close, .item-card, .item-tab, .market-tab, .shop-card, .shop-rail-item, .shop-place)):hover:not(:disabled) {
+  color: var(--b-ink);
+  background: var(--b-surface-2);
+}
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.danger { border: 0; border-radius: 999px; color: #fff; background: var(--b-danger); font-weight: 800; }
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button:disabled { opacity: .55; cursor: not-allowed; }
+
+/* ---------------------------------------------------------------- top HUD */
+html.ui-b .top-hud.ui-top-hud-bar {
+  padding: max(.7rem, env(safe-area-inset-top)) max(.9rem, env(safe-area-inset-right)) .7rem max(.9rem, env(safe-area-inset-left));
+  background: none;
+  gap: .6rem;
+}
+html.ui-b .top-hud .brand,
+html.ui-b .top-hud .hud-stat,
+html.ui-b .top-hud .camera-mode,
+html.ui-b .top-hud .ghost-button {
+  min-height: 2.6rem;
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 999px;
+  color: var(--b-ink);
+  background: rgba(255, 255, 255, .92);
+  box-shadow: var(--b-shadow);
+  backdrop-filter: blur(10px);
+}
+html.ui-b .top-hud .brand { padding: .3rem .9rem .3rem .55rem; gap: .45rem; }
+html.ui-b .top-hud .brand h1 {
+  color: var(--b-ink);
+  font-family: var(--b-font-display);
+  font-size: 1.12rem;
+  font-weight: 800;
+  text-shadow: none;
+}
+html.ui-b .top-hud .brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--b-primary);
+}
+html.ui-b .top-hud .hud-status { gap: .5rem; }
+html.ui-b .top-hud .hud-stat { padding: .25rem .9rem .25rem .3rem; gap: .5rem; }
+html.ui-b .top-hud .hud-stat-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 1.95rem;
+  height: 1.95rem;
+  border-radius: 50%;
+  background-image: none !important;
+}
+html.ui-b .top-hud .hud-stat-icon svg { display: block !important; width: 1.1rem; height: 1.1rem; }
+html.ui-b .top-hud .hud-stat-gold .hud-stat-icon { color: var(--b-gold-ink); background-color: var(--b-gold-soft); }
+html.ui-b .top-hud .hud-stat-level .hud-stat-icon { color: #3d63c9; background-color: var(--b-info-soft); }
+html.ui-b .top-hud #wallet,
+html.ui-b .top-hud .hud-stat .big {
+  color: var(--b-ink);
+  font-size: .98rem;
+  font-weight: 800;
+  white-space: nowrap;
+  text-shadow: none;
+}
+html.ui-b .top-hud .xp-bar { height: 5px; border-radius: 99px; background: var(--b-surface-3); }
+html.ui-b .top-hud .xp-fill { border-radius: 99px; background: #4f7ae0; }
+html.ui-b .top-hud .ghost-button {
+  width: 2.6rem;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  color: var(--b-ink-2);
+}
+html.ui-b .top-hud .ghost-button:hover:not(:disabled) { color: var(--b-ink); background: #fff; }
+html.ui-b .top-hud .ghost-button svg { display: block !important; }
+html.ui-b .top-hud .camera-mode { padding: .2rem; gap: .2rem; }
+html.ui-b .top-hud .camera-mode-button {
+  min-height: 2.15rem;
+  padding: .3rem .9rem;
+  border: 0;
+  border-radius: 999px;
+  color: var(--b-ink-2);
+  background: transparent;
+  box-shadow: none;
+  font-weight: 700;
+  font-size: .85rem;
+}
+html.ui-b .top-hud .camera-mode-button.is-active { color: #fff; background: var(--b-primary); }
+html.ui-b .top-hud .hud-menu {
+  border: 1px solid var(--b-line);
+  border-radius: var(--b-radius);
+  background: var(--b-surface);
+  box-shadow: var(--b-shadow-lg);
+}
+
+/* ---------------------------------------------------------------- left rail */
+html.ui-b {
+  --rail-size: 3rem;
+}
+html.ui-b .module-rail {
+  gap: .55rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  filter: none;
+}
+html.ui-b .module-rail .module-launcher {
+  position: relative;
+  width: 3rem;
+  height: 3rem;
+  min-width: 3rem;
+  min-height: 3rem;
+  padding: 0;
+  filter: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 16px;
+  color: var(--b-ink-2);
+  background: rgba(255, 255, 255, .94);
+  box-shadow: var(--b-shadow);
+}
+html.ui-b .module-rail .module-launcher:hover:not(:disabled) { color: var(--b-ink); background: #fff; transform: translateY(-1px); }
+html.ui-b .module-rail .module-launcher.is-active,
+html.ui-b .module-rail .module-launcher[aria-expanded="true"],
+html.ui-b .module-rail .module-launcher[aria-pressed="true"] { color: #fff; background: var(--b-primary); border-color: var(--b-primary); }
+html.ui-b .module-rail .module-launcher > span[data-icon] {
+  width: 1.5rem;
+  height: 1.5rem;
+  background-image: none !important;
+}
+html.ui-b .module-rail .module-launcher > span[data-icon] svg { display: block !important; width: 1.5rem; height: 1.5rem; }
+/* The label a player needs, on hover/focus, from the same accessible name the button already has. */
+@media (hover: hover) {
+  html.ui-b .module-rail .module-launcher::after {
+    content: attr(aria-label);
+    position: absolute;
+    left: calc(100% + .6rem);
+    top: 50%;
+    transform: translateY(-50%);
+    padding: .3rem .6rem;
+    border-radius: 8px;
+    color: #fff;
+    background: rgba(29, 43, 34, .92);
+    font-size: .78rem;
+    font-weight: 700;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s ease;
+  }
+  html.ui-b .module-rail .module-launcher:hover::after,
+  html.ui-b .module-rail .module-launcher:focus-visible::after { opacity: 1; }
+}
+
+/* ---------------------------------------------------------------- panels */
+html.ui-b #inventory-panel,
+html.ui-b #market-panel,
+html.ui-b #workers-panel,
+html.ui-b #work-areas-panel,
+html.ui-b #build-panel,
+html.ui-b .module-panel {
+  padding: 0;
+  border: 1px solid var(--b-line);
+  border-radius: var(--b-radius-lg);
+  color: var(--b-ink);
+  background: var(--b-surface);
+  background-image: none;
+  box-shadow: var(--b-shadow-lg);
+}
+html.ui-b #market-panel { width: min(34rem, calc(100vw - 6rem)); }
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-header,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .ui-panel-header,
+html.ui-b #build-panel .build-header {
+  min-height: 3.5rem;
+  margin: 0;
+  padding: .85rem .85rem .85rem 1.25rem;
+  border: 0;
+  border-bottom: 1px solid var(--b-line);
+  border-radius: 0;
+  background: var(--b-surface);
+  background-image: none;
+  box-shadow: none;
+}
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-header h2,
+html.ui-b #build-panel .build-header h2 {
+  color: var(--b-ink);
+  font-family: var(--b-font-display);
+  font-size: 1.22rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-shadow: none;
+  -webkit-text-stroke: 0;
+}
+html.ui-b .panel-close,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .panel-close,
+html.ui-b .resource-panel-close {
+  width: 2.2rem;
+  height: 2.2rem;
+  min-height: 0;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: var(--b-ink-2);
+  background: var(--b-surface-2);
+  background-image: none !important;
+  box-shadow: none;
+}
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .panel-close:hover,
+html.ui-b .resource-panel-close:hover { color: var(--b-ink); background: var(--b-surface-3); }
+html.ui-b .panel-close svg { display: block !important; }
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-body,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .ui-panel-body {
+  padding: 1rem 1.25rem 1.25rem;
+  background: var(--b-surface);
+  background-image: none;
+}
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .muted { color: var(--b-muted); }
+
+/* ---------------------------------------------------------------- tabs (inventory categories, market buy/sell) */
+html.ui-b .item-tabs,
+html.ui-b .market-tabs {
+  display: flex;
+  gap: .25rem;
+  margin: 0 0 .9rem;
+  padding: .25rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--b-surface-2);
+  background-image: none;
+  box-shadow: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+html.ui-b .market-tabs { margin: .9rem 1.25rem 0; }
+html.ui-b .item-tabs,
+html.ui-b .market-tabs,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-header { flex-shrink: 0; }
+html.ui-b .item-tabs .item-tab,
+html.ui-b .market-tabs .market-tab {
+  flex: 1 0 auto;
+  height: auto;
+  min-height: 2.1rem;
+  line-height: 1.2;
+  overflow: visible;
+  padding: .35rem .9rem;
+  border: 0;
+  border-radius: 999px;
+  color: var(--b-ink-2);
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  font-size: .86rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+html.ui-b .item-tabs .item-tab.is-active,
+html.ui-b .market-tabs .market-tab.is-active {
+  color: var(--b-ink);
+  background: var(--b-surface);
+  box-shadow: var(--b-shadow-sm), 0 0 0 1px var(--b-line);
+}
+
+/* ---------------------------------------------------------------- item cards (inventory, market) */
+html.ui-b .item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.4rem, 1fr));
+  gap: .7rem;
+}
+html.ui-b .item-grid .item-card {
+  position: relative;
+  min-height: 0;
+  padding: .55rem .55rem .7rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: .35rem;
+  border: 1px solid var(--b-line);
+  border-radius: var(--b-radius);
+  color: var(--b-ink);
+  background: var(--b-surface);
+  background-image: none;
+  box-shadow: var(--b-shadow-sm);
+  text-align: left;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
+}
+html.ui-b .item-grid .item-card:hover:not(:disabled) { border-color: var(--b-line-strong); box-shadow: var(--b-shadow); transform: translateY(-1px); }
+html.ui-b .item-grid .item-card[aria-pressed="true"],
+html.ui-b .item-grid .item-card.is-selected { border-color: var(--b-primary); box-shadow: 0 0 0 2px var(--b-primary-soft), var(--b-shadow); }
+html.ui-b .item-grid .item-card-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  height: auto;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: var(--b-surface-2);
+  box-shadow: none;
+}
+html.ui-b .item-grid .item-card-thumb img { width: 72%; height: 72%; object-fit: contain; }
+html.ui-b .item-grid .item-card-fallback { color: var(--b-muted); }
+html.ui-b .item-grid .item-card-fallback svg { width: 2.2rem; height: 2.2rem; }
+html.ui-b .item-grid .item-card-qty {
+  position: absolute;
+  right: .35rem;
+  bottom: .35rem;
+  min-width: 0;
+  padding: .1rem .45rem;
+  border: 0;
+  border-radius: 999px;
+  color: var(--b-ink);
+  background: rgba(255, 255, 255, .95);
+  box-shadow: var(--b-shadow-sm);
+  font-size: .74rem;
+  font-weight: 800;
+}
+html.ui-b .item-grid .item-card-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.3em;
+  color: var(--b-ink);
+  font-size: .86rem;
+  font-weight: 800;
+  line-height: 1.15;
+  white-space: normal;
+  text-overflow: clip;
+  text-shadow: none;
+}
+html.ui-b .item-grid .item-card-note {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: .12rem .5rem;
+  border: 0;
+  border-radius: 999px;
+  color: var(--b-ink-2);
+  background: var(--b-surface-2);
+  background-image: none;
+  font-size: .74rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: normal;
+  text-overflow: clip;
+  text-shadow: none;
+  -webkit-text-stroke: 0;
+}
+html.ui-b #market-panel .item-grid .item-card-note { color: var(--b-gold-ink); background: var(--b-gold-soft); }
+html.ui-b .item-grid .item-card:disabled { opacity: .55; }
+
+/* ---------------------------------------------------------------- market trade + warehouse */
+html.ui-b #market-panel .market-trade,
+html.ui-b .warehouse-strip {
+  margin: 0 0 1rem;
+  padding: .9rem 1rem;
+  border: 1px solid var(--b-line);
+  border-radius: var(--b-radius);
+  color: var(--b-ink);
+  background: var(--b-surface-2);
+  background-image: none;
+  box-shadow: none;
+}
+html.ui-b #market-panel .market-trade { margin: 1rem 0 0; background: var(--b-surface); box-shadow: var(--b-shadow-sm); }
+html.ui-b .warehouse-strip h3 {
+  color: var(--b-muted);
+  font-size: .74rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+html.ui-b .warehouse-strip .warehouse-usage { color: var(--b-ink); font-size: 1.15rem; font-weight: 800; }
+html.ui-b .warehouse-strip .warehouse-tier { color: var(--b-muted); font-weight: 700; }
+html.ui-b .warehouse-strip .warehouse-next { color: var(--b-ink-2); font-size: .8rem; }
+html.ui-b .ui-capacity-bar,
+html.ui-b .warehouse-bar,
+html.ui-b .auto-meter {
+  height: 8px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--b-surface-3);
+  box-shadow: none;
+  overflow: hidden;
+}
+html.ui-b .ui-capacity-bar-fill,
+html.ui-b .warehouse-bar > span,
+html.ui-b .auto-meter-fill { border-radius: 99px; background: var(--b-primary); }
+html.ui-b .warehouse-strip button.primary { width: 100%; margin-top: .6rem; }
+
+/* ---------------------------------------------------------------- Auto / workers / work areas */
+html.ui-b #workers-panel .auto-actor,
+html.ui-b #workers-panel .auto-control,
+html.ui-b #workers-panel .auto-card,
+html.ui-b #workers-panel .workers-cargo,
+html.ui-b #workers-panel .workers-editor,
+html.ui-b #work-areas-panel .work-area-row,
+html.ui-b #work-areas-panel .work-area-editor:not([hidden]) {
+  margin: 0 0 .75rem;
+  padding: .85rem 1rem;
+  border: 1px solid var(--b-line);
+  border-radius: var(--b-radius);
+  color: var(--b-ink);
+  background: var(--b-surface);
+  background-image: none;
+  box-shadow: var(--b-shadow-sm);
+}
+html.ui-b #workers-panel .auto-control { background: var(--b-primary-soft); border-color: transparent; }
+html.ui-b #workers-panel .auto-portrait,
+html.ui-b #workers-panel .auto-thumb {
+  border: 0;
+  border-radius: 12px;
+  background: var(--b-surface-2);
+  background-image: none;
+  box-shadow: none;
+}
+html.ui-b #workers-panel .auto-chip {
+  padding: .12rem .55rem;
+  border: 0;
+  border-radius: 999px;
+  color: var(--b-ink-2);
+  background: var(--b-surface-2);
+  font-size: .74rem;
+  font-weight: 800;
+}
+html.ui-b #workers-panel .auto-card-name,
+html.ui-b #workers-panel .auto-actor-text strong { color: var(--b-ink); font-weight: 800; white-space: nowrap; }
+html.ui-b #workers-panel .auto-status { color: var(--b-primary-hover); font-weight: 800; }
+html.ui-b #workers-panel .auto-cycle { color: var(--b-muted); font-size: .78rem; }
+html.ui-b #workers-panel .auto-section-title { color: var(--b-muted); font-size: .74rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+html.ui-b #workers-panel input[type="checkbox"],
+html.ui-b #work-areas-panel input[type="checkbox"] { accent-color: var(--b-primary); width: 1.1rem; height: 1.1rem; }
+
+html.ui-b #work-areas-panel .work-area-editor[hidden],
+html.ui-b #workers-panel .workers-editor[hidden] { display: none; }
+/* A work area row: name and size on top, its actions on one line below - never squeezed beside them. */
+html.ui-b #work-areas-panel .work-area-row { display: flex; flex-direction: column; align-items: stretch; gap: .6rem; }
+html.ui-b #work-areas-panel .work-area-name { color: var(--b-ink); font-weight: 800; font-size: .98rem; }
+html.ui-b #work-areas-panel .work-area-meta { color: var(--b-muted); font-size: .8rem; }
+html.ui-b #work-areas-panel .work-area-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+
+/* ---------------------------------------------------------------- floating panels: ferry, resource, selection, area harvest */
+html.ui-b .neighbor-panel,
+html.ui-b #resource-panel,
+html.ui-b .selection-panels > *:not([hidden]),
+html.ui-b #area-harvest-panel,
+html.ui-b .action-dock {
+  border: 1px solid var(--b-line);
+  border-radius: var(--b-radius-lg);
+  color: var(--b-ink);
+  background: var(--b-surface);
+  background-image: none;
+  box-shadow: var(--b-shadow-lg);
+}
+html.ui-b .neighbor-panel { padding: 1rem 1.1rem; }
+html.ui-b .neighbor-panel h2 { color: var(--b-ink); font-family: var(--b-font-display); font-size: 1.15rem; font-weight: 800; }
+html.ui-b .neighbor-panel .neighbor-status { color: var(--b-muted); font-size: .82rem; }
+html.ui-b .neighbor-panel .neighbor-actions { gap: .5rem; }
+html.ui-b .neighbor-panel button:not(.secondary) {
+  border: 1px solid var(--b-line-strong);
+  border-radius: 12px;
+  color: var(--b-ink);
+  background: var(--b-surface);
+  box-shadow: var(--b-shadow-sm);
+  font-weight: 800;
+}
+html.ui-b .neighbor-panel button:not(.secondary):hover { border-color: var(--b-primary); color: var(--b-primary-hover); }
+html.ui-b #area-harvest-panel { color: var(--b-ink); }
+html.ui-b #area-harvest-panel p,
+html.ui-b #area-harvest-panel span:not([data-icon]),
+html.ui-b #area-harvest-panel strong { color: var(--b-ink); text-shadow: none; }
+html.ui-b #area-harvest-panel [data-icon] { color: var(--b-primary); }
+html.ui-b #area-harvest-panel button.is-active,
+html.ui-b #area-harvest-panel button[aria-pressed="true"] { color: #fff; background: var(--b-primary); border-color: var(--b-primary); }
+html.ui-b .resource-panel-title { color: var(--b-ink); font-family: var(--b-font-display); font-weight: 800; }
+html.ui-b .resource-panel-label { color: var(--b-muted); }
+html.ui-b .resource-panel-value { color: var(--b-ink); font-weight: 800; }
+
+/* ---------------------------------------------------------------- build panel */
+html.ui-b #build-panel .shop-card,
+html.ui-b #build-panel .shop-inspector,
+html.ui-b #build-panel .shop-rail-item {
+  border: 1px solid var(--b-line);
+  border-radius: var(--b-radius);
+  color: var(--b-ink);
+  background: var(--b-surface);
+  background-image: none;
+  box-shadow: var(--b-shadow-sm);
+}
+html.ui-b #build-panel .shop-rail-item.is-active,
+html.ui-b #build-panel .shop-rail-item[aria-selected="true"] { color: #fff; background: var(--b-primary); border-color: var(--b-primary); }
+html.ui-b #build-panel .shop-card.is-selected { border-color: var(--b-primary); box-shadow: 0 0 0 2px var(--b-primary-soft), var(--b-shadow); }
+html.ui-b #build-panel .shop-card-thumb { border-radius: 10px; background: var(--b-surface-2); }
+html.ui-b #build-panel .shop-card-thumb::after { display: none; }
+html.ui-b #build-panel .shop-card-price,
+html.ui-b #build-panel .build-gold { color: var(--b-gold-ink); font-weight: 800; }
+html.ui-b #build-panel .build-body,
+html.ui-b #build-panel .build-center,
+html.ui-b #build-panel .shop-rail { background: var(--b-surface); background-image: none; }
+html.ui-b #build-panel .shop-rail { border-right: 1px solid var(--b-line); }
+html.ui-b #build-panel .shop-inspector-action { background: var(--b-surface); }
+html.ui-b #build-panel .shop-inspector-action button.shop-place,
+html.ui-b #build-panel .shop-inspector-action button.shop-place:not(:disabled) {
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--b-primary);
+  box-shadow: 0 4px 12px rgba(34, 160, 90, .28);
+  font-weight: 800;
+}
+html.ui-b #build-panel .shop-inspector-action button.shop-place:hover:not(:disabled) { background: var(--b-primary-hover); }
+html.ui-b #build-panel .shop-inspector-picture { border-radius: var(--b-radius); background: var(--b-surface-2); }
+html.ui-b #build-panel .shop-search-input {
+  border: 1px solid var(--b-line-strong);
+  border-radius: 999px;
+  background: var(--b-surface);
+}
+
+/* ---------------------------------------------------------------- phone */
+@media (max-width: 640px) {
+  html.ui-b .top-hud.ui-top-hud-bar { gap: .35rem; padding-inline: max(.5rem, env(safe-area-inset-left)) max(.5rem, env(safe-area-inset-right)); }
+  /* Gold, level and the camera switch are the only permanent occupants of a phone's top bar. */
+  html.ui-b .top-hud .brand { display: none; }
+  html.ui-b .top-hud .hud-status { width: 100%; gap: .35rem; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+  html.ui-b .top-hud .hud-stat-gold { margin-right: auto; }
+  html.ui-b .top-hud .hud-stat-level .xp-bar { display: none; }
+  html.ui-b .top-hud .hud-stat { min-height: 2.3rem; padding: .15rem .6rem .15rem .2rem; gap: .3rem; }
+  html.ui-b .top-hud .hud-stat-icon { width: 1.7rem; height: 1.7rem; }
+  html.ui-b .top-hud #wallet,
+  html.ui-b .top-hud .hud-stat .big { font-size: .84rem; }
+  html.ui-b .top-hud .ghost-button { width: 2.3rem; min-height: 2.3rem; }
+  html.ui-b .top-hud .camera-mode { min-height: 2.3rem; padding: .15rem; flex-shrink: 0; }
+  html.ui-b .top-hud .camera-mode-button { min-height: 1.95rem; padding: .2rem .55rem; font-size: .74rem; white-space: nowrap; }
+  html.ui-b #market-panel { width: auto; }
+  html.ui-b .item-grid { grid-template-columns: repeat(auto-fill, minmax(6.4rem, 1fr)); gap: .55rem; }
+  html.ui-b .module-panel { border-radius: var(--b-radius-lg) var(--b-radius-lg) 0 0; }
+}

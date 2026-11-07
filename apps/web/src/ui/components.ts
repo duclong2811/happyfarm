@@ -99,19 +99,35 @@ export function renderInventorySlot(
   return slot;
 }
 
+/** The active presentation system is Modern B when the document opts in with `<html class="ui-b">`. */
+export const MODERN_UI_CLASS = "ui-b";
+
+export function isModernUi(doc: Document | null = typeof document === "undefined" ? null : document): boolean {
+  return doc?.documentElement.classList.contains(MODERN_UI_CLASS) ?? false;
+}
+
 /** Adds presentation roles to the existing HUD and panel DOM without changing ownership or state. */
 export function decorateGameUi(root: ParentNode = document): void {
+  const modern = isModernUi();
   root.querySelectorAll<HTMLElement>(".top-hud").forEach((node) => {
-    node.classList.add("ui-top-hud-bar", "ui-warm-harvest-hud");
+    node.classList.add("ui-top-hud-bar");
+    if (!modern) node.classList.add("ui-warm-harvest-hud");
   });
   root.querySelectorAll<HTMLElement>(".module-rail").forEach((node) => {
-    node.classList.add("ui-warm-harvest-hud");
+    if (!modern) node.classList.add("ui-warm-harvest-hud");
   });
   root.querySelectorAll<HTMLElement>(".module-panel").forEach((node) => {
     node.classList.add("ui-panel-shell");
     node.querySelector<HTMLElement>(":scope > .module-header")?.classList.add("ui-panel-header");
     node.querySelector<HTMLElement>(":scope > .module-body")?.classList.add("ui-panel-body");
   });
+  // Modern B draws every sheet itself (ui/modern-b.css); the older art-frame skins below are kept
+  // only for the legacy presentation and must not be attached on top of it.
+  if (modern) {
+    root.querySelector<HTMLElement>("#inventory-tabs")?.classList.add("ui-category-tabs");
+    root.querySelector<HTMLElement>("#inventory-grid")?.classList.add("ui-inventory-grid");
+    return;
+  }
   root.querySelector<HTMLElement>("#inventory-panel")?.classList.add("ui-inventory-shell");
   // Warm Harvest is a presentation-only acceptance experiment. It is limited to the real
   // Construction sheet; the build renderer keeps ownership of cards, prices and placement actions.

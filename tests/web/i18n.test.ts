@@ -48,13 +48,13 @@ describe("language detection and persistence", () => {
     expect(detectLanguage("en", "vi-VN")).toBe("en");
   });
 
-  it("falls back to the browser language, and treats anything else as English", () => {
+  it("opens in Vietnamese for a new player, whatever the browser language", () => {
     expect(detectLanguage(null, "vi")).toBe("vi");
     expect(detectLanguage(null, "vi-VN")).toBe("vi");
     expect(detectLanguage(null, "VI-vn")).toBe("vi");
-    expect(detectLanguage(null, "en-GB")).toBe("en");
-    expect(detectLanguage(null, "fr-FR")).toBe("en");
-    expect(detectLanguage(null, null)).toBe("en");
+    expect(detectLanguage(null, "en-GB")).toBe("vi");
+    expect(detectLanguage(null, "fr-FR")).toBe("vi");
+    expect(detectLanguage(null, null)).toBe("vi");
     expect(detectLanguage("de", "vi")).toBe("vi");
   });
 

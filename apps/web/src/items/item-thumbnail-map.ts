@@ -39,7 +39,7 @@ export const ITEM_THUMBNAIL_MAP: Readonly<Record<string, ItemThumbnailSpec>> = {
   item_fish_mackerel: { kind: "MODEL", modelId: "fish_mackerel" },
   item_fish_snapper: { kind: "MODEL", modelId: "fish_snapper" },
   item_fish_tuna: { kind: "MODEL", modelId: "fish_tuna" },
-  item_ore: { kind: "MODEL", modelId: "resource_stone" },
+  item_ore: { kind: "IMAGE", assetName: "material_ore" },
   item_stone: { kind: "MODEL", modelId: "resource_stone" },
   item_copper_ore: { kind: "MODEL", modelId: "resource_copper" },
   item_iron_ore: { kind: "MODEL", modelId: "resource_iron" },

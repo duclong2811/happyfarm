@@ -46,8 +46,15 @@ export function detectLanguage(saved: string | null, navigatorLanguage: string |
   if (typeof navigatorLanguage === "string" && navigatorLanguage.toLowerCase().startsWith("vi")) {
     return "vi";
   }
-  return DEFAULT_LANGUAGE;
+  return PLAYER_DEFAULT_LANGUAGE;
 }
+
+/**
+ * The language a new player sees before choosing one. The game is made for Vietnamese players, so
+ * it opens in Vietnamese whatever the browser's UI language is; the switch in the HUD still saves
+ * English for anyone who wants it. `DEFAULT_LANGUAGE` stays English as the message fallback.
+ */
+export const PLAYER_DEFAULT_LANGUAGE: Language = "vi";
 
 export function readStoredLanguage(storage: LanguageStorage): Language | null {
   let value: string | null = null;
@@ -241,6 +248,7 @@ const EN_MESSAGES = {
   "neighbor.goMoc": "Sail to Moc island",
   "neighbor.goKim": "Sail to Kim island",
   "neighbor.goThuy": "Sail to Thuy island",
+  "neighbor.travelFailed": "Cannot sail right now.",
   "neighbor.status.growing": "Planting · {seconds}s left",
   "neighbor.status.stocked": "Harvested {quantity} goods · building",
   "neighbor.status.built": "Built a level {level} structure",
@@ -350,7 +358,7 @@ const EN_MESSAGES = {
   "workAreas.new": "New area",
   "workAreas.empty": "No work areas yet.",
   "workAreas.loading": "Loading work areas...",
-  "workAreas.cells": "{count} cells",
+  "workAreas.cells": "Cells: {count}",
   "workAreas.rename": "Rename",
   "workAreas.editCells": "Edit cells",
   "workAreas.delete": "Delete",
@@ -882,7 +890,7 @@ const EN_MESSAGES = {
   "workers.reorder": "Reorder",
   "workers.reorderDone": "Done",
   "workers.priority": "Priority {priority}",
-  "workers.usableCells": "{count} cells",
+  "workers.usableCells": "Cells: {count}",
   "workers.lifecycle": "Cycle",
   "workers.policy": "Buy missing supplies",
   "workers.policyHint": "Auto may buy what this assignment is missing, at the shop price.",
@@ -903,7 +911,7 @@ const EN_MESSAGES = {
     "Only the resources you select may be sold automatically, and only when Gold is not enough to buy work supplies. The first one is sold first.",
   "workers.fundingSaved": "Emergency funding saved.",
   "workers.noPlan": "No plan yet.",
-  "workers.planNote": "This is a plan, not work: nothing is planted, harvested, moved or bought yet.",
+  "workers.planNote": "Auto works through the jobs below in priority order.",
   "auto.status.ready": "Ready",
   "auto.status.waiting": "Waiting",
   "auto.status.blocked": "Blocked",
@@ -1240,6 +1248,7 @@ const VI_MESSAGES: Record<MessageKey, string> = {
   "neighbor.goMoc": "Sang đảo Mộc",
   "neighbor.goKim": "Sang đảo Kim",
   "neighbor.goThuy": "Sang đảo Thủy",
+  "neighbor.travelFailed": "Không thể sang đảo lúc này.",
   "neighbor.status.growing": "Đang trồng · còn {seconds} giây",
   "neighbor.status.stocked": "Đã thu hoạch {quantity} sản phẩm · đang dựng nhà",
   "neighbor.status.built": "Đã dựng công trình cấp {level}",
@@ -1769,7 +1778,7 @@ const VI_MESSAGES: Record<MessageKey, string> = {
     "Chỉ những tài nguyên bạn chọn mới có thể bị bán tự động, và chỉ khi vàng không đủ mua nguyên liệu cho công việc. Mục đầu tiên được bán trước.",
   "workers.fundingSaved": "Đã lưu nguồn tiền dự phòng.",
   "workers.noPlan": "Chưa có kế hoạch.",
-  "workers.planNote": "Đây là kế hoạch, không phải hành động: chưa trồng, thu hoạch, di chuyển hay mua gì.",
+  "workers.planNote": "Auto làm lần lượt các việc dưới đây theo thứ tự ưu tiên.",
   "auto.status.ready": "Sẵn sàng",
   "auto.status.waiting": "Đang chờ",
   "auto.status.blocked": "Bị chặn",
