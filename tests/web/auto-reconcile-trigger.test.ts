@@ -32,7 +32,9 @@ describe("the reconciliation trigger", () => {
     expect(source).toContain("awayMs >= 60_000");
   });
 
-  it("keeps the growth poll at its own five-second cadence", () => {
-    expect(source).toContain("window.setInterval(refreshGrowthOnce, GROWTH_REFRESH_INTERVAL_MS)");
+  it("reads growth only when a crop or tree is due, never on a fixed request cadence", () => {
+    expect(source).not.toContain("window.setInterval(refreshGrowthOnce");
+    expect(source).toContain("if (Date.now() >= growthRefreshDueAt) refreshGrowthOnce();");
+    expect(source).toContain("nextGrowthRefreshDelayMs(");
   });
 });

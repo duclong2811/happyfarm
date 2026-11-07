@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  GROWTH_REFRESH_IDLE_MS,
   GROWTH_REFRESH_INTERVAL_MS,
+  GROWTH_REFRESH_MIN_MS,
+  GROWTH_REFRESH_STAGE_MS,
+  nextGrowthRefreshDelayMs,
   shouldRefreshGrowth,
   type GrowthPollGate
 } from "../../apps/web/src/polling";
@@ -39,5 +43,41 @@ describe("the growth poll gate", () => {
     // The shortest crop grows in 300s; a few seconds of latency is invisible and bounded.
     expect(GROWTH_REFRESH_INTERVAL_MS).toBeGreaterThanOrEqual(2_000);
     expect(GROWTH_REFRESH_INTERVAL_MS).toBeLessThanOrEqual(15_000);
+  });
+});
+
+describe("nextGrowthRefreshDelayMs", () => {
+  const crop = (mature: boolean, growthProgress: number, growthDurationSeconds: number | null = 300) => ({
+    mature,
+    growthProgress,
+    growthDurationSeconds
+  });
+  const tree = (ready: boolean, secondsUntilReady: number, stored = false) => ({ ready, secondsUntilReady, stored });
+
+  it("only takes a slow safety read when nothing is growing", () => {
+    expect(nextGrowthRefreshDelayMs({ crops: [], trees: [] })).toBe(GROWTH_REFRESH_IDLE_MS);
+    expect(nextGrowthRefreshDelayMs({ crops: [crop(true, 1)], trees: [tree(true, 0), tree(false, 60, true)] })).toBe(
+      GROWTH_REFRESH_IDLE_MS
+    );
+  });
+
+  it("asks just after the soonest maturity", () => {
+    // 300s carrot at 95%: 15s left.
+    const delay = nextGrowthRefreshDelayMs({ crops: [crop(false, 0.95), crop(false, 0.1)], trees: [] });
+    expect(delay).toBeGreaterThan(15_000);
+    expect(delay).toBeLessThan(17_000);
+    expect(nextGrowthRefreshDelayMs({ crops: [], trees: [tree(false, 8)] })).toBeGreaterThan(8_000);
+  });
+
+  it("re-reads a long grow at the visual-stage cadence, and never faster than the old poll", () => {
+    expect(nextGrowthRefreshDelayMs({ crops: [crop(false, 0)], trees: [] })).toBe(GROWTH_REFRESH_STAGE_MS);
+    expect(nextGrowthRefreshDelayMs({ crops: [crop(false, 0.9999)], trees: [] })).toBe(GROWTH_REFRESH_MIN_MS);
+    expect(nextGrowthRefreshDelayMs({ crops: [crop(false, 0.5, null)], trees: [] })).toBe(GROWTH_REFRESH_STAGE_MS);
+  });
+
+  it("costs far fewer reads per hour than the fixed five-second poll", () => {
+    const fixedPerHour = 3_600_000 / GROWTH_REFRESH_INTERVAL_MS;
+    expect(3_600_000 / GROWTH_REFRESH_STAGE_MS).toBeLessThanOrEqual(fixedPerHour / 6);
+    expect(3_600_000 / GROWTH_REFRESH_IDLE_MS).toBeLessThanOrEqual(12);
   });
 });

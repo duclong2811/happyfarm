@@ -81,7 +81,7 @@ import {
 } from "./i18n";
 import { progressionSummary } from "./progression";
 import { LEVEL_UP_DURATION_MS, levelUpFeedback, unlockNotices } from "./unlocks";
-import { GROWTH_REFRESH_INTERVAL_MS, shouldRefreshGrowth } from "./polling";
+import { GROWTH_REFRESH_MIN_MS, nextGrowthRefreshDelayMs, shouldRefreshGrowth } from "./polling";
 import {
   FULL_FARM_REFRESH,
   GROWTH_REFRESH,
@@ -8256,6 +8256,7 @@ async function refreshFarm(scope: FarmRefreshScope = FULL_FARM_REFRESH): Promise
   // so the client neither reads plots nor draws locked land, which is also one D1 read fewer.
   state.plots = [];
   if (trees !== null) state.trees = trees.trees;
+  if (crops !== null || trees !== null) scheduleGrowthRefresh();
   if (constructions !== null) state.constructions = constructions.constructions;
   if (scene === null && areaHarvestSelection.active) state.cellMap = sceneInput().cells;
   renderBuildStatus();
@@ -8275,6 +8276,26 @@ async function refreshFarm(scope: FarmRefreshScope = FULL_FARM_REFRESH): Promise
  * audit found those two queries were 91.8% of 5.83M rows read in a day. See
  * `docs/performance/D1_READ_AUDIT.md`.
  */
+/** Local wall-clock instant (ms) at which the next growth read is due. Checking it costs no request. */
+let growthRefreshDueAt = 0;
+
+/** Recompute when the next growth read is worth a request, from the snapshot just received. */
+function scheduleGrowthRefresh(): void {
+  const durations = new Map(state.cropDefinitions.map((entry) => [entry.cropDefinitionId, entry.growthDurationSeconds]));
+  growthRefreshDueAt = Date.now() + nextGrowthRefreshDelayMs({
+    crops: state.crops.map((crop) => ({
+      mature: crop.mature,
+      growthProgress: crop.growthProgress,
+      growthDurationSeconds: durations.get(crop.definitionId) ?? null
+    })),
+    trees: state.trees.map((tree) => ({
+      ready: tree.ready,
+      secondsUntilReady: tree.secondsUntilReady,
+      stored: tree.storageState === "STORED"
+    }))
+  });
+}
+
 async function refreshGrowth(): Promise<void> {
   // Crops and production trees only: `GROWTH_REFRESH` reads no tiles and no built objects, so a
   // visible tab costs two small reads a tick and a hidden one costs nothing (see the gate below).
@@ -9531,11 +9552,17 @@ function wire(): void {
         // Growth polling is best-effort; explicit actions surface their own errors.
       } finally {
         farmRefreshInFlight = false;
+        // A failed read left the due instant in the past: back off rather than retrying every second.
+        if (growthRefreshDueAt <= Date.now()) growthRefreshDueAt = Date.now() + GROWTH_REFRESH_MIN_MS;
       }
     })();
   }
 
-  window.setInterval(refreshGrowthOnce, GROWTH_REFRESH_INTERVAL_MS);
+  // A one-second local check of the due instant: it costs no request. The read itself happens only
+  // when a crop or tree is due (see `nextGrowthRefreshDelayMs`), not on a fixed cadence.
+  window.setInterval(() => {
+    if (Date.now() >= growthRefreshDueAt) refreshGrowthOnce();
+  }, 1_000);
   let hiddenSince: number | null = null;
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
