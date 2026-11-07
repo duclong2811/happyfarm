@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
 import {
@@ -14,6 +12,7 @@ import {
   type TreeInstanceId
 } from "@happy-farm/domain";
 import { createHandler } from "../../workers/api/src/handler";
+import { schemaSql } from "../support/migrations";
 import {
   GameDataConstructionDefinitions,
   GameDataCropDefinitions,
@@ -25,7 +24,8 @@ import {
   Sha256Fingerprint,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
-  gameDataTileTerrain
+  gameDataTileTerrain,
+  gameDataLandSale
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID } from "../support/fixtures";
@@ -42,25 +42,7 @@ import { FARM_ONE_ID, NOW, PLAYER_ONE_ID } from "../support/fixtures";
  * 2 gold and a carrot sells for 2, and one planting yields two carrots.
  */
 
-const MIGRATIONS = [
-  "0001_phase_1_foundation.sql",
-  "0002_crop_simulation.sql",
-  "0003_inventory_and_harvest.sql",
-  "0004_economy_and_shop.sql",
-  "0005_player_progression.sql",
-  "0006_farm_expansion.sql",
-  "0007_seed_economy.sql",
-  "0008_tree_instances.sql",
-  "0009_starter_package.sql",
-  "0010_farm_constructions.sql",
-  "0011_construction_editing.sql",
-  "0012_world_objects.sql",
-  "0013_world_objects_v2.sql",
-  "0014_one_farm_per_player.sql",
-  "0015_player_identities.sql"
-]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+const MIGRATIONS = schemaSql();
 
 const STARTING_GOLD = 100;
 const SEED_PRICE = 2;
@@ -139,6 +121,7 @@ describe("the first complete farm economy loop", () => {
       progressionDefinition: gameDataProgressionDefinition,
       starterWorld: gameDataStarterWorld,
       terrain: gameDataTileTerrain,
+      landSale: gameDataLandSale,
       clock
     });
   });
@@ -325,6 +308,155 @@ describe("the first complete farm economy loop", () => {
     // Nothing moved: no gold, no items.
     expect(balance()).toBe(STARTING_GOLD);
     expect(held("item_carrot")).toBe(0);
+  });
+
+  it("harvests two ready carrots through the bounded area endpoint and replays safely", async () => {
+    await post("/farms", { name: "Starter Farm" });
+    await post("/shop/buy", { requestId: "area_buy_seeds", shopEntryId: "shop_carrot_seed", quantity: 2 });
+    const tilesBody: { readonly data: { readonly tiles: readonly { readonly x: number; readonly y: number; readonly version: number; readonly terrainType: string }[] } } = await (await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/tiles`))).json();
+    const soil = tilesBody.data.tiles.filter((tile) => tile.terrainType === "SOIL").slice(0, 2);
+    expect(soil).toHaveLength(2);
+    for (const [index, tile] of soil.entries()) {
+      expect((await post(`/farms/${FARM_ONE_ID}/crops`, {
+        requestId: `area_plant_${String(index)}`,
+        cropDefinitionId: "crop_carrot",
+        x: tile.x,
+        y: tile.y,
+        expectedTileVersion: tile.version
+      })).status).toBe(201);
+    }
+    clock.advanceSeconds(GROWTH_SECONDS + 1);
+    const grown: { readonly data: { readonly crops: readonly { readonly cropInstanceId: string; readonly version: number }[] } } = await (await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`))).json();
+    const crops = grown.data.crops;
+    expect(crops).toHaveLength(2);
+    const payload = {
+      requestId: "area_harvest_001",
+      crops: crops.map((crop) => ({ cropInstanceId: crop.cropInstanceId, expectedCropVersion: crop.version }))
+    };
+    const first = await post(`/farms/${FARM_ONE_ID}/crops/harvest-area`, payload);
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({ ok: true, data: { harvestedCount: 2, skippedCount: 0 } });
+    const replay = await post(`/farms/${FARM_ONE_ID}/crops/harvest-area`, payload);
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toMatchObject({ ok: true, data: { harvestedCount: 2, skippedCount: 0 } });
+    expect(held("item_carrot")).toBe(4);
+    const after: { readonly data: { readonly crops: readonly unknown[] } } = await (await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`))).json();
+    expect(after.data.crops).toEqual([]);
+  });
+
+  it("plants a crop area through the real API, debits each seed once, and replays safely", async () => {
+    await post("/farms", { name: "Starter Farm" });
+    await post("/shop/buy", { requestId: "plant_area_buy_seeds", shopEntryId: "shop_carrot_seed", quantity: 2 });
+    const tilesBody: { readonly data: { readonly tiles: readonly { readonly x: number; readonly y: number; readonly version: number; readonly terrainType: string }[] } } = await (await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/tiles`))).json();
+    const soil = tilesBody.data.tiles.filter((tile) => tile.terrainType === "SOIL").slice(0, 2);
+    expect(soil).toHaveLength(2);
+    const payload = {
+      requestId: "plant_area_001",
+      cropDefinitionId: "crop_carrot",
+      cells: soil.map((tile) => ({ x: tile.x, y: tile.y, expectedTileVersion: tile.version }))
+    };
+    const first = await post(`/farms/${FARM_ONE_ID}/crops/plant-area`, payload);
+    expect(first.status).toBe(201);
+    await expect(first.json()).resolves.toMatchObject({ ok: true, data: { plantedCount: 2, skippedCount: 0 } });
+    const replay = await post(`/farms/${FARM_ONE_ID}/crops/plant-area`, payload);
+    expect(replay.status).toBe(201);
+    await expect(replay.json()).resolves.toMatchObject({ ok: true, data: { plantedCount: 2, skippedCount: 0 } });
+    expect(held("item_carrot_seed")).toBe(0);
+    const crops: { readonly data: { readonly crops: readonly unknown[] } } = await (await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/crops`))).json();
+    expect(crops.data.crops).toHaveLength(2);
+  });
+
+  it("plants tree area groups through real HTTP/D1, reports an insufficient-sapling partial, and retries a lost second response safely", async () => {
+    await post("/farms", { name: "Starter Farm" });
+    // Wildwood is the level-one sapling used by the local planting loop. Buying 26 for 27 cells
+    // deliberately makes the second bounded group partial without letting the test invent a
+    // client-side quantity or bypass the shop settlement.
+    const bought = await post("/shop/buy", {
+      requestId: "tree_area_buy_saplings",
+      shopEntryId: "shop_wildwood_sapling",
+      quantity: 26
+    });
+    expect(bought.status).toBe(200);
+    expect(held("item_wildwood_sapling")).toBe(26);
+
+    const tilesBody: {
+      readonly data: {
+        readonly tiles: readonly {
+          readonly x: number;
+          readonly y: number;
+          readonly version: number;
+          readonly terrainType: string;
+        }[];
+      };
+    } = await (await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/tiles`))).json();
+    const soil = tilesBody.data.tiles.filter((tile) => tile.terrainType === "SOIL").slice(0, 27);
+    expect(soil).toHaveLength(27);
+
+    const firstCells = soil.slice(0, 25).map((tile) => ({
+      x: tile.x,
+      y: tile.y,
+      expectedTileVersion: tile.version
+    }));
+    const secondCells = soil.slice(25).map((tile) => ({
+      x: tile.x,
+      y: tile.y,
+      expectedTileVersion: tile.version
+    }));
+    const firstPayload = {
+      requestId: "tree_area_group_001",
+      treeDefinitionId: "tree_wildwood",
+      cells: firstCells
+    };
+    const secondPayload = {
+      requestId: "tree_area_group_002",
+      treeDefinitionId: "tree_wildwood",
+      cells: secondCells
+    };
+
+    const first = await post(`/farms/${FARM_ONE_ID}/trees/plant-area`, firstPayload);
+    expect(first.status).toBe(201);
+    await expect(first.json()).resolves.toMatchObject({
+      ok: true,
+      data: { plantedCount: 25, skippedCount: 0 }
+    });
+    expect(held("item_wildwood_sapling")).toBe(1);
+
+    // The first response of group two is intentionally discarded, representing a lost network
+    // response after the D1 transaction committed. The retry must return the stored group receipt,
+    // not create another tree or debit the remaining sapling again.
+    const lostResponse = await post(`/farms/${FARM_ONE_ID}/trees/plant-area`, secondPayload);
+    expect(lostResponse.status).toBe(201);
+    const retry = await post(`/farms/${FARM_ONE_ID}/trees/plant-area`, secondPayload);
+    expect(retry.status).toBe(201);
+    const retryBody: {
+      readonly ok: boolean;
+      readonly data: {
+        readonly plantedCount: number;
+        readonly skippedCount: number;
+        readonly results: readonly { readonly status: string; readonly reason: string | null }[];
+      };
+    } = await retry.json();
+    expect(retryBody).toMatchObject({
+      ok: true,
+      data: { plantedCount: 1, skippedCount: 1 }
+    });
+    expect(retryBody.data.results.some((result) => result.status === "SKIPPED" && result.reason === "NO_SEEDS")).toBe(true);
+    expect(held("item_wildwood_sapling")).toBe(0);
+
+    const treeBody: {
+      readonly data: { readonly trees: readonly unknown[] };
+    } = await (await handle(new Request(`https://api.test/farms/${FARM_ONE_ID}/trees`))).json();
+    expect(treeBody.data.trees).toHaveLength(26);
+
+    // Replay of the already completed first group also remains a no-op after group two, proving
+    // that a client retry cannot duplicate an earlier group while a later group is partial.
+    const firstReplay = await post(`/farms/${FARM_ONE_ID}/trees/plant-area`, firstPayload);
+    expect(firstReplay.status).toBe(201);
+    await expect(firstReplay.json()).resolves.toMatchObject({
+      ok: true,
+      data: { plantedCount: 25, skippedCount: 0 }
+    });
+    expect(held("item_wildwood_sapling")).toBe(0);
   });
 
   it("turns harvested crops into experience, a level, and the next crop's unlock", async () => {

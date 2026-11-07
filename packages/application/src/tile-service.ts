@@ -3,19 +3,26 @@ import {
   assertValidCoordinate,
   createFarmTile,
   DomainError,
+  isUsableLand,
+  landOriginFor,
   type FarmId,
   type TerrainType,
-  type TileCoordinate,
-  type UnlockedLandPolicy
+  type TileCoordinate
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
-import type { ActorContext, Clock, FarmMemberRepository, FarmTileRepository } from "./ports";
+import type {
+  ActorContext,
+  Clock,
+  FarmMemberRepository,
+  FarmTileRepository,
+  TileTerrainLookup
+} from "./ports";
 
 export class FarmTileService {
   constructor(
     private readonly members: FarmMemberRepository,
     private readonly tiles: FarmTileRepository,
-    private readonly unlockedLand: UnlockedLandPolicy,
+    private readonly terrain: TileTerrainLookup,
     private readonly clock: Clock
   ) {}
 
@@ -27,8 +34,8 @@ export class FarmTileService {
   ) {
     await this.assertCanMutate(actor, farmId);
     this.validateCoordinate(coordinate);
-    if (!(await this.unlockedLand.isUnlocked(farmId, coordinate))) {
-      throw new ApplicationError("INVALID_INPUT", "Tile is outside unlocked land");
+    if (!isUsableLand(landOriginFor(this.terrain.classify(coordinate)))) {
+      throw new ApplicationError("INVALID_INPUT", "That cell is not usable land");
     }
     try {
       const tile = createFarmTile(farmId, coordinate, terrainType, this.clock.now());

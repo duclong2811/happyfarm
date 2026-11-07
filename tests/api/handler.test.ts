@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
@@ -18,13 +16,13 @@ import { INITIAL_LAND_SIZE, PLOT_TILE_COUNT, parseConstructionId, parseCropInsta
 import { parseTreeInstanceId, type TreeInstanceId } from "@happy-farm/domain";
 import { itemRegistry, shops } from "@happy-farm/game-data";
 import { createHandler } from "../../workers/api/src/handler";
-import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataProgressionDefinition, gameDataStarterWorld, gameDataTileTerrain } from "../../workers/api/src/runtime";
+import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataProgressionDefinition, gameDataStarterWorld, gameDataTileTerrain, gameDataLandSale } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
+import { schemaSql } from "../support/migrations";
 import { FARM_ONE_ID, FARM_TWO_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = ["0001_phase_1_foundation.sql", "0002_crop_simulation.sql", "0003_inventory_and_harvest.sql", "0004_economy_and_shop.sql", "0005_player_progression.sql", "0006_farm_expansion.sql", "0007_seed_economy.sql", "0008_tree_instances.sql", "0009_starter_package.sql", "0010_farm_constructions.sql", "0011_construction_editing.sql", "0012_world_objects.sql", "0013_world_objects_v2.sql", "0014_one_farm_per_player.sql", "0015_player_identities.sql"]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+const migration = schemaSql();
+const PRODUCTION_CURSOR = "2026-09-26T23:44:00.000Z";
 
 const ShopEnvelopeSchema = z.object({ ok: z.literal(true), data: GetShopResponseSchema }).strict();
 const FarmEnvelopeSchema = z.object({ ok: z.literal(true), data: z.object({ farm: z.looseObject({ id: z.string() }) }) });
@@ -131,6 +129,7 @@ describe("Worker API foundation", () => {
       progressionDefinition: gameDataProgressionDefinition,
     starterWorld: gameDataStarterWorld,
     terrain: gameDataTileTerrain,
+    landSale: gameDataLandSale,
       clock: new FixedClock()
     });
   });
@@ -146,6 +145,22 @@ describe("Worker API foundation", () => {
         "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1)"
       )
       .run(player, itemDefinitionId, quantity, NOW);
+  }
+
+  function seedProduction(farmId: string, ownerId: string, assignmentId: string, mode = "RATE_PRODUCTION"): void {
+    db.sqlite.prepare("INSERT OR IGNORE INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'issuer', ?, 'Production Player', 'ACTIVE', ?, ?)").run(ownerId, ownerId, NOW, NOW);
+    db.sqlite.prepare("INSERT INTO farms (id, owner_player_id, name, created_at, updated_at) VALUES (?, ?, 'Production Farm', ?, ?)").run(farmId, ownerId, NOW, NOW);
+    db.sqlite.prepare("INSERT INTO farm_members (farm_id, player_id, role, created_at) VALUES (?, ?, 'OWNER', ?)").run(farmId, ownerId, NOW);
+    const suffix = farmId === FARM_ONE_ID ? "aaaaaaaa" : "bbbbbbbb";
+    const areaId = `workarea_${suffix}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+    const actorId = `actor_${suffix}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+    const jobId = `job_${suffix}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+    const sourceId = `production_source_${suffix}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+    db.sqlite.prepare("INSERT INTO work_areas (id, farm_id, zone_kind, zone_id, kind, display_name, version, created_by_player_id, created_at, updated_at) VALUES (?, ?, 'HOME_ISLAND', 'production-zone', 'FARM', 'Production Field', 1, ?, ?, ?)").run(areaId, farmId, ownerId, NOW, NOW);
+    db.sqlite.prepare("INSERT INTO actors (id, owner_player_id, kind, zone_kind, zone_id, created_at, updated_at) VALUES (?, ?, 'MAIN_CHARACTER', 'HOME_ISLAND', 'production-zone', ?, ?)").run(actorId, ownerId, NOW, NOW);
+    db.sqlite.prepare("INSERT INTO actor_jobs (id, actor_id, farm_id, work_area_id, kind, target_definition_id, priority, execution_mode, created_at, updated_at) VALUES (?, ?, ?, ?, 'FARM', 'crop_carrot', 1, ?, ?, ?)").run(jobId, actorId, farmId, areaId, mode, NOW, NOW);
+    db.sqlite.prepare("INSERT INTO production_sources (id, farm_id, kind, output_item_definition_id, rate_per_hour, created_at, updated_at) VALUES (?, ?, 'RENEWABLE', 'item_carrot', 60, ?, ?)").run(sourceId, farmId, NOW, NOW);
+    db.sqlite.prepare("INSERT INTO production_assignments (id, farm_id, actor_id, actor_job_id, source_id, settlement_cursor, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(assignmentId, farmId, actorId, jobId, sourceId, PRODUCTION_CURSOR, NOW, NOW);
   }
 
   it("serves health without authentication", async () => {
@@ -860,6 +875,7 @@ describe("Worker API foundation", () => {
           shopEntryId: entry.id,
           itemDefinitionId: entry.itemDefinitionId,
           itemDisplayNameKey: itemRegistry.get(entry.itemDefinitionId)?.displayNameKey,
+          shopDisplayNameKey: entry.shopDisplayNameKey ?? null,
           category: itemRegistry.get(entry.itemDefinitionId)?.category,
           currencyId: entry.currencyDefinitionId,
           currencyDisplayNameKey: "currency.gold.name",
@@ -875,6 +891,7 @@ describe("Worker API foundation", () => {
       shopEntryId: "shop_carrot_seed",
       itemDefinitionId: "item_carrot_seed",
       itemDisplayNameKey: "item.carrot_seed.name",
+      shopDisplayNameKey: null,
       category: "SEED",
       currencyId: "currency_gold",
       currencyDisplayNameKey: "currency.gold.name",
@@ -886,6 +903,7 @@ describe("Worker API foundation", () => {
       shopEntryId: "shop_carrot",
       itemDefinitionId: "item_carrot",
       itemDisplayNameKey: "item.carrot.name",
+      shopDisplayNameKey: null,
       category: "CROP",
       currencyId: "currency_gold",
       currencyDisplayNameKey: "currency.gold.name",
@@ -896,7 +914,7 @@ describe("Worker API foundation", () => {
     for (const entry of body.data.entries) {
       expect(Object.keys(entry).sort()).toEqual([
         "buyPrice", "category", "currencyDisplayNameKey", "currencyId", "itemDefinitionId",
-        "itemDisplayNameKey", "maxQuantityPerRequest", "sellPrice", "shopEntryId"
+        "itemDisplayNameKey", "maxQuantityPerRequest", "sellPrice", "shopDisplayNameKey", "shopEntryId"
       ]);
     }
     expect(counts()).toEqual(before);
@@ -1079,7 +1097,7 @@ describe("Worker API foundation", () => {
     const catalogue = await handle(new Request("https://api.test/tree-definitions"));
     expect(catalogue.status).toBe(200);
     const catalogueBody = TreeDefinitionsEnvelopeSchema.parse(await catalogue.json());
-    expect(catalogueBody.data.definitions).toHaveLength(3);
+    expect(catalogueBody.data.definitions).toHaveLength(4);
     expect(catalogueBody.data.definitions[0]).toMatchObject({
       treeDefinitionId: "tree_apple",
       saplingItemDefinitionId: "item_apple_sapling",
@@ -1092,6 +1110,7 @@ describe("Worker API foundation", () => {
     });
     expect(catalogueBody.data.definitions[1]).toMatchObject({ treeDefinitionId: "tree_orange", requiredLevel: 5 });
     expect(catalogueBody.data.definitions[2]).toMatchObject({ treeDefinitionId: "tree_peach", requiredLevel: 9 });
+    expect(catalogueBody.data.definitions[3]).toMatchObject({ treeDefinitionId: "tree_wildwood", harvestItemDefinitionId: "item_wood", baseQuantity: 12 });
     // The catalogue carries only what the client renders from: the sapling's own id and name, and
     // never a reward, a price, or a timer the client could set.
     expect(Object.keys(catalogueBody.data.definitions[0] ?? {}).sort()).toEqual([
@@ -1363,7 +1382,7 @@ describe("Worker API foundation", () => {
       expect(count.total).toBe(1);
     });
 
-    it("refuses land the farm does not own", async () => {
+    it("refuses an ocean footprint, not one the farm has not bought (V14.5.2)", async () => {
       const farmId = await farmWithGold(761);
       const response = await post(`/farms/${farmId}/constructions`, {
         requestId: "build_offland_001",
@@ -1372,8 +1391,9 @@ describe("Worker API foundation", () => {
         anchorY: 4_000,
         rotation: 0
       });
-      expect(response.status).toBe(403);
-      expect(await codeOf(response)).toBe("CONSTRUCTION_NOT_OWNED");
+      // Far offshore is ocean: the geography refuses it. Ownership is no longer the reason.
+      expect(response.status).toBe(400);
+      expect(await codeOf(response)).toBe("CONSTRUCTION_UNSUITABLE_GROUND");
       expect(goldOf()).toBe(761);
     });
 
@@ -1480,18 +1500,14 @@ describe("Worker API foundation", () => {
     });
 
     /**
-     * The freeform rule, end to end: a tree goes on ordinary owned land, and nowhere else.
-     *
-     * This is the bug the pass opened with. The client used to call every cell inside the plot
-     * reservation "owned", so a tree placed at (20,20) - inside the 36x36 rectangle the catalogue can
-     * sell, and outside the twelve-tile square this farm actually has - previewed green and was then
-     * refused with CONSTRUCTION_NOT_OWNED. The server was right; the preview was wrong. Both now say
-     * the same thing, and this pins the server half: owned land takes the tree, and a cell nobody has
-     * bought does not.
+     * V14.5.2: a tree goes on any valid natural island cell, near or far, with no land purchase.
      */
-    it("places a tree on any owned cell, and refuses land the farm has not bought", async () => {
+    it("places a tree on any valid natural island cell, with no land purchase (V14.5.2)", async () => {
       const farmId = await farmWithGold(400);
-      for (const [index, anchor] of [[0, 0], [11, 11]] .entries()) {
+      const goldBefore = goldOf();
+      // (0,0) and (11,11) already have rows; (20,20) is far from the starter square and has none -
+      // all three are natural Home Island land and cost only the tree's own price.
+      for (const [index, anchor] of [[0, 0], [11, 11], [20, 20]].entries()) {
         const built = await post(`/farms/${farmId}/constructions`, {
           requestId: `build_owned_${String(index)}`,
           entryId: "place_tree_broad",
@@ -1501,17 +1517,12 @@ describe("Worker API foundation", () => {
         });
         expect(built.status, `tree at ${String(anchor[0])},${String(anchor[1])}`).toBe(201);
       }
-      // Inside the reservation, outside the farm's own rows: the same refusal the bug reported, and
-      // now the refusal the preview predicts rather than contradicts.
-      const reserved = await post(`/farms/${farmId}/constructions`, {
-        requestId: "build_reserved_001",
-        entryId: "place_tree_broad",
-        anchorX: 20,
-        anchorY: 20,
-        rotation: 0
-      });
-      expect(reserved.status).toBe(403);
-      expect(await codeOf(reserved)).toBe("CONSTRUCTION_NOT_OWNED");
+      // Three trees, three prices; no land fee.
+      expect(goldOf()).toBe(goldBefore - 3 * 40);
+      // The distant footprint got the tile rows it needed, for free.
+      expect(
+        db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ? AND x = 20 AND y = 20").get(farmId)
+      ).toEqual({ count: 1 });
     });
 
     describe("editing a built thing", () => {
@@ -1572,7 +1583,7 @@ describe("Worker API foundation", () => {
         expect(mine.filter((entry) => entry.anchorX === 5 && entry.anchorY === 5)).toHaveLength(1);
       });
 
-      it("refuses a move onto unowned land, into another object, or from a stale copy - and changes nothing", async () => {
+      it("moves onto any valid natural cell, and refuses another object or a stale copy, changing nothing", async () => {
         const farmId = await farmWithGold(2_000);
         const tree = await build(farmId, {
           requestId: "edit_bad_001",
@@ -1591,25 +1602,27 @@ describe("Worker API foundation", () => {
         const move = (body: Record<string, unknown>) =>
           post(`/farms/${farmId}/constructions/${tree.constructionId}/move`, body);
 
-        const unowned = await move({ requestId: "edit_bad_003", anchorX: 20, anchorY: 20, rotation: 0, expectedVersion: tree.version });
-        expect(unowned.status).toBe(403);
-        expect(await codeOf(unowned)).toBe("CONSTRUCTION_NOT_OWNED");
+        // Moving onto distant natural land is fine (V14.5.2) - it writes the rows it needs.
+        const moved = await move({ requestId: "edit_bad_003", anchorX: 20, anchorY: 20, rotation: 0, expectedVersion: tree.version });
+        expect(moved.status).toBe(200);
+        const versionAfterMove = (await constructionOf(moved)).version;
 
-        const ontoAnother = await move({ requestId: "edit_bad_004", anchorX: 8, anchorY: 8, rotation: 0, expectedVersion: tree.version });
+        const ontoAnother = await move({ requestId: "edit_bad_004", anchorX: 8, anchorY: 8, rotation: 0, expectedVersion: versionAfterMove });
         expect(ontoAnother.status).toBe(409);
         expect(await codeOf(ontoAnother)).toBe("CONSTRUCTION_OCCUPIED");
 
-        const stale = await move({ requestId: "edit_bad_005", anchorX: 6, anchorY: 6, rotation: 0, expectedVersion: tree.version + 5 });
+        const stale = await move({ requestId: "edit_bad_005", anchorX: 6, anchorY: 6, rotation: 0, expectedVersion: versionAfterMove + 5 });
         expect(stale.status).toBe(409);
         expect(await codeOf(stale)).toBe("CONFLICT_STALE_STATE");
 
-        // Through all of it the object has not moved a cell, and no gold moved either.
+        // The one accepted move is the only change; the refused ones left the row alone and no gold
+        // ever moved for land.
         const row = db.sqlite
           .prepare("SELECT anchor_x, anchor_y, version FROM farm_constructions WHERE id = ?")
           .get(tree.constructionId) as { anchor_x: number; anchor_y: number; version: number };
-        expect(row.anchor_x).toBe(5);
-        expect(row.anchor_y).toBe(5);
-        expect(row.version).toBe(tree.version);
+        expect(row.anchor_x).toBe(20);
+        expect(row.anchor_y).toBe(20);
+        expect(row.version).toBe(versionAfterMove);
         expect(goldOf()).toBe(2_000 - 40 - 40);
       });
 
@@ -2014,7 +2027,7 @@ describe("Worker API foundation", () => {
         expect(goldOf()).toBe(100);
       });
 
-      it("refuses to place a stored object somewhere it could not stand", async () => {
+      it("refuses to place a stored object in the ocean", async () => {
         const farmId = await farmWithGold(100);
         const seeded = await listOf(farmId);
         const bush = seeded.find((entry) => entry.entryId === "world.bush");
@@ -2026,15 +2039,15 @@ describe("Worker API foundation", () => {
             expectedVersion: bush.version
           })
         );
-        const unowned = await post(`/farms/${farmId}/constructions/${bush.constructionId}/restore`, {
+        const offshore = await post(`/farms/${farmId}/constructions/${bush.constructionId}/restore`, {
           requestId: "starter_restore_002",
           anchorX: 400,
           anchorY: 400,
           rotation: 0,
           expectedVersion: stored.version
         });
-        expect(unowned.status).toBe(403);
-        expect(await codeOf(unowned)).toBe("CONSTRUCTION_NOT_OWNED");
+        expect(offshore.status).toBe(400);
+        expect(await codeOf(offshore)).toBe("CONSTRUCTION_UNSUITABLE_GROUND");
         // A failed restore leaves it in storage rather than half-placed.
         const row = db.sqlite
           .prepare("SELECT state FROM farm_constructions WHERE id = ?")
@@ -2262,6 +2275,92 @@ describe("Worker API foundation", () => {
           )
           .run(PLAYER_ONE_ID, NOW, NOW)
       ).toThrow();
+    });
+
+    it("protects production settlement before invoking the application boundary", async () => {
+      auth.setActor(null);
+      const response = await handle(new Request(
+        `https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`,
+        { method: "POST", body: JSON.stringify({ requestId: "request-unauth" }) }
+      ));
+      expect(response.status).toBe(401);
+      expect(FailureEnvelopeSchema.parse(await response.json()).error.code).toBe("NOT_AUTHENTICATED");
+    });
+
+    it.each(["quantity", "rate", "serverTime", "sourceId", "warehouseId", "playerId", "ownerId"]) (
+      "rejects production authority field %s before settlement",
+      async (field) => {
+        const response = await handle(new Request(
+          `https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`,
+          { method: "POST", body: JSON.stringify({ requestId: "request-valid", [field]: 1 }) }
+        ));
+        expect(response.status).toBe(400);
+        expect(FailureEnvelopeSchema.parse(await response.json()).error.code).toBe("INVALID_INPUT");
+      }
+    );
+
+    it("rejects invalid production path identifiers", async () => {
+      const response = await handle(new Request(
+        "https://example.test/farms/not-a-farm/production/not-an-assignment/settle",
+        { method: "POST", body: JSON.stringify({ requestId: "request-valid" }) }
+      ));
+      expect(response.status).toBe(400);
+      expect(FailureEnvelopeSchema.parse(await response.json()).error.code).toBe("INVALID_INPUT");
+    });
+
+    it("settles a real composed production assignment and persists output", async () => {
+      seedProduction(FARM_ONE_ID, PLAYER_ONE_ID, "production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      const response = await handle(new Request(`https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`, { method: "POST", body: JSON.stringify({ requestId: "request-happy" }) }));
+      expect(response.status).toBe(200);
+      expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID)).toEqual({ quantity: 16 });
+      expect(db.sqlite.prepare("SELECT settlement_cursor FROM production_assignments WHERE id = ?").get("production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toEqual({ settlement_cursor: NOW });
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM production_settlement_receipts").get()).toEqual({ count: 1 });
+    });
+
+    it("rejects a legitimate player from another player's farm without mutation", async () => {
+      seedProduction(FARM_ONE_ID, PLAYER_ONE_ID, "production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      db.sqlite.prepare("INSERT INTO players (id, auth_issuer, auth_subject, display_name, status, created_at, updated_at) VALUES (?, 'issuer', ?, 'Other', 'ACTIVE', ?, ?)").run(PLAYER_TWO_ID, PLAYER_TWO_ID, NOW, NOW);
+      auth.setActor({ playerId: PLAYER_TWO_ID });
+      const response = await handle(new Request(`https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`, { method: "POST", body: JSON.stringify({ requestId: "request-wrong-farm" }) }));
+      expect(response.status).toBe(403);
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM production_settlement_receipts").get()).toEqual({ count: 0 });
+    });
+
+    it("rejects an assignment from another farm", async () => {
+      seedProduction(FARM_ONE_ID, PLAYER_ONE_ID, "production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      seedProduction(FARM_TWO_ID, PLAYER_TWO_ID, "production_assignment_bbbbbbbb-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      const response = await handle(new Request(`https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_bbbbbbbb-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`, { method: "POST", body: JSON.stringify({ requestId: "request-cross-farm" }) }));
+      expect(response.status).toBe(404);
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM production_settlement_receipts").get()).toEqual({ count: 0 });
+    });
+
+    it("rejects a linked LEGACY_ACTION_AUTO assignment without production mutation", async () => {
+      seedProduction(FARM_ONE_ID, PLAYER_ONE_ID, "production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "LEGACY_ACTION_AUTO");
+      const response = await handle(new Request(`https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`, { method: "POST", body: JSON.stringify({ requestId: "request-legacy" }) }));
+      expect(response.status).toBe(400);
+      expect(FailureEnvelopeSchema.parse(await response.json()).error.code).toBe("INVALID_INPUT");
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM production_settlement_receipts").get()).toEqual({ count: 0 });
+    });
+
+    it("does not duplicate output on exact replay or a new-request-id retry", async () => {
+      seedProduction(FARM_ONE_ID, PLAYER_ONE_ID, "production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      const url = `https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`;
+      await handle(new Request(url, { method: "POST", body: JSON.stringify({ requestId: "request-replay-a" }) }));
+      await handle(new Request(url, { method: "POST", body: JSON.stringify({ requestId: "request-retry-b" }) }));
+      expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID)).toEqual({ quantity: 16 });
+      expect(db.sqlite.prepare("SELECT settlement_cursor FROM production_assignments WHERE id = ?").get("production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toEqual({ settlement_cursor: NOW });
+    });
+
+    it("does not double-credit two same-time HTTP settlement requests", async () => {
+      seedProduction(FARM_ONE_ID, PLAYER_ONE_ID, "production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      const url = `https://example.test/farms/${FARM_ONE_ID}/production/production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/settle`;
+      const responses = await Promise.all([
+        handle(new Request(url, { method: "POST", body: JSON.stringify({ requestId: "request-tab-a" }) })),
+        handle(new Request(url, { method: "POST", body: JSON.stringify({ requestId: "request-tab-b" }) }))
+      ]);
+      expect(responses.some((response) => response.status === 200)).toBe(true);
+      expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_carrot'").get(PLAYER_ONE_ID)).toEqual({ quantity: 16 });
+      expect(db.sqlite.prepare("SELECT settlement_cursor FROM production_assignments WHERE id = ?").get("production_assignment_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).toEqual({ settlement_cursor: NOW });
     });
   });
 });

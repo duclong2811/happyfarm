@@ -234,6 +234,19 @@ export function insidePlaza(tile: TileCoordinate, frame: WorldFrame = WORLD_FRAM
 }
 
 /**
+ * Whether a tile holds the pond's water.
+ *
+ * The pond is the island's only inland water, and it is water for the server exactly as it is for the
+ * client's cell map: a sale, a placement or a walk must not treat the lake as dry land. The ellipse
+ * is the same one the renderer draws, so the checked island and the drawn island agree.
+ */
+export function insidePond(tile: TileCoordinate): boolean {
+  const dx = (tile.x - POND.center.x) / POND.radiusX;
+  const dy = (tile.y - POND.center.y) / POND.radiusY;
+  return dx * dx + dy * dy <= 1;
+}
+
+/**
  * What a tile is, from the island's own shape.
  *
  * One function, used by the API's placement rules and (through the cell map) by the renderer, so a
@@ -250,6 +263,9 @@ export function classifyTile(tile: TileCoordinate, frame: WorldFrame = WORLD_FRA
     const shallow = radius <= 1 + SHALLOW_WATER_BAND && !insideHarbourWater(tile);
     return { terrain: "WATER", shallowWater: shallow, protectedGround: insideHarbourWater(tile), insideIsland: false };
   }
+  if (insidePond(tile)) {
+    return { terrain: "WATER", shallowWater: false, protectedGround: false, insideIsland: true };
+  }
   const zone = volcanoZoneAt(world.worldX, world.worldZ, volcanoShape(frame));
   if (zone !== null) {
     const protectedGround = zone !== "FOOTHILL";
@@ -264,4 +280,43 @@ export function classifyTile(tile: TileCoordinate, frame: WorldFrame = WORLD_FRA
     protectedGround: insidePlaza(tile, frame),
     insideIsland: true
   };
+}
+
+/**
+ * What a cell can be *worked* for, in the vocabulary a work area names its kind with.
+ *
+ * This is the server-relevant slice of the client's `CellCapability`: the capabilities that decide
+ * whether a player-named work area may claim a cell. It is deliberately narrower than the client's
+ * list - `WALK`, `BUILD`, `ROAD` and the rest are placement questions and never a work area's - and
+ * it is derived only from geography, because a work area must be validatable without a district map.
+ *
+ * The mapping is the same one the client draws: dry unprotected land is farmland, woodland and
+ * pasture ground; the volcano's wooded foothill is `FORESTRY`; its steep flank is the one ground a
+ * quarry could one day be cut into (`MINING`); and the shallow shelf is aquaculture.
+ */
+export const WORK_AREA_GROUND_CAPABILITIES = ["FARM", "FORESTRY", "LIVESTOCK", "MINING", "AQUACULTURE", "FISHERY"] as const;
+export type WorkAreaGroundCapability = (typeof WORK_AREA_GROUND_CAPABILITIES)[number];
+
+export function groundCapabilities(
+  tile: TileCoordinate,
+  frame: WorldFrame = WORLD_FRAME
+): readonly WorkAreaGroundCapability[] {
+  const classification = classifyTile(tile, frame);
+  if (classification.terrain === "LAND") {
+    return classification.protectedGround ? [] : ["FARM", "FORESTRY", "LIVESTOCK"];
+  }
+  if (classification.terrain === "VOLCANO") {
+    const world = tileToWorld(tile, frame);
+    const zone = volcanoZoneAt(world.worldX, world.worldZ, volcanoShape(frame));
+    if (zone === "SLOPE") return ["MINING"];
+    if (zone === "FOOTHILL") return ["FORESTRY"];
+    // The crater is nobody's ground and nobody's work.
+    return [];
+  }
+  if (classification.terrain === "WATER") {
+    // Wild fishery is valid on authored natural water, including the pond and harbour approach.
+    // Aquaculture remains the separate shallow-shelf capability and is not cut over here.
+    return classification.shallowWater ? ["FISHERY", "AQUACULTURE"] : ["FISHERY"];
+  }
+  return [];
 }

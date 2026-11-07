@@ -19,6 +19,7 @@ import { NEUTRAL_INPUT, type InputVector } from "./input";
  */
 
 export interface PlayerRuntimeDeps {
+  readonly onTick?: (timestampMs: number, pose: PlayerState) => boolean;
   /** Where a character appears, in world metres: the fixed spawn from the world config. */
   readonly spawn: { readonly worldX: number; readonly worldZ: number };
   /** Height of the character's feet above the ground plane. Cosmetic only. */
@@ -54,6 +55,8 @@ export interface PlayerRuntime {
   stop(): void;
   /** Puts a running character back at the spawn. Does nothing while stopped. */
   respawn(): void;
+  /** Teleports the local avatar to an already validated presentation spawn. */
+  teleport(position: { readonly worldX: number; readonly worldZ: number }): void;
   /**
    * Replaces the collision world from the farm's current rows.
    *
@@ -164,6 +167,7 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
       pose = { ...pose, y: groundY(pose.x, pose.z) };
     }
     deps.onPose(pose);
+    const visualActive = deps.onTick?.(timestampMs, pose) ?? false;
 
     if (destination !== null) {
       // A walk ends on arrival, on a step that could not move at all, or after long enough with no
@@ -192,7 +196,7 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
 
     // A held key - or a walk still under way - keeps the loop awake; with neither, the renderer goes
     // back to drawing on demand.
-    if (manual.x !== 0 || manual.z !== 0 || destination !== null) {
+    if (manual.x !== 0 || manual.z !== 0 || destination !== null || visualActive) {
       schedule();
     } else {
       lastFrameMs = null;
@@ -227,6 +231,11 @@ export function createPlayerRuntime(deps: PlayerRuntimeDeps): PlayerRuntime {
       lastFrameMs = null;
       clearDestination();
       publish(createPlayerState(deps.spawn, groundY(deps.spawn.worldX, deps.spawn.worldZ)));
+    },
+    teleport(next: { readonly worldX: number; readonly worldZ: number }): void {
+      if (pose === null || !Number.isFinite(next.worldX) || !Number.isFinite(next.worldZ)) return;
+      lastFrameMs = null; clearDestination();
+      publish(createPlayerState({ worldX: next.worldX, worldZ: next.worldZ }, groundY(next.worldX, next.worldZ)));
     },
     setTiles(next: readonly SceneTile[]): void {
       tiles = next;

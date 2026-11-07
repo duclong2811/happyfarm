@@ -23,8 +23,8 @@ Player  ->  Zone (kind, zoneId)  ->  FishingSpot  ->  FishingTable  ->  Fish
 
 A spot declares `zoneKind: HOME_ISLAND`. At settlement time the server resolves *the actor's own* home
 island zone through `HomeIslandZoneResolver` (`zone_home_island_<farmId>` today) and refuses a spot whose
-kind is not that zone's kind. The client never sends a zone, and the spot is never assumed to be the
-player's.
+kind is not that zone's kind. Mutable wild stock is keyed by that resolved zone and spot in
+`fishing_spot_states`; the client never sends a zone, and the spot is never assumed to be the player's.
 
 That is the seam a shared ground uses later: a `SHARED_FISHING` spot resolves a different zone through a
 different adapter, and the start/settle/cancel use cases do not change. None of that is implemented -
@@ -45,9 +45,9 @@ A **FishingSpot** is the smallest authoritative thing in the water:
 | `enabled` | An operator can close a spot without removing it |
 
 Spots are **static game data** (`packages/game-data/src/fishing/index.ts`), not rows. Home Island's water
-is authored, the spots do not move, and nothing depletes, so a table would be a second copy of the map.
-The boundary: a spot that becomes shared or depletable gets *its own* zone state later; this catalogue
-does not grow a column to pre-empt it.
+is authored and the spots do not move. Wild stock is the separate mutable row: it stores a bounded
+stock count and regeneration anchor, and regeneration is calculated from server time rather than by a
+timer. Aquaculture remains a distinct future source type and does not use these rows.
 
 There are four spots today: three on the island's pond bank (freshwater) and one in the sea off the
 harbour quay (coastal). Each was checked against the real terrain - the spot sits in water with walkable
@@ -79,13 +79,15 @@ IDLE -> (POST /fishing/start)  ACTIVE  -> (POST /fishing/:id/settle)  SETTLED ->
 ```
 
 There is no cast animation state machine and no per-second write. One row per attempt records the actor,
-the zone, the spot, the table, the two timestamps and a status; the wait itself is a comparison.
+the zone, the spot, the table, the two timestamps and a status; the wait itself is a comparison. A
+settlement consumes one stock unit in the same transaction as the catch.
 
 ## Authority
 
 | Fact | Owner |
 | --- | --- |
 | Which fish is caught | Server (`selectCatch` over the table, with a server roll) |
+| How much wild stock remains | Server (`fishing_spot_states`, with mathematical regeneration) |
 | When a catch is claimable | Server (`ready_at` against the server clock) |
 | How much experience | Server (the fish definition) |
 | Whether the player may fish here | Server (actor -> zone -> spot) |
@@ -164,6 +166,7 @@ without `Math.random` anywhere in the logic.
 ## Deliberately absent
 
 No energy, stamina, bait, rods, hooks, reels, durability, boats, minigame, timing bar, fish fighting,
-shared grounds, depletion, rare events, regions, weather, seasons, or fisherman skill tree. The catch
-table is the extension point for river/lake/deep-sea/regional/rare fishing, and `zoneKind` is the
-extension point for shared water.
+shared grounds, rare events, regions, weather, seasons, or fisherman skill tree. Wild spot depletion
+and regeneration now exist for Home Island automation; shared-ground stock, boats and aquaculture do
+not. The catch table is the extension point for river/lake/deep-sea/regional/rare fishing, and
+`zoneKind` is the extension point for shared water.

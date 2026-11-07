@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import type { DevApiHost } from "../../workers/api/dev/api-host";
+import { createHostCache, isServerSourceChange } from "./dev-api-host-cache";
 
 /**
  * Serves the development API on the same origin as the UI.
@@ -191,40 +192,57 @@ function devApiPlugin(): Plugin {
     apply: "serve",
     configureServer(server: ViteDevServer) {
       const repoRoot = resolve(server.config.root, "..", "..");
-      let hostPromise: Promise<DevApiHost> | null = null;
-
-      const loadHost = (): Promise<DevApiHost> => {
-        hostPromise ??= server
-          .ssrLoadModule(resolve(repoRoot, HOST_MODULE))
-          .then((loaded: unknown) => {
-            const factory = loaded as {
-              createDevApiHost: (options: { repoRoot: string }) => DevApiHost;
-            };
-            const host = factory.createDevApiHost({ repoRoot });
-            if (host.farmOwnershipRepair.farmsRemoved > 0) {
-              // A local database from before one-farm-per-player. The runner kept the farm the last
-              // session was playing and removed the duplicates the old bootstrap left behind, because
-              // the unique index that makes "one player, one farm" true cannot be created over them.
-              server.config.logger.warn(
-                `[dev-api] repaired ${String(host.farmOwnershipRepair.farmsRemoved)} abandoned duplicate farm(s) in the local database; kept ${host.farmOwnershipRepair.keptFarmIds.join(", ")}`
-              );
-            }
-            server.config.logger.info(
-              `[dev-api] database ${host.databasePath}${
-                host.appliedMigrations.length > 0
-                  ? ` (applied ${String(host.appliedMigrations.length)} migration(s))`
-                  : ""
-              }`
+      /**
+       * The host is cached per generation, and a server-side edit retires it. `createDevApiHost`
+       * captures `createHandler` when it is built, so a host memoized for the life of the dev server
+       * would keep serving the routes and schemas from before the edit - the "stale worker"
+       * failures of V14.5.1C and V14.5.2A. See `dev-api-host-cache.ts`.
+       */
+      const hostCache = createHostCache<DevApiHost>(() =>
+        server.ssrLoadModule(resolve(repoRoot, HOST_MODULE)).then((loaded: unknown) => {
+          const factory = loaded as {
+            createDevApiHost: (options: { repoRoot: string }) => DevApiHost;
+          };
+          const host = factory.createDevApiHost({ repoRoot });
+          if (host.farmOwnershipRepair.farmsRemoved > 0) {
+            // A local database from before one-farm-per-player. The runner kept the farm the last
+            // session was playing and removed the duplicates the old bootstrap left behind, because
+            // the unique index that makes "one player, one farm" true cannot be created over them.
+            server.config.logger.warn(
+              `[dev-api] repaired ${String(host.farmOwnershipRepair.farmsRemoved)} abandoned duplicate farm(s) in the local database; kept ${host.farmOwnershipRepair.keptFarmIds.join(", ")}`
             );
-            if (!host.configured) {
-              server.config.logger.warn(
-                "[dev-api] workers/api/.dev.vars is missing a development identity; every request will fail closed with NOT_AUTHENTICATED."
-              );
-            }
-            return host;
-          });
-        return hostPromise;
-      };
+          }
+          server.config.logger.info(
+            `[dev-api] database ${host.databasePath}${
+              host.appliedMigrations.length > 0
+                ? ` (applied ${String(host.appliedMigrations.length)} migration(s))`
+                : ""
+            }`
+          );
+          if (!host.configured) {
+            server.config.logger.warn(
+              "[dev-api] workers/api/.dev.vars is missing a development identity; every request will fail closed with NOT_AUTHENTICATED."
+            );
+          }
+          return host;
+        })
+      );
+
+      const serverSourceRoots = [
+        resolve(repoRoot, "workers"),
+        resolve(repoRoot, "packages"),
+        resolve(repoRoot, "database")
+      ];
+      server.watcher.on("all", (_event, file) => {
+        if (!isServerSourceChange(file, serverSourceRoots)) return;
+        // Drop both caches: the host instance *and* the SSR modules it was built from, so the next
+        // request builds a host from the edited source instead of Vite's cached copy of it.
+        hostCache.invalidate();
+        server.moduleGraph.invalidateAll();
+        server.config.logger.info(
+          "[dev-api] server source changed; rebuilding the API host on the next request"
+        );
+      });
 
       server.middlewares.use((request, response, next) => {
         const url = request.url;
@@ -233,8 +251,9 @@ function devApiPlugin(): Plugin {
           return;
         }
         void (async () => {
+          hostCache.begin();
           try {
-            const host = await loadHost();
+            const host = await hostCache.get();
             const workerRequest = toWebRequest(request, await readRequestBody(request));
             await respond(
               response,
@@ -265,6 +284,8 @@ function devApiPlugin(): Plugin {
               response.setHeader("content-type", "application/json");
             }
             response.end(JSON.stringify({ ok: false, error: { code: "INTERNAL_ERROR" } }));
+          } finally {
+            hostCache.end();
           }
         })();
       });
@@ -293,6 +314,12 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: "dist"
+    outDir: "dist",
+    // Keep item thumbnails as cacheable, hashed files even when their SVG payload is small.
+    // Other assets retain Vite's normal inline threshold.
+    assetsInlineLimit: (filePath, content) =>
+      filePath.replaceAll("\\", "/").includes("/src/assets/items/")
+        ? false
+        : content.byteLength < 4096
   }
 });

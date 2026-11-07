@@ -11,6 +11,7 @@ import {
   InventoryEntryDTOSchema,
   MAX_TILE_X,
   PlantCropRequestSchema,
+  PlantCropAreaRequestSchema,
   ShopEntryDTOSchema,
   SellItemRequestSchema,
   TileCoordinateSchema,
@@ -53,6 +54,14 @@ describe("Phase 1 runtime validation", () => {
     expect(HarvestCropRequestSchema.safeParse({ ...valid, expectedCropVersion: 0 }).success).toBe(false);
     expect(HarvestCropRequestSchema.safeParse({ ...valid, quantityAdded: 999 }).success).toBe(false);
     expect(HarvestCropRequestSchema.safeParse({ ...valid, itemDefinitionId: "item_gold" }).success).toBe(false);
+  });
+
+  it("bounds area planting and rejects client quantities", () => {
+    const cell = { x: 0, y: 0, expectedTileVersion: 1 };
+    expect(PlantCropAreaRequestSchema.safeParse({ requestId: "area_plant_123", cropDefinitionId: "crop_carrot", cells: [cell] }).success).toBe(true);
+    expect(PlantCropAreaRequestSchema.safeParse({ requestId: "area_plant_123", cropDefinitionId: "crop_carrot", cells: [] }).success).toBe(false);
+    expect(PlantCropAreaRequestSchema.safeParse({ requestId: "area_plant_123", cropDefinitionId: "crop_carrot", cells: Array.from({ length: 26 }, () => cell) }).success).toBe(false);
+    expect(PlantCropAreaRequestSchema.safeParse({ requestId: "area_plant_123", cropDefinitionId: "crop_carrot", cells: [{ ...cell, quantity: 2 }] }).success).toBe(false);
   });
 
   it("validates an uproot command that can only carry intent", () => {
@@ -120,6 +129,7 @@ describe("Phase 1 runtime validation", () => {
       shopEntryId: "shop_carrot_seed",
       itemDefinitionId: "item_carrot_seed",
       itemDisplayNameKey: "item.carrot_seed.name",
+      shopDisplayNameKey: null,
       category: "SEED",
       currencyId: "currency_gold",
       currencyDisplayNameKey: "currency.gold.name",

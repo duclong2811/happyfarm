@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
   ActorContext,
@@ -32,6 +30,7 @@ import {
 import { createHandler } from "../../workers/api/src/handler";
 import {
   GameDataConstructionDefinitions,
+  GameDataForestryConstructionDefinitions,
   GameDataCropDefinitions,
   GameDataCurrencyDefinitions,
   GameDataFishingCatalogue,
@@ -43,10 +42,12 @@ import {
   Sha256Fingerprint,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
-  gameDataTileTerrain
+  gameDataTileTerrain,
+  gameDataLandSale
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID } from "../support/fixtures";
+import { schemaSql } from "../support/migrations";
 
 /**
  * Forestry through the same API mining already uses.
@@ -57,27 +58,7 @@ import { FARM_ONE_ID, NOW, PLAYER_ONE_ID } from "../support/fixtures";
  * a decorative object are not nodes, and a node's reward and depletion survive a replay and a race.
  */
 
-const MIGRATIONS = [
-  "0001_phase_1_foundation.sql",
-  "0002_crop_simulation.sql",
-  "0003_inventory_and_harvest.sql",
-  "0004_economy_and_shop.sql",
-  "0005_player_progression.sql",
-  "0006_farm_expansion.sql",
-  "0007_seed_economy.sql",
-  "0008_tree_instances.sql",
-  "0009_starter_package.sql",
-  "0010_farm_constructions.sql",
-  "0011_construction_editing.sql",
-  "0012_world_objects.sql",
-  "0013_world_objects_v2.sql",
-  "0014_one_farm_per_player.sql",
-  "0015_player_identities.sql",
-  "0016_fishing_actions.sql",
-  "0017_resource_nodes.sql"
-]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+const MIGRATIONS = schemaSql();
 
 const WILDWOOD = { node: "node_wildwood_north_1", item: "item_wood", quantity: 2, actionSeconds: 5, regenerationSeconds: 120, xp: 2 };
 const PINE = { node: "node_pine_north_1", item: "item_resin", requiredLevel: 3 };
@@ -177,9 +158,11 @@ describe("the forestry loop", () => {
       plotDefinitions: new GameDataPlotDefinitions(),
       treeDefinitions: new GameDataTreeDefinitions(),
       constructionDefinitions: new GameDataConstructionDefinitions(),
+      forestryConstructionDefinitions: new GameDataForestryConstructionDefinitions(),
       progressionDefinition: gameDataProgressionDefinition,
       starterWorld: gameDataStarterWorld,
       terrain: gameDataTileTerrain,
+      landSale: gameDataLandSale,
       fishing: {
         catalogue: new GameDataFishingCatalogue(),
         ids: new ForestryIds(),
@@ -334,6 +317,76 @@ describe("the forestry loop", () => {
     expect(balance()).toBe(WILDWOOD.quantity);
   });
 
+  it("chops a persisted broadleaf construction without replacing its management lifecycle", async () => {
+    await createFarm();
+    const listed = await get(`/farms/${FARM_ONE_ID}/constructions`);
+    const constructions = ((await body(listed)) as {
+      data: { constructions: readonly { constructionId: string; entryId: string; anchorX: number; anchorY: number; version: number; state: string; forestry?: { status: string; version: number; regenerationAt: string | null } }[] }
+    }).data.constructions;
+    const tree = constructions.find((candidate) => candidate.entryId === "world.tree_broad" && candidate.state === "ACTIVE");
+    expect(tree?.forestry).toMatchObject({ status: "READY", version: 1, regenerationAt: null });
+    expect(tree).toBeDefined();
+    const constructionId = tree?.constructionId ?? "";
+
+    const chopped = await post(`/farms/${FARM_ONE_ID}/forestry/constructions/${constructionId}/chop`, {
+      requestId: "construction-chop-1",
+      expectedForestryVersion: 1
+    });
+    expect(chopped.status).toBe(200);
+    const first = (await body(chopped)) as { data: { quantityAdded: number; state: { status: string; version: number; regenerationAt: string | null } } };
+    expect(first.data).toMatchObject({ quantityAdded: 2, state: { status: "DEPLETED", version: 2 } });
+    expect(first.data.state.regenerationAt).toBeTruthy();
+    expect(held("item_wood")).toBe(2);
+
+    const replay = await post(`/farms/${FARM_ONE_ID}/forestry/constructions/${constructionId}/chop`, {
+      requestId: "construction-chop-1",
+      expectedForestryVersion: 1
+    });
+    expect(replay.status).toBe(200);
+    expect(((await body(replay)) as { data: { quantityAdded: number } }).data.quantityAdded).toBe(2);
+    expect(held("item_wood")).toBe(2);
+
+    const depleted = await post(`/farms/${FARM_ONE_ID}/forestry/constructions/${constructionId}/chop`, {
+      requestId: "construction-chop-2",
+      expectedForestryVersion: 2
+    });
+    expect(depleted.status).toBe(409);
+    expect(held("item_wood")).toBe(2);
+
+    const stored = await post(`/farms/${FARM_ONE_ID}/constructions/${constructionId}/store`, {
+      requestId: "construction-store-1",
+      expectedVersion: tree?.version
+    });
+    expect(stored.status).toBe(200);
+    const storedRow = (await body(stored)) as { data: { construction: { version: number; state: string } } };
+    expect(storedRow.data.construction).toMatchObject({ version: 2, state: "STORED" });
+
+    const restored = await post(`/farms/${FARM_ONE_ID}/constructions/${constructionId}/restore`, {
+      requestId: "construction-restore-1",
+      anchorX: Math.round(tree?.anchorX ?? 23),
+      anchorY: Math.round(tree?.anchorY ?? -14),
+      rotation: 0,
+      expectedVersion: storedRow.data.construction.version
+    });
+    expect(restored.status).toBe(200);
+    const afterRestore = await get(`/farms/${FARM_ONE_ID}/constructions`);
+    const afterRows = ((await body(afterRestore)) as { data: { constructions: typeof constructions } }).data.constructions;
+    const restoredTree = afterRows.find((candidate) => candidate.constructionId === constructionId);
+    expect(restoredTree?.forestry).toMatchObject({ status: "DEPLETED", version: 2, regenerationAt: first.data.state.regenerationAt });
+    expect(held("item_wood")).toBe(2);
+
+    clock.advanceSeconds(721);
+    const readyAgain = await get(`/farms/${FARM_ONE_ID}/constructions`);
+    const readyRows = ((await body(readyAgain)) as { data: { constructions: typeof constructions } }).data.constructions;
+    expect(readyRows.find((candidate) => candidate.constructionId === constructionId)?.forestry).toMatchObject({ status: "READY", version: 2, regenerationAt: null });
+    const stale = await post(`/farms/${FARM_ONE_ID}/forestry/constructions/${constructionId}/chop`, {
+      requestId: "construction-chop-stale",
+      expectedForestryVersion: 1
+    });
+    expect(stale.status).toBe(409);
+    expect(held("item_wood")).toBe(2);
+  });
+
   it("gates the advanced trees behind the same level check mining uses", async () => {
     await createFarm();
     for (const tree of [PINE, HARDWOOD]) {
@@ -359,11 +412,11 @@ describe("the forestry loop", () => {
 
   it("keeps MINE and CHOP on one engine, and lets a client name neither", async () => {
     await createFarm();
-    // A rock keeps its own verb through the same commands...
-    const rock = await chop(STONE.node, "rock", 6);
-    expect(rock.action.verb).toBe("MINE");
-    expect(rock.settled.status).toBe(200);
-    expect(held(STONE.item)).toBe(2);
+    // Unified ore keeps its own verb, but new starts use the actor assignment path rather than the
+    // legacy timed resource-action endpoint.
+    const rock = await start(STONE.node, "forest_unified_mine");
+    expect(rock.status).toBe(400);
+    await expect(body(rock)).resolves.toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
 
     // ...and a client cannot ask for a verb of its own.
     const smuggled = await start(WILDWOOD.node, "forest_smuggle_verb", { verb: "MINE" });

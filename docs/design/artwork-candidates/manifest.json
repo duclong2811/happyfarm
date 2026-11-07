@@ -1,0 +1,159 @@
+{
+  "name": "HappyFarm Premium Farming Adventure — Candidate Asset Kit V1",
+  "status": "CANDIDATE_ASSETS_NOT_PRODUCTION_APPROVED",
+  "source": "First-party generated illustration boards, not cropped from the approved flattened concept or third-party game screenshots",
+  "notes": [
+    "Background has been extracted algorithmically; carefully inspect alpha halos, anti-aliasing and corner quality.",
+    "Blank frames and slots are intended to hold dynamic text/item content; never ship flattened reference overlays.",
+    "No game state or values included. The asset board illustrations with numbers and words were explicitly omitted.",
+    "The panel frame needs 9-slice scaling proof at desktop and mobile; do not assume from artwork naming.",
+    "Item image sizes are limited by source illustration; judge crispness at rendered size."
+  ],
+  "assets": {
+    "slot_normal.png": {
+      "dimensions": [
+        117,
+        129
+      ],
+      "sha256": "e45e11630364787d78346ea7762bfaf715bfa4353a5aa90cd37cc23990bea083",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 20415
+    },
+    "button_primary_blank.png": {
+      "dimensions": [
+        310,
+        91
+      ],
+      "sha256": "c1488f9473de6978c4d4b3bf34fc680fd168a0f53b053bd817a567c261f58d57",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 35988
+    },
+    "slot_disabled.png": {
+      "dimensions": [
+        119,
+        129
+      ],
+      "sha256": "843ae9c86b7ec7700a5527f0f23821209001b6b47b7b5037129b15340e2305fa",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 19616
+    },
+    "wood_title_blank.png": {
+      "dimensions": [
+        429,
+        101
+      ],
+      "sha256": "0adba333e36e3db5ad29296f75a43a6da35c9c62b41a6fcdc1747547429978a4",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 73931
+    },
+    "slot_hover.png": {
+      "dimensions": [
+        118,
+        129
+      ],
+      "sha256": "f1cbd25bf07d2c3d7487e8dd12695d876978b79ab266063851c63ad6de8fbf04",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 19276
+    },
+    "slot_selected.png": {
+      "dimensions": [
+        127,
+        129
+      ],
+      "sha256": "30e73d9efb7752ca1364d37d6f62faf0bd1e201d8d19b0b16ef4844348428650",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 23263
+    },
+    "item_seed_carrot.png": {
+      "dimensions": [
+        111,
+        120
+      ],
+      "sha256": "971e146f020d75a13bb9c80c576762e0ab411f152f4bf807dfe462dbb250ab5b",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 25415
+    },
+    "item_seed_corn.png": {
+      "dimensions": [
+        106,
+        120
+      ],
+      "sha256": "a8e3e9cc506ef3f0e81bc8ec070d5cfd33c456b6da144cd23475de9a2d2bd4f2",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 25309
+    },
+    "item_seed_generic.png": {
+      "dimensions": [
+        125,
+        120
+      ],
+      "sha256": "547a7efa59436a3c45e23a370cd9c58e38ebdcd5fbd14e5ee02a6ccf9cc5fa10",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 26548
+    },
+    "inventory_panel_blank.png": {
+      "dimensions": [
+        584,
+        394
+      ],
+      "sha256": "cd4ab103b1a47d0c45e253ef8a4baa685f90849e3d829311b29e4122ceebd14c",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 374924
+    },
+    "category_tab_alt_blank.png": {
+      "dimensions": [
+        174,
+        72
+      ],
+      "sha256": "6999b85ca9a1196aca761a8fdf53908f2de31817d75091b5ff32fbb01ab2f477",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 16666
+    },
+    "category_tab_blank.png": {
+      "dimensions": [
+        190,
+        72
+      ],
+      "sha256": "04f59e7855cc6597eefd52ae2392412947f523e9e1e616fe1e1783d511ed7de0",
+      "alpha_extrema": [
+        0,
+        255
+      ],
+      "bytes": 19283
+    }
+  },
+  "candidate_count": 12
+}

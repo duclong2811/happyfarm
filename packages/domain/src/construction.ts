@@ -36,8 +36,13 @@ export interface CellBounds {
 export interface ConstructionCell {
   readonly x: number;
   readonly y: number;
-  /** Whether this cell is owned by the farm the player is building on. */
-  readonly owned: boolean;
+  /**
+   * Legacy ownership flag, retained while callers still compute it.
+   *
+   * V14.5.2 removed its meaning: ownership is not a placement boundary, because the natural Home
+   * Island is already the player's to develop. Nothing reads it.
+   */
+  readonly owned?: boolean;
   readonly terrain: "LAND" | "SHORE" | "WATER" | "VOLCANO" | "BLOCKED";
   /**
    * Whether this water is workable shallows rather than open sea.
@@ -142,7 +147,6 @@ export interface ConstructionInstance {
 /** Why a construction may not go where the player pointed. */
 export type ConstructionRefusal =
   | "OUTSIDE_ISLAND"
-  | "NOT_OWNED"
   | "INVALID_TERRAIN"
   | "OCCUPIED"
   | "BLOCKED"
@@ -268,8 +272,6 @@ export function groundRefusal(check: GroundCheck): ConstructionRefusal | null {
   }
 
   for (const cell of cells) {
-    // Ownership first: land the farm does not own is "not yours", whatever it happens to be made of.
-    if (definition.requiresOwnership && !cell.owned) return "NOT_OWNED";
     // Ground the island keeps for itself - the crater, the village's own buildings, the harbour's
     // approach. Different from "somebody built here", which is `OCCUPIED`.
     if (cell.protectedGround || cell.terrain === "VOLCANO" || cell.terrain === "BLOCKED") return "BLOCKED";

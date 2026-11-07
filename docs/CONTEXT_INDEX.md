@@ -140,10 +140,24 @@ landmark set, or the renderer's lighting, sky, shadows, and instancing.
   (`islandRadiusAt`, `islandRimPoint`, `terrainHeightAt`, `GROUND_SURFACE_Y`), its config in
   `world-config.ts` (`ISLAND_SHAPE`, `TERRAIN_SHAPE`, `TERRAIN_RELIEF_WORLD`, `terrainLevelAreas`),
   and `tests/web/farm-terrain.test.ts`.
-- The cultivated apron and the bed follow the land the farm *owns* (`FarmWorld.apron`/`.bed`,
-  `APRON_MARGIN_TILES`); locked land is ground, scrub, a stake line, and a sign
-  (`FarmWorld.lockedScenery`/`.lockedBoundary`). Both are rebuilt with the overlay, never with the
-  static layer.
+- **Ownership is not terrain (V14.5.1).** Buying land grants development rights and nothing else:
+  an owned, uncultivated cell is grass, and only a cell actually carrying a crop draws a soil pad
+  (`tileDrawsSoil`, `TILE_SURFACE_Y`). The old apron/bed/furrow rectangle was removed with ADR 0029.
+  Locked land is ground, scrub, a stake line, and a sign
+  (`FarmWorld.lockedScenery`/`.lockedBoundary`), rebuilt with the overlay, never the static layer.
+- **Free natural land (V14.5.2).** The natural Home Island is the player's land: plant and build
+  anywhere the island is valid, with no quote, no purchase, no land Gold and no ownership row
+  required. `farm_tiles` is now tile state plus legacy ownership bookkeeping - the settlements write
+  the rows a used cell needs, for free. Geography still limits (ocean, pond, beach, volcano,
+  protected ground, occupancy) and the server decides. Read
+  `docs/decisions/0030-home-island-free-land.md` before touching placement, planting, `farm_tiles`,
+  or the land routes.
+- The future sea-reclamation seam is `packages/domain/src/land.ts` (`LandOrigin`, `isUsableLand`,
+  `landOriginFor`): usable land = natural OR (later) reclaimed. Reclamation itself is not
+  implemented.
+- Legacy-only, no UI: `POST /farms/:id/plots`, `POST /farms/:id/land/quote`,
+  `POST /farms/:id/land/cells` (`packages/application/src/{plot,land}.ts`, `singleCellPrice`). They
+  still work for compatibility and are documented as deprecated.
 - Landmarks: `LANDMARKS`/`LANDMARKS_WORLD`/`STATIC_OBSTACLES` in `world-config.ts` and the builders
   in `apps/web/src/render/landmarks.ts`. A landmark is scenery with a collision circle; it unlocks,
   stores, and prices nothing.
@@ -1030,6 +1044,322 @@ the upgrade route, or anything that adds items to a player.
   `WAREHOUSE_UPGRADE` reason.
 - The API maps the guard's `warehouse_full` error to `WAREHOUSE_FULL` (409). Never let a grant fail
   with a generic 500, and never accept capacity, tier or cost from a client.
+- Rolled rewards: fishing and gathering ask `assertWarehouseHasRoom`
+  (`packages/application/src/storage.ts`) *before* drawing, so a full warehouse refuses without
+  drawing. Migration `0020_action_reward_rolls.sql` pins immutable entropy on the action before payout,
+  preserving the roll even if a competing grant fills storage after that pre-check. The guard is still
+  the authority on the write. Full-capacity QA: `docs/qa/V16_2_1_WAREHOUSE_FULL_QA.md`.
+- `database/migrations/0019_warehouse_upgrade_marker.sql` adds the step marker that makes an upgrade
+  receipt provable; without it two racing upgrades could charge twice for one tier.
+- Client surface: the `#warehouse` strip in the Inventory panel (`renderWarehouse()` in
+  `apps/web/src/main.ts`), read with the account on load and after inventory mutations - never polled.
+
+## Automation and logistics (V16.2.2 - design only, nothing implemented)
+
+Read `docs/design/AUTOMATION_LOGISTICS.md` before adding an actor, a job, a work area, cargo, offline
+progression, or anything that can produce goods without the player's hand on the tile. It is a
+design, not a system: no table, route, migration or client surface exists yet.
+
+- The locked model is `WORK AREA -> JOB -> ACTOR -> PRODUCTION -> CARGO -> ROUTE -> STORAGE`:
+  resources never teleport to storage, and the Main Character is the player's first worker.
+- Offline automation advances at most 24 h per absence, driven only by the server clock and a purely
+  derived watermark (`actors.simulation_at`), with a hard transition budget and no event log.
+- No work -> no simulation; no observer -> no continuous simulation. No cron, no per-actor timer, no
+  coordinate stream, no new poll. Existing deployments bind no Durable Object and no cron; the design
+  must not require either.
+- Automation settles through the existing paths: harvest/resource/fishing settlements, the one
+  inventory service, the warehouse capacity guard (`warehouse_capacity_guard_*`,
+  `assertStorageDeltaFits`) and the `idempotency_keys` receipt pattern. Rolled rewards reuse the
+  pinned rolls from `0020_action_reward_rolls.sql`.
+- Work areas are player-named groups of cells, never a district: `CellCapability` plus the player's
+  own placement still decides what land may carry, and a location is never an authorization (ADR
+  0027).
+- Reuse points named by the audit: `resource_node_states`/`fishing_actions` (bounded, zone-scoped,
+  timestamp-derived state), `farm_constructions` with a `ROAD` category plus
+  `packages/game-data/src/roads/index.ts` (`moveMultiplier`) for travel cost, and the
+  discovery/execution split in `apps/web/src/interaction/`.
+- Staging recommendation in the document: deploy the current V16.2.1 build before the first
+  automation slice, and again after the cargo/unload slice, so the cost model is calibrated on real
+  usage rather than estimates.
+
+### Work areas (V16.2.2A - implemented, nothing works them yet)
+
+Slice A of the automation design is built. A work area is a **player-named group of cells** - not
+ownership, not a district, not a placement reservation, not occupancy - and no Job, Actor, Cargo or
+offline simulation exists. Read `docs/qa/V16_2_2A_WORK_AREA_FOUNDATION.md` before changing any of it.
+
+- Rules: `packages/domain/src/work-area.ts` (`WORK_AREA_KINDS`, `MAX_WORK_AREA_CELLS` = 256,
+  `MAX_WORK_AREA_NAME_LENGTH` = 40, `normalizeWorkAreaName`, `normalizeWorkAreaCells`,
+  `requiredGroundCapability`, `workAreaGroundSupports`, `assertWorkAreaVersion`). Kinds are
+  `FARM | ORCHARD | FORESTRY | MINING | LIVESTOCK | AQUACULTURE` - the `CellCapability` words plus
+  ORCHARD, which asks for FARM ground. There is deliberately no MIXED kind, and overlap between areas
+  is permitted (`WORK_AREAS_MAY_OVERLAP`): exclusivity would make membership a soft land reservation.
+- Use cases: `packages/application/src/work-areas.ts` (`ListWorkAreas`, `GetWorkArea`,
+  `CreateWorkArea`, `RenameWorkArea`, `ReplaceWorkAreaCells`, `DeleteWorkArea`); ports in
+  `packages/application/src/ports.ts` (`WorkAreaRepository`, `WorkAreaGroundLookup`,
+  `WorkAreaIdGenerator`). Reads need membership; every write needs **OWNER**, matching Home Island
+  editing. Create is idempotent (`CREATE_WORK_AREA`); the edits are version-guarded.
+- Ground: `groundCapabilities` in `packages/game-data/src/world/geography.ts`, adapted to the port by
+  `gameDataWorkAreaGround` in `workers/api/src/runtime.ts`. Dry unprotected land is FARM/FORESTRY/
+  LIVESTOCK, the volcano foothill is FORESTRY, its steep flank is MINING, the shallow shelf is
+  AQUACULTURE; ocean, pond, beach and the crater carry nothing.
+- Persistence: `database/migrations/0022_work_areas.sql` (`work_areas`, `work_area_cells`) and
+  `D1WorkAreaRepository`. The membership read is served by `idx_work_area_cells_area_yx` (index-only,
+  in order); nothing here reads `farm_tiles`.
+- Routes: `GET|POST /farms/:id/work-areas`, `GET /farms/:id/work-areas/:workAreaId`, and
+  `POST .../rename`, `POST .../cells`, `POST .../delete`.
+- Client: `apps/web/src/work-areas/model.ts` (pure selection/naming; a rectangle is only a selection
+  method and is converted to explicit cells) and the **Work Areas** module in `panels.ts`/`main.ts`,
+  with the draft drawn by `scene.setWorkAreaDraft`. It is read **only** when the panel opens and after
+  a mutation - never on boot, never on the growth poll; a source test fails if that changes.
+- A work area is free: no gold, no land, no `farm_tiles` row. A rowless natural cell can belong to one.
+
+### Actors and jobs (V16.2.2B - configuration only, nothing executes)
+
+The second slice of the automation design: **who** could work, **where**, **what** for and in **what
+order**. `docs/qa/V16_2_2B_ACTOR_JOB_SPINE.md` is the record; the invariant is in its title -
+**job configuration is not job execution**. Creating a job plants nothing, harvests nothing, moves
+nobody and writes no inventory, experience, gold or warehouse row; there is no Auto switch, no cargo,
+no route and no offline simulation.
+
+- Rules: `packages/domain/src/actor.ts` (`ACTOR_KINDS`, `CONTROL_MODES`, `MAIN_CHARACTER_KIND`,
+  `ActorActivity` - named but deliberately unpersisted - `actorAcceptsWork`) and
+  `packages/domain/src/job.ts` (`JOB_KINDS` = the work-area kinds, `JOB_TARGET_PREFIXES`,
+  `MAX_JOBS_PER_ACTOR` = 24, `jobKindMatchesArea`, `planJobReorder`, `prioritiesFor`,
+  `nextJobPriority`, `assertJobVersion`, `assertActorVersion`). An **actor is not a player**: a player
+  is the account authority, an actor is the thing that works, and one player has exactly one Main
+  Character today.
+- Use cases: `packages/application/src/jobs.ts` (`ResolveWorkers`, `CreateJob`, `UpdateJobTarget`,
+  `SetJobEnabled`, `ReorderJobs`, `DeleteJob`); ports `ActorRepository`, `ActorJobRepository`,
+  `ActorIdGenerator`, `JobIdGenerator` in `packages/application/src/ports.ts`. Reads and writes are
+  **OWNER-only**, like the rest of Home Island editing; `owner_player_id`, control mode and farm
+  ownership are never taken from a client.
+- Targets are stable game-data ids validated against the catalogues the world ships - `crop_*` for
+  FARM, `tree_*` for ORCHARD, `resource_*` for MINING/FORESTRY. LIVESTOCK and AQUACULTURE are refused:
+  there is no such system to honour. `JOB_TARGET_PREFIXES` is where that rule lives.
+- Persistence: `database/migrations/0023_actors_and_jobs.sql` (`actors`, `actor_jobs`) and
+  `D1ActorRepository`/`D1ActorJobRepository`. `ensureMainCharacter` is `INSERT OR IGNORE` behind the
+  partial unique index `idx_actors_one_main_character`, so concurrent first-fills converge on one row.
+  `actor_jobs.work_area_id` is `ON DELETE RESTRICT`, and `DeleteWorkArea` refuses first with
+  `WORK_AREA_IN_USE` (409).
+- Ordering: priorities are dense 1..N. Create appends after the highest; reorder sends the actor's
+  whole order as ids and the server accepts only a permutation of it, guarded by the actor's version;
+  delete renumbers the survivors in the same transaction, so no gap can be fallen into.
+- The assignment's one Auto policy column, `auto_purchase_supplies`, is added by
+  `database/migrations/0025_assignment_auto_purchase.sql` (default 0) and set by the Auto route; the
+  actor/job spine's own commands never write it, and the farm's ordinary loads never read it.
+- Routes: `GET /farms/:id/workers`, `POST /farms/:id/jobs`, `POST /farms/:id/jobs/order`,
+  `POST /farms/:id/jobs/:jobId/target|enabled|delete`.
+- Client: `apps/web/src/workers/model.ts` (pure: targets per profession, compatible areas, order
+  arithmetic) and the **Workers** module in `panels.ts`/`main.ts`. Read **only** when that panel is
+  opened and after a mutation - never on boot, never on the growth poll, never in the frame, pointer
+  or movement loops; a source test fails if that changes.
+
+### Actor cargo (V16.2.2C - a separate container, and the one transfer out of it)
+
+`actor_cargo_items` holds what an actor is **carrying**; `inventory_items` stays what is **stored**.
+The record is `docs/qa/V16_2_2C_ACTOR_CARGO_FOUNDATION.md`, and the invariant is that a transfer moves
+every carried stack or none of them.
+
+- Rules: `packages/domain/src/cargo.ts` (`CARGO_ITEM_CATEGORIES`, `isCarryableCategory`,
+  `cargoUsed`, `cargoAvailable`, `assertCargoDeltaFits` - the net-delta primitive - and
+  `cargoHasRoom`). Capacity is a number from game data: `packages/game-data/src/cargo/index.ts`
+  (`STARTER_CARGO_CAPACITY = 30`), handed in through the `CargoCapacityLookup` port
+  (`gameDataCargoCapacities`). It is **provisional** balancing and lives on `actors.cargo_capacity` so a
+  backpack, cart or ship is a different number for the same code.
+- Application: `packages/application/src/cargo.ts` (`CargoService.prepareGrant` - the grant primitive
+  no production path calls yet - `GetActorCargo`, and `UnloadCargo`); ports
+  `CargoRepository`, `CargoCapacityLookup`, `CargoGrant`, `CargoUnload` in
+  `packages/application/src/ports.ts`. The destination is derived from the farm's owner; the client
+  sends a request id and the cargo version it read.
+- Persistence: `database/migrations/0024_actor_cargo.sql` and `D1CargoRepository`. The capacity guard
+  (`cargo_capacity_guard_insert`/`_update`) is the warehouse guard's twin and is the authority; the
+  unload is one transaction whose every statement is scoped to `actors.cargo_transfer_id = requestId`,
+  which is what stops a losing concurrent unload from paying out twice.
+- Routes: `GET /farms/:id/cargo`, `POST /farms/:id/cargo/unload`. **There is deliberately no grant
+  route**: cargo is filled by production, in the slice that executes it.
+- Client: the Cargo strip in the **Workers** panel (`renderWorkersCargo`, `unloadCargoAtWarehouse` in
+  `main.ts`) with `apps/web/src/workers/model.ts` beside it. It is read with that panel's own load and
+  after an unload - never on boot, never on a tick, never while walking.
+- **Transitional**: manual harvest, fishing, mining and forestry still settle straight to the
+  Warehouse. That is a temporary bridge so a regression stays isolatable, not a reversal of
+  `production -> cargo -> warehouse`; the boundary is recorded in the QA report.
+
+### Work Skills and Auto (V16.2.2C.5 design; D1 built, planning only)
+
+Read `docs/design/WORK_SKILLS_AND_AUTO.md` before designing or building any Auto behaviour. It is the
+contract the executor slices build against. V16.2.2D1 built the **control switch, the pure resolver,
+the one assignment policy and the Auto panel**; there is still **no executor, no travel, no planting,
+no harvesting into cargo and no offline simulation**, and none may be assumed from it.
+
+- **Terminology**: the database keeps `actor_jobs`; the product calls those rows **Work Assignments**,
+  and a **Work Skill** is *derived* from an assignment's `(kind, targetDefinitionId)` pair as
+  `<kind>.<target short name>` (`farm.rice`, `orchard.apple`, `mining.iron`, `forestry.wildwood`).
+  A `skill_id` column is earned only when two skills share one `(kind, target)` pair - a rename never
+  earns a migration.
+- **Layer split**: skill *definitions* are game data, family *semantics* are domain, the *use cases*
+  (including `resolveNextAction`) are application, and the executor is `workers/*`. A definition is
+  data and never contains execution code.
+- **Lifecycle families**: `REPLANT_CROP` (farm.*), `PERENNIAL_PRODUCTION` (orchard.*),
+  `RESOURCE_NODE_GATHERING` (mining.*, forestry.*), `FISHING`, `LIVESTOCK`. A definition parameterises
+  a family; it does not fork it.
+- **The executor contract**: `resolveNextAction(assignment, actor, world): WorkAction` - pure,
+  server-only, bounded to one assignment's own facts, and total (every state is an action, a wait with
+  a reason, or a pause with a reason). Priority is the highest-priority **actionable** assignment, so
+  a growing crop never starves a ready orchard. Overlapping work areas are resolved at execution time
+  by priority; no schema constraint is added.
+- **Waiting states** are derived, never persisted (`WAITING_FOR_GROWTH`, `WAITING_FOR_RESOURCE`,
+  `WAITING_FOR_SUPPLY`, `WAITING_FOR_FUNDS`, `WAITING_FOR_STORAGE`, `CARGO_FULL`, `PAUSED`); the only
+  future persisted state is an offline watermark.
+- **The missing half of the physical model is LOAD** (Warehouse -> Cargo) - the mirror of the UNLOAD
+  in `V16.2.2C`. Auto Purchase is recommended to buy **straight into the actor's cargo** through the
+  existing authoritative settlement rather than into the warehouse and then loading.
+- **Slices**: C.6 (LOAD + supply acquisition), D1 (resolver + control mode + panel states), D2 (rice
+  vertical), D3 (apple), D4 (mining/forestry), D5 (fishing, livestock, NPCs), then offline <= 24 h.
+  Auto must never land as one giant phase.
+
+### Auto execution: the replanting crop vertical (V16.2.2D2 - built; online only)
+
+`docs/qa/V16_2_2D2_RICE_AUTO_VERTICAL.md` is the record of the first Work Skill that runs end to end.
+**D2 executes; D3 onwards still do not.**
+
+- **The step route**: `POST /farms/:id/auto/step` (`AdvanceAuto` in
+  `packages/application/src/auto-executor.ts`) is the only Auto request that changes anything, and its
+  body is a request id and nothing else - no cell, no crop, no quantity, no price, no claim to have
+  arrived. One call performs at most one bounded transition.
+- **In-flight state**: `actor_auto_state` (migration `0026_auto_execution.sql`) records where the actor
+  is, where it is walking to, and when the server will consider it arrived. That is the anti-teleport
+  rule: no field, Warehouse or Market action settles before the server's own clock says the actor has
+  had time to get there, and the browser's drawn position is never authority.
+- **Travel**: distance / speed, from the island's own tile pitch and the same walk speed the client's
+  character controller uses; clamped to 0.4 s - 180 s. The anchors are the barn's yard (the Home
+  Warehouse) and the tile beside the market stall, derived from the starter layout in
+  `packages/game-data/src/auto/index.ts` and checked against every other starter footprint.
+- **Two containers, one rule set**: `PlantCrop.executeFromCargo` and `HarvestCrop.executeIntoCargo` are
+  the *same* classes as the manual paths, branching only on the container the seed leaves or the reward
+  lands in. `harvest_settlements.destination` selects the destination inside the settlement's own
+  trigger, so Auto can never yield more than a manual harvest.
+- **Only the replanting family executes**: orchard, mining, forestry, fishing and livestock still
+  resolve, and the step answers `NOT_EXECUTABLE_YET` rather than running them.
+- **The browser drives the beat**: one request per settlement, per arrival, or per the server's own
+  growth wake, and never a repeating timer. A hidden tab pauses Auto; a refresh resumes from the world.
+- **Still not implemented**: offline production, the other families, NPC workers and ships.
+
+### Auto output: atomic harvest and delivery (V16.2.2D2.3 — B2, built; online only)
+
+`docs/qa/V16_2_2D2_3_B2_ATOMIC_AUTO_OUTPUT.md` is the record. B2 makes the last two economic
+transitions of the replanting lifecycle commit **with** the Auto timeline:
+
+- **Harvest**: `HarvestCrop.executeIntoCargoAuto` (`packages/application/src/harvest.ts`) composes the
+  existing cargo harvest settlement (claim + settlement row + progression seed + guarded receipt + XP
+  apply) with `D1AutoHarvestSettlementService` (`workers/api/src/d1-auto-harvest-settlement.ts`) in one
+  `db.batch()`. The reward, XP rule, maturity check and crop guard are the manual ones; only the
+  destination differs.
+- **Delivery**: `UnloadCargo.executeAuto` (`packages/application/src/cargo.ts`) composes the existing
+  all-or-nothing transfer with `D1AutoUnloadSettlementService`
+  (`workers/api/src/d1-auto-unload-settlement.ts`), so a delivery and `simulation_at` move together.
+- **Identity**: `autoTransitionId` (`packages/application/src/auto-plant.ts`) now covers `HARVEST` and
+  `UNLOAD` and takes `assignmentId: string | null` (a delivery is the actor's step). Receipts are
+  `AUTO_HARVEST` / `AUTO_UNLOAD`; the harvest additionally keeps its `HARVEST_CROP` settlement receipt,
+  which is the pre-award progression guard and the once-per-crop uniqueness rule.
+- **Guards**: the receipts are the batch-failing guard — a stale timeline, a stale crop/container, a
+  full cargo or a full warehouse leaves the receipt NULL and the whole batch rolls back. Do not move
+  one of these statements out of the batch or the pairing silently breaks.
+- **Not implemented in B2**: bounded multi-crop/multi-cell settlements (B2.5) and offline
+  reconciliation (B3).
+
+### Auto cost and read reuse (V16.2.2D2.3 — B2.5, built; measurement + one optimisation)
+
+`docs/qa/V16_2_2D2_3_B2_5_CLOUDFLARE_OPTIMIZATION.md` is the record. B2.5 measured the whole loop
+through the real repositories (`tests/support/cost-harness.ts` +
+`tests/integration/auto-cost-harness.test.ts`) and fixed the cost that dominated: the same rows read
+up to six times inside one Auto step.
+
+- `requireOwnedFarm` returns the farm it read; `mainCharacterFor(..., observedFarm?)` accepts it;
+  `ResolveAutoPlan.execute(actor, farmId, observed?)` accepts the farm, actor and carried rows the
+  caller already read, and `executeWithSnapshot` returns the rows the pass read
+  (`AutoPlanObservation`: work-area cells, crops, trees, building bounds).
+- `AdvanceAuto` reads once and hands the snapshot to `fieldState`, so a settlement step no longer
+  re-reads the two largest lists. The snapshot is valid only **within one request, before any
+  settlement write** — do not cache it across transitions or across requests.
+- Measured effect: −25…−29% statements, −29…−33% read calls, −30…−48% rows read, with **identical**
+  writes, batches, receipts and durable state (SHA-256 digests pinned in the harness test).
+- No bulk settlement, no contract change, no migration. The measured per-event cost and the B3
+  recommendation (reuse one observation across a bounded reconciliation pass) are in the QA doc.
+
+### Auto offline reconciliation (V16.2.2D2.3 — B3, built)
+
+`docs/qa/V16_2_2D2_3_B3_OFFLINE_RECONCILIATION.md` is the record. Closing the browser no longer stops
+authoritative Auto time: on return, one bounded request settles what the absence allowed.
+
+- **Service**: `ReconcileActorAuto` (`packages/application/src/auto-reconcile.ts`) — `start =
+  simulation_at`, `target = min(now, start + 24 h)`, event-driven cursor, budget
+  `{ transitions: 24, steps: 32 }` per call.
+- **Watermark**: settlements write `simulation_at` as they commit. On budget exhaustion the watermark
+  stays at the exact committed instant (never the target); on caught-up/blocked it moves to `now`, so
+  elapsed time beyond the cap or beyond a block is paused, and login cycling cannot mint a second
+  window.
+- **Trigger**: `POST /farms/:id/auto/reconcile`, called by the client on farm entry and on resume
+  after ≥ 60 s hidden — never by the 5-second growth poll, a timer or a background loop.
+- **Reuse**: `AutoPassContext`/`AutoPassReuse` shares work-area cells and building bounds across one
+  pass; crops, trees, cargo and the actor are re-read per transition. Simulated instants drive
+  maturity projection, travel and the Auto plant/harvest receipts.
+- Do not let a walk erase `simulationAt` (`travelTo`/`arrive`/`abandon` carry it), and keep START
+  stamping the epoch (`SetActorControl`) so a manually driven period is never simulated.
+
+### Auto control, the resolver and the Auto panel (V16.2.2D1 - built; planning only)
+
+`docs/qa/V16_2_2D1_AUTO_EXECUTOR_FOUNDATION.md` is the record of the first slice that gives Auto a
+brain and a switch. **D1 can PLAN and D1 does not EXECUTE**: nothing plants, harvests, travels,
+unloads, buys or mutates a node.
+
+- **Control**: `actors.control_mode` is written by `POST /farms/:id/workers/control`
+  (`SetActorControl`), convergent on a no-op and version-guarded on a real change. The same actor, the
+  same cargo, the same assignments; no second actor and no economic mutation.
+- **Policy**: `actor_jobs.auto_purchase_supplies` (migration
+  `0025_assignment_auto_purchase.sql`, default 0) is the one boolean the supply ladder reads, set by
+  `POST /farms/:id/assignments/:jobId/policy`.
+- **The resolver**: `packages/domain/src/work-skill.ts` (`familyForKind`, `skillIdFor`,
+  `WorkSkillDefinition`, `planAssignment`, `resolvePass`, `resolveNextAction`) is pure - it takes a
+  snapshot and returns a plan. It does not read, write, poll or mutate anything, and a test asserts the
+  snapshot is unchanged. `resolvePass` returns the actor-level plan plus a per-assignment explanation.
+- **The plan read**: `GET /farms/:id/auto-plan` (`ResolveAutoPlan` in
+  `packages/application/src/auto.ts`) performs the bounded read set and answers with a derived skill
+  id, a typed action and a wait reason - even while the player is driving, which is what the panel
+  previews.
+- **Priority and blockers**: the highest-priority *actionable* assignment wins, so a growing field
+  never starves a ready orchard; a full cargo becomes the delivery (`TRAVEL_TO_STORAGE`) when nothing
+  else is actionable, and a full cargo over a full Warehouse is `WAITING_FOR_STORAGE`.
+- **The panel**: the Workers panel is now the game-native Auto sheet (`apps/web/src/main.ts` +
+  `apps/web/src/workers/model.ts` + `apps/web/index.html` + `apps/web/src/styles.css`): actor header,
+  one START AUTO / STOP AUTO control, assignment cards with real thumbnails and the production-cycle
+  strip, and an editor of profession chips, skill cards, area cards and one policy toggle. It reads on
+  open and after its own actions, never on a timer.
+- **Still not implemented**: the executor, cargo as a harvest destination, travel, automatic unload,
+  automatic purchase and offline reconciliation.
+
+### Bidirectional cargo and Auto supply (V16.2.2C.6 - built; Auto still does not execute)
+
+The physical supply foundation the Work Skills need. `docs/qa/V16_2_2C_6_BIDIRECTIONAL_CARGO.md` is
+the record; the design of what they feed is `docs/design/WORK_SKILLS_AND_AUTO.md`.
+
+- **LOAD** (Warehouse -> Cargo): `packages/application/src/cargo.ts` (`LoadCargo`),
+  `CargoRepository.loadAllAtomically`, `POST /farms/:id/cargo/load`. Atomic, all-or-nothing,
+  conserving, capacity-guarded by the cargo trigger, and guarded by the cargo version plus the same
+  per-request marker UNLOAD uses (`actors.cargo_transfer_id`) - so a losing concurrent LOAD cannot
+  credit cargo from a subtraction that never happened.
+- **Supply purchase** (Shop -> Cargo): `PurchaseSupplyIntoCargo` +
+  `EconomySettlementRepository.settleSupplyIntoCargoAtomically`,
+  `POST /farms/:id/cargo/purchase`. The ordinary shop settlement - catalogue price, wallet, ledger
+  (`SHOP_BUY`), receipt, item validation - with the destination being the actor's cargo. Only
+  **supply** categories may ride it (`CARGO_SUPPLY_CATEGORIES = ["SEED"]`), and the cargo capacity
+  trigger is the authority, so nothing is charged for goods that did not fit.
+- No migration was needed (the container, its guard, the marker and the settlement all existed), and
+  **no cargo grant route exists** - neither new route creates an item.
+- Ordinary `POST /shop/buy` still delivers to the Warehouse, and manual production still settles
+  there; only the explicit cargo commands take goods in hand.
+- **Still not implemented**: the resolver, the Auto switch, travel, planting, harvesting into cargo,
+  automatic unload and automatic purchase.
 
 ## Staging deployment foundation
 
@@ -1050,6 +1380,17 @@ proved the cause, and the cost model.
   `--remote` or deploys with `wrangler deploy` without `--dry-run`.
 - Policy: LOCAL is sqlite only; STAGING is manual verification only; PRODUCTION is not configured.
   `npx wrangler d1 info` / `d1 insights` are the read-only way to re-check the budget.
+- V16.2.1 baseline (2026-10-04): staging was migrated `0001` - `0020` and redeployed; the deploy,
+  remote smoke tests, polling audit and the pre-automation Cloudflare baseline are recorded in
+  `docs/qa/V16_2_1_CLOUDFLARE_STAGING_BASELINE.md`. The database already sits near the D1 Free 5M
+  rows-read/day ceiling on ordinary alpha traffic, so re-check `npx wrangler d1 info` before adding
+  traffic, and do not assume 80-player safety until the load ladder is measured.
+- V16.2.1A (2026-10-04): the remaining rows-read was the client's per-action full-list refresh, not
+  the poll (which already reads only crops and trees, while visible). Fix: migration
+  `0021_farm_read_indexes.sql` makes the farm-scoped list reads covering and ordered, and
+  `apps/web/src/farm-refresh.ts` decides which lists each action and the timer re-read. Any code that
+  reads a farm list (tiles/crops/trees/constructions) is expected to go through that scope and live
+  inside `refreshFarm`; the full write-up is `docs/qa/V16_2_1A_D1_READ_OPTIMIZATION.md`.
 
 ### Staging playtest deployment (V13.6)
 

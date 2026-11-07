@@ -47,6 +47,8 @@ export interface ItemCardModel {
 const FALLBACK_ICON: Readonly<Record<ItemFallback, IconName>> = {
   PRODUCE: "harvest",
   SEED: "seed",
+  SEED_CARROT: "seed",
+  SEED_CORN: "seed",
   SAPLING: "sprout",
   ITEM: "inventory"
 };
@@ -93,8 +95,14 @@ export function renderItemCard(
   image.decoding = "async";
   const fallback = document.createElement("span");
   fallback.className = "item-card-fallback";
+  fallback.dataset.fallback = model.visual.fallback;
   fallback.hidden = true;
   fallback.appendChild(deps.icon(FALLBACK_ICON[model.visual.fallback], 26));
+  image.addEventListener("error", () => {
+    image.hidden = true;
+    fallback.hidden = false;
+    thumb.classList.remove("is-loading");
+  });
   // `appendChild`, not `append`: this repository typechecks against both the DOM and the Workers
   // libraries, whose `append` signatures disagree.
   thumb.appendChild(image);

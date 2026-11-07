@@ -13,17 +13,26 @@ import type { RoadTierId } from "@happy-farm/game-data";
 /** Thumbnail resolution. 256 is enough for a card at 2x and cheap enough to render dozens of. */
 export const THUMBNAIL_SIZE = 256;
 
-/** How much of the frame the object's longest side fills. */
-export const THUMBNAIL_FILL = 0.72;
+/**
+ * How much of the frame the object's longest side fills.
+ *
+ * The former 0.72 target was mathematically safe but visually timid: after a three-quarter camera
+ * projected a deep model and the card downscaled the square bitmap, the useful silhouette often
+ * occupied barely half the picture. 0.84 keeps a deliberate rim around roofs and tree crowns while
+ * making the model, rather than its presentation floor, the first thing the player sees.
+ */
+export const THUMBNAIL_FILL = 0.84;
 
 /** Where a thumbnail came from, so the panel can fall back cleanly. */
-export type ThumbnailSource = "MODEL" | "ROAD" | "FALLBACK";
+export type ThumbnailSource = "MODEL" | "ROAD" | "IMAGE" | "FALLBACK";
 
 export interface ThumbnailRequest {
   /** The GLB to draw, or null for a road preview. */
   readonly modelId: string | null;
   /** The road tier to draw, or null for a model. */
   readonly roadTierId: string | null;
+  /** A Vite-hashed transparent illustration for an item with no suitable GLB. */
+  readonly imageUrl?: string | null;
 }
 
 export interface ThumbnailResult {
@@ -39,6 +48,7 @@ export interface ThumbnailResult {
  * hits, and a test can pin the behaviour without a WebGL context.
  */
 export function thumbnailCacheKey(request: ThumbnailRequest): string {
+  if (request.imageUrl !== undefined && request.imageUrl !== null) return `image:${request.imageUrl}`;
   if (request.roadTierId !== null) return `road:${request.roadTierId}`;
   if (request.modelId !== null) return `model:${request.modelId}`;
   return "fallback";

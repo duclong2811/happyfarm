@@ -27,7 +27,7 @@ import {
   VISUAL_BOUNDS,
   WORLD_CONFIG_VERSION
 } from "../../apps/web/src/render/world-config";
-import { APRON_MARGIN_TILES } from "../../apps/web/src/render/world";
+import { FIELD_FRAME_MARGIN_TILES } from "../../apps/web/src/render/world";
 
 const PITCH = DEFAULT_TILE_SIZE + DEFAULT_TILE_GAP;
 const frame = worldFrame();
@@ -195,13 +195,13 @@ describe("static world config", () => {
       expect(patch.radiusX, patch.id).toBeGreaterThan(0);
       expect(patch.radiusY, patch.id).toBeGreaterThan(0);
       // A patch may lie inside the reserve - the ground there is pasture the farm has not bought -
-      // but it may never cover the starter square or the apron around it, because the tiles and the
-      // cultivated ground are drawn on top of it.
+      // but it may never cover the starter square or its framing margin, because that ground is the
+      // player's own field and an authored tint across it would read as ownership.
       const overlapsStarter =
-        patch.center.x - patch.radiusX <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES &&
-        patch.center.x + patch.radiusX >= -APRON_MARGIN_TILES &&
-        patch.center.y - patch.radiusY <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES &&
-        patch.center.y + patch.radiusY >= -APRON_MARGIN_TILES;
+        patch.center.x - patch.radiusX <= INITIAL_LAND_SIZE - 1 + FIELD_FRAME_MARGIN_TILES &&
+        patch.center.x + patch.radiusX >= -FIELD_FRAME_MARGIN_TILES &&
+        patch.center.y - patch.radiusY <= INITIAL_LAND_SIZE - 1 + FIELD_FRAME_MARGIN_TILES &&
+        patch.center.y + patch.radiusY >= -FIELD_FRAME_MARGIN_TILES;
       expect(overlapsStarter, patch.id).toBe(false);
       const insideIsland =
         patch.center.x - patch.radiusX >= VISUAL_BOUNDS.minX &&

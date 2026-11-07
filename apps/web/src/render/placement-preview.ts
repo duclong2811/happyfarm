@@ -30,7 +30,6 @@ export type PreviewGround = "LAND" | "SHORE" | "SHALLOW_WATER" | "WATER";
 export type PreviewRejection =
   | "NO_CELL"
   | "OUT_OF_WORLD"
-  | "NOT_OWNED"
   | "BLOCKED"
   | "OCCUPIED"
   | "INVALID_TERRAIN";
@@ -41,8 +40,6 @@ export interface PreviewRequirement {
   readonly footprint: { readonly widthCells: number; readonly depthCells: number };
   /** True for a catalogue entry that is itself a road: a road lies on cells a building may not use. */
   readonly isRoad: boolean;
-  /** True when the entry may only go on land the player owns. */
-  readonly requiresOwnership: boolean;
   /**
    * Cells the check should treat as free, whatever stands on them.
    *
@@ -78,10 +75,9 @@ export function footprintCells(
 /**
  * Why this entry could not go on this cell, or null when it could.
  *
- * The order is the server's order, because the *reason* is part of the answer: ownership first, then
- * ground the island keeps, then what stands there, then the asset's own terrain. A player who is told
- * "that is not your land" and a player who is told "something is already there" are being told two
- * different things about their island.
+ * The order is the server's order, because the *reason* is part of the answer: ground the island
+ * keeps, then what stands there, then the asset's own terrain. Ownership is deliberately absent
+ * (V14.5.2): the natural Home Island is already the player's to develop, so it is never the reason.
  */
 export function previewRejection(
   cells: WorldCellMap,
@@ -94,7 +90,6 @@ export function previewRejection(
     const world = cells.cells.get(cellKey(cell.x, cell.y));
     const self = ignored.has(cellKey(cell.x, cell.y));
     if (world === undefined) return "OUT_OF_WORLD";
-    if (requirement.requiresOwnership && !world.owned) return "NOT_OWNED";
     // Ground the island keeps, a building already standing there, or the island's authored road: all
     // three are "not yours to change", which is what BLOCKED means.
     if (world.reserved || world.terrain === "BLOCKED" || world.terrain === "VOLCANO") return "BLOCKED";
@@ -130,8 +125,6 @@ export function rejectionMessageKey(rejection: PreviewRejection): string {
       return "build.reason.noCell";
     case "OUT_OF_WORLD":
       return "build.reason.outsideIsland";
-    case "NOT_OWNED":
-      return "build.reason.notOwned";
     case "BLOCKED":
       return "build.reason.blocked";
     case "OCCUPIED":

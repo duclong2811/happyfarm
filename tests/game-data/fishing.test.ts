@@ -210,7 +210,11 @@ describe("the fishing economy", () => {
     for (const definition of fish) {
       const entry = shops.find((row) => row.itemDefinitionId === definition.itemDefinitionId);
       expect(entry?.sellPrice, definition.id).toBe(definition.sellPrice);
-      expect(entry?.buyPrice, definition.id).toBeUndefined();
+      if (definition.itemDefinitionId === "item_fish_tilapia") {
+        expect(entry?.buyPrice, definition.id).toBeGreaterThan(definition.sellPrice);
+      } else {
+        expect(entry?.buyPrice, definition.id).toBeUndefined();
+      }
     }
   });
 });

@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+﻿import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -101,6 +101,11 @@ function withOneFarmPerPlayer(): readonly string[] {
     .sort();
 }
 
+/** Migrations a repaired pre-0014 database must receive, in canonical order. */
+function migrationsAfterOneFarmPerPlayer(): readonly string[] {
+  return withOneFarmPerPlayer().filter((name) => name >= "0014_one_farm_per_player.sql");
+}
+
 /** The local database as it actually was: a player, three farms, and progress on the newest. */
 function seedLegacyLocalDatabase(sqlite: DatabaseSync): void {
   sqlite
@@ -196,13 +201,7 @@ describe("a local database from before one-farm-per-player", () => {
 
     // And now the migration applies, which is the whole point.
     const applied = applyMigrations(sqlite, migrationsUpTo(withOneFarmPerPlayer()));
-    expect(applied).toEqual([
-      "0014_one_farm_per_player.sql",
-      "0015_player_identities.sql",
-      "0016_fishing_actions.sql",
-      "0017_resource_nodes.sql",
-      "0018_island_warehouses.sql"
-    ]);
+    expect(applied).toEqual(migrationsAfterOneFarmPerPlayer());
     const index = sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_farms_owner_player'")
       .get() as { readonly name: string } | undefined;
@@ -258,13 +257,7 @@ describe("a local database from before one-farm-per-player", () => {
       farmsRemoved: 2,
       keptFarmIds: [NEWEST_FARM]
     });
-    expect(host.appliedMigrations).toEqual([
-      "0014_one_farm_per_player.sql",
-      "0015_player_identities.sql",
-      "0016_fishing_actions.sql",
-      "0017_resource_nodes.sql",
-      "0018_island_warehouses.sql"
-    ]);
+    expect(host.appliedMigrations).toEqual(migrationsAfterOneFarmPerPlayer());
 
     // The API now answers, and the farm it hands back is the one that survived - the last one played,
     // not a fresh world and not an abandoned duplicate.

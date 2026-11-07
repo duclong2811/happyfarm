@@ -12,7 +12,7 @@
 
 import type { MessageKey } from "./i18n";
 
-export type ModuleId = "inventory" | "market" | "build";
+export type ModuleId = "inventory" | "market" | "build" | "workAreas" | "workers";
 
 export interface ModuleDefinition {
   readonly id: ModuleId;
@@ -59,6 +59,24 @@ export const MODULES: readonly ModuleDefinition[] = [
     bodyId: "build-body",
     launcherId: "build-launcher",
     closeId: "build-close"
+  },
+  {
+    id: "workAreas",
+    glyph: "🌾",
+    labelKey: "panel.workareas",
+    panelId: "work-areas-panel",
+    bodyId: "work-areas-body",
+    launcherId: "work-areas-launcher",
+    closeId: "work-areas-close"
+  },
+  {
+    id: "workers",
+    glyph: "🧑‍🌾",
+    labelKey: "panel.workers",
+    panelId: "workers-panel",
+    bodyId: "workers-body",
+    launcherId: "workers-launcher",
+    closeId: "workers-close"
   }
 ];
 

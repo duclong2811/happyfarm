@@ -42,6 +42,7 @@ export const SHOP_CATEGORY_ORDER: readonly ShopCategory[] = [
   "LIGHTING",
   "UTILITY",
   "WATERFRONT",
+  "AQUACULTURE",
   "MONUMENT"
 ];
 

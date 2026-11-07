@@ -124,6 +124,11 @@ describe("Vite development API bridge", () => {
   let middleware: Connect.NextHandleFunction | null = null;
   let nextCalls = 0;
   let warnings: string[] = [];
+  /** The dev server's watcher, so a test can simulate a server-side (or client-side) edit. */
+  let watcher: EventEmitter = new EventEmitter();
+  /** How many times the plugin has built the API host. One per generation. */
+  let hostLoads = 0;
+  let moduleGraphInvalidations = 0;
 
   beforeEach(() => {
     // The bindings live in the temp directory, never in `workers/api/.dev.vars`: that file holds
@@ -137,6 +142,9 @@ describe("Vite development API bridge", () => {
 
     nextCalls = 0;
     warnings = [];
+    watcher = new EventEmitter();
+    hostLoads = 0;
+    moduleGraphInvalidations = 0;
     // Vite's `PluginOption` may also be an array or a promise; the config under test is a flat list.
     const plugins = (viteConfig.plugins ?? []) as unknown as readonly Plugin[];
     const plugin = plugins.find((entry) => entry.name === PLUGIN_NAME);
@@ -159,7 +167,21 @@ describe("Vite development API bridge", () => {
           middleware = handler;
         }
       },
-      ssrLoadModule: (absolutePath: string) => import(pathToFileURL(absolutePath).href)
+      moduleGraph: {
+        invalidateAll: () => {
+          moduleGraphInvalidations += 1;
+        }
+      },
+      watcher: {
+        on: (event: string, listener: (...args: unknown[]) => void) => {
+          watcher.on(event, listener);
+          return watcher;
+        }
+      },
+      ssrLoadModule: (absolutePath: string) => {
+        hostLoads += 1;
+        return import(pathToFileURL(absolutePath).href);
+      }
     } as unknown as ViteDevServer;
     runConfigureServer.call(plugin, server);
     expect(middleware).not.toBeNull();
@@ -245,6 +267,42 @@ describe("Vite development API bridge", () => {
     expect(health.status).toBe(200);
     expect(health.body).toEqual({ ok: true, data: { status: "ok" } });
     expect(health.headers["content-type"]).toContain("json");
+  });
+
+  it("rebuilds the API host when a server-side file changes, instead of serving the old contract", async () => {
+    // The host captures `createHandler` (routes and payload schemas) when it is built, so a
+    // memoized host would keep answering with the pre-edit contract: the V14.5.1C / V14.5.2A
+    // "stale worker" bug. A server-side edit has to retire it.
+    expect((await call("GET", "/api/health")).status).toBe(200);
+    expect(hostLoads).toBe(1);
+    watcher.emit("all", "change", join(REPO_ROOT, "workers", "api", "src", "handler.ts"));
+    expect((await call("GET", "/api/health")).status).toBe(200);
+    expect(hostLoads).toBe(2);
+    expect(moduleGraphInvalidations).toBe(1);
+  });
+
+  it("rebuilds for a package or migration change, and not for a client-only change", async () => {
+    await call("GET", "/api/health");
+    watcher.emit("all", "change", join(REPO_ROOT, "apps", "web", "src", "main.ts"));
+    await call("GET", "/api/health");
+    expect(hostLoads).toBe(1);
+
+    watcher.emit("all", "change", join(REPO_ROOT, "packages", "domain", "src", "tile.ts"));
+    await call("GET", "/api/health");
+    expect(hostLoads).toBe(2);
+
+    watcher.emit("all", "change", join(REPO_ROOT, "database", "migrations", "0002_crop_simulation.sql"));
+    await call("GET", "/api/health");
+    expect(hostLoads).toBe(3);
+    expect(moduleGraphInvalidations).toBe(2);
+  });
+
+  it("keeps answering after a reload, with a fresh database handle", async () => {
+    await call("GET", "/api/health");
+    watcher.emit("all", "change", join(REPO_ROOT, "workers", "api", "src", "handler.ts"));
+    const wallet = await call("GET", "/api/wallet");
+    expect(wallet.status).toBe(200);
+    expect(wallet.body).toMatchObject({ data: { wallets: [{ balance: 100 }] } });
   });
 
   it("attaches the server-held dev credential and ignores a browser-supplied bearer", async () => {

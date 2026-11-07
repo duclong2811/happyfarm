@@ -27,15 +27,20 @@ import {
   GameDataWarehouseTiers,
   GameDataTreeDefinitions,
   GameDataConstructionDefinitions,
+  GameDataForestryConstructionDefinitions,
   Sha256Fingerprint,
   SystemClock,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
   gameDataTileTerrain,
+  gameDataLandSale,
+  gameDataWorkAreaGround,
+  gameDataCargoCapacities,
   gameDataStarterPackage
 } from "./runtime";
 import { isApiRequest, rewriteToApiRequest } from "./staging-routing";
 import type { D1DatabaseLike } from "./d1-types";
+import { withStaticAssetCache } from "./static-assets";
 
 /**
  * The deployed Worker: staging today, production when it exists.
@@ -131,9 +136,11 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
     plotDefinitions: new GameDataPlotDefinitions(),
     treeDefinitions: new GameDataTreeDefinitions(),
     constructionDefinitions: new GameDataConstructionDefinitions(),
+    forestryConstructionDefinitions: new GameDataForestryConstructionDefinitions(),
     progressionDefinition: gameDataProgressionDefinition,
     starterWorld: gameDataStarterWorld,
     terrain: gameDataTileTerrain,
+    landSale: gameDataLandSale,
     fishing: {
       catalogue: new GameDataFishingCatalogue(),
       ids,
@@ -145,6 +152,9 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
       random: new CryptoResourceRandom()
     },
     warehouse: { tiers: new GameDataWarehouseTiers() },
+    workAreas: { ground: gameDataWorkAreaGround, ids },
+    workers: { ids },
+    cargoCapacities: gameDataCargoCapacities,
     clock
   });
 
@@ -156,7 +166,7 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
       // Static assets own everything that is not the API: the shell, hashed bundles, GLB models and
       // the SPA fallback. An unknown /api route never reaches this branch, so it answers with the
       // API's own JSON 404 instead of an HTML page.
-      return env.ASSETS.fetch(request);
+      return withStaticAssetCache(request, await env.ASSETS.fetch(request));
     }
     // A Worker deployed without static assets keeps serving the API at the root, which is how the
     // API has always been deployed and what its own tests exercise.

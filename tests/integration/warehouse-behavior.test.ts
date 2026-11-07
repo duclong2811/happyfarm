@@ -130,6 +130,52 @@ describe("island warehouse", () => {
     expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE player_id = ?").get(PLAYER_ONE_ID)).toMatchObject({ n: 1 });
   });
 
+  it("charges exactly once for two racing submissions of the same upgrade", async () => {
+    stock("item_wood", 500);
+    stock("item_stone", 500);
+    // The double-submit case: the same request id, twice, at once. The receipt makes it one purchase.
+    const [first, second] = await Promise.all([
+      upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_race_same" }),
+      upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_race_same" })
+    ]);
+    expect(second).toEqual(first);
+    const row = db.sqlite
+      .prepare("SELECT tier, capacity FROM home_island_warehouses WHERE owner_player_id = ?")
+      .get(PLAYER_ONE_ID) as { tier: number; capacity: number };
+    expect(row).toEqual({ tier: 1, capacity: 2500 });
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'WAREHOUSE_UPGRADE'").get()
+    ).toMatchObject({ n: 1 });
+    const wallet = await wallets.find(PLAYER_ONE_ID, parseCurrencyDefinitionId("currency_gold"));
+    expect(wallet?.balance).toBe(99_500);
+  });
+
+  it("never charges for a racing upgrade whose own step did not happen", async () => {
+    // Different request ids are two purchases, but a step is chosen once from the tier the caller
+    // read. The loser must fail closed: exactly one step applied, exactly one charge, and the tier
+    // must match the money spent. (Before the transaction marker this double-charged: the loser's
+    // receipt was satisfied by the winner's tier/version.)
+    stock("item_wood", 500);
+    stock("item_stone", 500);
+    const attempts = await Promise.allSettled([
+      upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_race_a" }),
+      upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_race_b" })
+    ]);
+    const row = db.sqlite
+      .prepare("SELECT tier, capacity FROM home_island_warehouses WHERE owner_player_id = ?")
+      .get(PLAYER_ONE_ID) as { tier: number; capacity: number };
+    const ledger = db.sqlite
+      .prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'WAREHOUSE_UPGRADE'")
+      .get() as { n: number };
+    const wallet = await wallets.find(PLAYER_ONE_ID, parseCurrencyDefinitionId("currency_gold"));
+    const spent = 100_000 - (wallet?.balance ?? 0);
+    // However the race interleaves: the tier's step count, the ledger rows and the gold all agree.
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    expect(row.tier).toBe(1);
+    expect(ledger.n).toBe(1);
+    expect(spent).toBe(500);
+  });
+
   it("refuses an upgrade the island lacks materials for", async () => {
     stock("item_wood", 10); // fewer than the 50 the first upgrade needs
     stock("item_stone", 50);

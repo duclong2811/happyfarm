@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ResourceNodeDTO } from "@happy-farm/contracts";
-import { resourceDefinitions } from "@happy-farm/game-data";
+import { activeResourceNodes, resourceDefinitionRegistry, resourceDefinitions } from "@happy-farm/game-data";
 import { tileToWorld, worldFrame } from "../../apps/web/src/render/layout";
 import { resourceModelUrl } from "../../apps/web/src/render/model-urls";
 import { INTERACTION_RANGE_WORLD, interactionPromptFor } from "../../apps/web/src/interaction/model";
@@ -28,8 +28,8 @@ import { inventoryCards, inventoryTabs } from "../../apps/web/src/items/catalogu
 function node(overrides: Partial<ResourceNodeDTO> = {}): ResourceNodeDTO {
   return {
     nodeId: "node_stone_ridge",
-    definitionId: "resource_stone",
-    displayNameKey: "resource.stone.name",
+    definitionId: "resource_ore",
+    displayNameKey: "resource.ore.name",
     verb: "MINE",
     zoneKind: "HOME_ISLAND",
     position: { x: 12, y: -12 },
@@ -37,7 +37,7 @@ function node(overrides: Partial<ResourceNodeDTO> = {}): ResourceNodeDTO {
     actionSeconds: 6,
     modelId: "resource_stone",
     depletedModelId: null,
-    dropItemDefinitionId: "item_stone",
+    dropItemDefinitionId: "item_ore",
     requiredLevel: 1,
     availableAt: null,
     secondsUntilAvailable: 0,
@@ -73,7 +73,7 @@ describe("resource nodes in the interaction system", () => {
       key: "resource:node_stone_ridge",
       kind: "RESOURCE_NODE",
       action: "MINE",
-      nameKey: "resource.stone.name",
+      nameKey: "resource.ore.name",
       readyInSeconds: null
     });
     if (candidate === null) throw new Error("fixture produced no candidate");
@@ -131,6 +131,22 @@ describe("the resource model manifest", () => {
   it("answers null for a deposit this build has never heard of", () => {
     expect(resourceModelUrl("resource_mythril")).toBeNull();
     expect(resourceModelUrl(null)).toBeNull();
+  });
+
+  it("maps the active unified ore node to the shipped stone GLB at one canonical world position", () => {
+    const active = activeResourceNodes.find((entry) => entry.id === "node_stone_ridge");
+    expect(active).toMatchObject({ definitionId: "resource_ore", position: { x: 12, y: -12 } });
+    const definition = active === undefined ? undefined : resourceDefinitionRegistry.get(active.definitionId);
+    expect(definition?.modelId).toBe("resource_stone");
+    expect(resourceModelUrl(definition?.modelId ?? null)).toBeTypeOf("string");
+    const position = tileToWorld(active?.position ?? { x: 0, y: 0 }, worldFrame());
+    expect(position.worldX).toBeCloseTo(7.02);
+    expect(position.worldZ).toBeCloseTo(-18.9);
+
+    const target = buildInteractionIndex(world([node()])).targets.find(
+      (candidate) => candidate.key === "resource:node_stone_ridge"
+    );
+    expect(target).toMatchObject({ kind: "RESOURCE_NODE", action: "MINE", tileX: 12, tileY: -12 });
   });
 });
 

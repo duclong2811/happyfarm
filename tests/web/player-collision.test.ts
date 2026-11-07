@@ -50,6 +50,7 @@ function sceneTile(x: number, y: number, options: TileOptions = {}): SceneTile {
         ? {
             treeInstanceId: "treeinst_1",
             definitionId: "tree_apple",
+            phase: "GROWING",
             visualStage: "SAPLING",
             growthProgress: 0.1,
             ready: false
@@ -137,13 +138,11 @@ describe("player collision world", () => {
     }
   });
 
-  it("blocks a crop as a circle at the tile centre, not as the whole tile", () => {
+  it("lets the character pass through ordinary crop visuals", () => {
     const cropped = sceneTile(4, 3, { occupied: "crop" });
     const world = createPlayerCollisionWorld([cropped]);
-    expect(world.depth(cropped.worldX, cropped.worldZ)).toBeGreaterThan(0);
-    // Touching the crop is blocked; a step further out is ground the character can stand on again.
-    expect(world.depth(cropped.worldX + 0.45, cropped.worldZ)).toBeGreaterThan(0);
-    expect(world.depth(cropped.worldX + 0.55, cropped.worldZ)).toBeLessThanOrEqual(0);
+    expect(world.depth(cropped.worldX, cropped.worldZ)).toBeLessThanOrEqual(0);
+    expect(world.depth(cropped.worldX + 0.45, cropped.worldZ)).toBeLessThanOrEqual(0);
     expect(world.depth(cropped.worldX + 0.7, cropped.worldZ)).toBeLessThanOrEqual(0);
   });
 

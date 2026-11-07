@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type {
@@ -13,7 +13,9 @@ import {
   inventoryTabs,
   visibleInventoryCards
 } from "../../apps/web/src/items/catalogue";
-import { cropVisualFor, itemVisualFor, saplingVisual, seedVisual } from "../../apps/web/src/items/visuals";
+import { cropVisualFor, itemVisualFor } from "../../apps/web/src/items/visuals";
+import { ITEM_THUMBNAIL_MAP } from "../../apps/web/src/items/item-thumbnail-map";
+import { shops } from "@happy-farm/game-data";
 
 /**
  * What the inventory shelf shows, and what picture each card gets.
@@ -175,18 +177,21 @@ describe("thumbnails and their fallbacks", () => {
     expect(fromItem.request).toEqual(fromPicker.request);
   });
 
-  it("falls back deliberately where no model exists", () => {
-    // Seeds and saplings have no shipped model at all; saying so is the honest answer, and the card
-    // draws its own art rather than a broken image or an empty square.
+  it("uses item-specific transparent art where no GLB exists", () => {
+    // Seeds and saplings are not represented by mature GLBs, so each gets its own Vite asset rather
+    // than sharing a generic seed icon.
     const seed = itemVisualFor("item_carrot_seed", { cropDefinitions: CROPS, treeDefinitions: TREES });
     expect(seed.request.modelId).toBeNull();
-    expect(seed.fallback).toBe("SEED");
-    expect(seed.key).toBe(seedVisual().key);
+    expect(seed.request.imageUrl).toBeTruthy();
+    expect(seed.key).toBe("image:seed_carrot");
+    const cornSeed = itemVisualFor("item_corn_seed", { cropDefinitions: CROPS, treeDefinitions: TREES });
+    expect(cornSeed.request.imageUrl).toBeTruthy();
+    expect(cornSeed.key).toBe("image:seed_corn");
 
     const sapling = itemVisualFor("item_apple_sapling", { cropDefinitions: CROPS, treeDefinitions: TREES });
     expect(sapling.request.modelId).toBeNull();
-    expect(sapling.fallback).toBe("SAPLING");
-    expect(sapling.key).toBe(saplingVisual().key);
+    expect(sapling.request.imageUrl).toBeTruthy();
+    expect(sapling.key).toBe("image:sapling_apple");
   });
 
   it("gives an item this build has never heard of a sized, deterministic placeholder", () => {
@@ -195,15 +200,53 @@ describe("thumbnails and their fallbacks", () => {
     expect(unknown.request).toEqual({ modelId: null, roadTierId: null });
   });
 
-  it("names the items that fall back today", () => {
-    // The documented list from `items/visuals.ts`: produce draws the crop's model, everything else in
-    // the current catalogue is a drawn fallback. If a seed model ever ships, this test should change.
+  it("keeps every known planting input on its own art key", () => {
     const visuals = ["item_carrot", "item_corn", "item_carrot_seed", "item_corn_seed", "item_apple_sapling"].map(
       (id) => itemVisualFor(id, { cropDefinitions: CROPS, treeDefinitions: TREES })
     );
-    expect(visuals.filter((visual) => visual.fallback === "PRODUCE").length).toBe(2);
-    expect(visuals.filter((visual) => visual.fallback === "SEED").length).toBe(2);
-    expect(visuals.filter((visual) => visual.fallback === "SAPLING").length).toBe(1);
+    expect(visuals.map((visual) => visual.key)).toEqual([
+      "model:crop_carrot",
+      "model:crop_corn",
+      "image:seed_carrot",
+      "image:seed_corn",
+      "image:sapling_apple"
+    ]);
+  });
+
+  it("covers every Shop item with an explicit, decodable thumbnail source", () => {
+    const shopItemIds = [...new Set(shops.map((entry) => entry.itemDefinitionId))].sort();
+    expect(Object.keys(ITEM_THUMBNAIL_MAP).sort()).toEqual(shopItemIds);
+    const assetRoot = fileURLToPath(new URL("../../apps/web/src/assets/", import.meta.url));
+    for (const itemId of shopItemIds) {
+      const spec = ITEM_THUMBNAIL_MAP[itemId];
+      if (spec === undefined) throw new Error(`missing thumbnail mapping for ${itemId}`);
+      if (spec.kind === "IMAGE") {
+        const path = `${assetRoot}/items/${spec.assetName}.svg`;
+        expect(existsSync(path), itemId).toBe(true);
+        const source = readFileSync(path, "utf8");
+        expect(source, itemId).toMatch(/^<svg\b/);
+        expect(source, itemId).toContain("viewBox=");
+        expect(source, itemId).not.toMatch(/<text\b/);
+      } else {
+        const path = spec.modelId.startsWith("crop_")
+          ? `${assetRoot}/models/${spec.modelId}.glb`
+          : spec.modelId.startsWith("fish_")
+            ? `${assetRoot}/models/fishing/${spec.modelId}.glb`
+            : `${assetRoot}/models/resources/${spec.modelId}.glb`;
+        expect(existsSync(path), itemId).toBe(true);
+        expect(statSync(path).size, itemId).toBeGreaterThan(32);
+        expect([...readFileSync(path).subarray(0, 4)], itemId).toEqual([103, 108, 84, 70]);
+      }
+    }
+  });
+
+  it("uses one itemId thumbnail in both directions and separates fingerling from adult fish", () => {
+    const catalogues = { cropDefinitions: CROPS, treeDefinitions: TREES, fish: [], resourceNodes: [] };
+    const fingerling = itemVisualFor("item_fish_tilapia", catalogues);
+    const adult = itemVisualFor("item_fish_tilapia_adult", catalogues);
+    expect(fingerling.key).toBe("image:fish_tilapia_fingerling");
+    expect(adult.key).toBe("model:fish_tilapia");
+    expect(fingerling.key).not.toBe(adult.key);
   });
 });
 
@@ -227,9 +270,13 @@ describe("the item presentation performance contract", () => {
     // second WebGL context and a second copy of every picture.
     const web = fileURLToPath(new URL("../../apps/web/src", import.meta.url));
     const callers: string[] = [];
+    // This is a documented dev-only page entrypoint, not an application module. It may reuse the
+    // renderer for QA without creating a second production thumbnail pipeline.
+    const devOnlyEntryPoints = new Set(["moc-asset-contact-sheet.ts"]);
     for (const name of readdirSync(web, { recursive: true })) {
       const path = `${web}/${String(name)}`;
       if (!String(name).endsWith(".ts")) continue;
+      if (devOnlyEntryPoints.has(String(name).split("\\").join("/"))) continue;
       const text = readFileSync(path, "utf8");
       if (text.includes("createThumbnailRenderer(")) callers.push(String(name).split("\\").join("/"));
     }

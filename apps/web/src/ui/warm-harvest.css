@@ -1,0 +1,406 @@
+/*
+ * Warm Harvest is the active scoped presentation system for Construction, HUD and navigation.
+ * Baseline before this rebalance: 1024px maximum Build panel, 64px header, 168px rail and 272px
+ * inspector. The rules below target 920px at a 1040px viewport, 1056px at desktop, a 56px/60px
+ * header, 156px/176px rail, 244px/272px inspector and 12px region gaps. The superseded Modern Orchard stylesheet stays
+ * in the workspace as a rollback reference but is no longer imported by the application entrypoint.
+ */
+
+.ui-warm-harvest-construction,
+.ui-warm-harvest-hud {
+  --harvest-background: #fff7eb;
+  --harvest-surface: #f5dfc0;
+  --harvest-structure: #3e2b26;
+  --harvest-primary: #f28c45;
+  --harvest-primary-depth: #a74425;
+  --harvest-gold: #e9b54b;
+  --harvest-green: #31885d;
+  --harvest-ink: #38291f;
+  --harvest-line: rgba(62, 43, 38, .17);
+  --harvest-panel-shadow: 0 1.25rem 3rem rgba(62, 43, 38, .28), 0 .18rem 0 rgba(255, 255, 255, .72) inset;
+  --harvest-card-shadow: 0 .3rem 0 #d6ae81, 0 .58rem 1rem rgba(62, 43, 38, .14);
+}
+
+/* HUD values sit on cocoa plaques: contrast stays stable over the real, changing 3D world. */
+.top-hud.ui-warm-harvest-hud {
+  gap: .7rem;
+  padding: max(.58rem, env(safe-area-inset-top)) max(.86rem, env(safe-area-inset-right)) .62rem max(.86rem, env(safe-area-inset-left));
+  background: linear-gradient(180deg, rgba(62, 43, 38, .86), rgba(62, 43, 38, .2) 76%, transparent);
+}
+.top-hud.ui-warm-harvest-hud .brand {
+  gap: .5rem;
+  padding: .36rem .7rem .36rem .55rem;
+  border: 2px solid rgba(255, 247, 235, .46);
+  border-radius: 1rem;
+  color: var(--harvest-background);
+  background: var(--harvest-structure);
+  box-shadow: 0 .27rem 0 rgba(39, 25, 22, .65), 0 .48rem .95rem rgba(39, 25, 22, .22);
+}
+.top-hud.ui-warm-harvest-hud .brand::after { display: none; }
+.top-hud.ui-warm-harvest-hud .brand-mark,
+.top-hud.ui-warm-harvest-hud .hud-stat-icon { color: var(--harvest-gold); filter: none; }
+.top-hud.ui-warm-harvest-hud .brand h1 {
+  color: var(--harvest-background);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(1.08rem, 1.8vw, 1.32rem);
+  font-weight: 800;
+  letter-spacing: .01em;
+  text-shadow: none;
+}
+.top-hud.ui-warm-harvest-hud .hud-status { gap: .44rem; }
+.top-hud.ui-warm-harvest-hud .hud-stat,
+.top-hud.ui-warm-harvest-hud .camera-mode,
+.top-hud.ui-warm-harvest-hud .ghost-button {
+  min-height: 2.7rem;
+  border: 2px solid rgba(255, 247, 235, .34);
+  border-image: none;
+  border-radius: .88rem;
+  background: var(--harvest-structure);
+  box-shadow: 0 .22rem 0 rgba(39, 25, 22, .62), 0 .42rem .82rem rgba(39, 25, 22, .22);
+}
+.top-hud.ui-warm-harvest-hud .hud-stat { gap: .42rem; padding: .32rem .72rem; }
+.top-hud.ui-warm-harvest-hud .hud-stat strong,
+.top-hud.ui-warm-harvest-hud .hud-stat .big,
+.top-hud.ui-warm-harvest-hud .hud-stat .muted {
+  color: var(--harvest-background);
+  font-family: "Nunito Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(.94rem, 1.5vw, 1.12rem);
+  font-weight: 850;
+  text-shadow: none;
+}
+.top-hud.ui-warm-harvest-hud .xp-bar { background: rgba(255, 247, 235, .18); box-shadow: inset 0 1px 2px rgba(39, 25, 22, .52); }
+.top-hud.ui-warm-harvest-hud .xp-fill { background: var(--harvest-gold); }
+.top-hud.ui-warm-harvest-hud .ghost-button { width: 2.7rem; padding: .25rem; color: var(--harvest-background); }
+.top-hud.ui-warm-harvest-hud .ghost-button:hover:not(:disabled) { border-image: none; color: var(--harvest-background); background: #5a4039; transform: translateY(-1px); }
+.top-hud.ui-warm-harvest-hud .camera-mode { gap: .18rem; padding: .18rem; }
+.top-hud.ui-warm-harvest-hud .camera-mode-button {
+  min-height: 2.15rem;
+  padding: .3rem .62rem;
+  border: 0;
+  border-image: none;
+  border-radius: .65rem;
+  color: var(--harvest-background);
+  background: transparent;
+  font-family: "Nunito Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: .88rem;
+  font-weight: 800;
+}
+.top-hud.ui-warm-harvest-hud .camera-mode-button:hover:not(:disabled) { border-image: none; color: var(--harvest-background); background: rgba(255, 247, 235, .13); }
+.top-hud.ui-warm-harvest-hud .camera-mode-button.is-active { border-image: none; color: var(--harvest-ink); background: var(--harvest-gold); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .54); }
+
+/* Navigation has one quiet cocoa silhouette; orange names the currently open game surface. */
+.module-rail.ui-warm-harvest-hud { gap: .42rem; padding: 0; border: 0; border-image: none; border-radius: 0; background: none; box-shadow: none; }
+.module-rail.ui-warm-harvest-hud .module-launcher {
+  width: 3.15rem;
+  height: 3.15rem;
+  min-width: 3.15rem;
+  min-height: 3.15rem;
+  border: 2px solid rgba(255, 247, 235, .46);
+  border-image: none;
+  border-radius: .92rem;
+  color: var(--harvest-background);
+  background: var(--harvest-structure);
+  box-shadow: 0 .28rem 0 rgba(39, 25, 22, .62), 0 .48rem .9rem rgba(39, 25, 22, .22);
+  filter: none;
+}
+.module-rail.ui-warm-harvest-hud .module-launcher:hover:not(:disabled) { border-image: none; color: var(--harvest-background); background: #5a4039; filter: none; transform: translateY(-2px); }
+.module-rail.ui-warm-harvest-hud .module-launcher.is-active { border-image: none; color: var(--harvest-ink); background: var(--harvest-primary); box-shadow: 0 .28rem 0 var(--harvest-primary-depth), 0 .48rem .9rem rgba(89, 42, 26, .28); }
+
+/* Construction shell: 920px near a 1040px viewport; 1056px cap at 1440px desktop. */
+#build-panel.ui-warm-harvest-construction {
+  width: min(66rem, calc(100vw - 7.5rem));
+  height: min(76vh, 43rem);
+  max-height: calc(100dvh - var(--hud-height) - 1.25rem);
+  padding: 0;
+  border: 3px solid var(--harvest-structure);
+  border-image: none;
+  border-radius: 1.35rem;
+  background: var(--harvest-background);
+  color: var(--harvest-ink);
+  box-shadow: var(--harvest-panel-shadow);
+  font-family: "Nunito Variable", "Noto Sans", "Noto Sans KR", "Noto Sans SC", system-ui, sans-serif;
+}
+#build-panel.ui-warm-harvest-construction .build-header {
+  min-height: 3.75rem;
+  padding: .55rem 1rem .5rem 1.12rem;
+  border: 0;
+  border-bottom: 3px solid var(--harvest-gold);
+  background: var(--harvest-structure);
+  color: var(--harvest-background);
+  box-shadow: 0 .18rem 0 rgba(39, 25, 22, .23);
+  filter: none;
+}
+#build-panel.ui-warm-harvest-construction .build-header h2 {
+  gap: .58rem;
+  color: var(--harvest-background);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(1.34rem, 2.1vw, 1.58rem);
+  font-weight: 850;
+  letter-spacing: .01em;
+}
+#build-panel.ui-warm-harvest-construction .build-title-icon { color: var(--harvest-gold); }
+#build-panel.ui-warm-harvest-construction .build-header-right { gap: .58rem; }
+#build-panel.ui-warm-harvest-construction .build-gold {
+  min-height: 2.22rem;
+  padding: .2rem .62rem;
+  border: 1px solid rgba(255, 247, 235, .28);
+  border-radius: .72rem;
+  color: var(--harvest-background);
+  background: rgba(25, 16, 13, .48);
+  font-size: .98rem;
+  font-weight: 850;
+}
+#build-panel.ui-warm-harvest-construction .build-gold svg { color: var(--harvest-gold); }
+#build-panel.ui-warm-harvest-construction .panel-close {
+  width: 2.22rem;
+  height: 2.22rem;
+  border: 1px solid rgba(255, 247, 235, .58);
+  border-radius: .72rem;
+  color: var(--harvest-ink);
+  background: var(--harvest-gold);
+  box-shadow: 0 .14rem 0 rgba(111, 77, 23, .68);
+}
+#build-panel.ui-warm-harvest-construction .panel-close:hover:not(:disabled) { color: var(--harvest-background); background: var(--harvest-primary); transform: translateY(-1px); }
+
+/* Desktop uses a 176px rail + 272px inspector; the compact breakpoint below reduces both. */
+#build-panel.ui-warm-harvest-construction .build-body {
+  grid-template-columns: 11rem minmax(0, 1fr) 17rem;
+  gap: .75rem;
+  padding: .75rem;
+  background: var(--harvest-surface);
+}
+#build-panel.ui-warm-harvest-construction .shop-rail {
+  gap: .42rem;
+  padding: .56rem;
+  border: 0;
+  border-radius: .88rem;
+  background: #f0d5af;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .52);
+}
+#build-panel.ui-warm-harvest-construction .shop-rail-item,
+#build-panel.ui-warm-harvest-construction .shop-filter {
+  min-height: 3rem;
+  padding: .52rem .58rem;
+  border: 2px solid transparent;
+  border-image: none;
+  border-radius: .78rem;
+  color: var(--harvest-ink);
+  background: transparent;
+  box-shadow: none;
+  font-family: "Nunito Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: .94rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+#build-panel.ui-warm-harvest-construction .shop-rail-item svg { color: var(--harvest-primary-depth); }
+#build-panel.ui-warm-harvest-construction .shop-rail-item:hover:not(.is-active),
+#build-panel.ui-warm-harvest-construction .shop-filter:hover:not(.is-active) { color: var(--harvest-ink); background: rgba(62, 43, 38, .08); }
+#build-panel.ui-warm-harvest-construction .shop-rail-item.is-active,
+#build-panel.ui-warm-harvest-construction .shop-filter.is-active {
+  border-image: none;
+  border-color: var(--harvest-primary-depth);
+  color: var(--harvest-ink);
+  background: var(--harvest-primary);
+  box-shadow: 0 .2rem 0 var(--harvest-primary-depth), inset 0 1px 0 rgba(255, 255, 255, .46);
+}
+#build-panel.ui-warm-harvest-construction .shop-rail-item.is-active svg { color: var(--harvest-ink); }
+
+#build-panel.ui-warm-harvest-construction .build-center {
+  gap: .62rem;
+  padding: .72rem;
+  border-radius: .9rem;
+  background: var(--harvest-background);
+}
+#build-panel.ui-warm-harvest-construction .shop-tools-summary { color: var(--harvest-structure); font-weight: 850; }
+#build-panel.ui-warm-harvest-construction .shop-tools-controls { gap: .5rem; padding: .12rem 0 .32rem; }
+#build-panel.ui-warm-harvest-construction .shop-search-input {
+  min-height: 2.62rem;
+  border: 2px solid rgba(62, 43, 38, .2);
+  border-radius: .76rem;
+  color: var(--harvest-ink);
+  background: #fffdf7;
+  box-shadow: inset 0 1px 2px rgba(62, 43, 38, .07);
+  font-size: .9rem;
+}
+#build-panel.ui-warm-harvest-construction .shop-search-input:focus { border-color: var(--harvest-primary); outline: 2px solid rgba(242, 140, 69, .28); outline-offset: 1px; }
+#build-panel.ui-warm-harvest-construction .shop-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .75rem;
+  padding: .12rem .08rem .68rem;
+  scrollbar-color: var(--harvest-primary-depth) transparent;
+}
+
+/* Cards reserve the upper region for the real GLB thumbnail and keep live title/price below it. */
+#build-panel.ui-warm-harvest-construction .shop-card {
+  position: relative;
+  min-height: 0;
+  border: 2px solid #e2bf8b;
+  border-image: none;
+  border-radius: .82rem;
+  background: #fffdf7;
+  box-shadow: var(--harvest-card-shadow);
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+}
+#build-panel.ui-warm-harvest-construction .shop-card:hover:not(.is-selected) { border-image: none; border-color: var(--harvest-primary); background: #fffdf7; box-shadow: 0 .42rem 0 #e3b37c, 0 .68rem 1.08rem rgba(62, 43, 38, .18); transform: translateY(-2px); }
+#build-panel.ui-warm-harvest-construction .shop-card.is-selected { border-image: none; border-color: var(--harvest-primary-depth); box-shadow: 0 0 0 .16rem rgba(242, 140, 69, .5), 0 .42rem 0 var(--harvest-primary-depth), 0 .68rem 1.08rem rgba(62, 43, 38, .2); }
+#build-panel.ui-warm-harvest-construction .shop-card.is-locked { border-color: #c9b9a0; background: #f4ebdd; box-shadow: 0 .26rem 0 #c9b9a0, 0 .42rem .78rem rgba(62, 43, 38, .1); }
+#build-panel.ui-warm-harvest-construction .shop-card.is-preview { border-color: #d9ad50; }
+#build-panel.ui-warm-harvest-construction .shop-card.is-unaffordable .shop-card-price { color: #a74425; }
+#build-panel.ui-warm-harvest-construction .shop-card-thumb {
+  min-height: 8.25rem;
+  aspect-ratio: 1.22 / 1;
+  border-bottom: 1px solid rgba(62, 43, 38, .1);
+  background: linear-gradient(145deg, #fffdf7 16%, #f5dfc0 100%);
+}
+#build-panel.ui-warm-harvest-construction .shop-card-thumb::after {
+  content: "";
+  position: absolute;
+  inset: auto .62rem .42rem;
+  height: .46rem;
+  border-radius: 50%;
+  background: rgba(62, 43, 38, .15);
+  filter: blur(3px);
+}
+#build-panel.ui-warm-harvest-construction .shop-thumb-image { z-index: 1; padding: .45rem; }
+#build-panel.ui-warm-harvest-construction .shop-card-lock,
+#build-panel.ui-warm-harvest-construction .shop-card-preview {
+  z-index: 2;
+  right: .44rem;
+  bottom: .44rem;
+  padding: .28rem .44rem;
+  border: 1px solid rgba(255, 255, 255, .64);
+  border-radius: .56rem;
+  color: var(--harvest-background);
+  background: var(--harvest-structure);
+  font-size: .75rem;
+  font-weight: 850;
+}
+#build-panel.ui-warm-harvest-construction .shop-card-preview { color: var(--harvest-ink); background: var(--harvest-gold); }
+#build-panel.ui-warm-harvest-construction .shop-card-meta { gap: .4rem; padding: .62rem .68rem .7rem; }
+#build-panel.ui-warm-harvest-construction .shop-card-name { color: var(--harvest-ink); font-size: 1.02rem; font-weight: 900; line-height: 1.18; }
+#build-panel.ui-warm-harvest-construction .shop-card-line { font-size: .88rem; }
+#build-panel.ui-warm-harvest-construction .shop-card-price {
+  gap: .28rem;
+  padding: .17rem .4rem;
+  border-radius: .48rem;
+  color: var(--harvest-ink);
+  background: #f9e3b1;
+  font-size: .94rem;
+  font-weight: 900;
+}
+#build-panel.ui-warm-harvest-construction .shop-card-price svg,
+#build-panel.ui-warm-harvest-construction .shop-fact-price svg { color: #c38222; }
+#build-panel.ui-warm-harvest-construction .shop-card-level { color: var(--harvest-green); font-size: .78rem; font-weight: 850; }
+
+#build-panel.ui-warm-harvest-construction .shop-inspector {
+  gap: .68rem;
+  padding: .78rem;
+  border: 0;
+  border-radius: .9rem;
+  background: #f0d5af;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .52);
+}
+#build-panel.ui-warm-harvest-construction .shop-inspector-name {
+  color: var(--harvest-ink);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(1.24rem, 2vw, 1.44rem);
+  font-weight: 850;
+  line-height: 1.05;
+}
+#build-panel.ui-warm-harvest-construction .shop-inspector-description,
+#build-panel.ui-warm-harvest-construction .shop-does-line,
+#build-panel.ui-warm-harvest-construction .shop-does-status,
+#build-panel.ui-warm-harvest-construction .shop-facts,
+#build-panel.ui-warm-harvest-construction .shop-stat { color: #695348; font-size: .87rem; line-height: 1.4; }
+#build-panel.ui-warm-harvest-construction .shop-inspector-picture {
+  min-height: 9rem;
+  max-height: 12rem;
+  border: 2px solid #e0bb7a;
+  border-radius: .88rem;
+  background: linear-gradient(145deg, #fffdf7 16%, #f5dfc0);
+}
+#build-panel.ui-warm-harvest-construction .shop-inspector-picture .shop-thumb-image { padding: .52rem; }
+#build-panel.ui-warm-harvest-construction .shop-does-title { color: var(--harvest-structure); font-size: .75rem; font-weight: 900; letter-spacing: .07em; }
+#build-panel.ui-warm-harvest-construction .shop-stat svg { color: var(--harvest-green); }
+#build-panel.ui-warm-harvest-construction .shop-stat-value,
+#build-panel.ui-warm-harvest-construction .shop-facts dd { color: var(--harvest-ink); font-weight: 850; }
+#build-panel.ui-warm-harvest-construction .shop-inspector-action { padding-top: .66rem; border-top: 1px solid var(--harvest-line); }
+#build-panel.ui-warm-harvest-construction .shop-inspector-price { color: #695348; font-size: .87rem; font-weight: 750; }
+#build-panel.ui-warm-harvest-construction .shop-inspector-price .shop-fact-price { color: var(--harvest-ink); font-size: 1.1rem; font-weight: 900; }
+#build-panel.ui-warm-harvest-construction .shop-inspector-state { color: var(--harvest-green); font-size: .82rem; font-weight: 800; }
+#build-panel.ui-warm-harvest-construction .shop-inspector-state.is-locked,
+#build-panel.ui-warm-harvest-construction .shop-inspector-state.is-unaffordable { color: var(--harvest-primary-depth); }
+#build-panel.ui-warm-harvest-construction .shop-place {
+  min-height: 3rem;
+  border: 2px solid var(--harvest-primary-depth);
+  border-image: none;
+  border-radius: .82rem;
+  color: var(--harvest-ink);
+  background: var(--harvest-primary);
+  box-shadow: 0 .24rem 0 var(--harvest-primary-depth), inset 0 1px 0 rgba(255, 255, 255, .44);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: 1.06rem;
+  font-weight: 850;
+}
+#build-panel.ui-warm-harvest-construction .shop-place:hover:not(:disabled) { border-image: none; color: var(--harvest-ink); background: #ffa45d; transform: translateY(-1px); }
+#build-panel.ui-warm-harvest-construction .shop-place:disabled { border-image: none; border-color: #c8b9a5; color: #756b61; background: #e8dfd0; box-shadow: none; }
+#build-panel.ui-warm-harvest-construction .shop-inspector-empty { color: #756354; font-size: .92rem; }
+#build-panel.ui-warm-harvest-construction .shop-inspector-empty svg { color: var(--harvest-primary); }
+
+/* Compact desktop targets the 1040px composition without crowding the item grid. */
+@media (min-width: 901px) and (max-width: 1180px) {
+  #build-panel.ui-warm-harvest-construction .build-header { min-height: 3.5rem; }
+  #build-panel.ui-warm-harvest-construction .build-body { grid-template-columns: 9.75rem minmax(0, 1fr) 15.25rem; }
+}
+
+@media (max-width: 900px) {
+  #build-panel.ui-warm-harvest-construction { width: min(58rem, calc(100vw - 2rem)); max-height: calc(100dvh - 1.25rem); }
+  #build-panel.ui-warm-harvest-construction .build-body { grid-template-columns: minmax(0, 1fr) 15rem; }
+  #build-panel.ui-warm-harvest-construction .shop-rail { grid-column: 1 / -1; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  #build-panel.ui-warm-harvest-construction .shop-rail-item { min-width: max-content; }
+}
+
+@media (max-width: 700px) {
+  .top-hud.ui-warm-harvest-hud { gap: .35rem; padding-inline: max(.5rem, env(safe-area-inset-left)) max(.5rem, env(safe-area-inset-right)); }
+  .top-hud.ui-warm-harvest-hud .brand { padding: .28rem .46rem; }
+  .top-hud.ui-warm-harvest-hud .brand h1 { font-size: .98rem; }
+  .top-hud.ui-warm-harvest-hud .hud-stat { min-height: 2.38rem; padding: .2rem .42rem; }
+  .top-hud.ui-warm-harvest-hud .hud-stat strong,
+  .top-hud.ui-warm-harvest-hud .hud-stat .big { font-size: .88rem; }
+  .top-hud.ui-warm-harvest-hud .camera-mode { display: none; }
+  .module-rail.ui-warm-harvest-hud { gap: .28rem; }
+  .module-rail.ui-warm-harvest-hud .module-launcher { width: var(--touch-target); height: var(--touch-target); min-width: var(--touch-target); min-height: var(--touch-target); border-radius: .78rem; }
+  #build-panel.ui-warm-harvest-construction {
+    top: max(.55rem, env(safe-area-inset-top));
+    left: .5rem;
+    width: calc(100vw - 1rem);
+    height: calc(100dvh - 1.1rem);
+    max-height: none;
+    border-width: 3px;
+    border-radius: 1.16rem;
+  }
+  #build-panel.ui-warm-harvest-construction .build-header { min-height: 3.62rem; padding: .48rem .6rem .45rem .75rem; }
+  #build-panel.ui-warm-harvest-construction .build-header h2 { font-size: 1.28rem; }
+  #build-panel.ui-warm-harvest-construction .build-gold { min-height: 2.1rem; max-width: 8.1rem; padding-inline: .42rem; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #build-panel.ui-warm-harvest-construction .panel-close { width: 2.1rem; height: 2.1rem; }
+  #build-panel.ui-warm-harvest-construction .build-body { display: flex; flex-direction: column; gap: .5rem; padding: .5rem; overflow-y: auto; }
+  #build-panel.ui-warm-harvest-construction .shop-rail { flex: 0 0 auto; min-height: 3.95rem; padding: .42rem; }
+  #build-panel.ui-warm-harvest-construction .shop-rail-item { min-height: var(--touch-target); padding-inline: .6rem; font-size: .87rem; white-space: nowrap; }
+  #build-panel.ui-warm-harvest-construction .build-center { flex: 0 0 auto; min-height: 21rem; padding: .58rem; }
+  #build-panel.ui-warm-harvest-construction .shop-tools-controls { flex-direction: column; }
+  #build-panel.ui-warm-harvest-construction .shop-filters { width: 100%; }
+  #build-panel.ui-warm-harvest-construction .shop-filter { flex: 1; min-height: var(--touch-target); padding-inline: .3rem; font-size: .78rem; }
+  #build-panel.ui-warm-harvest-construction .shop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .62rem; overflow: visible; }
+  #build-panel.ui-warm-harvest-construction .shop-card-thumb { min-height: 7rem; }
+  #build-panel.ui-warm-harvest-construction .shop-card-meta { padding: .52rem .56rem .62rem; }
+  #build-panel.ui-warm-harvest-construction .shop-card-name { font-size: .93rem; }
+  #build-panel.ui-warm-harvest-construction .shop-card-price { font-size: .83rem; }
+  #build-panel.ui-warm-harvest-construction .shop-inspector { flex: 0 0 auto; min-height: 0; padding: .72rem; }
+  #build-panel.ui-warm-harvest-construction .shop-inspector-picture { min-height: 9.75rem; max-height: 11.75rem; flex: 0 0 9.75rem; }
+  #build-panel.ui-warm-harvest-construction .shop-inspector-name { font-size: 1.28rem; }
+  #build-panel.ui-warm-harvest-construction .shop-inspector-action { position: sticky; bottom: 0; padding-bottom: max(.2rem, env(safe-area-inset-bottom)); background: #f0d5af; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #build-panel.ui-warm-harvest-construction .shop-card { transition: none; }
+}

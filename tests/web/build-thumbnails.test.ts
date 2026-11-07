@@ -79,8 +79,8 @@ describe("thumbnail framing", () => {
     // card's picture.
     expect(Number.isInteger(Math.log2(THUMBNAIL_SIZE))).toBe(true);
     expect(THUMBNAIL_SIZE).toBeGreaterThanOrEqual(128);
-    expect(THUMBNAIL_FILL).toBeGreaterThan(0.6);
-    expect(THUMBNAIL_FILL).toBeLessThan(0.85);
+    expect(THUMBNAIL_FILL).toBeGreaterThanOrEqual(0.8);
+    expect(THUMBNAIL_FILL).toBeLessThan(0.9);
   });
 });
 

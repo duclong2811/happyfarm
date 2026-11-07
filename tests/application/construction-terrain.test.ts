@@ -110,16 +110,23 @@ describe("the placement rule reads the island's geography", () => {
     await expect(beach.run()).rejects.toMatchObject({ code: "CONSTRUCTION_UNSUITABLE_GROUND" });
   });
 
-  it("refuses land the farm does not own before any physical question, whatever the ground is", async () => {
-    // Ownership first: land the farm does not have is "not yours", which is the honest answer and the
-    // one the client's preview gives.
+  it("places on natural land the farm has no ownership row for (V14.5.2)", async () => {
+    // V14.5.2: ownership no longer gates placement. A footprint on valid natural land is placed and
+    // the settlement writes the tile rows it needs, for free - the price is the asset's own.
+    let placedTiles = 0;
     const { farm, ownerMembership } = createOwnedFarm(FARM_ID, PLAYER_ONE_ID, "Terrain Farm", NOW);
     const useCase = new PlaceConstruction({
       farms: { findById: () => Promise.resolve(farm), starterWorldState: () => Promise.resolve(null) },
       members: { findByFarmAndPlayer: () => Promise.resolve(ownerMembership) },
       tiles: { find: () => Promise.resolve(null) },
       terrain: gameDataTileTerrain,
-      constructions: { listBounds: () => Promise.resolve([]) },
+      constructions: {
+        listBounds: () => Promise.resolve([]),
+        placeAtomically: (placement: { readonly tiles: readonly unknown[] }) => {
+          placedTiles = placement.tiles.length;
+          return Promise.resolve();
+        }
+      },
       definitions: new GameDataConstructionDefinitions(),
       progression: { find: () => Promise.resolve(null) },
       progressionDefinition: gameDataProgressionDefinition,
@@ -143,9 +150,8 @@ describe("the placement rule reads the island's geography", () => {
       fingerprints: { hash: () => Promise.resolve("a".repeat(64)) },
       clock: { now: () => NOW }
     } as unknown as ConstructorParameters<typeof PlaceConstruction>[0]);
-    await expect(useCase.execute({ playerId: PLAYER_ONE_ID }, FARM_ID, TREE)).rejects.toMatchObject({
-      code: "CONSTRUCTION_NOT_OWNED"
-    });
+    await useCase.execute({ playerId: PLAYER_ONE_ID }, FARM_ID, TREE);
+    expect(placedTiles).toBeGreaterThan(0);
   });
 
   it("classifies the island's real places the way a player would describe them", () => {

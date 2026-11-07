@@ -78,6 +78,19 @@ describe("the category rail", () => {
     expect(shopCategories(catalog)).toEqual(["ROAD", "BUILDING", "VEGETATION"]);
   });
 
+  it("keeps Aquaculture separate from waterfront and decorative entries", () => {
+    const cage = entry({
+      entryId: "place_fish_cage",
+      category: "AQUACULTURE",
+      decorative: false,
+      allowedTerrain: ["SHALLOW_WATER"],
+      tags: ["water", "aquaculture"]
+    });
+    expect(shopCategories([cage])).toEqual(["AQUACULTURE"]);
+    expect(resolveCategory([cage], "DECORATION")).toBe("AQUACULTURE");
+    expect(visibleEntries([cage], { category: "AQUACULTURE", query: "", filter: "ALL", playerLevel: 5, nameOf })).toEqual([cage]);
+  });
+
   it("falls back to a category that has entries when the preferred one is empty", () => {
     const catalog = [entry({ entryId: "r", category: "ROAD" })];
     expect(resolveCategory(catalog, "DECORATION")).toBe("ROAD");

@@ -74,22 +74,6 @@ export function ownedCells(cells: WorldCellMap): readonly TileCoordinate[] {
 }
 
 /**
- * Whether to draw the ownership mark, and for which cells.
- *
- * Only while the player is *using* the land: placing something, or carrying something to a new cell.
- * Normal play shows no grid and no ownership - the island stays a place rather than a spreadsheet -
- * and a mode that ends takes the mark with it.
- */
-export function ownershipOverlayFor(input: {
-  readonly placing: boolean;
-  readonly moving: boolean;
-  readonly cells: WorldCellMap;
-}): readonly TileCoordinate[] | null {
-  if (!input.placing && !input.moving) return null;
-  return ownedCells(input.cells);
-}
-
-/**
  * The bounds of the owned parcel, for the developer diagnostic.
  *
  * A human asked why the placement ghost kept saying "you do not own that land yet" and had no way to

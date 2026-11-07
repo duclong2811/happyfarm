@@ -70,10 +70,12 @@ const DEVELOPABLE: readonly CellCapability[] = [
 describe("cell capabilities", () => {
   it("answers for every kind of ground, so no caller has to invent an answer", () => {
     expect(cellCapabilitiesFor("BLOCKED", "CIVIC")).toEqual([]);
-    expect(cellCapabilitiesFor("WATER", "NONE")).toEqual([]);
-    expect(cellCapabilitiesFor("WATER", "AQUACULTURE")).toEqual(["AQUACULTURE"]);
+    expect(cellCapabilitiesFor("WATER", "NONE")).toEqual(["FISHERY"]);
+    expect(cellCapabilitiesFor("WATER", "AQUACULTURE")).toEqual(["FISHERY", "AQUACULTURE"]);
     expect(cellCapabilitiesFor("SHORE", "NONE")).toEqual(["WALK", "DOCK"]);
     expect(cellCapabilitiesFor("LAND", "NONE")).toEqual(DEVELOPABLE);
+    expect(cellCapabilitiesFor("VOLCANO", "VOLCANO_CORE")).toEqual([]);
+    expect(cellCapabilitiesFor("VOLCANO", "VOLCANO_SLOPE")).toEqual(["WALK", "MINING"]);
   });
 
   it("gives dry land every developable use, whether or not a district is drawn over it", () => {
@@ -122,13 +124,13 @@ describe("cell capabilities", () => {
 
   it("names the vocabulary the build catalogue uses, no more and no fewer", () => {
     const seen = new Set<CellCapability>();
-    for (const terrain of ["LAND", "SHORE", "WATER", "BLOCKED"] as const) {
-      for (const zone of ["NONE", "AGRICULTURE", "AQUACULTURE", "FORESTRY", "MINING", "CIVIC", "WILDERNESS"] as const) {
+    for (const terrain of ["LAND", "SHORE", "WATER", "VOLCANO", "BLOCKED"] as const) {
+      for (const zone of ["NONE", "AGRICULTURE", "AQUACULTURE", "FORESTRY", "MINING", "CIVIC", "WILDERNESS", "VOLCANO_CORE", "VOLCANO_SLOPE", "VOLCANO_FOOTHILL"] as const) {
         for (const capability of cellCapabilitiesFor(terrain, zone)) seen.add(capability);
       }
     }
     expect([...seen].sort()).toEqual(
-      ["AQUACULTURE", "BUILD", "DECORATION", "DOCK", "FARM", "FORESTRY", "LIVESTOCK", "ROAD", "WALK"].sort()
+      ["AQUACULTURE", "BUILD", "DECORATION", "DOCK", "FARM", "FISHERY", "FORESTRY", "LIVESTOCK", "MINING", "ROAD", "WALK"].sort()
     );
   });
 });

@@ -116,7 +116,7 @@ export function marketCards(input: MarketInput): MarketCard[] {
         key: entry.shopEntryId,
         shopEntryId: entry.shopEntryId,
         itemDefinitionId: entry.itemDefinitionId,
-        nameKey: entry.itemDisplayNameKey,
+        nameKey: entry.shopDisplayNameKey ?? entry.itemDisplayNameKey,
         nameFallback: entry.itemDefinitionId,
         unitPrice: (input.direction === "buy" ? entry.buyPrice : entry.sellPrice) ?? 0,
         owned,

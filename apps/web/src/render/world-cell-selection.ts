@@ -78,6 +78,42 @@ export function movementDestination(
   return destinationRejection(cell, map, isBlocked) === null ? cellCentre(cell, map) : null;
 }
 
+/**
+ * A walk destination for a selected world target.
+ *
+ * A crop is passable, so its own centre is the natural destination. A perennial tree is different:
+ * its cell is walkable ground, but its trunk is a collision circle. When the target centre is blocked,
+ * offer the nearest walkable neighbour instead. The caller supplies the character position so the
+ * straight-line runtime approaches from the player's side of the tree rather than trying to cross its
+ * trunk. This is movement presentation only; interaction range and harvest legality remain separate.
+ */
+export function movementDestinationForTarget(
+  target: WorldCell,
+  map: WorldCellMap,
+  from: { readonly worldX: number; readonly worldZ: number },
+  isBlocked: (worldX: number, worldZ: number) => boolean
+): { readonly worldX: number; readonly worldZ: number } | null {
+  const direct = movementDestination(target, map, isBlocked);
+  if (direct !== null) return direct;
+
+  const candidates: { readonly worldX: number; readonly worldZ: number }[] = [];
+  for (let dz = -1; dz <= 1; dz += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dz === 0) continue;
+      const neighbour = map.cells.get(cellKey(target.x + dx, target.z + dz));
+      if (neighbour === undefined) continue;
+      const destination = movementDestination(neighbour, map, isBlocked);
+      if (destination !== null) candidates.push(destination);
+    }
+  }
+  candidates.sort((a, b) => {
+    const distanceA = Math.hypot(a.worldX - from.worldX, a.worldZ - from.worldZ);
+    const distanceB = Math.hypot(b.worldX - from.worldX, b.worldZ - from.worldZ);
+    return distanceA - distanceB;
+  });
+  return candidates[0] ?? null;
+}
+
 export function destinationRejection(
   cell: WorldCell,
   map: WorldCellMap,

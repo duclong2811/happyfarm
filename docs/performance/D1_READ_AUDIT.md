@@ -239,3 +239,100 @@ PRODUCTION forbidden during the alpha                 -> not configured
   next lever if the alpha grows.
 - Cloudflare's own D1 metrics (`d1 info`, `d1 insights`) are the fastest way to re-check this budget;
   they are read-only and safe to run.
+
+## 11. V16.2.1A follow-up - the poll was not the second problem
+
+V16.2.1 recorded a fresh baseline of ~4.54M rows-read/day (91% of the Free ceiling) and the intent to
+reduce it again before automation. The V16.2.1A audit found the remaining volume was **not** the poll:
+
+- The 5 s timer was already reading only `crop_instances` and `tree_instances`, only while visible.
+- The cost was the client's `refreshFarm`, which re-read **all four farm lists** after every action.
+  Two of them dominated: full `farm_tiles` (2.13M rows) and full `farm_constructions` (1.77M) - 86%
+  of the day. Both used a non-covering `farm_id` index and then sorted, costing two rows-read per
+  returned row (measured: 144 tiles = 289, 720 tiles = 1440, 382 objects = 764).
+
+The fix is in `docs/qa/V16_2_1A_D1_READ_OPTIMIZATION.md`: migration
+`0021_farm_read_indexes.sql` adds covering, order-matching indexes for the tiles/crops/trees list
+reads (halving their rows-read and removing the temp sort), and the client now refreshes only the
+lists an action can change - opening a farm reads all four, a harvest reads crops, the timer reads
+crops and trees. The "no new continuous system" rule held: no WebSocket, no Durable Object, no cron,
+no per-player timer, and no change to the 5 s visible-only poll.
+
+## 12. V16.2.2D1 - one resolver pass is a bounded read set, not a poll
+
+V16.2.2D1 gives Auto a pure resolver (`resolvePass` in `packages/domain/src/work-skill.ts`) and one
+read that feeds it (`ResolveAutoPlan` in `packages/application/src/auto.ts`, served by
+`GET /farms/:id/auto-plan`). It **plans only**: no planting, harvesting, travel, unload, purchase or
+node mutation, and therefore no new write path and no new hot path.
+
+The read set for one pass, and the index each read already uses:
+
+```text
+farm + membership                     by primary key (the authorization root)
+actors                                by actor id / (owner_player_id, kind) - the Main Character bootstrap
+actor_cargo_items                     by actor_id (bounded by the container's own capacity)
+wallets                               by (player_id, currency_id)
+home_island_warehouses                by player_id - capacity and used in one row
+actor_jobs                            by (actor_id, priority, id) - the priority-ordered range read
+work_area_cells                       by work_area_id, once per *distinct* area (never per assignment)
+crop_instances / tree_instances       by farm_id, covering index from migration 0021
+farm_constructions (bounds)           by farm_id
+resource_node_states                  by (zone_id, node_id) - the actor's own zone only
+inventory_items.find(owner, input)    by (player_id, item_definition_id), one per distinct input needed
+```
+
+Catalogues (crops, trees, resources, shops) are game data held in memory and cost no D1 rows. There is
+**no** `SELECT` over the world, no `COUNT` over a farm's crops, and no per-crop or per-node query; a
+plan for three assignments in three areas of a 144-cell field reads the same number of statements as a
+plan for one.
+
+Frequency is the point. The plan runs when the Auto panel is opened and after an Auto action, and
+**nowhere else**: no 2 s Auto poll, no frame-loop resolver, no pointer or movement resolver, no cron,
+no Durable Object and no per-actor timer. `tests/web/workers-panel.test.ts` fails if `getAutoPlan(`
+appears anywhere but the panel's own load, or if a farm load, the growth poll or the account refresh
+names the plan - the same source guard the worker and cargo reads already have. A running Auto with the
+panel closed writes and reads nothing until the player opens it again.
+
+## 13. V16.2.2D2 - how often the executor runs, and what one step costs
+
+D2 made Auto execute (the replanting crop family: walk, load, plant from cargo, grow, harvest into
+cargo, return, unload, replant). The D1 policy above is unchanged and still binds: the resolver is not a
+poller, and neither is the executor.
+
+A step is `POST /farms/:id/auto/step`. It costs the D1 plan read set plus:
+
+```text
+actor, membership, farm                the authorization root, as on every route
+actor_auto_state                       one primary-key row: where the actor is, and any walk
+the winning assignment's area cells    one bounded range read
+crops / trees / construction bounds    one read each, by farm_id
+one settlement, when one happens       the settlement's own batch (its reads and its writes)
+```
+
+There is no new index to add: every one of those reads is a point read or a per-area range read that
+already had an index from 0021/0022/0023. The writes are the interesting half, and they are all
+*transition* writes rather than frame writes:
+
+```text
+start a walk       1 guarded upsert of actor_auto_state
+finish a walk      1 guarded upsert of actor_auto_state
+a settlement       the settlement's own batch, plus (for a plant) one row in actor_auto_state
+```
+
+**Cadence** is what keeps the total small. The client asks exactly when the server said there would be
+something to do:
+
+```text
+after a settlement      when the client's work gesture ends (~0.7 s)
+while walking           when the server's arrival time arrives
+while waiting to grow   when the soonest crop in the field is ripe (capped at 5 minutes)
+waiting for supply/funds/storage/space   not at all - retryAfterMs is 0, and the panel's own actions
+                        (a purchase, a manual unload, opening the sheet) are what wake it
+hidden tab              nothing: the loop stops while the tab is hidden and resumes on visible
+```
+
+Measured on staging for one real cycle (a one-cell carrot field, V16.2.2D2 smoke): 8 steps carried the
+actor from an empty field to a harvested and replanted one - `LOAD`, `TRAVELLING`, `PLANT` (13 growth
+waits while the crop ripened, re-asked 20 s at a time by the *smoke harness*; the browser sleeps the
+whole countdown and would have asked once), `HARVEST`, `TRAVELLING`, `LOAD`, `TRAVELLING`, `PLANT`. No
+step read a whole farm list it did not need, and nothing ran between steps.

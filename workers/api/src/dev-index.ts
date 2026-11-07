@@ -23,11 +23,15 @@ import {
   GameDataWarehouseTiers,
   GameDataTreeDefinitions,
   GameDataConstructionDefinitions,
+  GameDataForestryConstructionDefinitions,
   Sha256Fingerprint,
   SystemClock,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
   gameDataTileTerrain,
+  gameDataLandSale,
+  gameDataWorkAreaGround,
+  gameDataCargoCapacities,
   gameDataStarterPackage
 } from "./runtime";
 import { D1StarterGrantRepository, D1WalletRepository } from "./d1-repositories";
@@ -66,8 +70,13 @@ function devErrorStatus(code: ErrorCode): number {
     case "NOT_AUTHENTICATED":
       return 401;
     case "RESOURCE_NOT_FOUND":
+    case "FORESTRY_CONSTRUCTION_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
+    case "TREE_NOT_ACTIVE":
+    case "TREE_NOT_STORED":
+    case "FORESTRY_CONSTRUCTION_NOT_READY":
+    case "FORESTRY_CONSTRUCTION_CONFLICT":
       return 409;
     default:
       return 500;
@@ -96,9 +105,11 @@ export function createDevWorker(env: DevEnv) {
     plotDefinitions: new GameDataPlotDefinitions(),
     treeDefinitions: new GameDataTreeDefinitions(),
     constructionDefinitions: new GameDataConstructionDefinitions(),
+    forestryConstructionDefinitions: new GameDataForestryConstructionDefinitions(),
     progressionDefinition: gameDataProgressionDefinition,
     starterWorld: gameDataStarterWorld,
     terrain: gameDataTileTerrain,
+    landSale: gameDataLandSale,
     fishing: {
       catalogue: new GameDataFishingCatalogue(),
       ids,
@@ -110,6 +121,9 @@ export function createDevWorker(env: DevEnv) {
       random: new CryptoResourceRandom()
     },
     warehouse: { tiers: new GameDataWarehouseTiers() },
+    workAreas: { ground: gameDataWorkAreaGround, ids },
+    workers: { ids },
+    cargoCapacities: gameDataCargoCapacities,
     clock
   });
   const bootstrap = new DevPlayerBootstrap(env.DB);

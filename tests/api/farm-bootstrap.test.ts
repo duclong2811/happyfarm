@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
 import {
@@ -15,6 +13,7 @@ import {
 } from "@happy-farm/domain";
 import { createDevWorker, type DevEnv } from "../../workers/api/src/dev-index";
 import { createHandler } from "../../workers/api/src/handler";
+import { schemaSql } from "../support/migrations";
 import {
   GameDataConstructionDefinitions,
   GameDataCropDefinitions,
@@ -26,7 +25,8 @@ import {
   Sha256Fingerprint,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
-  gameDataTileTerrain
+  gameDataTileTerrain,
+  gameDataLandSale
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, FARM_TWO_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
@@ -41,25 +41,7 @@ import { FARM_ONE_ID, FARM_TWO_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../
  * once, and a farm that already has progress is returned untouched.
  */
 
-const MIGRATIONS = [
-  "0001_phase_1_foundation.sql",
-  "0002_crop_simulation.sql",
-  "0003_inventory_and_harvest.sql",
-  "0004_economy_and_shop.sql",
-  "0005_player_progression.sql",
-  "0006_farm_expansion.sql",
-  "0007_seed_economy.sql",
-  "0008_tree_instances.sql",
-  "0009_starter_package.sql",
-  "0010_farm_constructions.sql",
-  "0011_construction_editing.sql",
-  "0012_world_objects.sql",
-  "0013_world_objects_v2.sql",
-  "0014_one_farm_per_player.sql",
-  "0015_player_identities.sql"
-]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+const MIGRATIONS = schemaSql();
 
 const DEV_TOKEN = "dev-bootstrap-token-0123456789";
 
@@ -275,6 +257,7 @@ describe("two players", () => {
       progressionDefinition: gameDataProgressionDefinition,
       starterWorld: gameDataStarterWorld,
       terrain: gameDataTileTerrain,
+      landSale: gameDataLandSale,
       clock: new FixedClock()
     });
   });

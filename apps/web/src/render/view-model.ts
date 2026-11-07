@@ -26,20 +26,22 @@ export interface SceneCrop {
 }
 
 /**
- * The four visual stages a tree can be drawn in.
+ * The visual stages a tree can be drawn in, including the explicit stump of a depleted one-shot tree.
  *
  * Derived from the server's phase and growth numbers, never decided here: this is the only place the
  * renderer's vocabulary meets the contract's, and it is a projection in one direction.
  */
-export type TreeVisualStage = "SAPLING" | "GROWING" | "READY" | "REGROWING";
+export type TreeVisualStage = "SAPLING" | "GROWING" | "READY" | "REGROWING" | "DEPLETED";
 
 export interface SceneTree {
   readonly treeInstanceId: string;
   readonly definitionId: string;
+  readonly phase: TreeStateDTO["phase"];
   readonly visualStage: TreeVisualStage;
   /** 0..1 within the current cycle, straight from the server's projection. */
   readonly growthProgress: number;
   readonly ready: boolean;
+  readonly rotation?: 0 | 1 | 2 | 3;
 }
 
 export interface SceneTile extends TilePlacement {
@@ -50,6 +52,17 @@ export interface SceneTile extends TilePlacement {
   readonly crop: SceneCrop | null;
   /** The tree on this tile, or null. A tile never holds both, but this file does not assume it. */
   readonly tree: SceneTree | null;
+}
+
+/**
+ * Whether a tile shows a tilled soil pad.
+ *
+ * Ownership is not terrain: an owned cell the player has not cultivated is grass, and only a cell
+ * actually carrying a crop is drawn as soil. Extracted so the renderer and its tests read the same
+ * rule, and so "buying land must not turn the island brown" is a promise a unit test can keep.
+ */
+export function tileDrawsSoil(tile: SceneTile): boolean {
+  return tile.crop !== null;
 }
 
 export interface FarmSceneInput {
@@ -82,6 +95,7 @@ export interface FarmViewState {
    * read yet.
    */
   readonly constructions?: readonly ConstructionDTO[];
+  readonly resourceNodes?: readonly { readonly position: { readonly x: number; readonly y: number } }[];
   readonly selected: { readonly x: number; readonly y: number } | null;
 }
 
@@ -147,7 +161,7 @@ export function farmPresentationSignature(state: FarmViewState): string {
   for (const tree of state.trees) {
     parts.push(
       `r${tree.treeInstanceId}:${tree.definitionId}@${String(tree.tileX)},${String(tree.tileY)}` +
-        `:${tree.phase}:${String(Math.round(tree.growthProgress * 100))}:${tree.ready ? "1" : "0"}:${String(tree.version)}`
+        `:${tree.phase}:${String(Math.round(tree.growthProgress * 100))}:${tree.ready ? "1" : "0"}:${tree.storageState ?? "ACTIVE"}:${String(tree.rotation ?? 0)}:${String(tree.version)}`
     );
   }
   // Built things belong in the presentation signature because they are *occupancy*: a barn the player
@@ -156,7 +170,8 @@ export function farmPresentationSignature(state: FarmViewState): string {
     parts.push(
       `b${construction.constructionId}:${construction.entryId}` +
         `@${String(construction.anchorX)},${String(construction.anchorY)}:${String(construction.rotation)}` +
-        `:${String(construction.version)}`
+        `:${String(construction.version)}` +
+        `:${construction.forestry?.status ?? "-"}:${construction.forestry?.regenerationAt ?? "-"}:${String(construction.forestry?.version ?? 0)}`
     );
   }
   return parts.join(";");
@@ -177,6 +192,7 @@ function heightFractionOf(crop: CropStateDTO): number {
  */
 function visualStageOf(tree: TreeStateDTO): TreeVisualStage {
   if (tree.ready) return "READY";
+  if (tree.phase === "DEPLETED") return "DEPLETED";
   if (tree.phase === "REGROWING") return "REGROWING";
   return tree.growthStage <= 0 ? "SAPLING" : "GROWING";
 }
@@ -186,9 +202,11 @@ function sceneTreeOf(tree: TreeStateDTO): SceneTree {
   return {
     treeInstanceId: tree.treeInstanceId,
     definitionId: tree.definitionId,
+    phase: tree.phase,
     visualStage: visualStageOf(tree),
     growthProgress: Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 1) : 0,
-    ready: tree.ready
+    ready: tree.ready,
+    rotation: tree.rotation ?? 0
   };
 }
 
@@ -207,7 +225,8 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
   // candidates when the API repeats a coordinate.
   const tilesByCoordinate = firstByCoordinate(state.tiles, (tile) => coordinateKey(tile.x, tile.y));
   const cropsByCoordinate = firstByCoordinate(state.crops, (crop) => coordinateKey(crop.tileX, crop.tileY));
-  const treesByCoordinate = firstByCoordinate(state.trees, (tree) => coordinateKey(tree.tileX, tree.tileY));
+  const activeTrees = state.trees.filter((tree) => tree.storageState !== "STORED");
+  const treesByCoordinate = firstByCoordinate(activeTrees, (tree) => coordinateKey(tree.tileX, tree.tileY));
   const uniqueTiles = [...tilesByCoordinate.values()].map((tile) => ({ x: tile.x, y: tile.y }));
   const frame = landFrame(uniqueTiles, state.plots);
   const layout = layoutFarmTiles(uniqueTiles, frame === null ? {} : { frame });
@@ -260,8 +279,9 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
       .filter((construction) => construction.state === "ACTIVE")
       .map((construction) => constructionBoundsOf(construction)),
     plantedTiles: state.crops.map((crop) => ({ x: crop.tileX, y: crop.tileY })).concat(
-      state.trees.map((tree) => ({ x: tree.tileX, y: tree.tileY }))
+      activeTrees.map((tree) => ({ x: tree.tileX, y: tree.tileY }))
     ),
+    resourceNodes: (state.resourceNodes ?? []).map((node) => node.position),
     scenery: world.scenery,
     roads: world.roads
   }, world.terrain);

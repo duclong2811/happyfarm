@@ -7,6 +7,8 @@ import type {
 import { cropModelId } from "../render/assets";
 import { fishModelUrl, resourceModelUrl } from "../render/model-urls";
 import type { ThumbnailRequest } from "../render/thumbnail";
+import { ITEM_THUMBNAIL_MAP } from "./item-thumbnail-map";
+import { itemThumbnailUrl } from "./item-thumbnail-urls";
 
 /**
  * What an item *looks like*, and what to show when it has no picture.
@@ -21,16 +23,15 @@ import type { ThumbnailRequest } from "../render/thumbnail";
  *
  * | Item | Picture | Why |
  * | --- | --- | --- |
- * | `item_carrot`, `item_wheat`, `item_corn` (produce) | the crop's own model | the crop *is* the model |
- * | `item_carrot_seed` and every other seed | fallback `SEED` | seeds have no model in the shipped set |
- * | `item_apple_sapling` | fallback `SAPLING` | a tree's model is the mature tree, not its sapling |
+ * | harvested crops, fish and ores | their own GLB | the same model is used in the world |
+ * | seeds, saplings, fingerlings and forestry materials | item-specific transparent SVG | no suitable GLB exists |
  * | anything this build has never heard of | fallback `ITEM` | the server may define items this build does not |
  *
  * Pure: the mapping is a lookup over the catalogues the page already has, and it is asserted in
  * `tests/web/item-presentation.test.ts`.
  */
 
-export type ItemFallback = "PRODUCE" | "SEED" | "SAPLING" | "ITEM";
+export type ItemFallback = "PRODUCE" | "SEED" | "SEED_CARROT" | "SEED_CORN" | "SAPLING" | "ITEM";
 
 export interface ItemVisual {
   /** The identity a picture, a cache entry and a DOM node are keyed by. */
@@ -46,14 +47,37 @@ function modelVisual(modelId: string | null, fallback: ItemFallback): ItemVisual
     : { key: `model:${modelId}`, request: { modelId, roadTierId: null }, fallback };
 }
 
+function imageVisual(assetName: string, fallback: ItemFallback): ItemVisual {
+  const imageUrl = itemThumbnailUrl(assetName);
+  if (imageUrl === null) return unknownItemVisual();
+  return {
+    key: `image:${assetName}`,
+    request: { modelId: null, roadTierId: null, imageUrl },
+    fallback
+  };
+}
+
+function explicitItemVisual(itemDefinitionId: string): ItemVisual | null {
+  const spec = ITEM_THUMBNAIL_MAP[itemDefinitionId];
+  if (spec === undefined) return null;
+  if (spec.kind === "MODEL") return modelVisual(spec.modelId, "PRODUCE");
+  const fallback: ItemFallback = spec.assetName.startsWith("seed_") ? "SEED" : spec.assetName.startsWith("sapling_") ? "SAPLING" : "PRODUCE";
+  return imageVisual(spec.assetName, fallback);
+}
+
 /** A crop's own art: the model the island draws it with, or the produce fallback when there is none. */
 export function cropVisualFor(cropDefinitionId: string): ItemVisual {
   return modelVisual(cropModelId(cropDefinitionId), "PRODUCE");
 }
 
 /** A seed: no model exists for one, and a pouch is honest about that. */
-export function seedVisual(): ItemVisual {
-  return modelVisual(null, "SEED");
+export function seedVisual(cropDefinitionId?: string): ItemVisual {
+  const fallback = cropDefinitionId === "crop_carrot"
+    ? "SEED_CARROT"
+    : cropDefinitionId === "crop_corn"
+      ? "SEED_CORN"
+      : "SEED";
+  return modelVisual(null, fallback);
 }
 
 /** A sapling: the tree's art is its mature model, so a sapling is drawn as a seedling. */
@@ -86,7 +110,9 @@ export interface ItemVisualCatalogues {
 }
 
 /**
- * The visual for one inventory item, found through the definitions that name it.
+ * The visual for one inventory or market item. Shipped Shop ids are resolved by the explicit stable
+ * map first; catalogue lookup remains the compatibility path for a future server item this client has
+ * not mapped yet.
  *
  * This is the whole reason the mapping lives in one function: an item id is only meaningful in terms of
  * what produces or consumes it, and both answers are already on the server's catalogues - no second
@@ -96,6 +122,8 @@ export function itemVisualFor(
   itemDefinitionId: string,
   catalogues: ItemVisualCatalogues
 ): ItemVisual {
+  const explicit = explicitItemVisual(itemDefinitionId);
+  if (explicit !== null) return explicit;
   const producer = catalogues.cropDefinitions.find(
     (definition) => definition.harvestItemDefinitionId === itemDefinitionId
   );
@@ -111,7 +139,7 @@ export function itemVisualFor(
   const seedOf = catalogues.cropDefinitions.find(
     (definition) => definition.seedItemDefinitionId === itemDefinitionId
   );
-  if (seedOf !== undefined) return seedVisual();
+  if (seedOf !== undefined) return seedVisual(seedOf.cropDefinitionId);
   const saplingOf = catalogues.treeDefinitions.find(
     (definition) => definition.saplingItemDefinitionId === itemDefinitionId
   );

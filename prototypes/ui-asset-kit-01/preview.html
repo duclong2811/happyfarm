@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>HappyFarm UI Kit 01 Visual Foundation</title>
+    <link rel="stylesheet" href="preview.css" />
+  </head>
+  <body>
+    <main class="preview-page">
+      <header class="preview-header">
+        <p class="eyebrow">HappyFarm · UI Asset Kit 01</p>
+        <h1>Inventory visual foundation</h1>
+        <p class="intro">Preview-only foundation. The frame is scalable, slot states are replaceable, and every label/quantity is live DOM text. No production UI is connected.</p>
+      </header>
+
+      <section class="audit-banner" role="note">
+        <strong>Real gameplay reference loaded for desktop.</strong>
+        `assets/real-gameplay-01-world-hud.png` is the genuine 1040 × 823 staging scene. Mobile remains capture-required because the supplied reference set contains no mobile screenshot.
+      </section>
+
+      <section class="reference-panel" aria-label="Approved reference comparison">
+        <div>
+          <p class="eyebrow">Reference only</p>
+          <h2>Approved concept</h2>
+          <p>Flattened PNG copied locally only to repair the preview path. It is not used as a UI layer or sprite source.</p>
+        </div>
+        <img src="assets/approved-reference.png" alt="Approved HappyFarm HUD and Inventory concept reference" />
+      </section>
+
+      <section class="desktop-preview-section" aria-label="Desktop Inventory preview">
+        <div class="section-heading"><p class="eyebrow">Desktop composition</p><h2>1440 × 900 target</h2><p>Inventory target: 560px wide × 765px high, anchored to the right with the world still visible.</p></div>
+        <div class="game-canvas desktop-canvas" data-canvas="desktop">
+          <div class="gameplay-missing"><strong>REAL GAMEPLAY REFERENCE</strong><span>01_world_hud.png · 1040 × 823 native scene</span></div>
+          <section class="inventory-panel" aria-labelledby="desktop-inventory-title">
+            <header class="inventory-header">
+              <span class="art-slot title-decoration-slot" data-art-slot="title-decoration" aria-label="Replaceable title decoration artwork slot">ART SLOT</span>
+              <h2 id="desktop-inventory-title">Inventory</h2>
+              <button class="close-button art-slot" data-art-slot="close-button" type="button" aria-label="Close preview">×</button>
+            </header>
+            <div class="inventory-body">
+              <div class="warehouse-strip">
+                <span class="art-slot resource-slot" data-art-slot="warehouse-icon" aria-label="Replaceable Warehouse icon artwork slot">ART</span>
+                <strong>48 / 100</strong>
+                <span class="warehouse-meter" aria-label="Preview Warehouse capacity"><span></span></span>
+              </div>
+              <nav class="category-tabs" aria-label="Inventory categories">
+                <button class="category-tab is-active" type="button">All</button>
+                <button class="category-tab" type="button">Produce</button>
+                <button class="category-tab" type="button">Materials</button>
+                <button class="category-tab" type="button">Seeds</button>
+              </nav>
+              <div class="item-grid" aria-label="Apple item state examples">
+                <article class="item-slot normal"><img class="slot-art" src="assets/inventory-slot.svg" alt="" /><span class="art-slot apple-art-slot" data-art-slot="item-apple">APPLE ART</span><span class="item-name">Apple</span><strong class="item-quantity">48</strong><span class="state-label">Normal</span></article>
+                <article class="item-slot selected"><img class="slot-art" src="assets/inventory-slot-selected.svg" alt="" /><span class="art-slot apple-art-slot" data-art-slot="item-apple">APPLE ART</span><span class="item-name">Apple</span><strong class="item-quantity">48</strong><span class="state-label">Selected</span></article>
+                <article class="item-slot disabled" aria-disabled="true"><img class="slot-art" src="assets/inventory-slot-disabled.svg" alt="" /><span class="art-slot apple-art-slot" data-art-slot="item-apple">APPLE ART</span><span class="item-name">Apple</span><strong class="item-quantity">48</strong><span class="state-label">Disabled</span></article>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="mobile-preview-section" aria-label="Mobile Inventory preview">
+        <div class="section-heading"><p class="eyebrow">Mobile composition</p><h2>390 × 844 target</h2><p>Separate bounded sheet composition; it is not a scaled desktop screenshot.</p></div>
+        <div class="game-canvas mobile-canvas" data-canvas="mobile">
+          <div class="gameplay-missing"><strong>MOBILE GAMEPLAY SCREENSHOT REQUIRED</strong><span>No mobile capture was supplied in real-gameplay/</span></div>
+          <section class="inventory-panel" aria-labelledby="mobile-inventory-title">
+            <header class="inventory-header">
+              <span class="art-slot title-decoration-slot" data-art-slot="title-decoration" aria-label="Replaceable title decoration artwork slot">ART SLOT</span>
+              <h2 id="mobile-inventory-title">Inventory</h2>
+              <button class="close-button art-slot" data-art-slot="close-button" type="button" aria-label="Close preview">×</button>
+            </header>
+            <div class="inventory-body">
+              <div class="warehouse-strip"><strong>48 / 100</strong><span class="warehouse-meter"><span></span></span></div>
+              <nav class="category-tabs" aria-label="Mobile inventory categories"><button class="category-tab is-active" type="button">All</button><button class="category-tab" type="button">Produce</button><button class="category-tab" type="button">Materials</button></nav>
+              <div class="item-grid">
+                <article class="item-slot normal"><img class="slot-art" src="assets/inventory-slot.svg" alt="" /><span class="art-slot apple-art-slot" data-art-slot="item-apple">APPLE ART</span><span class="item-name">Apple</span><strong class="item-quantity">48</strong></article>
+                <article class="item-slot selected"><img class="slot-art" src="assets/inventory-slot-selected.svg" alt="" /><span class="art-slot apple-art-slot" data-art-slot="item-apple">APPLE ART</span><span class="item-name">Apple</span><strong class="item-quantity">48</strong></article>
+                <article class="item-slot disabled"><img class="slot-art" src="assets/inventory-slot-disabled.svg" alt="" /><span class="art-slot apple-art-slot" data-art-slot="item-apple">APPLE ART</span><span class="item-name">Apple</span><strong class="item-quantity">48</strong></article>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <footer class="preview-footer">Preview only · replace every ART SLOT with independently authored artwork before production integration.</footer>
+    </main>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const mode = params.get("mode");
+      if (mode === "desktop" || mode === "mobile") document.body.dataset.mode = mode;
+      for (const canvas of document.querySelectorAll("[data-canvas]")) {
+        const source = canvas.dataset.canvas === "desktop" ? "assets/real-gameplay-01-world-hud.png" : null;
+        const image = new Image();
+        image.onload = () => { canvas.classList.add("has-gameplay"); canvas.style.setProperty("--gameplay-image", `url(${source})`); };
+        image.onerror = () => canvas.classList.add("missing-gameplay");
+        if (source !== null) image.src = source;
+        else canvas.classList.add("missing-gameplay");
+      }
+    </script>
+  </body>
+</html>

@@ -99,7 +99,9 @@ describe("how much of the selection surface is on screen", () => {
 
 describe("responsive HUD contract", () => {
   const html = readFileSync(INDEX_HTML, "utf8");
-  const css = readFileSync(STYLES, "utf8");
+  // Source contract only: normalise the line endings so a CRLF working copy (Windows checkout) does
+  // not fail assertions that are about rule structure, not about the EOL byte.
+  const css = readFileSync(STYLES, "utf8").replace(/\r\n/g, "\n");
 
   it("keeps the overflow control and the recenter control in the markup", () => {
     expect(html).toContain('id="hud-menu-toggle"');

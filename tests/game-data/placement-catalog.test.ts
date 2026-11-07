@@ -152,7 +152,8 @@ describe("the build catalogue", () => {
       "MONUMENT",
       "FENCE",
       "LIGHTING",
-      "WATERFRONT"
+      "WATERFRONT",
+      "AQUACULTURE"
     ]);
     // The ground vocabulary is *physical*: an entry asks for dry land, a beach, the shallows or open
     // water, and nothing economic is in the list. There is deliberately no FARM, FORESTRY or BUILD
@@ -189,9 +190,19 @@ describe("the build catalogue", () => {
     for (const entry of placementEntries) {
       byCategory.set(entry.category, (byCategory.get(entry.category) ?? 0) + 1);
     }
-    for (const category of ["VEGETATION", "DECORATION", "FENCE", "LIGHTING", "WATERFRONT", "UTILITY", "BUILDING"]) {
+    for (const category of ["VEGETATION", "DECORATION", "FENCE", "LIGHTING", "AQUACULTURE", "UTILITY", "BUILDING"]) {
       expect(byCategory.get(category), category).toBeGreaterThan(0);
     }
+    expect(placementEntries.find((entry) => entry.id === "place_fish_cage")).toMatchObject({
+      category: "AQUACULTURE",
+      allowedTerrain: ["SHALLOW_WATER"],
+      decorative: false,
+      movable: true,
+      rotatable: true,
+      storable: true,
+      removable: true,
+      tags: ["water", "aquaculture"]
+    });
   });
 
   it("unlocks each tier at the level of its own rank, so the ladder is the progression", () => {

@@ -38,7 +38,7 @@ complexity the renderer does not use.
 | Island outline | a superellipse, exponent 3.4, scaled by three radial lobes, plus 2 tiles of shore margin | `world-config.ts`, `terrain-height.ts` |
 | Ground surface where level | `y = -0.04` | `terrain-height.ts` (`GROUND_SURFACE_Y`) |
 | Hill relief | up to 6.5 world units, on the upland side of the island | `world-config.ts` (`TERRAIN_RELIEF_WORLD`) |
-| Cultivated apron | 1.5 tiles of dirt around the land the farm owns | `world.ts` (`APRON_MARGIN_TILES`) |
+| Owned ground | grass; soil appears only on a tile actually carrying a crop | `scene.ts` (`tileDrawsSoil`), `terrain.ts` (`TILE_SURFACE_Y`) |
 | Road widths | 1.9 / 1.3 / 0.8 tiles for primary / secondary / path | `world-config.ts` (`ROAD_WIDTH_TILES`) |
 | Scenery instances | capped at 700, of which at most 200 are the curated set | `world.ts` (`MAX_SCENERY`, `HERO_SCENERY_BUDGET`) |
 | Scenery detail | flowers and grass tufts hide above zoom 2.2, so the estate view is masses and roads | `scene.ts` (`DETAIL_ZOOM_LIMIT`) |

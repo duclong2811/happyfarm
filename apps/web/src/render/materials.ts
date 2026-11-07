@@ -138,13 +138,28 @@ export interface SharedAssets {
   readonly cellNeighbour: MeshBasicMaterial;
   readonly cellDebug: MeshBasicMaterial;
   /**
-   * The ownership mark: a quiet green wash over the cells the player actually owns.
+   * The work-area draft: the cells a player has picked for an area they are drawing.
    *
-   * Shown only while something is in hand for placement or a move, so the player can see where "here"
-   * is. Quieter than a selection, because it is *context* rather than an answer: a hundred and forty
-   * cells of it must not drown the footprint the player is deciding about.
+   * A cool translucent wash, distinct from the warm selection so a cell that is both selected and
+   * drafted still reads as drafted. Shown only while the work-area editor is open.
    */
-  readonly cellOwned: MeshBasicMaterial;
+  readonly cellWorkArea: MeshBasicMaterial;
+  /**
+   * The work-area editor's other states.
+   *
+   * `grid` is the faintest thing on screen - the cell lattice, shown only while the editor is open;
+   * `preview` is the rectangle a player is about to commit; `invalid` quietly says "not workable";
+   * `hover` is the cell under the pointer; `corner` is the first corner already taken. All are low
+   * opacity and none hides the crop, tree, rock or building it lies under.
+   */
+  readonly cellWorkAreaGrid: MeshBasicMaterial;
+  readonly cellWorkAreaPreview: MeshBasicMaterial;
+  readonly cellWorkAreaShortage: MeshBasicMaterial;
+  readonly cellWorkAreaInvalid: MeshBasicMaterial;
+  readonly cellWorkAreaHover: MeshBasicMaterial;
+  readonly cellWorkAreaCorner: MeshBasicMaterial;
+  /** A quiet cyan outline used only while an aquaculture placement preview is active. */
+  readonly shallowWaterPreview: MeshBasicMaterial;
   readonly cropGrowing: MeshStandardMaterial;
   readonly cropMature: MeshStandardMaterial;
   /** A ready tree's fruit, by orchard species. The canopy is shared art; the fruit says which tree. */
@@ -296,7 +311,15 @@ export function createSharedAssets(): SharedAssets {
     cellSelection: flatMaterial(flat(0xf3f7e4, { opacity: 0.34, depthWrite: false })),
     cellNeighbour: flatMaterial(flat(0xdfe9cf, { opacity: 0.16, depthWrite: false })),
     cellDebug: flatMaterial(flat(0xffffff, { opacity: 0.62, depthWrite: false })),
-    cellOwned: flatMaterial(flat(0x86c96a, { opacity: 0.2, depthWrite: false })),
+    cellWorkArea: flatMaterial(flat(0x8fd0ff, { opacity: 0.45, depthWrite: false })),
+    // The lattice is a whisper: enough to count cells, not enough to read as a spreadsheet.
+    cellWorkAreaGrid: flatMaterial(flat(0xdff0ff, { opacity: 0.14, depthWrite: false })),
+    cellWorkAreaPreview: flatMaterial(flat(0x79c98b, { opacity: 0.34, depthWrite: false })),
+    cellWorkAreaShortage: flatMaterial(flat(0xf0b84b, { opacity: 0.34, depthWrite: false })),
+    cellWorkAreaInvalid: flatMaterial(flat(0xd98a8a, { opacity: 0.22, depthWrite: false })),
+    cellWorkAreaHover: flatMaterial(flat(0xffffff, { opacity: 0.30, depthWrite: false })),
+    cellWorkAreaCorner: flatMaterial(flat(0xffe9a8, { opacity: 0.6, depthWrite: false })),
+    shallowWaterPreview: flatMaterial(flat(0x6ed9e6, { opacity: 0.72, depthWrite: false })),
     cropGrowing: material(standard(0x6fbf7f)),
     cropMature: material(standard(0xe0b64a)),
     fruitApple: material(standard(0xd4452f)),
@@ -315,17 +338,15 @@ export function createSharedAssets(): SharedAssets {
 }
 
 /**
- * The colours one tile slab may be drawn in.
+ * The colours one cultivated tile pad may be drawn in, and the grass an owned-but-unused cell shows.
  *
- * Four cultivated-soil tones and three under-crop tones, picked per coordinate rather than per
- * material: a field of one flat brown reads as a placeholder, and a field with a slow, deterministic
- * variation reads as ground that was actually worked. The variation is a property of the coordinate,
- * so a tile keeps its shade when the farm grows and two clients see the same field.
+ * Two cultivated-soil tones and two under-crop tones, picked per coordinate rather than per material:
+ * one flat brown reads as a placeholder, and a slow, deterministic variation reads as ground that was
+ * actually worked. The variation is a property of the coordinate, so a tile keeps its shade when the
+ * farm grows and two clients see the same field.
  */
 // Two tones a shade apart rather than two colours: with the tile seams gone, a wide tonal difference
-// between neighbouring tiles is what would put the grid back on screen. The furrows are what carry
-// the field's structure now.
-const SOIL_TONES: readonly number[] = [0xb4835a, 0xb88a5e];
+// between neighbouring tiles is what would put the grid back on screen.
 const SOIL_OCCUPIED_TONES: readonly number[] = [0x7f5a3a, 0x83603f];
 const GRASS_TONES: readonly number[] = [0x6cae52, 0x74b757];
 
@@ -349,22 +370,26 @@ function tileToneIndex(x: number, y: number, length: number): number {
 /**
  * The colour the renderer draws one unlocked tile in.
  *
- * The caller passes the tile's own coordinate so the choice is stable and testable; nothing here
- * reads the server's state, and a tile the server did not return is never drawn at all.
+ * Ownership is not terrain: an owned cell the player has not cultivated shows the island's grass, and
+ * only a cell actually carrying a crop is drawn as soil. The caller passes the tile's own coordinate
+ * so the choice is stable and testable; nothing here reads the server's state, and a tile the server
+ * did not return is never drawn at all.
  */
 export function tileColorFor(
   terrainType: FarmTileDTO["terrainType"],
-  occupied: boolean,
+  cultivated: boolean,
   x: number,
   y: number
 ): number {
   switch (terrainType) {
-    case "SOIL": {
-      const tones = occupied ? SOIL_OCCUPIED_TONES : SOIL_TONES;
-      return tones[tileToneIndex(x, y, tones.length)] ?? tones[0] ?? 0xb98a5a;
-    }
     case "GRASS":
       return GRASS_TONES[tileToneIndex(x, y, GRASS_TONES.length)] ?? 0x6cae52;
+    case "SOIL": {
+      // Bought but bare is grass; only a planted tile is soil.
+      if (!cultivated) return GRASS_TONES[tileToneIndex(x, y, GRASS_TONES.length)] ?? 0x6cae52;
+      const tones = SOIL_OCCUPIED_TONES;
+      return tones[tileToneIndex(x, y, tones.length)] ?? tones[0] ?? 0x7f5a3a;
+    }
     default:
       return TILE_FLAT_TONES[terrainType];
   }

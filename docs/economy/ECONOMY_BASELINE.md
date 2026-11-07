@@ -11,7 +11,7 @@ source drifts from the catalogue. It is the "implemented today" column of the ec
 | Farming | 8 crops, 3 production trees | `packages/game-data/src/crops`, `trees` |
 | Fishing | 4 spots, 2 catch tables, 7 species | `packages/game-data/src/fishing` |
 | Mining | 4 deposits, 9 placements | `packages/game-data/src/resources` |
-| Forestry | 3 wild trees, 12 placements | `packages/game-data/src/resources` |
+| Forestry | 3 wild trees, 13 placements | `packages/game-data/src/resources` |
 | Market | 30 catalogue entries, one buy or sell direction each | `packages/game-data/src/shops` |
 | Land | 8 plots, level-gated, gold-priced | `packages/game-data/src/plots` |
 | Progression | 50 levels, triangular curve, `xpStep` 120 | `packages/game-data/src/progression` |
@@ -26,7 +26,7 @@ source drifts from the catalogue. It is the "implemented today" column of the ec
 | Farming (a tree) | 0.40-0.48 | 0.60 | one tree |
 | Fishing | 12.4-14.2 | 6.8-8.2 | one spot, active |
 | Mining | 8.77 | 12.27 | the whole island's deposits |
-| Forestry | 11.25 | 15.50 | all twelve wild trees |
+| Forestry | 12.25 | 16.50 | all thirteen wild trees |
 
 The units are the point: farming's rate is per tile and scales with land, while fishing, mining and
 forestry are per-island rates bounded by spots, deposits and regeneration. A player's actual income is

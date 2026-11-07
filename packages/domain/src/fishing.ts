@@ -2,6 +2,46 @@ import { DomainError } from "./errors";
 import type { FishingActionId, PlayerId } from "./ids";
 import { instantAfter, secondsUntil } from "./time";
 
+export interface FishingStockState {
+  readonly spotId: string;
+  readonly zoneKind: string;
+  readonly zoneId: string;
+  readonly stock: number;
+  readonly lastRegeneratedAt: string;
+  readonly version: number;
+}
+
+/** Stock is regenerated mathematically at read time; no timer or per-fish row is created. */
+export function fishingStockAt(
+  state: Pick<FishingStockState, "stock" | "lastRegeneratedAt"> | null,
+  maxStock: number,
+  regenerationSeconds: number,
+  now: string
+): number {
+  if (!Number.isSafeInteger(maxStock) || maxStock < 1 || !Number.isSafeInteger(regenerationSeconds) || regenerationSeconds < 1) {
+    throw new DomainError("INVALID_FISHING", "Fishing stock configuration is invalid");
+  }
+  if (state === null) return maxStock;
+  if (!Number.isSafeInteger(state.stock) || state.stock < 0 || state.stock > maxStock) {
+    throw new DomainError("INVALID_FISHING", "Fishing stock state is invalid");
+  }
+  const elapsed = Date.parse(now) - Date.parse(state.lastRegeneratedAt);
+  if (!Number.isSafeInteger(elapsed) || elapsed < 0) throw new DomainError("INVALID_FISHING", "Fishing stock time is invalid");
+  return Math.min(maxStock, state.stock + Math.floor(elapsed / (regenerationSeconds * 1000)));
+}
+
+export function consumeFishingStock(
+  availableStock: number,
+  quantity: number,
+  now: string
+): { readonly stock: number; readonly lastRegeneratedAt: string } {
+  if (!Number.isSafeInteger(availableStock) || !Number.isSafeInteger(quantity) || quantity < 1 || availableStock < quantity) {
+    throw new DomainError("INVALID_FISHING", "Fishing stock is depleted");
+  }
+  if (!Number.isFinite(Date.parse(now))) throw new DomainError("INVALID_FISHING", "Fishing settlement time is invalid");
+  return { stock: availableStock - quantity, lastRegeneratedAt: now };
+}
+
 /**
  * Fishing's rules, with no database, no clock and no randomness of their own.
  *

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>HappyFarm — UI Art Direction Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-direction="meadowloom" data-screen="hud">
+    <main class="prototype-shell">
+      <header class="prototype-toolbar">
+        <div>
+          <span class="eyebrow">HappyFarm / visual study 01</span>
+          <h1>Three ways to make the farm feel like a place.</h1>
+        </div>
+        <div class="toolbar-actions" aria-label="Prototype controls">
+          <button class="toolbar-button is-active" data-screen="hud">HUD</button>
+          <button class="toolbar-button" data-screen="work">Work Areas</button>
+          <button class="toolbar-button" data-screen="inventory">Inventory</button>
+          <button class="toolbar-button" data-screen="shop">Shop</button>
+          <span class="viewport-note">Resize the browser for responsive review</span>
+        </div>
+      </header>
+
+      <section class="direction-switcher" aria-label="Art directions">
+        <button class="direction-card is-active" data-direction="meadowloom">
+          <span class="direction-letter">A</span>
+          <span><strong>Cozy Handcrafted Farm</strong><small>Meadowloom / warm wood + parchment</small></span>
+        </button>
+        <button class="direction-card" data-direction="sprout-circuit">
+          <span class="direction-letter">B</span>
+          <span><strong>Modern Stylized Adventure</strong><small>Sprout Circuit / crisp HUD + color</small></span>
+        </button>
+        <button class="direction-card" data-direction="hearth-hedge">
+          <span class="direction-letter">C</span>
+          <span><strong>Rustic Village Storybook</strong><small>Hearth &amp; Hedge / illustrated village</small></span>
+        </button>
+      </section>
+
+      <section class="preview-stage" aria-label="Interactive visual prototype">
+        <div class="world-art" aria-hidden="true">
+          <div class="sun-disc"></div>
+          <div class="cloud cloud-a"></div><div class="cloud cloud-b"></div>
+          <div class="hill hill-back"></div><div class="hill hill-front"></div>
+          <div class="water-ribbon"></div>
+          <div class="farm-patch patch-one"><i></i><i></i><i></i></div>
+          <div class="farm-patch patch-two"><i></i><i></i><i></i><i></i></div>
+          <div class="tree tree-one"><b></b><i></i></div><div class="tree tree-two"><b></b><i></i></div>
+          <div class="barn"><span></span><i></i></div>
+          <div class="world-caption">TEMP ART · world window placeholder</div>
+        </div>
+
+        <div class="hud-shell">
+          <div class="hud-top">
+            <div class="brand-lockup"><span class="brand-sigil">✦</span><span>HappyFarm</span><small>Willowbrook</small></div>
+            <div class="top-resources">
+              <div class="resource-counter"><span class="resource-art coin-art">✦</span><span><small>GOLD</small><strong>1,240</strong></span></div>
+              <div class="resource-counter"><span class="resource-art heart-art">♥</span><span><small>HEARTS</small><strong>7</strong></span></div>
+              <div class="level-chip"><span>LVL</span><strong>12</strong><i><b></b></i></div>
+            </div>
+            <button class="icon-button" aria-label="Open menu">☰</button>
+          </div>
+
+          <div class="hud-middle">
+            <div class="quest-card">
+              <span class="quest-ribbon">TODAY'S TALE</span>
+              <strong>Bring 3 carrots to the old mill</strong>
+              <div class="quest-progress"><i></i></div>
+              <small>2 / 3 complete <span>+80 gold</span></small>
+            </div>
+            <div class="location-chip"><span class="pin-art">✣</span> Home Island <i>⌄</i></div>
+          </div>
+
+          <div class="hud-bottom">
+            <div class="action-prompt"><span class="key-cap">E</span><span><strong>Harvest carrot</strong><small>Field row 02</small></span></div>
+            <div class="module-dock" aria-label="Game modules">
+              <button class="dock-button is-active"><span class="dock-art">▦</span><small>Bag</small></button>
+              <button class="dock-button"><span class="dock-art">⌂</span><small>Market</small></button>
+              <button class="dock-button"><span class="dock-art">✚</span><small>Build</small></button>
+              <button class="dock-button"><span class="dock-art">♧</span><small>Workers</small></button>
+            </div>
+          </div>
+        </div>
+
+        <aside class="preview-panel panel-hud" aria-label="Prototype panel">
+          <div class="panel-header"><div><span class="panel-kicker">HOME ISLAND</span><h2 class="screen-title">Your morning</h2></div><button class="close-button">×</button></div>
+          <div class="screen-content"></div>
+          <div class="state-strip"><span>INTERACTION STATES</span><button>Ready</button><button class="is-active">Selected</button><button disabled>Locked</button><button class="is-loading">Loading…</button></div>
+        </aside>
+      </section>
+
+      <footer class="prototype-footer">
+        <div><span class="current-direction">A · Cozy Handcrafted Farm</span><span class="current-screen">HUD</span></div>
+        <p>All artwork in this study is temporary CSS/SVG-style illustration. Production controls remain untouched.</p>
+      </footer>
+    </main>
+    <script type="module" src="./prototype.js"></script>
+  </body>
+</html>

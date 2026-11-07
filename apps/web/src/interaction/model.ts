@@ -22,7 +22,17 @@ import type { CropStateDTO, TreeStateDTO } from "@happy-farm/contracts";
  * ENTER, USE) is deliberately absent rather than declared and unimplemented: an action exists here when
  * there is a handler for it, and adding one is a case in `interactionActionPriority` plus an executor.
  */
-export type InteractionAction = "INSPECT" | "HARVEST" | "TRADE" | "FISH" | "MINE" | "CHOP";
+export type InteractionAction =
+  | "INSPECT"
+  | "HARVEST"
+  | "TRADE"
+  | "FISH"
+  | "MINE"
+  | "CHOP"
+  | "CHOP_TREE"
+  | "CHOP_CONSTRUCTION"
+  | "STOCK_AQUACULTURE"
+  | "HARVEST_AQUACULTURE";
 
 /**
  * What the target *is*, for range, priority and the adapter that reads it.
@@ -72,6 +82,10 @@ export const INTERACTION_ACTION_PRIORITY: Readonly<Record<InteractionAction, num
   FISH: 2,
   MINE: 2,
   CHOP: 2,
+  CHOP_TREE: 2,
+  CHOP_CONSTRUCTION: 2,
+  STOCK_AQUACULTURE: 2,
+  HARVEST_AQUACULTURE: 2,
   INSPECT: 1
 };
 
@@ -146,7 +160,9 @@ export interface InteractionPrompt {
     | "interaction.trade"
     | "interaction.fish"
     | "interaction.mine"
-    | "interaction.chop";
+    | "interaction.chop"
+    | "interaction.stockAquaculture"
+    | "interaction.harvestAquaculture";
   readonly nameKey: string | null;
   readonly nameFallback: string;
   readonly readyInSeconds: number | null;
@@ -171,7 +187,9 @@ export function interactionActionKey(
   | "interaction.trade"
   | "interaction.fish"
   | "interaction.mine"
-  | "interaction.chop" {
+  | "interaction.chop"
+  | "interaction.stockAquaculture"
+  | "interaction.harvestAquaculture" {
   switch (action) {
     case "HARVEST":
       return "interaction.harvest";
@@ -182,7 +200,13 @@ export function interactionActionKey(
     case "MINE":
       return "interaction.mine";
     case "CHOP":
+    case "CHOP_TREE":
+    case "CHOP_CONSTRUCTION":
       return "interaction.chop";
+    case "STOCK_AQUACULTURE":
+      return "interaction.stockAquaculture";
+    case "HARVEST_AQUACULTURE":
+      return "interaction.harvestAquaculture";
     case "INSPECT":
       return "interaction.inspect";
   }
@@ -195,5 +219,5 @@ export function cropInteraction(crop: CropStateDTO): InteractionAction {
 
 /** A production tree offers its fruit exactly when the server says this cycle is ready. */
 export function treeInteraction(tree: TreeStateDTO): InteractionAction {
-  return tree.ready ? "HARVEST" : "INSPECT";
+  return tree.ready ? tree.definitionId === "tree_wildwood" ? "CHOP_TREE" : "HARVEST" : "INSPECT";
 }

@@ -67,8 +67,13 @@ import { PROP_MODELS } from "./prop-model-urls";
 
 /** Side length of one plot cohort, mirroring `PLOT_TILE_SIZE` in `packages/domain/src/plot.ts`. */
 export const PLOT_TILE_SIZE = 12;
-/** Tiles of dirt the cultivated apron keeps around the land the farm owns. */
-export const APRON_MARGIN_TILES = 1.5;
+/**
+ * Breathing room, in tiles, the default camera keeps around the land the farm owns.
+ *
+ * V14.5.1 removed the cultivated apron and the soil bed: buying land no longer paints it brown. This
+ * margin is only how much grass the opening view frames beyond the field, never a surface.
+ */
+export const FIELD_FRAME_MARGIN_TILES = 1.5;
 /** How wide the tree line inside the island's rim is, in tiles. */
 export const RIM_TREE_BAND_TILES = 2;
 /** Tile spacing between the rim trees that close off the island's edge. */
@@ -76,8 +81,8 @@ export const RIM_TREE_SPACING_TILES = 2.2;
 /**
  * Height of the rough ground drawn over a locked plot.
  *
- * A hair above the cultivated apron it overlaps at the field's edge, and a little above the grass
- * beyond it, so the plot's own surface is what the eye reads rather than the ground underneath.
+ * A hair above the island's grass, so the plot's own surface is what the eye reads rather than the
+ * ground underneath it.
  */
 export const LOCKED_GROUND_SURFACE_Y = 0.012;
 
@@ -158,14 +163,6 @@ export interface MeadowSpec {
   readonly rotationY: number;
 }
 
-/** A rectangle of ground in world metres: the apron and the bed under the tiles. */
-export interface GroundRect {
-  readonly worldX: number;
-  readonly worldZ: number;
-  readonly widthWorld: number;
-  readonly depthWorld: number;
-}
-
 /** The settlement's paved square, in world metres. */
 export interface PlazaSpec {
   readonly worldX: number;
@@ -204,16 +201,6 @@ export interface FarmWorld {
   readonly inner: TileBounds | null;
   /** Unlocked land plus the next ring of locked land, which is the map the player sees. */
   readonly outer: TileBounds | null;
-  /**
-   * The cultivated dirt around the land the farm actually owns.
-   *
-   * It follows `inner`, not the whole reserved field: the alpha paved the entire 36-tile reserve, so
-   * the twelve-tile starter square sat in the middle of a brown yard. The apron now hugs what the
-   * player owns, and the rest of the reserve is ground with the next plots growing on it.
-   */
-  readonly apron: GroundRect | null;
-  /** The darker soil bed under the tile slabs, so the gaps between tiles read as furrows. */
-  readonly bed: GroundRect | null;
   readonly lockedPlots: readonly LockedPlotSquare[];
   /**
    * Wild vegetation inside the locked plots.
@@ -265,7 +252,7 @@ export interface FarmWorld {
   readonly meadows: readonly MeadowSpec[];
   readonly islandHalfWidthWorld: number;
   readonly islandHalfDepthWorld: number;
-  /** Half the framed farm: the owned field and its apron, which is what a default view frames. */
+  /** Half the framed farm: the owned field and a little grass around it, what a default view frames. */
   readonly farmHalfExtentWorld: number;
   /** World centre of the static world, for camera framing only. Never a coordinate origin. */
   readonly centerWorldX: number;
@@ -283,8 +270,6 @@ export interface BuildWorldInput {
 const EMPTY_WORLD: FarmWorld = {
   inner: null,
   outer: null,
-  apron: null,
-  bed: null,
   lockedPlots: [],
   lockedScenery: [],
   landmarks: [],
@@ -1153,32 +1138,12 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
     };
   }
 
-  /**
-   * A rectangle of ground with `marginTiles` of slack on every side, in world metres.
-   *
-   * The apron and the bed are both built this way: both hug the land the farm owns rather than the
-   * reserve, so the field is what the eye lands on and the reserve reads as ground around it.
-   */
-  function groundRect(bounds: TileBounds, marginTiles: number): GroundRect {
-    const centre = tileToWorld(
-      { x: (bounds.minX + bounds.maxX + 1) / 2, y: (bounds.minY + bounds.maxY + 1) / 2 },
-      mapping
-    );
-    return {
-      worldX: centre.worldX,
-      worldZ: centre.worldZ,
-      widthWorld: (bounds.maxX - bounds.minX + 1 + marginTiles * 2) * input.layout.pitch,
-      depthWorld: (bounds.maxY - bounds.minY + 1 + marginTiles * 2) * input.layout.pitch
-    };
-  }
-
   // `outer` is non-null past the early return, so there is always something to cultivate around.
   const owned = inner ?? outer;
-  const apron = groundRect(owned, APRON_MARGIN_TILES);
-  const bed = groundRect(owned, 0);
-  // What a default camera frames: the owned field and the apron around it, not the whole estate.
+  // What a default camera frames: the owned field and a little grass around it, not the whole estate.
   const ownedHalfTiles = Math.max(owned.maxX - owned.minX + 1, owned.maxY - owned.minY + 1) / 2;
-  const farmHalfExtentWorld = ownedHalfTiles * input.layout.pitch + APRON_MARGIN_TILES * input.layout.pitch;
+  const farmHalfExtentWorld =
+    ownedHalfTiles * input.layout.pitch + FIELD_FRAME_MARGIN_TILES * input.layout.pitch;
 
   const roads = ROADS.map((road) => buildRoadSpec(road, input.layout, terrain));
 
@@ -1259,8 +1224,6 @@ export function buildFarmWorld(input: BuildWorldInput): FarmWorld {
   return {
     inner,
     outer,
-    apron,
-    bed,
     lockedPlots,
     // Every plot the catalogue has not sold, not just the ring it is offering: land the player has
     // not bought is countryside, and it belongs to the overlay because buying a plot clears it.

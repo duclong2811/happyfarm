@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator } from "@happy-farm/application";
 import {
@@ -16,6 +14,7 @@ import {
   type TreeInstanceId
 } from "@happy-farm/domain";
 import { createHandler } from "../../workers/api/src/handler";
+import { schemaSql } from "../support/migrations";
 import {
   GameDataConstructionDefinitions,
   GameDataCropDefinitions,
@@ -27,7 +26,8 @@ import {
   Sha256Fingerprint,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
-  gameDataTileTerrain
+  gameDataTileTerrain,
+  gameDataLandSale
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID } from "../support/fixtures";
@@ -45,31 +45,14 @@ import { FARM_ONE_ID, NOW, PLAYER_ONE_ID } from "../support/fixtures";
  * accepted after it, the buy-ahead rule, a tree that repeats, and a replayed cycle that pays once.
  */
 
-const MIGRATIONS = [
-  "0001_phase_1_foundation.sql",
-  "0002_crop_simulation.sql",
-  "0003_inventory_and_harvest.sql",
-  "0004_economy_and_shop.sql",
-  "0005_player_progression.sql",
-  "0006_farm_expansion.sql",
-  "0007_seed_economy.sql",
-  "0008_tree_instances.sql",
-  "0009_starter_package.sql",
-  "0010_farm_constructions.sql",
-  "0011_construction_editing.sql",
-  "0012_world_objects.sql",
-  "0013_world_objects_v2.sql",
-  "0014_one_farm_per_player.sql",
-  "0015_player_identities.sql"
-]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+const MIGRATIONS = schemaSql();
 
 const CARROT = { seed: "item_carrot_seed", produce: "item_carrot", growthSeconds: 300, xp: 4, yield: 2 };
 const WHEAT = { seed: "item_wheat_seed", produce: "item_wheat", growthSeconds: 900, xp: 12, yield: 3 };
 const APPLE = { sapling: "item_apple_sapling", fruit: "item_apple", firstReadySeconds: 3600, regrowSeconds: 900, xp: 9, yield: 3 };
 const ORANGE = { sapling: "item_orange_sapling", fruit: "item_orange", firstReadySeconds: 5400, regrowSeconds: 1200, xp: 12, yield: 3 };
 const PEACH = { sapling: "item_peach_sapling" };
+const WILDWOOD = { sapling: "item_wildwood_sapling", wood: "item_wood", firstReadySeconds: 3600, yield: 12, xp: 5 };
 
 const STARTING_GOLD = 400;
 const STARTER_CARROT_SEEDS = 10;
@@ -149,6 +132,7 @@ describe("an early farming journey", () => {
       progressionDefinition: gameDataProgressionDefinition,
       starterWorld: gameDataStarterWorld,
       terrain: gameDataTileTerrain,
+      landSale: gameDataLandSale,
       clock
     });
   });
@@ -453,17 +437,285 @@ describe("an early farming journey", () => {
     expect(treeCatalogue.data.definitions).toEqual([
       expect.objectContaining({ treeDefinitionId: "tree_apple", requiredLevel: 3, harvestXp: 9 }),
       expect.objectContaining({ treeDefinitionId: "tree_orange", requiredLevel: 5, harvestXp: 12 }),
-      expect.objectContaining({ treeDefinitionId: "tree_peach", requiredLevel: 9, harvestXp: 15 })
+      expect.objectContaining({ treeDefinitionId: "tree_peach", requiredLevel: 9, harvestXp: 15 }),
+      expect.objectContaining({ treeDefinitionId: "tree_wildwood", harvestXp: WILDWOOD.xp })
     ]);
 
     const shop = (await bodyOf(await get("/shop"))) as {
       data: { entries: readonly { itemDefinitionId: string; buyPrice: number | null; sellPrice: number | null }[] };
     };
-    for (const item of ["item_potato_seed", "item_pumpkin_seed", "item_orange_sapling", "item_peach_sapling"]) {
+    for (const item of ["item_potato_seed", "item_pumpkin_seed", "item_orange_sapling", "item_peach_sapling", WILDWOOD.sapling]) {
       expect(shop.data.entries.find((row) => row.itemDefinitionId === item)?.buyPrice, item).toBeGreaterThan(0);
     }
     for (const item of ["item_potato", "item_pumpkin", "item_orange", "item_peach"]) {
       expect(shop.data.entries.find((row) => row.itemDefinitionId === item)?.sellPrice, item).toBeGreaterThan(0);
     }
+  });
+
+  it("runs the purchased Wildwood vertical slice through the real tree settlement", async () => {
+    expect((await post("/farms", { name: "Wildwood Farm" })).status).toBe(201);
+    expect((await post("/shop/buy", { requestId: "wildwood_buy_01", shopEntryId: "shop_wildwood_sapling", quantity: 1 })).status).toBe(200);
+    expect(held(WILDWOOD.sapling)).toBe(1);
+
+    const plantingTile = await tile(4, 0);
+    const planted = await plantTree("tree_wildwood", plantingTile, "wildwood_plant_01");
+    expect(planted.status).toBe(201);
+    const plantedTree = ((await bodyOf(planted)) as { data: { tree: { treeInstanceId: string; version: number; ready: boolean; phase: string } } }).data.tree;
+    expect(plantedTree).toMatchObject({ version: 1, ready: false, phase: "GROWING" });
+    expect(held(WILDWOOD.sapling)).toBe(0);
+
+    clock.advanceSeconds(WILDWOOD.firstReadySeconds + 1);
+    const ready = ((await bodyOf(await get(`/farms/${FARM_ONE_ID}/trees`))) as {
+      data: { trees: readonly { treeInstanceId: string; version: number; ready: boolean; phase: string }[] };
+    }).data.trees.find((tree) => tree.treeInstanceId === plantedTree.treeInstanceId);
+    expect(ready).toMatchObject({ ready: true, phase: "READY", version: 1 });
+
+    const chopped = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/harvest`, {
+      requestId: "wildwood_chop_01",
+      expectedTreeVersion: plantedTree.version
+    });
+    expect(chopped.status).toBe(200);
+    await expect(chopped.json()).resolves.toMatchObject({
+      data: { harvest: { itemDefinitionId: WILDWOOD.wood, quantityAdded: WILDWOOD.yield } }
+    });
+    expect(held(WILDWOOD.wood)).toBe(WILDWOOD.yield);
+
+    const replay = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/harvest`, {
+      requestId: "wildwood_chop_01",
+      expectedTreeVersion: plantedTree.version
+    });
+    expect(replay.status).toBe(200);
+    expect(held(WILDWOOD.wood)).toBe(WILDWOOD.yield);
+    const depleted = ((await bodyOf(await get(`/farms/${FARM_ONE_ID}/trees`))) as {
+      data: { trees: readonly { treeInstanceId: string; version: number; phase: string; ready: boolean; readyAt: string | null }[] };
+    }).data.trees.find((tree) => tree.treeInstanceId === plantedTree.treeInstanceId);
+    expect(depleted).toMatchObject({ version: 2, phase: "DEPLETED", ready: false, readyAt: null });
+
+    // A one-shot Wildwood never comes back by waiting, and an old revision cannot replay a new cycle.
+    clock.advanceSeconds(WILDWOOD.firstReadySeconds + 1);
+    const afterWait = ((await bodyOf(await get(`/farms/${FARM_ONE_ID}/trees`))) as {
+      data: { trees: readonly { treeInstanceId: string; version: number; phase: string; ready: boolean }[] };
+    }).data.trees.find((tree) => tree.treeInstanceId === plantedTree.treeInstanceId);
+    expect(afterWait).toMatchObject({ version: 2, phase: "DEPLETED", ready: false });
+    const stale = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/harvest`, {
+      requestId: "wildwood_chop_stale",
+      expectedTreeVersion: plantedTree.version
+    });
+    expect(stale.status).toBe(409);
+    expect(held(WILDWOOD.wood)).toBe(WILDWOOD.yield);
+
+    // Clearing the stump is explicit; planting again consumes exactly one new sapling on the same tile.
+    const cleared = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/remove`, {
+      requestId: "wildwood_clear_stump",
+      expectedTreeVersion: 2
+    });
+    expect(cleared.status).toBe(200);
+    expect((await post("/shop/buy", { requestId: "wildwood_buy_02", shopEntryId: "shop_wildwood_sapling", quantity: 1 })).status).toBe(200);
+    expect(held(WILDWOOD.sapling)).toBe(1);
+    const replanted = await plantTree("tree_wildwood", await tile(4, 0), "wildwood_replant_01");
+    expect(replanted.status).toBe(201);
+    expect(held(WILDWOOD.sapling)).toBe(0);
+  });
+
+  it("accepts a valid estate-management harvest for a far tree and replays without a second settlement", async () => {
+    expect((await post("/farms", { name: "Far Orchard Farm" })).status).toBe(201);
+    setXp(cumulativeXpForLevel(gameDataProgressionDefinition, 3));
+    expect((await post("/shop/buy", {
+      requestId: "far_orchard_buy_01",
+      shopEntryId: "shop_apple_sapling",
+      quantity: 1
+    })).status).toBe(200);
+
+    const origin = await tile(0, 0);
+    const soil = (await tiles()).filter((candidate) => candidate.terrainType === "SOIL");
+    const far = soil.reduce((best, candidate) => {
+      const bestDistance = Math.abs(best.x - origin.x) + Math.abs(best.y - origin.y);
+      const candidateDistance = Math.abs(candidate.x - origin.x) + Math.abs(candidate.y - origin.y);
+      return candidateDistance > bestDistance ? candidate : best;
+    }, origin);
+    expect(Math.abs(far.x - origin.x) + Math.abs(far.y - origin.y)).toBeGreaterThan(0);
+
+    const planted = await plantTree("tree_apple", far, "far_orchard_plant_01");
+    expect(planted.status).toBe(201);
+    const tree = ((await bodyOf(planted)) as { data: { tree: { treeInstanceId: string; version: number } } }).data.tree;
+    clock.advanceSeconds(APPLE.firstReadySeconds + 1);
+
+    // This is the real HTTP route. It carries no client position or distance; the server still
+    // owns readiness, ownership, version and the atomic reward settlement.
+    const command = {
+      requestId: "far_orchard_area_01",
+      trees: [{ treeInstanceId: tree.treeInstanceId, expectedTreeVersion: tree.version }]
+    };
+    const spoofedPosition = await post(`/farms/${FARM_ONE_ID}/trees/harvest-area`, {
+      ...command,
+      playerX: origin.x,
+      playerY: origin.y
+    });
+    expect(spoofedPosition.status).toBe(400);
+    const settled = await post(`/farms/${FARM_ONE_ID}/trees/harvest-area`, command);
+    expect(settled.status).toBe(200);
+    await expect(settled.json()).resolves.toMatchObject({
+      ok: true,
+      data: { harvestedCount: 1, skippedCount: 0, products: [{ itemDefinitionId: APPLE.fruit, quantity: APPLE.yield }] }
+    });
+    expect(held(APPLE.fruit)).toBe(APPLE.yield);
+
+    const replay = await post(`/farms/${FARM_ONE_ID}/trees/harvest-area`, command);
+    expect(replay.status).toBe(200);
+    expect(held(APPLE.fruit)).toBe(APPLE.yield);
+  });
+
+  it("manages one Wildwood identity without refunding or resetting its lifecycle", async () => {
+    expect((await post("/farms", { name: "Managed Wildwood Farm" })).status).toBe(201);
+    expect((await post("/shop/buy", {
+      requestId: "managed_wildwood_buy_01",
+      shopEntryId: "shop_wildwood_sapling",
+      quantity: 1
+    })).status).toBe(200);
+
+    const planted = await plantTree("tree_wildwood", await tile(4, 0), "managed_wildwood_plant_01");
+    expect(planted.status).toBe(201);
+    const plantedTree = ((await bodyOf(planted)) as {
+      data: { tree: { treeInstanceId: string; version: number; storageState: string; rotation: number } };
+    }).data.tree;
+    expect(plantedTree).toMatchObject({ version: 1, storageState: "ACTIVE", rotation: 0 });
+    expect(held(WILDWOOD.sapling)).toBe(0);
+
+    // Rotate is a server write, but does not alter the growth anchor or consume another sapling.
+    const rotated = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/rotate`, {
+      requestId: "managed_wildwood_rotate_01",
+      expectedTreeVersion: 1,
+      rotation: 2
+    });
+    expect(rotated.status).toBe(200);
+    expect(await bodyOf(rotated)).toMatchObject({ data: { tree: { version: 2, rotation: 2, storageState: "ACTIVE" } } });
+
+    // Forty-five minutes into the one-hour cycle: Store captures exactly fifteen minutes and pauses it.
+    clock.advanceSeconds(45 * 60);
+    const stored = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/store`, {
+      requestId: "managed_wildwood_store_01",
+      expectedTreeVersion: 2
+    });
+    expect(stored.status).toBe(200);
+    const storedTree = ((await bodyOf(stored)) as {
+      data: { tree: { version: number; storageState: string; storedRemainingSeconds: number | null; ready: boolean } };
+    }).data.tree;
+    expect(storedTree).toMatchObject({
+      version: 3,
+      storageState: "STORED",
+      storedRemainingSeconds: 900,
+      ready: false
+    });
+    expect(held(WILDWOOD.sapling)).toBe(0);
+
+    // The same identity is still returned by a reload, but it is not in the world and cannot move.
+    const reloadedStored = ((await bodyOf(await get(`/farms/${FARM_ONE_ID}/trees`))) as {
+      data: { trees: readonly { treeInstanceId: string; storageState: string; rotation: number; secondsUntilReady: number }[] };
+    }).data.trees.find((tree) => tree.treeInstanceId === plantedTree.treeInstanceId);
+    expect(reloadedStored).toMatchObject({ storageState: "STORED", rotation: 2, secondsUntilReady: 900 });
+    const moveStored = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/move`, {
+      requestId: "managed_wildwood_move_stored",
+      expectedTreeVersion: 3,
+      x: 22,
+      y: 22,
+      rotation: 2
+    });
+    expect(moveStored.status).toBe(403);
+
+    // Waiting while stored does not spend the paused fifteen minutes.
+    clock.advanceSeconds(3600);
+    const restored = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/restore`, {
+      requestId: "managed_wildwood_restore_01",
+      expectedTreeVersion: 3,
+      x: 22,
+      y: 22,
+      rotation: 1
+    });
+    expect(restored.status).toBe(200);
+    const restoredTree = ((await bodyOf(restored)) as {
+      data: { tree: { version: number; tileX: number; tileY: number; rotation: number; storageState: string; ready: boolean; secondsUntilReady: number } };
+    }).data.tree;
+    expect(restoredTree).toMatchObject({
+      version: 4,
+      tileX: 22,
+      tileY: 22,
+      rotation: 1,
+      storageState: "ACTIVE",
+      ready: false,
+      secondsUntilReady: 900
+    });
+
+    // Move keeps the instance and its remaining time; replay returns the original receipt.
+    const moved = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/move`, {
+      requestId: "managed_wildwood_move_01",
+      expectedTreeVersion: 4,
+      x: 23,
+      y: 22,
+      rotation: 1
+    });
+    expect(moved.status).toBe(200);
+    const movedBody = await bodyOf(moved);
+    expect(movedBody).toMatchObject({ data: { tree: { version: 5, tileX: 23, tileY: 22, storageState: "ACTIVE" } } });
+    expect(await bodyOf(await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/move`, {
+      requestId: "managed_wildwood_move_01",
+      expectedTreeVersion: 4,
+      x: 23,
+      y: 22,
+      rotation: 1
+    }))).toEqual(movedBody);
+
+    const staleRotate = await post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/rotate`, {
+      requestId: "managed_wildwood_rotate_stale",
+      expectedTreeVersion: 4,
+      rotation: 3
+    });
+    expect(staleRotate.status).toBe(409);
+
+    // An occupied target and a different farm cannot move this identity.
+    expect((await post("/shop/buy", {
+      requestId: "managed_wildwood_buy_02",
+      shopEntryId: "shop_wildwood_sapling",
+      quantity: 1
+    })).status).toBe(200);
+    const second = await plantTree("tree_wildwood", await tile(4, 0), "managed_wildwood_plant_02");
+    const secondTree = ((await bodyOf(second)) as { data: { tree: { treeInstanceId: string; version: number } } }).data.tree;
+    const occupied = await post(`/farms/${FARM_ONE_ID}/trees/${secondTree.treeInstanceId}/move`, {
+      requestId: "managed_wildwood_move_occupied",
+      expectedTreeVersion: secondTree.version,
+      x: 23,
+      y: 22,
+      rotation: 0
+    });
+    expect(occupied.status).toBe(409);
+
+    clock.advanceSeconds(900);
+    const readyBeforeRace = ((await bodyOf(await get(`/farms/${FARM_ONE_ID}/trees`))) as {
+      data: { trees: readonly { treeInstanceId: string; phase: string; ready: boolean; version: number }[] };
+    }).data.trees.find((tree) => tree.treeInstanceId === plantedTree.treeInstanceId);
+    expect(readyBeforeRace).toMatchObject({ phase: "READY", ready: true, version: 5 });
+    const [storeRace, chopRace] = await Promise.all([
+      post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/store`, {
+        requestId: "managed_wildwood_store_race",
+        expectedTreeVersion: 5
+      }),
+      post(`/farms/${FARM_ONE_ID}/trees/${plantedTree.treeInstanceId}/harvest`, {
+        requestId: "managed_wildwood_chop_race",
+        expectedTreeVersion: 5
+      })
+    ]);
+    expect([storeRace.status, chopRace.status].filter((status) => status === 200)).toHaveLength(1);
+    expect([0, WILDWOOD.yield]).toContain(held(WILDWOOD.wood));
+    if (storeRace.status === 200) {
+      const storedReady = ((await bodyOf(await get(`/farms/${FARM_ONE_ID}/trees`))) as {
+        data: { trees: readonly { treeInstanceId: string; storageState: string; ready: boolean; phase: string }[] };
+      }).data.trees.find((tree) => tree.treeInstanceId === plantedTree.treeInstanceId);
+      expect(storedReady).toMatchObject({ storageState: "STORED", ready: true, phase: "READY" });
+    }
+
+    const crossFarm = await post(`/farms/farm_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/trees/${plantedTree.treeInstanceId}/store`, {
+      requestId: "managed_wildwood_cross_farm",
+      expectedTreeVersion: 5
+    });
+    expect(crossFarm.status).toBe(404);
   });
 });

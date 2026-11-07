@@ -66,10 +66,92 @@
       </div>
 
       <nav id="module-rail" class="module-rail" aria-label="Farm modules">
+        <button id="harvest-area-global" class="module-launcher" type="button" title="Harvest or plant in area" aria-label="Harvest or plant in area"><span data-icon="harvest" data-icon-size="22"></span></button>
         <button id="inventory-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="inventory-panel" title="Inventory"><span data-icon="inventory" data-icon-size="22"></span></button>
         <button id="market-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="market-panel" title="Farm Market"><span data-icon="market" data-icon-size="22"></span></button>
         <button id="build-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="build-panel" title="Build"><span data-icon="build" data-icon-size="22"></span></button>
+        <button id="work-areas-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="work-areas-panel" title="Work Areas"><span data-icon="farm" data-icon-size="22"></span></button>
+        <button id="workers-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="workers-panel" title="Workers"><span data-icon="walk" data-icon-size="22"></span></button>
       </nav>
+
+      <!--
+        Auto: the Main Character, the Work Assignments it holds, and what Auto would do next.
+
+        D1 plans and explains; it does not act. Nothing here plants, harvests, travels, unloads or buys,
+        the resolver is a pure function of a bounded snapshot, and the panel is read only when it is
+        opened and after an Auto action - never on a timer. Rendered by `renderWorkers`.
+      -->
+      <aside id="workers-panel" class="module-panel auto-panel" aria-labelledby="workers-title" hidden>
+        <header class="module-header">
+          <h2 id="workers-title">Auto</h2>
+          <button id="workers-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
+        </header>
+        <div id="workers-body" class="module-body">
+          <p id="workers-note" class="muted" hidden></p>
+
+          <!-- Who works, what they are carrying, and who is driving. -->
+          <section id="workers-actor" class="auto-actor" hidden>
+            <span class="auto-portrait" data-icon="walk" data-icon-size="24"></span>
+            <div class="auto-actor-text">
+              <strong id="workers-actor-name"></strong>
+              <span id="workers-control" class="auto-chip"></span>
+            </div>
+            <div class="auto-cargo">
+              <span class="auto-cargo-label" data-icon="inventory" data-icon-size="14"></span>
+              <span id="workers-cargo-usage" class="auto-cargo-usage"></span>
+              <span class="auto-meter"><span id="workers-cargo-bar" class="auto-meter-fill"></span></span>
+            </div>
+          </section>
+
+          <!-- One control, and the plan it would run. -->
+          <section id="workers-auto" class="auto-control" hidden>
+            <p id="workers-auto-status" class="auto-status"></p>
+            <p id="workers-auto-progress" class="auto-progress muted" hidden></p>
+            <button id="workers-auto-toggle" class="primary auto-toggle" type="button"></button>
+          </section>
+
+          <div class="auto-toolbar">
+            <button id="workers-reorder" class="compact" type="button"></button>
+          </div>
+          <div id="workers-list" class="auto-assignments" role="list"></div>
+
+          <!--
+            Cargo: what the actor is carrying, and the one way it reaches the warehouse. Kept beside
+            the assignments because it is the same actor's, and kept small because it is not a second
+            inventory screen. Rendered by `renderWorkersCargo`.
+          -->
+          <section id="workers-cargo" class="workers-cargo" hidden>
+            <div class="workers-cargo-head">
+              <h3 id="workers-cargo-title" class="auto-section-title"></h3>
+            </div>
+            <p id="workers-cargo-note" class="muted" hidden></p>
+            <div id="workers-cargo-list" class="workers-cargo-list" role="list"></div>
+            <button id="workers-cargo-unload" class="primary compact" type="button" hidden></button>
+          </section>
+
+          <button id="workers-assign" class="primary compact" type="button"></button>
+          <section id="workers-editor" class="workers-editor" aria-live="polite" hidden></section>
+        </div>
+      </aside>
+
+      <!--
+        Work Areas: player-named groups of cells a future Job may be asked to work. Estate view only -
+        precision cell picking belongs to the map, not to a character standing in the field. The panel
+        is the *only* thing that reads work areas; they are never part of the farm's ordinary loads or
+        the growth poll. Rendered by `renderWorkAreas`.
+      -->
+      <aside id="work-areas-panel" class="module-panel" aria-labelledby="work-areas-title" hidden>
+        <header class="module-header">
+          <h2 id="work-areas-title">Work Areas</h2>
+          <button id="work-areas-close" class="panel-close" type="button"><span data-icon="close" data-icon-size="16"></span></button>
+        </header>
+        <div id="work-areas-body" class="module-body">
+          <button id="work-area-create" class="primary compact" type="button">New area</button>
+          <p id="work-areas-note" class="muted" hidden></p>
+          <div id="work-area-list" class="work-area-list" role="list"></div>
+          <section id="work-area-editor" class="work-area-editor" aria-live="polite" hidden></section>
+        </div>
+      </aside>
 
       <aside id="inventory-panel" class="module-panel" aria-labelledby="inventory-title" hidden>
         <header class="module-header">
@@ -78,17 +160,27 @@
         </header>
         <div id="inventory-body" class="module-body">
           <!--
+            The warehouse: one compact strip above the shelf. It is the budget every stored good
+            shares, so it belongs at the top of the inventory rather than in a panel of its own.
+          -->
+          <section id="warehouse" class="warehouse-strip" aria-labelledby="warehouse-title" hidden>
+            <div class="warehouse-head">
+              <h3 id="warehouse-title">Warehouse</h3>
+              <span id="warehouse-tier" class="warehouse-tier"></span>
+            </div>
+            <p id="warehouse-usage" class="warehouse-usage"></p>
+            <div id="warehouse-bar" class="warehouse-bar" aria-label="Warehouse capacity"><span id="warehouse-bar-fill"></span></div>
+            <p id="warehouse-next" class="warehouse-next"></p>
+            <p id="warehouse-note" class="warehouse-note" hidden></p>
+            <button id="warehouse-upgrade" class="primary compact" type="button" hidden></button>
+          </section>
+          <!--
             The inventory as a shelf, not a table: category tabs over a grid of visual item cards
             (thumbnail, name, quantity). Land is deliberately *outside* the grid - it is not an item.
           -->
           <nav id="inventory-tabs" class="item-tabs" role="tablist" aria-label="Inventory categories"></nav>
           <div id="inventory-grid" class="item-grid" role="list"></div>
           <p id="inventory-empty" class="muted" hidden></p>
-          <section class="land-strip">
-            <h3 id="land-title">Land</h3>
-            <div id="plots"></div>
-            <button id="expand-farm" class="primary compact" type="button"><span data-icon="land" data-icon-size="18"></span><span class="label">Unlock next plot</span></button>
-          </section>
         </div>
       </aside>
 
@@ -115,7 +207,7 @@
 
       <aside id="build-panel" class="module-panel module-panel-build" aria-labelledby="build-title" hidden>
         <header class="module-header build-header">
-          <h2 id="build-title">Build</h2>
+          <h2 id="build-title"><span class="build-title-icon" data-icon="build" data-icon-size="24"></span><span>Build</span></h2>
           <div class="build-header-right">
             <span id="build-gold" class="build-gold"></span>
             <button id="build-close" class="panel-close" type="button" aria-label="Close"><span data-icon="close" data-icon-size="16"></span></button>
@@ -144,7 +236,17 @@
         The panel for the built thing the player has selected: what it is, and the actions its own
         asset policy allows. Rendered by `renderObjectPanel`; hidden whenever nothing is selected.
       -->
-      <section id="object-panel" class="placement-hud object-panel" aria-label="Selected object" hidden></section>
+      <div id="selection-panels" class="selection-panels" aria-live="polite">
+        <section id="object-panel" class="placement-hud object-panel" aria-label="Selected object" hidden></section>
+        <section id="tree-management-panel" class="placement-hud object-panel tree-management-panel" aria-label="Tree management" hidden></section>
+        <section id="aquaculture-panel" class="placement-hud object-panel aquaculture-panel" aria-label="Aquaculture" hidden></section>
+        <section id="forestry-construction-panel" class="placement-hud object-panel resource-panel" aria-label="Forestry tree" hidden></section>
+        <section id="resource-panel" class="placement-hud object-panel resource-panel" aria-label="Resource profession" hidden></section>
+      </div>
+
+      <section id="area-harvest-panel" class="area-harvest-panel" aria-live="polite" hidden></section>
+      <button id="area-harvest-progress-dock" class="area-harvest-progress-dock" type="button" hidden></button>
+      <section id="neighbor-panel" class="neighbor-panel" aria-live="polite" hidden></section>
 
       <section id="action-dock" class="action-dock" aria-label="Farm actions" hidden>
         <div class="action-copy"><strong id="selection">Click a field tile</strong><span id="selection-detail">Choose a tile to plant or harvest.</span><button id="dock-expand" class="dock-expand" type="button" hidden></button></div>
@@ -158,6 +260,7 @@
           <div id="plant-controls" class="action-controls"><button id="plant" class="primary" type="button" disabled><span data-icon="plant" data-icon-size="18"></span><span class="label">Plant crop</span></button><div id="plant-picker" class="item-picker" role="group"></div></div>
           <div id="crop-controls" class="action-controls" hidden><button id="harvest" class="primary harvest" type="button"><span data-icon="harvest" data-icon-size="18"></span><span class="label">Harvest</span></button><button id="uproot" class="uproot" type="button"><span data-icon="remove" data-icon-size="18"></span><span class="label">Uproot</span></button></div>
           <div id="tree-controls" class="action-controls" hidden><span id="tree-state" class="muted"></span><button id="harvest-tree" class="primary harvest" type="button"><span data-icon="harvest" data-icon-size="18"></span><span class="label">Harvest</span></button><button id="remove-tree" class="uproot" type="button"><span data-icon="remove" data-icon-size="18"></span><span class="label">Remove tree</span></button></div>
+          <button id="harvest-area" class="secondary area-harvest-launcher" type="button" hidden></button>
         </div>
       </section>
 
@@ -173,6 +276,11 @@
         <strong id="level-up-title"></strong>
         <span id="level-up-detail"></span>
       </div>
+      <section id="return-popup" class="return-popup" role="dialog" aria-modal="true" hidden>
+        <h2 id="return-popup-title"></h2><p id="return-popup-away"></p>
+        <h3 id="return-popup-produced"></h3><div id="return-popup-items"></div>
+        <p id="return-popup-empty" hidden></p><button id="return-popup-close" class="primary" type="button"></button>
+      </section>
       <div class="renderer-state" id="render-3d-state">Preparing 3D world…</div>
       <button id="render-3d" type="button" hidden>Enable 3D</button><div id="field" class="debug-field" hidden></div>
     </section></main><script type="module" src="/src/main.ts"></script>

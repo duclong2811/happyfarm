@@ -4,11 +4,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   InventoryService,
   PlantCrop,
+  PlantCropAreaGroup,
+  type PlantBatchReceiptRepository,
+  type IdempotencyRecord,
   type Clock,
   type CropIdGenerator
 } from "@happy-farm/application";
-import type { CropInstanceId, UnlockedLandPolicy } from "@happy-farm/domain";
+import type { CropInstanceId } from "@happy-farm/domain";
 import { createOwnedFarm, createFarmTile } from "@happy-farm/domain";
+import type { TileTerrainLookup } from "@happy-farm/application";
 import {
   D1CropRepository,
   D1FarmMemberRepository,
@@ -56,11 +60,14 @@ class SequenceCropIds implements CropIdGenerator {
   }
 }
 
-class ConfiguredUnlockedLand implements UnlockedLandPolicy {
-  constructor(private readonly unlocked: boolean) {}
-  isUnlocked(): Promise<boolean> {
-    return Promise.resolve(this.unlocked);
-  }
+/** Natural dry land, unless a test asks for ground the island would refuse. */
+function configuredLand(usable = true): TileTerrainLookup {
+  return {
+    classify: () =>
+      usable
+        ? { terrain: "LAND", shallowWater: false, protectedGround: false }
+        : { terrain: "WATER", shallowWater: false, protectedGround: false }
+  };
 }
 
 function seedPlayer(db: NodeD1Database, id: string, subject: string): void {
@@ -107,7 +114,7 @@ describe("PlantCrop", () => {
     db.close();
   });
 
-  function useCase(unlocked = true, ids = new SequenceCropIds()): PlantCrop {
+  function useCase(usableLand = true, ids = new SequenceCropIds()): PlantCrop {
     return new PlantCrop({
       farms,
       members,
@@ -118,7 +125,7 @@ describe("PlantCrop", () => {
       definitions: new GameDataCropDefinitions(),
       progression: progressions,
       progressionDefinition: gameDataProgressionDefinition,
-      unlockedLand: new ConfiguredUnlockedLand(unlocked),
+      terrain: configuredLand(usableLand),
       inventoryService: new InventoryService(new GameDataItemDefinitions(), clock),
       ids,
       fingerprints: new Sha256Fingerprint(),
@@ -140,6 +147,19 @@ describe("PlantCrop", () => {
       .get(player, itemDefinitionId);
   }
 
+  class MemoryPlantReceipt implements PlantBatchReceiptRepository {
+    private readonly records = new Map<string, IdempotencyRecord>();
+    find(actorPlayerId: IdempotencyRecord["actorPlayerId"], requestId: string): Promise<IdempotencyRecord | null> {
+      return Promise.resolve(this.records.get(`${actorPlayerId}:${requestId}`) ?? null);
+    }
+    save(record: IdempotencyRecord): Promise<boolean> {
+      const key = `${record.actorPlayerId}:${record.requestId}`;
+      if (this.records.has(key)) return Promise.resolve(false);
+      this.records.set(key, record);
+      return Promise.resolve(true);
+    }
+  }
+
   it("plants on SOIL with server-owned ID and time, spending exactly one seed", async () => {
     giveSeeds(db, "item_carrot_seed", 5);
     const result = await useCase().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
@@ -148,6 +168,23 @@ describe("PlantCrop", () => {
     // The seed is spent by the server, in the same transaction, from the crop's own definition. The
     // command never carried an item ID or a quantity.
     expect(seedQuantity()).toEqual({ quantity: 4, version: 2 });
+  });
+
+  it("plants a bounded area through the single-cell settlement and replays without a second debit", async () => {
+    giveSeeds(db, "item_carrot_seed", 2);
+    const ids = new SequenceCropIds([CROP_ONE_ID, CROP_TWO_ID]);
+    const receipt = new MemoryPlantReceipt();
+    const batch = new PlantCropAreaGroup(farms, members, useCase(true, ids), receipt, new Sha256Fingerprint(), clock);
+    const cells = Array.from({ length: 25 }, (_, index) => ({ x: index, y: 1 }));
+    const command = { requestId: "request_crop_area_001", cropDefinitionId: "crop_carrot", cells };
+    const result = await batch.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    expect(result.plantedCount).toBe(2);
+    expect(result.skippedCount).toBe(23);
+    expect(result.results.filter((entry) => entry.reason === "NO_SEEDS")).toHaveLength(23);
+    expect(seedQuantity()).toEqual({ quantity: 0, version: 3 });
+    const retry = await batch.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    expect(retry).toEqual(result);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances").get()).toEqual({ count: 2 });
   });
 
   it("leaves an empty seed stack at zero rather than negative", async () => {
@@ -182,18 +219,32 @@ describe("PlantCrop", () => {
     expect(seedQuantity("item_wheat_seed")).toEqual({ quantity: 10, version: 1 });
   });
 
-  it("rejects unknown definitions, missing tiles, and locked land without spending a seed", async () => {
+  it("rejects unknown definitions and ground the island refuses, without spending a seed", async () => {
     giveSeeds(db, "item_carrot_seed", 5);
     await expect(
       useCase().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { ...command, cropDefinitionId: "crop_unknown" })
     ).rejects.toMatchObject({ code: "CROP_DEFINITION_NOT_FOUND" });
-    await expect(
-      useCase().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { ...command, x: 99 })
-    ).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    // V14.5.2: a cell with no tile row is *free natural land*, not an error - but the island's own
+    // classifier still refuses water and protected ground.
     await expect(useCase(false).execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).rejects.toMatchObject({
-      code: "INVALID_INPUT"
+      code: "TILE_NOT_PLANTABLE"
     });
     expect(seedQuantity()).toEqual({ quantity: 5, version: 1 });
+  });
+
+  it("plants on a natural cell that has no tile row yet, creating it for free", async () => {
+    giveSeeds(db, "item_carrot_seed", 2);
+    // (4,4) has no farm_tiles row: it is natural Home Island land, and the plant writes the row.
+    const fresh = { ...command, x: 4, y: 4, requestId: "request_plant_fresh", expectedTileVersion: undefined };
+    await useCase().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, fresh);
+    expect(
+      db.sqlite.prepare("SELECT terrain_type, version FROM farm_tiles WHERE farm_id = ? AND x = 4 AND y = 4").get(FARM_ONE_ID)
+    ).toEqual({ terrain_type: "SOIL", version: 1 });
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances WHERE farm_id = ? AND tile_x = 4 AND tile_y = 4").get(FARM_ONE_ID)
+    ).toEqual({ count: 1 });
+    // No gold involved: the seed is the only cost.
+    expect(seedQuantity()).toEqual({ quantity: 1, version: 2 });
   });
 
   it.each(["GRASS", "WATER", "BLOCKED"] as const)("rejects %s terrain without spending a seed", async (terrain) => {

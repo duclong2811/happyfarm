@@ -239,8 +239,10 @@ Removed in V12.2:
 
 Still to remove or replace:
 
-* the player's own cultivated plot still reads as a slightly raised patch of ground; the apron that
-  surrounds the owned tiles could be blended further into the terrain;
+* ~~the player's own cultivated plot still reads as a slightly raised patch of ground; the apron that
+  surrounds the owned tiles could be blended further into the terrain~~ - **done in V14.5.1**: the
+  apron, soil bed and furrows are gone, owned ground is grass, and only a cultivated cell shows soil
+  (ADR 0029);
 * a building's `district` is `null` when it stands on open land (the windmill, the coop, the storage
   shed). Those landmarks occupy cells a player might want; a later pass could make them movable, or
   place them only where the island still owns the ground.

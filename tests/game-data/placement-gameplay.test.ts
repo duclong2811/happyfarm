@@ -59,6 +59,11 @@ describe("every shipped asset declares what it does", () => {
     }
     // A decoration is real today: it is built, persisted and drawn.
     expect(gameplayFor("place_tree_broad")?.status).toBe("ACTIVE");
+    expect(gameplayFor("place_fish_cage")).toMatchObject({
+      classification: "UTILITY",
+      status: "ACTIVE"
+    });
+    expect(gameplayFor("place_fish_cage")?.classification).not.toBe("COSMETIC");
   });
 });
 

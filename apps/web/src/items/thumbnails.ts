@@ -54,6 +54,7 @@ export function createItemThumbnails(
   }
 
   function sourceOf(request: ThumbnailRequest): ThumbnailResult["source"] {
+    if (request.imageUrl !== undefined && request.imageUrl !== null) return "IMAGE";
     return request.roadTierId === null ? "MODEL" : "ROAD";
   }
 
@@ -88,6 +89,7 @@ export function createItemThumbnails(
         })
         .catch(() => {
           // A picture is decoration: one that cannot be drawn leaves the card's own fallback in place.
+          onResult?.({ dataUrl: null, source: sourceOf(request) });
         });
     },
     stats(): { readonly drawn: number; readonly cached: number } {

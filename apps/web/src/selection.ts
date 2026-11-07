@@ -26,7 +26,7 @@ export interface SelectedCoordinate {
   readonly y: number;
 }
 
-export type SelectionKind = "none" | "missing" | "empty" | "growing" | "mature" | "tree";
+export type SelectionKind = "none" | "missing" | "open" | "empty" | "growing" | "mature" | "tree";
 
 /**
  * The first precondition the dock is missing, in the order a player would fix them.
@@ -106,6 +106,15 @@ export interface SelectionInput {
   readonly selected: SelectedCoordinate | null;
   readonly selectedCrop: SelectedCropState | null;
   readonly selectedTree: SelectedTreeState | null;
+  /**
+   * Whether an unplanted selected cell is valid natural Home Island land, when the caller knows it.
+   *
+   * V14.5.2: the natural Home Island is the player's land, so a cell with no tile row yet is simply
+   * plantable - no purchase, no ownership. With a crop (or tree) chosen, unlocked and in stock, the
+   * dock offers the plant and the server plants it. The server checks the geography again and is the
+   * one that decides.
+   */
+  readonly unowned?: { readonly plantable: boolean } | null;
   /** Current epoch milliseconds. Callers pass `Date.now()`; tests pass a fixed value. */
   readonly nowMs: number;
 }
@@ -153,11 +162,11 @@ export function remainingGrowthSeconds(
  * if the chosen crop is also locked, because that is the fact they can act on immediately.
  */
 function plantBlocker(
-  tile: FarmTileDTO,
+  terrain: FarmTileDTO["terrainType"],
   selectedCrop: SelectedCropState | null,
   selectedTree: SelectedTreeState | null
 ): { readonly reason: PlantBlockReason | null; readonly option: "crop" | "tree" | null } {
-  if (tile.terrainType !== "SOIL") return { reason: "terrain", option: null };
+  if (terrain !== "SOIL") return { reason: "terrain", option: null };
   if (selectedTree !== null) {
     if (!selectedTree.unlocked) return { reason: "tree-locked", option: null };
     if (!Number.isSafeInteger(selectedTree.saplingCount) || selectedTree.saplingCount < 1) {
@@ -181,6 +190,27 @@ export function describeSelection(input: SelectionInput): SelectionView {
   const coordinate: SelectedCoordinate = { x: input.selected.x, y: input.selected.y };
   const tile = input.tiles.find((row) => row.x === coordinate.x && row.y === coordinate.y);
   if (tile === undefined) {
+    // A cell the island would let a farm work but the farm has no row for yet is free natural land
+    // (V14.5.2): the dock offers the plant and the server writes the row it needs. Any other missing
+    // tile stays what it was - a place with nothing to do.
+    if (input.unowned?.plantable === true) {
+      const blocked = plantBlocker("SOIL", input.selectedCrop, input.selectedTree);
+      return {
+        kind: "open",
+        coordinate,
+        terrainType: null,
+        crop: null,
+        tree: null,
+        canPlant: blocked.reason === null,
+        canHarvest: false,
+        canUproot: false,
+        canHarvestTree: false,
+        canRemoveTree: false,
+        plantOption: blocked.option,
+        plantBlocked: blocked.reason,
+        remainingSeconds: null
+      };
+    }
     return { kind: "missing", ...NO_SELECTION, coordinate, plantBlocked: "unlocked-land" };
   }
 
@@ -213,7 +243,7 @@ export function describeSelection(input: SelectionInput): SelectionView {
   }
 
   if (crop === undefined) {
-    const blocked = plantBlocker(tile, input.selectedCrop, input.selectedTree);
+    const blocked = plantBlocker(tile.terrainType, input.selectedCrop, input.selectedTree);
     return {
       kind: "empty",
       coordinate,
@@ -278,9 +308,10 @@ export function describeSelection(input: SelectionInput): SelectionView {
 export function formatRemainingGrowth(seconds: number | null, t: Translate): string {
   if (seconds === null) return t("time.unknown");
   if (seconds <= 0) return t("time.readySoon");
-  if (seconds < 60) return t("time.seconds", { count: seconds });
-  const totalMinutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
+  const wholeSeconds = Math.floor(seconds);
+  if (wholeSeconds < 60) return t("time.seconds", { count: wholeSeconds });
+  const totalMinutes = Math.floor(wholeSeconds / 60);
+  const remainingSeconds = wholeSeconds % 60;
   if (totalMinutes < 60) {
     return remainingSeconds === 0
       ? t("time.minutes", { count: totalMinutes })

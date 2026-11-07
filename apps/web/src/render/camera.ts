@@ -131,6 +131,10 @@ export interface OrbitCameraRig {
   panByScreen(deltaX: number, deltaY: number, viewportHeight: number): void;
   /** Puts the target somewhere without a glide: how the camera first frames a world it has not seen. */
   moveTargetTo(worldX: number, worldZ: number): void;
+  /** Sets an arrival distance without changing the user's yaw or pitch. */
+  setDistance(distance: number): void;
+  /** Sets the presentation bearing for a deliberately framed arrival view. */
+  setYaw(yaw: number): void;
   /** Starts a glide toward a point, used by the recenter control. */
   recenterTo(worldX: number, worldZ: number): void;
   /**
@@ -374,6 +378,15 @@ export function createOrbitCamera(options: OrbitCameraOptions): OrbitCameraRig {
       homeZ = worldZ;
       recenterX = null;
       recenterZ = null;
+    },
+    setDistance(nextDistance: number): void {
+      if (!Number.isFinite(nextDistance)) return;
+      requestedDistance = clamp(nextDistance, minDistance, maxDistance);
+      distance = requestedDistance;
+    },
+    setYaw(nextYaw: number): void {
+      if (!Number.isFinite(nextYaw)) return;
+      yaw = wrapYaw(nextYaw);
     },
     recenterTo: armGlide,
     followTo: armGlide,

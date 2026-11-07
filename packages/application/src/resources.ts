@@ -7,16 +7,22 @@ import {
   resourceQuantity,
   secondsUntilResourceAvailable,
   selectResourceDrop,
+  parseJobId,
+  parseItemDefinitionId,
+  workAreaCellKey,
   type ItemDefinitionId,
+  type FarmId,
   type PlayerId,
   type ProgressionDefinition,
   type ResourceAction,
   type ResourceActionId,
   type ResourceNodeState,
   type ResourceVerb,
+  type ActorCargoItem,
   type XpAward
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { CargoService } from "./cargo";
 import type { InventoryService } from "./inventory";
 import {
   assertStoredXpAward,
@@ -27,6 +33,17 @@ import {
 } from "./progression";
 import type {
   ActorContext,
+  ActorRepository,
+  ActorJobRepository,
+  ActorIdGenerator,
+  CargoGrant,
+  CargoCapacityLookup,
+  CargoRepository,
+  FarmMemberRepository,
+  FarmRepository,
+  ItemDefinitionRepository,
+  WorkAreaRepository,
+  WorkAreaGroundLookup,
   Clock,
   HomeIslandZoneResolver,
   IdempotencyRecord,
@@ -39,8 +56,79 @@ import type {
   ResourceCataloguePort,
   ResourceIdGenerator,
   ResourceNodeStateRepository,
-  ResourceSettlementRepository
+  ResourceSettlementRepository,
+  WarehouseRepository,
+  WarehouseTierRepository
 } from "./ports";
+import { autoTransitionId } from "./auto-plant";
+import { mainCharacterFor, requireMainCharacterPlayerControl, requireOwnedFarm } from "./jobs";
+import { assertWarehouseHasRoom } from "./storage";
+
+export interface AutoMiningSettlementContext {
+  readonly actorId: string;
+  readonly assignmentId: string;
+  readonly eventTime: string;
+  readonly expectedAutoVersion: number;
+  readonly expectedSimulationAt: string | null;
+}
+
+export interface AutoMiningSettlement {
+  settle(input: {
+    readonly actorId: string;
+    readonly playerId: PlayerId;
+    readonly nodeId: string;
+    readonly nodeX: number;
+    readonly nodeY: number;
+    readonly itemDefinitionId: ItemDefinitionId;
+    readonly grant: CargoGrant;
+    readonly expectedCargo: ActorCargoItem | null;
+    readonly containerVersion: number;
+    readonly idempotency: IdempotencyRecord;
+    readonly context: AutoMiningSettlementContext;
+  }): Promise<void>;
+}
+
+export interface MineResourceAutoCommand extends AutoMiningSettlementContext {
+  readonly nodeId: string;
+}
+
+export interface MineResourceAutoResult {
+  readonly nodeId: string;
+  readonly itemDefinitionId: ItemDefinitionId;
+  readonly quantity: number;
+}
+
+interface MineResourceAutoDependencies {
+  readonly farms: FarmRepository;
+  readonly members: FarmMemberRepository;
+  readonly actors: ActorRepository;
+  readonly ids: ActorIdGenerator;
+  readonly jobs: ActorJobRepository;
+  readonly workAreas: WorkAreaRepository;
+  readonly catalogue: ResourceCataloguePort;
+  readonly ground: WorkAreaGroundLookup;
+  readonly cargo: CargoRepository;
+  readonly itemDefinitions: ItemDefinitionRepository;
+  readonly cargoCapacities: CargoCapacityLookup;
+  readonly idempotency: IdempotencyRepository;
+  readonly fingerprints: PayloadFingerprint;
+  readonly clock: Clock;
+  readonly settlement: AutoMiningSettlement;
+}
+
+/**
+ * The storage a gather must be able to hold before its drop is drawn.
+ *
+ * A table whose entries all name the same item and the same fixed quantity - every table the
+ * deployment ships - reserves exactly that drop. A table that can vary is reserved at its largest
+ * possible quantity, which is conservative on purpose: a refusal must happen before the roll, so the
+ * only safe bound is one that no roll could exceed. The database guard still decides the write.
+ */
+function reserveForTable(entries: readonly { readonly minQuantity: number; readonly maxQuantity: number }[]): number {
+  let reserve = 0;
+  for (const entry of entries) reserve = Math.max(reserve, entry.maxQuantity);
+  return Math.max(1, reserve);
+}
 
 /**
  * Resource gathering: the generic lifecycle mining introduces and forestry reuses.
@@ -148,7 +236,8 @@ export class ListResourceNodes {
       const definition = this.catalogue.findDefinition(node.definitionId);
       if (definition === null) continue;
       const state = byNode.get(node.id) ?? null;
-      const availableAt = state?.availableAt ?? null;
+      const continuousLabor = definition.settlementMode === "CONTINUOUS_LABOR";
+      const availableAt = continuousLabor ? null : state?.availableAt ?? null;
       const table = this.catalogue.findDropTable(definition.dropTableId);
       const dropItem = table?.entries[0]?.itemDefinitionId;
       if (dropItem === undefined) continue;
@@ -167,7 +256,7 @@ export class ListResourceNodes {
         requiredLevel: definition.requiredLevel,
         availableAt,
         secondsUntilAvailable: secondsUntilResourceAvailable(availableAt, now),
-        available: isResourceAvailable(availableAt, now)
+        available: continuousLabor || isResourceAvailable(availableAt, now)
       });
     }
     return { nodes };
@@ -217,7 +306,8 @@ export class StartResourceAction {
     private readonly idempotency: IdempotencyRepository,
     private readonly ids: ResourceIdGenerator,
     private readonly fingerprints: PayloadFingerprint,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    private readonly actors?: ActorRepository
   ) {}
 
   async execute(
@@ -225,6 +315,7 @@ export class StartResourceAction {
     command: StartResourceActionCommand
   ): Promise<ResourceActionView> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    await requireMainCharacterPlayerControl(this.actors, actor.playerId);
     const fingerprint = await this.fingerprints.hash(JSON.stringify([command.nodeId]));
 
     const existing = await this.idempotency.find(actor.playerId, START_OPERATION, command.requestId);
@@ -238,6 +329,9 @@ export class StartResourceAction {
     }
     if (this.catalogue.findDropTable(definition.dropTableId) === null) {
       throw new ApplicationError("INTERNAL_ERROR", "Resource node has no drop table");
+    }
+    if (definition.settlementMode === "CONTINUOUS_LABOR") {
+      throw new ApplicationError("INVALID_INPUT", "Unified Mining must use an actor assignment");
     }
 
     const zone = await this.zones.resolveForPlayer(actor.playerId);
@@ -348,7 +442,10 @@ export class SettleResourceAction {
     private readonly idempotency: IdempotencyRepository,
     private readonly random: RandomPort,
     private readonly fingerprints: PayloadFingerprint,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    /** The Home Island warehouse, when the host wired one: a pre-roll space check only. */
+    private readonly warehouse?: WarehouseRepository,
+    private readonly tiers?: WarehouseTierRepository
   ) {}
 
   async execute(
@@ -396,8 +493,14 @@ export class SettleResourceAction {
       throw new ApplicationError("RESOURCE_NODE_DEPLETED", "This resource node is still depleted");
     }
 
-    const entry = selectResourceDrop(table.entries, this.random.roll());
-    const quantity = resourceQuantity(entry, this.random.roll());
+    // The whole batch of a gather fits or it does not, and that is known before the drop is chosen:
+    // a node with a fixed table reserves exactly its quantity, and a weighted table is refused unless
+    // even its largest possible drop would fit. Asking here means a full warehouse refuses without
+    // spending the roll. Pinning both rolls also protects against grants racing this pre-check.
+    await assertWarehouseHasRoom(this.warehouse, this.tiers, actor.playerId, reserveForTable(table.entries));
+    const [selectionRoll, quantityRoll] = await this.actions.pinRolls(action, () => this.random.roll());
+    const entry = selectResourceDrop(table.entries, selectionRoll);
+    const quantity = resourceQuantity(entry, quantityRoll);
     const addition = this.inventoryService.prepareAddition(actor.playerId, entry.itemDefinitionId, quantity);
     await this.assertCapacity(addition.playerId, addition.itemDefinitionId, addition.quantity, addition.maxQuantity);
 
@@ -588,5 +691,98 @@ export class CancelResourceAction {
       throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
     }
     return { cancelled: true };
+  }
+}
+
+/**
+ * One continuous Mining beat. This is deliberately a resource use case, not a second inventory
+ * implementation: the existing CargoService validates the reward and the existing Auto settlement
+ * composes it with the actor timeline in one D1 batch.
+ */
+export class MineResourceIntoCargoAuto {
+  constructor(private readonly dependencies: MineResourceAutoDependencies) {}
+
+  async executeAuto(
+    actor: ActorContext | null,
+    farmId: FarmId,
+    command: MineResourceAutoCommand
+  ): Promise<MineResourceAutoResult> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const farm = await requireOwnedFarm(this.dependencies, farmId, actor);
+    const main = await mainCharacterFor(this.dependencies, farmId, farm);
+    if (main.id !== command.actorId) throw new ApplicationError("NOT_AUTHORIZED", "The actor is not owned by this farm");
+    const job = await this.dependencies.jobs.findById(parseJobId(command.assignmentId));
+    if (
+      job === null || job.actorId !== main.id || job.farmId !== farmId || job.kind !== "MINING" ||
+      job.targetDefinitionId !== "resource_ore" || job.executionMode !== "RATE_PRODUCTION" || !job.enabled
+    ) {
+      throw new ApplicationError("INVALID_INPUT", "The actor has no active unified Mining assignment");
+    }
+    const node = this.dependencies.catalogue.findNode(command.nodeId);
+    const definition = node === null ? null : this.dependencies.catalogue.findDefinition(node.definitionId);
+    if (node === null || definition === null || definition.id !== job.targetDefinitionId || definition.verb !== "MINE" || definition.settlementMode !== "CONTINUOUS_LABOR") {
+      throw new ApplicationError("RESOURCE_NODE_NOT_FOUND", "The Mining target is not available");
+    }
+    if (node.zoneKind !== main.zoneKind) throw new ApplicationError("RESOURCE_ZONE_NOT_ALLOWED", "Mining is not allowed in this zone");
+    const area = await this.dependencies.workAreas.findById(job.workAreaId);
+    const nodeCell = { x: Math.round(node.position.x), y: Math.round(node.position.y) };
+    if (
+      area === null || area.farmId !== farmId || area.kind !== "MINING" || area.zoneKind !== node.zoneKind ||
+      !(await this.dependencies.workAreas.listCells(area.id)).some((cell) => workAreaCellKey(cell) === workAreaCellKey(nodeCell)) ||
+      !this.dependencies.ground.capabilitiesAt(nodeCell).includes("MINING")
+    ) {
+      throw new ApplicationError("INVALID_INPUT", "The Mining target is outside the assigned work area");
+    }
+    const table = this.dependencies.catalogue.findDropTable(definition.dropTableId);
+    const entry = table?.entries.length === 1 ? table.entries[0] : undefined;
+    if (entry === undefined || entry.minQuantity !== entry.maxQuantity) {
+      throw new ApplicationError("INVALID_INPUT", "The Mining target needs one deterministic cargo output");
+    }
+    const itemDefinitionId = parseItemDefinitionId(entry.itemDefinitionId);
+    const transitionId = autoTransitionId({ ...command, kind: "MINE" });
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([farmId, main.id, job.id, node.id, command.eventTime]));
+    const existing = await this.dependencies.idempotency.find(actor.playerId, "AUTO_MINE", transitionId);
+    if (existing !== null) return this.replay(existing, fingerprint);
+    const carried = await this.dependencies.cargo.listByActor(main.id);
+    const expected = carried.find((item) => item.itemDefinitionId === itemDefinitionId) ?? null;
+    const used = carried.reduce((total, item) => total + item.quantity, 0);
+    const cargo = new CargoService(this.dependencies.itemDefinitions, this.dependencies.cargoCapacities, this.dependencies.clock);
+    const grant = cargo.prepareGrant(main.id, main.cargoCapacity, used, itemDefinitionId, entry.minQuantity);
+    const result: MineResourceAutoResult = { nodeId: node.id, itemDefinitionId, quantity: entry.minQuantity };
+    const record: IdempotencyRecord = {
+      actorPlayerId: actor.playerId,
+      operation: "AUTO_MINE",
+      requestId: transitionId,
+      payloadFingerprint: fingerprint,
+      resourceId: node.id,
+      responseJson: JSON.stringify(result),
+      status: "COMPLETED",
+      createdAt: command.eventTime
+    };
+    await this.dependencies.settlement.settle({
+      actorId: main.id,
+      playerId: actor.playerId,
+      nodeId: node.id,
+      nodeX: nodeCell.x,
+      nodeY: nodeCell.y,
+      itemDefinitionId,
+      grant,
+      expectedCargo: expected,
+      containerVersion: main.cargoVersion,
+      idempotency: record,
+      context: command
+    });
+    return result;
+  }
+
+  private replay(record: IdempotencyRecord, fingerprint: string): MineResourceAutoResult {
+    if (record.payloadFingerprint !== fingerprint) throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
+    try {
+      const value = JSON.parse(record.responseJson) as MineResourceAutoResult;
+      if (typeof value.nodeId !== "string" || typeof value.itemDefinitionId !== "string" || !Number.isSafeInteger(value.quantity) || value.quantity <= 0) throw new Error("invalid mining receipt");
+      return value;
+    } catch {
+      throw new ApplicationError("INTERNAL_ERROR", "Stored Mining result is unavailable");
+    }
   }
 }

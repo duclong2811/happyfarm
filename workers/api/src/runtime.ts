@@ -12,6 +12,10 @@ import {
   parseShopEntryId,
   parseTreeDefinitionId,
   treeInstanceIdFromUuid,
+  workAreaIdFromUuid,
+  actorIdFromUuid,
+  jobIdFromUuid,
+  type AutoAnchorTiles,
   type CropDefinition,
   type CropDefinitionId,
   type CropInstanceId,
@@ -31,7 +35,11 @@ import {
   type ShopEntryId,
   type TreeDefinition,
   type TreeDefinitionId,
-  type TreeInstanceId
+  type TreeInstanceId,
+  type WorkAreaGroundCapability,
+  type WorkAreaId,
+  type ActorId,
+  type JobId
 } from "@happy-farm/domain";
 import type {
   ActorContext,
@@ -64,11 +72,24 @@ import type {
   TreeDefinitionRepository,
   TreeIdGenerator,
   WarehouseTierRepository,
-  TileTerrainLookup
+  TileTerrainLookup,
+  LandSaleLookup,
+  WorkAreaGroundLookup,
+  WorkAreaIdGenerator,
+  ActorIdGenerator,
+  JobIdGenerator
+  ,CargoCapacityLookup
+  ,ForestryConstructionDefinition
+  ,ForestryConstructionDefinitionRepository
 } from "@happy-farm/application";
 import {
   cropRegistry,
+  aquacultureDefinition,
   currencyRegistry,
+  AUTO_WALK_SPEED_WORLD_PER_SECOND,
+  FARM_MARKET_ANCHOR_TILE,
+  FARM_TILE_PITCH_WORLD,
+  HOME_WAREHOUSE_ANCHOR_TILE,
   FISHING_ACTION_SECONDS,
   fishRegistry,
   fishingSpotRegistry,
@@ -80,19 +101,31 @@ import {
   plotRegistry,
   resourceDefinitionRegistry,
   resourceDropTableRegistry,
-  resourceNodeRegistry,
+  activeResourceNodes,
   shopRegistry,
   starterPackage,
+  starterCargoCapacity,
   treeRegistry,
   warehouseTiers,
   STARTER_WORLD_PLACEMENTS,
   STARTER_WORLD_VERSION,
   classifyTile,
+  groundCapabilities,
   worldObjectDefinition,
   WORLD_OBJECT_DEFINITIONS,
   type CropDefinitionData,
   type TreeDefinitionData
 } from "@happy-farm/game-data";
+import { forestryConstructionDefinition } from "@happy-farm/game-data";
+
+export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
+
+export class GameDataForestryConstructionDefinitions implements ForestryConstructionDefinitionRepository {
+  findByEntryId(entryId: string): ForestryConstructionDefinition | null {
+    const definition = forestryConstructionDefinition(entryId);
+    return definition === null ? null : { entryId, ...definition };
+  }
+}
 
 /**
  * The island's starter arrangement, as the application layer reads it.
@@ -113,6 +146,24 @@ export const gameDataStarterWorld = {
 };
 
 /**
+ * Where Auto walks to load, unload and buy, and how fast it walks there.
+ *
+ * Game data, not a handler constant: the anchors are derived from the starter layout's own barn and
+ * market stall (see `packages/game-data/src/auto`), and the pace is the same number the client's
+ * character controller walks at. The server needs both because travel time is a *rule* here, not a
+ * picture: it is what makes "the client says it arrived" meaningless.
+ */
+export const gameDataAutoAnchors: AutoAnchorTiles = {
+  warehouse: HOME_WAREHOUSE_ANCHOR_TILE,
+  market: FARM_MARKET_ANCHOR_TILE
+};
+
+export const gameDataWalk = {
+  speedWorldPerSecond: AUTO_WALK_SPEED_WORLD_PER_SECOND,
+  pitchWorld: FARM_TILE_PITCH_WORLD
+};
+
+/**
  * The island's geography, as the placement rules read it.
  *
  * The *same* `classifyTile` the client's cell map is built from, handed to the application as a port.
@@ -128,6 +179,47 @@ export const gameDataTileTerrain: TileTerrainLookup = {
       shallowWater: classification.shallowWater,
       protectedGround: classification.protectedGround
     };
+  }
+};
+
+/**
+ * Where the island lets a farm own land, for the single-cell land sale.
+ *
+ * The same `classifyTile` the placement rule reads: a cell is developable when it is dry land the
+ * island has not kept for itself. "Inside the reservation the catalogue sells" is decided by the plot
+ * geometry in `@happy-farm/domain`, so a cell outside every plot cohort is refused there.
+ */
+export const gameDataLandSale: LandSaleLookup = {
+  isDevelopable(tile) {
+    const classification = classifyTile(tile);
+    return classification.terrain === "LAND" && !classification.protectedGround;
+  }
+};
+
+/**
+ * What the ground can be *worked* for, as the work-area rules read it.
+ *
+ * The same `groundCapabilities` the cell map is classified with, handed to the application as a port
+ * for the same reason `gameDataTileTerrain` is: the application owns the rule and game data owns the
+ * island. It reports what the ground supports, never who may name it - a capability is not a
+ * permission, and a work area is not ownership.
+ */
+export const gameDataWorkAreaGround: WorkAreaGroundLookup = {
+  capabilitiesAt(tile): readonly WorkAreaGroundCapability[] {
+    return groundCapabilities(tile);
+  }
+};
+
+/**
+ * What an actor of a kind can carry, from game data.
+ *
+ * A port rather than an import for the same reason the terrain lookup is one: the application owns the
+ * rule and game data owns the numbers. `null` means the kind has no capacity defined yet, which is a
+ * refusal rather than a zero.
+ */
+export const gameDataCargoCapacities: CargoCapacityLookup = {
+  forActorKind(kind) {
+    return starterCargoCapacity(kind);
   }
 };
 
@@ -203,7 +295,7 @@ export class SystemClock implements Clock {
 }
 
 export class CryptoIdGenerator
-  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator, ConstructionIdGenerator, FishingIdGenerator, ResourceIdGenerator
+  implements IdGenerator, CropIdGenerator, TreeIdGenerator, EconomyTransactionIdGenerator, ConstructionIdGenerator, FishingIdGenerator, ResourceIdGenerator, WorkAreaIdGenerator, ActorIdGenerator, JobIdGenerator
 {
   newFarmId(): FarmId {
     return farmIdFromUuid(crypto.randomUUID());
@@ -231,6 +323,18 @@ export class CryptoIdGenerator
 
   newResourceActionId(): ResourceActionId {
     return resourceActionIdFromUuid(crypto.randomUUID());
+  }
+
+  newWorkAreaId(): WorkAreaId {
+    return workAreaIdFromUuid(crypto.randomUUID());
+  }
+
+  newActorId(): ActorId {
+    return actorIdFromUuid(crypto.randomUUID());
+  }
+
+  newJobId(): JobId {
+    return jobIdFromUuid(crypto.randomUUID());
   }
 }
 
@@ -283,6 +387,8 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
       verb: definition.verb,
       actionSeconds: definition.actionSeconds,
       regenerationSeconds: definition.regenerationSeconds,
+      productionUnitsPerHour: definition.productionUnitsPerHour,
+      settlementMode: definition.settlementMode,
       dropTableId: definition.dropTableId,
       xp: definition.xp,
       modelId: definition.modelId,
@@ -292,7 +398,7 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
   }
 
   listNodes(): readonly ResourceNodePlacement[] {
-    return [...resourceNodeRegistry.values()].map((node) => ({
+    return activeResourceNodes.map((node) => ({
       id: node.id,
       definitionId: node.definitionId,
       zoneKind: node.zoneKind,
@@ -310,6 +416,8 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
       verb: definition.verb,
       actionSeconds: definition.actionSeconds,
       regenerationSeconds: definition.regenerationSeconds,
+      productionUnitsPerHour: definition.productionUnitsPerHour,
+      settlementMode: definition.settlementMode,
       dropTableId: definition.dropTableId,
       xp: definition.xp,
       modelId: definition.modelId,
@@ -319,7 +427,7 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
   }
 
   findNode(id: string): ResourceNodePlacement | null {
-    const node = resourceNodeRegistry.get(id);
+    const node = activeResourceNodes.find((candidate) => candidate.id === id);
     return node === undefined
       ? null
       : {
@@ -365,7 +473,10 @@ export class GameDataFishingCatalogue implements FishingCataloguePort {
       position: { x: spot.position.x, y: spot.position.y },
       interactionRadiusTiles: spot.interactionRadiusTiles,
       tableId: spot.tableId,
-      enabled: spot.enabled
+      enabled: spot.enabled,
+      maxStock: spot.maxStock ?? 5,
+      regenerationSeconds: spot.regenerationSeconds ?? 120,
+      productionUnitsPerHour: spot.productionUnitsPerHour ?? 1
     }));
   }
 
@@ -380,7 +491,10 @@ export class GameDataFishingCatalogue implements FishingCataloguePort {
           position: { x: spot.position.x, y: spot.position.y },
           interactionRadiusTiles: spot.interactionRadiusTiles,
           tableId: spot.tableId,
-          enabled: spot.enabled
+          enabled: spot.enabled,
+          maxStock: spot.maxStock ?? 5,
+          regenerationSeconds: spot.regenerationSeconds ?? 120,
+          productionUnitsPerHour: spot.productionUnitsPerHour ?? 1
         };
   }
 
@@ -535,6 +649,7 @@ function toShopEntry(entry: {
   readonly id: string;
   readonly itemDefinitionId: string;
   readonly currencyDefinitionId: string;
+  readonly shopDisplayNameKey?: string | undefined;
   // `| undefined` as well as optional: game data is compiled with `exactOptionalPropertyTypes`, so
   // the parsed entry's absent price is typed as an explicit `undefined`.
   readonly buyPrice?: number | undefined;
@@ -544,6 +659,7 @@ function toShopEntry(entry: {
   return {
     id: parseShopEntryId(entry.id),
     itemDefinitionId: parseItemDefinitionId(entry.itemDefinitionId),
+    ...(entry.shopDisplayNameKey === undefined ? {} : { shopDisplayNameKey: entry.shopDisplayNameKey }),
     currencyDefinitionId: parseCurrencyDefinitionId(entry.currencyDefinitionId),
     // A missing price is the explicit "this direction is closed" the domain and the client read.
     // Collapsing it to 0 would read as a free purchase or a zero-value sale instead.
@@ -596,6 +712,7 @@ function toTreeDefinition(definition: TreeDefinitionData): TreeDefinition {
     saplingItemDefinitionId: parseItemDefinitionId(definition.saplingItemDefinitionId),
     firstReadySeconds: definition.firstReadySeconds,
     regrowSeconds: definition.regrowSeconds,
+    ...(definition.regenerates === undefined ? {} : { regenerates: definition.regenerates }),
     growthStages: definition.growthStages,
     harvest: {
       itemDefinitionId: parseItemDefinitionId(definition.harvest.itemDefinitionId),

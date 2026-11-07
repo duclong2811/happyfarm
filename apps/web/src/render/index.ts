@@ -14,11 +14,15 @@ export {
   FarmRendererUnavailableError,
   GROUND_MARGIN,
   MIN_CROP_HEIGHT,
+  TILE_SURFACE_Y,
   TILE_THICKNESS,
   type FarmInteractionMode,
   type FarmScenePlayer,
   type FarmSceneHandle,
-  type EstateCameraFocus
+  type AreaHarvestEditState,
+  type EstateCameraFocus,
+  type SceneWorldTarget,
+  type SceneNeighborIslandPreview
 } from "./scene";
 export {
   buildFarmSceneInput,

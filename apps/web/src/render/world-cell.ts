@@ -83,7 +83,8 @@ export type CellCapability =
    * explicit that mining is a hook, not a system. It exists so that "the mountain is not wasted land"
    * is a fact about the map rather than a note somebody has to remember.
    */
-  | "MINING";
+  | "MINING"
+  | "FISHERY";
 
 /**
  * One cell of the island.
@@ -272,7 +273,7 @@ export function cellCapabilitiesFor(terrain: CellTerrain, zone: CellZone): reado
     case "WATER":
       // Open water is not a place to build: only planned water carries fish cages, and only a shore
       // cell may meet it with a dock.
-      return zone === "AQUACULTURE" ? ["AQUACULTURE"] : [];
+      return zone === "AQUACULTURE" ? ["FISHERY", "AQUACULTURE"] : ["FISHERY"];
     case "SHORE":
       // The beach is walkable, and it is the one ground a dock may stand on - which is what makes
       // "land meets water" the dock's own rule rather than a rectangle somebody authored.

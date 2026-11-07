@@ -126,6 +126,18 @@ describe("HUD wording", () => {
     expect(interpolate("{missing}")).toBe("{missing}");
   });
 
+  it("renders the assignment skill label through the game-data display fallback", () => {
+    expect(displayName("en", "crop.carrot.name", "crop_carrot")).toBe("Carrot");
+    expect(displayName("vi", "crop.carrot.name", "crop_carrot")).toBe("Cà rốt");
+    expect(() => en("workers.policyHint", { item: "Carrot" })).not.toThrow();
+  });
+
+  it("does not crash when a UI translation key is missing at runtime", () => {
+    const runtimeTranslate: (key: MessageKey) => string = en;
+    expect(() => runtimeTranslate("workers.workers" as MessageKey)).not.toThrow();
+    expect(runtimeTranslate("workers.workers" as MessageKey)).toBe("workers.workers");
+  });
+
   it("names every action the dock can offer, in both languages", () => {
     expect([en("dock.plant"), en("dock.harvest"), en("dock.uproot")]).toEqual(["Plant crop", "Harvest", "Uproot"]);
     expect([vi("dock.plant"), vi("dock.harvest"), vi("dock.uproot")]).toEqual(["Trồng cây", "Thu hoạch", "Nhổ cây"]);
@@ -169,7 +181,6 @@ describe("HUD wording", () => {
       "hud.refresh",
       "hud.starting",
       "panel.inventory",
-      "panel.land",
       "panel.market",
       "panel.bag",
       "panel.collapse",
@@ -192,9 +203,6 @@ describe("HUD wording", () => {
       "dock.goTitle",
       "dock.uproot.confirm",
       "dock.seedCount",
-      "land.unlock",
-      "land.next",
-      "land.all",
       "progression.signedOut",
       "progression.level",
       "progression.toNext",
@@ -267,7 +275,6 @@ describe("HUD wording", () => {
       "status.levelUp",
       "status.bought",
       "status.sold",
-      "status.expanded",
       "status.uprooted",
       "status.loadFarm",
       "status.selectMature",

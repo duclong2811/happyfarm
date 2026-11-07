@@ -87,7 +87,7 @@ export function assertStorageDeltaFits(
   if (!Number.isSafeInteger(projected) || projected < 0) {
     throw new DomainError("INVALID_WAREHOUSE", "Storage delta would make usage invalid");
   }
-  if (projected > capacity) {
+  if (net > 0 && projected > capacity) {
     throw new DomainError("WAREHOUSE_FULL", "The warehouse does not have enough space");
   }
 }

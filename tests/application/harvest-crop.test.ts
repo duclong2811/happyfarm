@@ -1,15 +1,15 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   HarvestCrop,
+  HarvestCropAreaGroup,
   InventoryService,
   type Clock,
   type FarmMemberRepository
 } from "@happy-farm/application";
-import { MAX_INVENTORY_QUANTITY, type FarmMember } from "@happy-farm/domain";
+import type { FarmMember } from "@happy-farm/domain";
 import {
   D1CropRepository,
+  D1CropHarvestBatchReceiptRepository,
   D1FarmMemberRepository,
   D1FarmRepository,
   D1HarvestSettlementRepository,
@@ -23,6 +23,7 @@ import {
   gameDataProgressionDefinition
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
+import { schemaSql } from "../support/migrations";
 import {
   CROP_ONE_ID,
   CROP_TWO_ID,
@@ -32,14 +33,8 @@ import {
   PLAYER_TWO_ID
 } from "../support/fixtures";
 
-const migration = [
-  "0001_phase_1_foundation.sql",
-  "0002_crop_simulation.sql",
-  "0003_inventory_and_harvest.sql",
-  "0005_player_progression.sql"
-]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+// The current schema: the harvest settlement names its destination, so it needs migration 0026.
+const migration = schemaSql();
 
 class FixedClock implements Clock {
   constructor(private readonly value = NOW) {}
@@ -114,6 +109,18 @@ describe("HarvestCrop", () => {
     );
   }
 
+  function areaService(clock: Clock = new FixedClock()): HarvestCropAreaGroup {
+    return new HarvestCropAreaGroup(
+      new D1FarmRepository(db),
+      members,
+      crops,
+      service(clock),
+      new D1CropHarvestBatchReceiptRepository(db),
+      new Sha256Fingerprint(),
+      clock
+    );
+  }
+
   const command = { cropInstanceId: CROP_ONE_ID, expectedCropVersion: 1, requestId: "harvest_request_001" };
 
   it("settles a mature crop atomically and makes the tile available", async () => {
@@ -123,6 +130,45 @@ describe("HarvestCrop", () => {
     });
     expect(await crops.findById(CROP_ONE_ID)).toBeNull();
     expect((await inventory.listByPlayer(PLAYER_ONE_ID))[0]).toMatchObject({ itemDefinitionId: "item_carrot", quantity: 2 });
+  });
+
+  it("harvests a bounded crop group, skips immature cells, and replays without a second reward", async () => {
+    seedCrop(CROP_ONE_ID, 0);
+    seedCrop(CROP_TWO_ID, 1, "crop_carrot", "2026-09-26T23:59:59.000Z");
+    const command = {
+      requestId: "crop_area_request_001",
+      crops: [
+        { cropInstanceId: CROP_ONE_ID, expectedCropVersion: 1 },
+        { cropInstanceId: CROP_TWO_ID, expectedCropVersion: 1 }
+      ]
+    } as const;
+    const batch = areaService();
+    const first = await batch.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);
+    expect(first).toMatchObject({ harvestedCount: 1, skippedCount: 1 });
+    expect(first.results).toEqual([
+      expect.objectContaining({ cropInstanceId: CROP_ONE_ID, status: "HARVESTED", quantityAdded: 2, reason: null }),
+      expect.objectContaining({ cropInstanceId: CROP_TWO_ID, status: "SKIPPED", reason: "NOT_READY" })
+    ]);
+    await expect(batch.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).resolves.toEqual(first);
+    expect((await inventory.listByPlayer(PLAYER_ONE_ID))[0]).toMatchObject({ itemDefinitionId: "item_carrot", quantity: 2 });
+  });
+
+  it("reports stale and warehouse-full crops without paying or deleting them", async () => {
+    seedCrop(CROP_ONE_ID, 0);
+    await expect(areaService().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, {
+      requestId: "crop_area_stale_001",
+      crops: [{ cropInstanceId: CROP_ONE_ID, expectedCropVersion: 2 }]
+    })).resolves.toMatchObject({ skippedCount: 1, results: [expect.objectContaining({ reason: "STALE" })] });
+
+    db.sqlite
+      .prepare("INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, 'item_wheat', 999, ?, 1)")
+      .run(PLAYER_ONE_ID, NOW);
+    await expect(areaService().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, {
+      requestId: "crop_area_full_001",
+      crops: [{ cropInstanceId: CROP_ONE_ID, expectedCropVersion: 1 }]
+    })).resolves.toMatchObject({ skippedCount: 1, results: [expect.objectContaining({ reason: "WAREHOUSE_FULL" })] });
+    expect(await crops.findById(CROP_ONE_ID)).not.toBeNull();
+    expect((await inventory.listByPlayer(PLAYER_ONE_ID)).some((row) => row.itemDefinitionId === "item_carrot")).toBe(false);
   });
 
   it("accepts exact maturity and offline maturity but rejects an immature crop", async () => {
@@ -212,9 +258,15 @@ describe("HarvestCrop", () => {
 
   it("rejects overflow and rolls back the harvest", async () => {
     seedCrop();
-    db.sqlite.prepare("INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, 'item_carrot', ?, ?, 1)").run(PLAYER_ONE_ID, MAX_INVENTORY_QUANTITY - 1, NOW);
-    await expect(service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).rejects.toMatchObject({ code: "INVENTORY_LIMIT_EXCEEDED" });
+    // A starter Warehouse holds 1,000 units. Filling it to 999 means the crop's 2-unit reward cannot
+    // fit, so the destination's own capacity guard refuses the settlement - and the whole harvest,
+    // crop included, rolls back rather than paying out goods that have nowhere to go.
+    db.sqlite
+      .prepare("INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, 'item_wheat', 999, ?, 1)")
+      .run(PLAYER_ONE_ID, NOW);
+    await expect(service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command)).rejects.toThrow();
     expect(await crops.findById(CROP_ONE_ID)).not.toBeNull();
+    expect((await inventory.listByPlayer(PLAYER_ONE_ID)).some((row) => row.itemDefinitionId === "item_carrot")).toBe(false);
   });
 
   it("rechecks authorization and farm existence before replay", async () => {

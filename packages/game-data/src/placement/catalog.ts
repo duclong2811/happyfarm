@@ -92,6 +92,7 @@ export const REMOVAL_REFUND_POLICY: Readonly<Record<PlacementCategory, number>> 
   UTILITY: 0.5,
   MONUMENT: 0.5,
   WATERFRONT: 0.5,
+  AQUACULTURE: 0.5,
   ROAD: 0.25,
   FENCE: 0.25,
   DECORATION: 0,
@@ -193,6 +194,20 @@ function assetEntries(): PlacementCatalogEntryData[] {
     category: "DECORATION",
     removalRefundRate: REMOVAL_REFUND_POLICY.DECORATION
   });
+  /** A working shallow-water construction, separate from visual decoration. */
+  const aquaculture = (
+    id: string,
+    modelId: string,
+    labelKey: string,
+    priceGold: number,
+    requiredLevel: number,
+    tags: readonly string[]
+  ): PlacementCatalogEntryData => ({
+    ...planting(id, modelId, labelKey, priceGold, requiredLevel, tags),
+    category: "AQUACULTURE",
+    decorative: false,
+    removalRefundRate: REMOVAL_REFUND_POLICY.AQUACULTURE
+  });
   /**
    * The placement and editing fields for a thing that stands on dry land.
    *
@@ -256,9 +271,7 @@ function assetEntries(): PlacementCatalogEntryData[] {
       removalRefundRate: REMOVAL_REFUND_POLICY.UTILITY
     },
     {
-      ...decoration("place_fish_cage", "prop_cage_small", "place.fish_cage.name", price.fishCage, level.ESTABLISHED, ["water"]),
-      category: "WATERFRONT",
-      removalRefundRate: REMOVAL_REFUND_POLICY.WATERFRONT,
+      ...aquaculture("place_fish_cage", "prop_cage_small", "place.fish_cage.name", price.fishCage, level.ESTABLISHED, ["water", "aquaculture"]),
       // The one asset in the catalogue that may not stand on land: a cage is moored in the shallows.
       allowedTerrain: ["SHALLOW_WATER"]
     },

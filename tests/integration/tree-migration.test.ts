@@ -26,6 +26,36 @@ const BEFORE = [
   .join("\n");
 
 const TREES = readMigration("0008_tree_instances.sql");
+const MANAGEMENT = [
+  "0009_starter_package.sql",
+  "0010_farm_constructions.sql",
+  "0011_construction_editing.sql",
+  "0012_world_objects.sql",
+  "0013_world_objects_v2.sql",
+  "0014_one_farm_per_player.sql",
+  "0015_player_identities.sql",
+  "0016_fishing_actions.sql",
+  "0017_resource_nodes.sql",
+  "0018_island_warehouses.sql",
+  "0019_warehouse_upgrade_marker.sql",
+  "0020_action_reward_rolls.sql",
+  "0021_farm_read_indexes.sql",
+  "0022_work_areas.sql",
+  "0023_actors_and_jobs.sql",
+  "0024_actor_cargo.sql",
+  "0025_assignment_auto_purchase.sql",
+  "0026_auto_execution.sql",
+  "0027_auto_simulation_watermark.sql",
+  "0028_auto_funding.sql",
+  "0029_production_rate_core.sql",
+  "0030_wild_fishery_stock.sql",
+  "0031_aquaculture_pond_cycle.sql",
+  "0032_aquaculture_multi_fish.sql",
+  "0033_aquaculture_backfill_empty_ponds.sql",
+  "0034_aquaculture_adult_fish_output.sql",
+  "0035_forestry_construction_lifecycle.sql",
+  "0036_tree_management.sql"
+].map(readMigration).join("\n");
 
 function seedPlayers(db: NodeD1Database): void {
   const insert = db.sqlite.prepare(
@@ -168,6 +198,31 @@ describe("tree migration", () => {
     ).toEqual({ quantity: 4 });
   });
 
+  it("carries an old tree identity and lifecycle timestamps through management migration", () => {
+    db.sqlite.exec(TREES);
+    insertTree(db, 0, 7, NOW);
+    db.sqlite.exec(MANAGEMENT);
+
+    expect(db.sqlite.prepare(
+      "SELECT id, farm_id, tile_x, tile_y, tree_definition_id, planted_by_player_id, planted_at, last_harvested_at, version, storage_state, rotation, stored_at, stored_remaining_seconds FROM tree_instances WHERE id = ?"
+    ).get(TREE_ONE_ID)).toEqual({
+      id: TREE_ONE_ID,
+      farm_id: FARM_ONE_ID,
+      tile_x: 0,
+      tile_y: 0,
+      tree_definition_id: "tree_apple",
+      planted_by_player_id: PLAYER_ONE_ID,
+      planted_at: NOW,
+      last_harvested_at: NOW,
+      version: 7,
+      storage_state: "ACTIVE",
+      rotation: 0,
+      stored_at: null,
+      stored_remaining_seconds: null
+    });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM tree_instances").get()).toEqual({ count: 1 });
+  });
+
   it("refuses a tree and a crop on the same tile, in both directions", () => {
     db.sqlite.exec(TREES);
     insertCrop(db, 0);
@@ -253,7 +308,7 @@ describe("tree migration", () => {
           createdAt: NOW,
           updatedAt: NOW
         } as never,
-        1,
+        { kind: "EXISTING", version: 1 },
         {
           kind: "REMOVE",
           playerId: PLAYER_ONE_ID,

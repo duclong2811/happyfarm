@@ -27,6 +27,11 @@ function fits(capacity: number, used: number, deltas: readonly number[]): void {
 }
 
 describe("warehouse capacity", () => {
+  it("allows legacy usage to decrease even while it remains above capacity", () => {
+    expect(() => { fits(1000, 1100, [-50]); }).not.toThrow();
+    expect(() => { fits(1000, 1100, [0]); }).not.toThrow();
+    expect(() => { fits(1000, 1100, [1]); }).toThrow(/warehouse/i);
+  });
   it("reports available space and the over-capacity flag", () => {
     expect(warehouseAvailable({ capacity: 100, used: 40 })).toBe(60);
     expect(warehouseAvailable({ capacity: 100, used: 100 })).toBe(0);

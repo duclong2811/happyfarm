@@ -17,7 +17,8 @@ import {
   Sha256Fingerprint,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
-  gameDataTileTerrain
+  gameDataTileTerrain,
+  gameDataLandSale
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { NOW, PLAYER_ONE_ID } from "../support/fixtures";
@@ -93,6 +94,7 @@ describe("static catalogue reads", () => {
       progressionDefinition: gameDataProgressionDefinition,
       starterWorld: gameDataStarterWorld,
       terrain: gameDataTileTerrain,
+      landSale: gameDataLandSale,
       fishing: {
         catalogue: new GameDataFishingCatalogue(),
         ids: {

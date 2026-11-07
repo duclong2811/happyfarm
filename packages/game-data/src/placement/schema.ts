@@ -32,7 +32,8 @@ export type PlacementGround = (typeof PLACEMENT_GROUNDS)[number];
 /**
  * The shop's categories.
  *
- * `WATERFRONT` is the quay, the jetty and the moorings; `UTILITY` is what makes the island work
+ * `WATERFRONT` is the quay, the jetty and the moorings; `AQUACULTURE` is the working shallow-water
+ * construction family; `UTILITY` is what makes the island work
  * rather than pretty; `MONUMENT` is what a player builds when they have more money than land. The
  * working systems a later pass adds - workers, vehicles, livestock as a *system* rather than as a pen -
  * are not shop categories and do not belong here.
@@ -46,7 +47,8 @@ export const PLACEMENT_CATEGORIES = [
   "MONUMENT",
   "FENCE",
   "LIGHTING",
-  "WATERFRONT"
+  "WATERFRONT",
+  "AQUACULTURE"
 ] as const;
 export type PlacementCategory = (typeof PLACEMENT_CATEGORIES)[number];
 

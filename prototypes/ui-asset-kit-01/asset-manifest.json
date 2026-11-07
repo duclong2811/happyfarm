@@ -1,0 +1,21 @@
+{
+  "status": "preview-only",
+  "gameplayBackgrounds": {
+    "desktop": "assets/real-gameplay-01-world-hud.png (genuine staging reference, 1040x823; not a 1440x900 capture)",
+    "mobile": "missing; README confirms no mobile gameplay reference was supplied"
+  },
+  "source": "../../docs/design/references/HAPPYFARM_UI_ASSET_SHEET_01.png",
+  "sourceNote": "The supplied sheet is a flattened art-direction sheet with baked Vietnamese labels and quantities. Only isolated derivatives are used here.",
+  "assets": [
+    { "id": "inventory.header.barn", "file": "assets/inventory-header-barn.png", "type": "raster-preview-derivative", "sourceCrop": "26,16,215,180", "text": true, "numbers": false, "itemLabels": true, "neighborFragments": true, "status": "REJECTED" },
+    { "id": "inventory.frame.leafCorner", "file": "assets/inventory-leaf-corner.png", "type": "raster-preview-derivative", "sourceCrop": "6,744,128,128", "text": false, "numbers": false, "itemLabels": false, "neighborFragments": true, "status": "REJECTED" },
+    { "id": "inventory.close", "file": "assets/inventory-close.png", "type": "raster-preview-derivative", "sourceCrop": "548,72,130,130", "text": true, "numbers": false, "itemLabels": true, "neighborFragments": true, "status": "REJECTED" },
+    { "id": "inventory.item.apple", "file": "assets/apple-icon.png", "type": "raster-preview-derivative", "sourceCrop": "765,310,180,152", "text": false, "numbers": false, "itemLabels": false, "neighborFragments": true, "status": "REJECTED" },
+    { "id": "reference.approved", "file": "assets/approved-reference.png", "type": "full-reference-only", "text": true, "numbers": true, "itemLabels": true, "neighborFragments": true, "screenshotBackground": true, "status": "REFERENCE_ONLY" },
+    { "id": "scene.realGameplay.desktop", "file": "assets/real-gameplay-01-world-hud.png", "type": "real-gameplay-reference", "width": 1040, "height": 823, "status": "REFERENCE_ONLY" },
+    { "id": "inventory.frame.center", "file": "assets/inventory-frame-center.svg", "type": "vector-layer", "nineSliceEquivalent": true },
+    { "id": "inventory.slot.normal", "file": "assets/inventory-slot.svg", "type": "vector-layer", "state": "normal" },
+    { "id": "inventory.slot.selected", "file": "assets/inventory-slot-selected.svg", "type": "vector-layer", "state": "selected" },
+    { "id": "inventory.slot.disabled", "file": "assets/inventory-slot-disabled.svg", "type": "vector-layer", "state": "disabled" }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "themeId": "vibrant-cozy-farm-v2",
+  "note": "EXAMPLE ONLY. These art files do not exist yet. Replace with REAL files before validation or integration.",
+  "assets": [
+    {
+      "id": "panel.shell.standard",
+      "kind": "nine_slice",
+      "file": "assets/panel-shell-standard.png",
+      "density": 2,
+      "capInsets": { "top": 96, "right": 96, "bottom": 96, "left": 96 },
+      "contentInsetsCssPx": { "top": 28, "right": 28, "bottom": 28, "left": 28 },
+      "alphaRequired": true,
+      "sourceFile": "source/panel-shell-standard.blend",
+      "license": "project-owned",
+      "status": "candidate"
+    },
+    {
+      "id": "button.primary.normal",
+      "kind": "nine_slice",
+      "file": "assets/button-primary-normal.png",
+      "density": 2,
+      "capInsets": { "top": 40, "right": 44, "bottom": 44, "left": 44 },
+      "alphaRequired": true,
+      "sourceFile": "source/button-primary.blend",
+      "license": "project-owned",
+      "status": "candidate"
+    },
+    {
+      "id": "card.item.normal",
+      "kind": "nine_slice",
+      "file": "assets/card-item-normal.png",
+      "density": 2,
+      "capInsets": { "top": 32, "right": 32, "bottom": 32, "left": 32 },
+      "alphaRequired": true,
+      "sourceFile": "source/card-item.blend",
+      "license": "project-owned",
+      "status": "candidate"
+    }
+  ]
+}

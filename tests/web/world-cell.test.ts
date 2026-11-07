@@ -3,11 +3,7 @@ import type { FarmTileDTO, PlotDTO } from "@happy-farm/contracts";
 import { INITIAL_LAND_SIZE } from "@happy-farm/domain";
 import { buildFarmSceneInput } from "../../apps/web/src/render/view-model";
 import { cellKey, cellToWorld, productionCapabilityFor, worldCellAt, worldToCell } from "../../apps/web/src/render/world-cell";
-import {
-  FARM_FIELD_BOUNDS,
-  ISLAND_SHAPE,
-  isWaterTile
-} from "../../apps/web/src/render/world-config";
+import { ISLAND_SHAPE, isWaterTile } from "../../apps/web/src/render/world-config";
 import { islandRadiusAt } from "../../apps/web/src/render/terrain-height";
 import {
   cellToFarmTile,
@@ -15,7 +11,12 @@ import {
   farmTileWorldCell,
   isFarmlandTile
 } from "../../apps/web/src/render/legacy-farm-cell-adapter";
-import { localNeighbourhood, movementDestination, selectableCellAt } from "../../apps/web/src/render/world-cell-selection";
+import {
+  localNeighbourhood,
+  movementDestination,
+  movementDestinationForTarget,
+  selectableCellAt
+} from "../../apps/web/src/render/world-cell-selection";
 import { getAvailableCellActions } from "../../apps/web/src/render/world-cell-actions";
 import { planCellOverlay } from "../../apps/web/src/render/world-cell-overlay";
 
@@ -159,20 +160,20 @@ describe("the island is classified from its own coastline", () => {
 });
 
 describe("land use decides what a cell can produce", () => {
-  it("gives agriculture land crop capability, and only inside the reservation", () => {
+  it("gives dry workable land crop capability, inside and outside the reservation", () => {
     const input = starterInput();
     const crop = input.cells.productionCells.CROP;
-    expect(crop.length).toBe(FARM_FIELD_BOUNDS.maxX - FARM_FIELD_BOUNDS.minX + 1 > 0 ? crop.length : 0);
     expect(crop.length).toBeGreaterThan(100);
     for (const cell of crop) {
-      expect(isFarmlandTile(cell), `${String(cell.x)},${String(cell.y)}`).toBe(true);
       const world = worldCellAt(input.cells, cell.x, cell.y);
       expect(world?.terrain).toBe("LAND");
-      // The zone no longer names a production area - the island stopped deciding that - so the
-      // capability is the *reservation's* answer plus the ground's own, which is what makes a crop
-      // cell a cell the catalogue can actually sell.
-      expect(world?.legacyFarmTile).not.toBeNull();
+      // The stage is the ground's, not a district's: a crop may be offered wherever the island is
+      // dry, workable land - ownership decides the *cost*, not the capability (V14.5.1B).
+      expect(world?.capabilities).toContain("FARM");
     }
+    // Freeform development: some workable land lies outside the plot catalogue's reservation, and it
+    // is still a crop-capable cell - the player can develop the whole island.
+    expect(crop.some((cell) => !isFarmlandTile(cell))).toBe(true);
   });
 
   it("grows no timber plantation, because forestry is the player's to plant", () => {
@@ -235,6 +236,21 @@ describe("land use decides what a cell can produce", () => {
 });
 
 describe("buildings occupy ground and block movement", () => {
+  it("marks server resource nodes as occupied without turning them into farm production", () => {
+    const tiles = [tile(0, 0), tile(1, 0), tile(0, 1), tile(1, 1)];
+    const input = buildFarmSceneInput({
+      tiles,
+      crops: [],
+      trees: [],
+      plots: [],
+      resourceNodes: [{ position: { x: 1, y: 1 } }],
+      selected: null
+    });
+    const nodeCell = worldCellAt(input.cells, 1, 1);
+    expect(nodeCell?.occupancy).toBe("RESOURCE");
+    expect(nodeCell?.productionCapability).toBe("CROP");
+  });
+
   it("blocks the farmhouse and the barn, and leaves the square and the road open", () => {
     const input = starterInput();
     const farmhouse = worldCellAt(input.cells, 45, -2);
@@ -281,6 +297,23 @@ describe("buildings occupy ground and block movement", () => {
     const meadow = worldCellAt(input.cells, 0, 50);
     if (meadow === null) throw new Error("the southern meadow must be on the map");
     expect(movementDestination(meadow, input.cells, blocked)).not.toBeNull();
+  });
+
+  it("chooses a walkable neighbour when a perennial tree blocks its target centre", () => {
+    const input = starterInput();
+    const target = worldCellAt(input.cells, 3, 3);
+    if (target === null) throw new Error("the tree target must be on the map");
+    const targetWorld = cellToWorld({ x: target.x, y: target.z }, input.cells.frame);
+    const blocked = (worldX: number, worldZ: number): boolean =>
+      Math.hypot(worldX - targetWorld.worldX, worldZ - targetWorld.worldZ) < 0.7;
+    const destination = movementDestinationForTarget(
+      target,
+      input.cells,
+      centreOf(1, 3),
+      blocked
+    );
+    const expected = cellToWorld({ x: 2, y: 3 }, input.cells.frame);
+    expect(destination).toEqual(expected);
   });
 });
 

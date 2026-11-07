@@ -1,0 +1,340 @@
+{
+  "kit": "happyfarm-ui-v2-artkit-01",
+  "version": "0.1.0",
+  "status": "candidate",
+  "note": "Candidate art; NOT approved for production registry opt-in. Visual approval and actual 9-slice UI validation required.",
+  "direction": "Vibrant Cozy Farm 3D — lacquered coral/honey/gold and clean cream, no wood-grain",
+  "units": "cap insets are in source pixel coordinates; exports 2x design pixels",
+  "assets": [
+    {
+      "key": "panel.shell",
+      "id": "panel-shell",
+      "source": "source/panel-shell.svg",
+      "png": "export/panel-shell.png",
+      "size_px": [
+        1100,
+        900
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 130,
+        "right": 150,
+        "bottom": 150,
+        "left": 150
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "panel.header",
+      "id": "panel-header",
+      "source": "source/panel-header.svg",
+      "png": "export/panel-header.png",
+      "size_px": [
+        920,
+        176
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 110,
+        "bottom": 60,
+        "left": 110
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.primary.normal",
+      "id": "button-primary-normal",
+      "source": "source/button-primary-normal.svg",
+      "png": "export/button-primary-normal.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.primary.hover",
+      "id": "button-primary-hover",
+      "source": "source/button-primary-hover.svg",
+      "png": "export/button-primary-hover.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.primary.pressed",
+      "id": "button-primary-pressed",
+      "source": "source/button-primary-pressed.svg",
+      "png": "export/button-primary-pressed.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.primary.disabled",
+      "id": "button-primary-disabled",
+      "source": "source/button-primary-disabled.svg",
+      "png": "export/button-primary-disabled.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.secondary.normal",
+      "id": "button-secondary-normal",
+      "source": "source/button-secondary-normal.svg",
+      "png": "export/button-secondary-normal.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.secondary.hover",
+      "id": "button-secondary-hover",
+      "source": "source/button-secondary-hover.svg",
+      "png": "export/button-secondary-hover.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.secondary.pressed",
+      "id": "button-secondary-pressed",
+      "source": "source/button-secondary-pressed.svg",
+      "png": "export/button-secondary-pressed.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "button.secondary.disabled",
+      "id": "button-secondary-disabled",
+      "source": "source/button-secondary-disabled.svg",
+      "png": "export/button-secondary-disabled.png",
+      "size_px": [
+        520,
+        168
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "card.item.normal",
+      "id": "card-item-normal",
+      "source": "source/card-item-normal.svg",
+      "png": "export/card-item-normal.png",
+      "size_px": [
+        360,
+        480
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 92,
+        "right": 66,
+        "bottom": 90,
+        "left": 66
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "card.item.hover",
+      "id": "card-item-hover",
+      "source": "source/card-item-hover.svg",
+      "png": "export/card-item-hover.png",
+      "size_px": [
+        360,
+        480
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 92,
+        "right": 66,
+        "bottom": 90,
+        "left": 66
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "card.item.selected",
+      "id": "card-item-selected",
+      "source": "source/card-item-selected.svg",
+      "png": "export/card-item-selected.png",
+      "size_px": [
+        360,
+        480
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 92,
+        "right": 66,
+        "bottom": 90,
+        "left": 66
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "card.item.disabled",
+      "id": "card-item-disabled",
+      "source": "source/card-item-disabled.svg",
+      "png": "export/card-item-disabled.png",
+      "size_px": [
+        360,
+        480
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 92,
+        "right": 66,
+        "bottom": 90,
+        "left": 66
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    },
+    {
+      "key": "badge.price",
+      "id": "badge-price",
+      "source": "source/badge-price.svg",
+      "png": "export/badge-price.png",
+      "size_px": [
+        420,
+        140
+      ],
+      "alpha": true,
+      "capInsetsSourcePx": {
+        "top": 48,
+        "right": 106,
+        "bottom": 46,
+        "left": 106
+      },
+      "scale": 2,
+      "origin": "HappyFarm custom layered vector artwork",
+      "status": "candidate",
+      "license": "Project owned original",
+      "no_baked_content": true
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ConstructionDTO, CropStateDTO, TreeStateDTO } from "@happy-farm/contracts";
+import type { AquaculturePondDTO, ConstructionDTO, CropStateDTO, TreeStateDTO } from "@happy-farm/contracts";
 import {
   INTERACTION_RANGE_WORLD,
   interactionPromptFor,
@@ -15,6 +15,7 @@ import {
 import {
   interactionActivation,
   interactionCandidateFrom,
+  selectFocusedInteractionCandidate,
   selectInteractionCandidate,
   type InteractionQuery
 } from "../../apps/web/src/interaction/selection";
@@ -147,6 +148,54 @@ function keyedTargets(targets: readonly InteractableTarget[]): readonly Interact
 }
 
 describe("adapting the island's own rows into targets", () => {
+  it("offers an empty cage for stocking and a ready cage for server-authoritative harvest", () => {
+    const pond: AquaculturePondDTO = {
+      pondId: construction().constructionId,
+      farmId: construction().farmId,
+      itemDefinitionId: null,
+      status: "EMPTY",
+      stockedAt: null,
+      readyAt: null,
+      capacity: 10,
+      stockedCount: 0,
+      growingCount: 0,
+      readyCount: 0,
+      availableCapacity: 10,
+      cohorts: [],
+      version: 4
+    };
+    const empty = buildInteractionIndex(world({ constructions: [construction({ entryId: "place_fish_cage" })], aquaculturePonds: [pond] })).targets[0];
+    if (empty === undefined) throw new Error("empty pond fixture produced no target");
+    expect(empty.action).toBe("STOCK_AQUACULTURE");
+    const stockDecision = interactionActivation(
+      { ...empty, distanceWorld: 0, facing: 1 },
+      { ...empty, distanceWorld: 0, facing: 1 }
+    );
+    expect(stockDecision).toMatchObject({ kind: "STOCK_AQUACULTURE", pondId: pond.pondId, expectedPondVersion: 4 });
+
+    const readyPond: AquaculturePondDTO = {
+      ...pond,
+      itemDefinitionId: "item_fish_tilapia",
+      status: "READY",
+      stockedAt: "2026-10-02T00:00:00.000Z",
+      readyAt: "2026-10-02T01:00:00.000Z",
+      stockedCount: 1,
+      growingCount: 0,
+      readyCount: 1,
+      availableCapacity: 9,
+      cohorts: [{ cohortId: "cohort_ready", itemDefinitionId: "item_fish_tilapia", quantity: 1, stockedAt: "2026-10-02T00:00:00.000Z", readyAt: "2026-10-02T01:00:00.000Z" }],
+      version: 5
+    };
+    const ready = buildInteractionIndex(world({ constructions: [construction({ entryId: "place_fish_cage" })], aquaculturePonds: [readyPond] })).targets[0];
+    if (ready === undefined) throw new Error("ready pond fixture produced no target");
+    expect(ready.action).toBe("HARVEST_AQUACULTURE");
+    expect(interactionActivation({ ...ready, distanceWorld: 0, facing: 1 }, { ...ready, distanceWorld: 0, facing: 1 })).toMatchObject({
+      kind: "HARVEST_AQUACULTURE",
+      pondId: readyPond.pondId,
+      expectedPondVersion: 5
+    });
+  });
+
   it("offers a mature crop as a harvest and a growing one as an inspection", () => {
     const mature = buildInteractionIndex(world({ crops: [crop({ mature: true })] })).targets[0];
     expect(mature?.action).toBe("HARVEST");
@@ -181,6 +230,46 @@ describe("adapting the island's own rows into targets", () => {
     expect(
       worldObjectIsInteractable(construction({ entryId: "world.tree_pine", footprint: { widthCells: 1, depthCells: 1 } }))
     ).toBe(false);
+    expect(
+      worldObjectIsInteractable(construction({
+        entryId: "world.tree_pine",
+        forestry: {
+          constructionId: "construct_11111111-1111-4111-8111-111111111111",
+          entryId: "world.tree_pine",
+          status: "READY",
+          dropItemDefinitionId: "item_wood",
+          dropQuantity: 2,
+          regenerationAt: null,
+          version: 1
+        }
+      }))
+    ).toBe(true);
+  });
+
+  it("routes a ready persisted tree construction to Forestry instead of asset management only", () => {
+    const index = buildInteractionIndex(world({
+      constructions: [construction({
+        entryId: "world.tree_broad",
+        footprint: { widthCells: 1, depthCells: 1 },
+        forestry: {
+          constructionId: "construct_11111111-1111-4111-8111-111111111111",
+          entryId: "world.tree_broad",
+          status: "READY",
+          dropItemDefinitionId: "item_wood",
+          dropQuantity: 2,
+          regenerationAt: null,
+          version: 4
+        }
+      })]
+    }));
+    const candidate = selectInteractionCandidate(index, at(7, 5));
+    expect(candidate).toMatchObject({ kind: "WORLD_OBJECT", action: "CHOP_CONSTRUCTION", version: 4 });
+    if (candidate === null) throw new Error("missing forestry construction target");
+    expect(interactionActivation(candidate, candidate)).toMatchObject({
+      kind: "CHOP_FORESTRY_CONSTRUCTION",
+      constructionId: candidate.targetId,
+      expectedForestryVersion: 4
+    });
   });
 
   it("ignores an object that is in storage and one that is not standing", () => {
@@ -353,6 +442,45 @@ describe("the bounded neighbourhood", () => {
 });
 
 describe("activating a candidate", () => {
+  it("keeps a clicked aquaculture cage as the E target while another target is nearer", () => {
+    const cage: InteractableTarget = {
+      key: "object:cage-1",
+      kind: "WORLD_OBJECT",
+      action: "STOCK_AQUACULTURE",
+      targetId: "cage-1",
+      tileX: 5,
+      tileY: 5,
+      worldX: 0,
+      worldZ: 0,
+      rangeWorld: 2,
+      priority: 2,
+      nameKey: null,
+      nameFallback: "Fish Cage",
+      version: 9,
+      readyInSeconds: null
+    };
+    const cropTarget: InteractableTarget = {
+      ...cage,
+      key: "crop:nearby",
+      kind: "CROP",
+      action: "HARVEST",
+      targetId: "crop-1",
+      tileX: 5,
+      tileY: 5,
+      rangeWorld: 2,
+      priority: 3,
+      version: 4
+    };
+    const index = { buckets: new Map(), targets: [cage, cropTarget] };
+    const focused = selectFocusedInteractionCandidate(index, cage, { worldX: 0, worldZ: 0, facingYaw: null });
+    expect(focused?.key).toBe(cage.key);
+    expect(interactionActivation(focused, focused)).toMatchObject({
+      kind: "STOCK_AQUACULTURE",
+      pondId: "cage-1",
+      expectedPondVersion: 9
+    });
+  });
+
   it("harvests the crop it was showing, with the version the client was looking at", () => {
     const index = buildInteractionIndex(world({ crops: [crop({ mature: true })] }));
     const candidate = selectInteractionCandidate(index, at(5, 5));

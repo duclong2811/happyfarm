@@ -20,10 +20,10 @@ import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
  *
  * 1. The island shore, which the character stays inside.
  * 2. The static obstacles the world config already declares: the pond, the barn, and the landmarks.
- * 3. The farm's own rows: a crop or a tree blocks a circle at its centre, and terrain that is not
- *    soil or grass (water today) blocks its whole tile.
+ * 3. The farm's own rows: agricultural trees block a small circle at their centre, ordinary annual
+ *    crops are passable, and terrain that is not soil or grass blocks its whole tile.
  *
- * Everything else is open ground, so the paths, the apron, and the grass between plots are walkable
+ * Everything else is open ground, so the paths, crop rows, apron, and grass between plots are walkable
  * without the client inventing a second map. Nothing here asks who owns a tile or whether a farming
  * action would be allowed on it: walking is presentation, planting is authority, and the two must not
  * be confused. Locked land is not in this list at all, so a character may walk over land the farm has
@@ -44,13 +44,9 @@ const TILE_BLOCK_HALF_EXTENT_WORLD = 0.5;
 /**
  * How wide a planted thing blocks, as a circle at the tile's centre.
  *
- * Not the whole tile: one planted row would then be a solid wall, and no one could walk down their
- * own field. At the shipped 1.08 tile pitch a row of crops leaves a gap the player (radius 0.28) can
- * pass through, while a row of trees does not - which is the difference between a crop and a tree.
- * Placeholder art draws a little wider than these circles; the real models in the art phase get to
- * define their footprint, and only these two numbers would follow it.
+ * Ordinary annual crops have no locomotion footprint. Agricultural trees use a small footprint;
+ * orchard-vs-forestry classification remains a later data-driven refinement.
  */
-const CROP_BLOCK_RADIUS_WORLD = 0.22;
 const TREE_BLOCK_RADIUS_WORLD = 0.34;
 
 /**
@@ -132,6 +128,8 @@ export interface TerrainFollow {
   readonly maxSlope: number;
   /** A rise at or below this is always walkable, whatever the ratio: a curb, a small bump. */
   readonly maxStepWorld: number;
+  /** Optional signed shore depth for a non-home scene; omitted means the canonical home island. */
+  readonly depthAt?: (worldX: number, worldZ: number) => number;
 }
 
 /**
@@ -164,8 +162,6 @@ function farmBlocks(tiles: readonly SceneTile[]): { readonly circles: readonly B
   for (const tile of tiles) {
     if (tile.tree !== null) {
       circles.push({ centerWorldX: tile.worldX, centerWorldZ: tile.worldZ, radiusWorld: TREE_BLOCK_RADIUS_WORLD });
-    } else if (tile.crop !== null) {
-      circles.push({ centerWorldX: tile.worldX, centerWorldZ: tile.worldZ, radiusWorld: CROP_BLOCK_RADIUS_WORLD });
     }
     if (tile.terrainType !== "SOIL" && tile.terrainType !== "GRASS") {
       boxes.push({
@@ -183,8 +179,8 @@ function farmBlocks(tiles: readonly SceneTile[]): { readonly circles: readonly B
  * The collision world for one frame of farm state.
  *
  * The static half - the shore, the pond, the yard, and the fence - is a function of the world config
- * alone. The dynamic half is whatever the farm currently has in the ground, so a crop that appears
- * under the character starts blocking the next step and a crop that is harvested stops blocking it.
+ * alone. The dynamic half is whatever solid tree the farm currently has in the ground; crop visuals do
+ * not alter locomotion collision.
  */
 export function createPlayerCollisionWorld(
   tiles: readonly SceneTile[],
@@ -209,7 +205,7 @@ export function createPlayerCollisionWorld(
 
   return {
     depth(x: number, z: number): number {
-      let depth = islandDepth(x, z);
+      let depth = terrain?.depthAt?.(x, z) ?? islandDepth(x, z);
       for (const obstacle of [...STATIC_OBSTACLES, ...extraObstacles]) {
         depth = Math.max(depth, circleDepth(x, z, obstacle.centerWorldX, obstacle.centerWorldZ, obstacle.radiusWorld));
       }

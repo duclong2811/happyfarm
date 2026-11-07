@@ -1,0 +1,431 @@
+/*
+ * Modern Orchard is deliberately a scoped presentation experiment. It does not alter any renderer,
+ * catalogue, action callback, or state owner: only the existing Construction, HUD and module-rail
+ * DOM classes opt into these materials. The older artwork-backed family remains available as the
+ * fallback outside these namespaces.
+ */
+
+.ui-modern-orchard-construction,
+.ui-modern-orchard-hud {
+  --orchard-forest: #20483f;
+  --orchard-forest-deep: #153b34;
+  --orchard-cream: #fff1d6;
+  --orchard-cream-bright: #fff9e9;
+  --orchard-orange: #f28335;
+  --orchard-orange-deep: #c95624;
+  --orchard-gold: #f6c34a;
+  --orchard-cocoa: #38291f;
+  --orchard-green: #31885d;
+  --orchard-line: rgba(56, 41, 31, .18);
+  --orchard-panel-shadow: 0 1.25rem 3rem rgba(17, 45, 39, .38), 0 .22rem 0 rgba(255, 255, 255, .5) inset;
+  --orchard-card-shadow: 0 .38rem 0 #d7ae61, 0 .58rem 1rem rgba(56, 41, 31, .18);
+  --orchard-focus: 0 0 0 .2rem rgba(246, 195, 74, .76), 0 .48rem 0 #c95725;
+}
+
+/* HUD: dark plaques make authoritative values readable over every part of the 3D world. */
+.top-hud.ui-modern-orchard-hud {
+  gap: .7rem;
+  padding: max(.6rem, env(safe-area-inset-top)) max(.85rem, env(safe-area-inset-right)) .65rem max(.85rem, env(safe-area-inset-left));
+  background: linear-gradient(180deg, rgba(13, 44, 37, .88), rgba(13, 44, 37, .28) 74%, transparent);
+}
+
+.top-hud.ui-modern-orchard-hud .brand {
+  gap: .5rem;
+  padding: .38rem .72rem .38rem .55rem;
+  border: 2px solid rgba(255, 241, 214, .56);
+  border-radius: 1rem;
+  color: var(--orchard-cream);
+  background: var(--orchard-forest);
+  box-shadow: 0 .28rem 0 rgba(10, 37, 31, .56), 0 .5rem 1rem rgba(10, 37, 31, .22);
+}
+
+.top-hud.ui-modern-orchard-hud .brand::after { display: none; }
+.top-hud.ui-modern-orchard-hud .brand-mark { color: var(--orchard-gold); }
+.top-hud.ui-modern-orchard-hud .brand h1 {
+  color: var(--orchard-cream);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(1.08rem, 1.8vw, 1.32rem);
+  font-weight: 800;
+  letter-spacing: .01em;
+  text-shadow: none;
+}
+
+.top-hud.ui-modern-orchard-hud .hud-status { gap: .45rem; }
+.top-hud.ui-modern-orchard-hud .hud-stat,
+.top-hud.ui-modern-orchard-hud .camera-mode,
+.top-hud.ui-modern-orchard-hud .ghost-button {
+  min-height: 2.7rem;
+  border: 2px solid rgba(255, 241, 214, .38);
+  border-image: none;
+  border-radius: .88rem;
+  background: var(--orchard-forest);
+  box-shadow: 0 .24rem 0 rgba(10, 37, 31, .58), 0 .42rem .82rem rgba(10, 37, 31, .25);
+}
+
+.top-hud.ui-modern-orchard-hud .hud-stat {
+  gap: .42rem;
+  padding: .32rem .72rem;
+}
+
+.top-hud.ui-modern-orchard-hud .hud-stat strong,
+.top-hud.ui-modern-orchard-hud .hud-stat .big,
+.top-hud.ui-modern-orchard-hud .hud-stat .muted {
+  color: var(--orchard-cream);
+  font-family: "Nunito Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(.94rem, 1.5vw, 1.12rem);
+  font-weight: 850;
+  text-shadow: none;
+}
+
+.top-hud.ui-modern-orchard-hud .hud-stat-icon { color: var(--orchard-gold); filter: none; }
+.top-hud.ui-modern-orchard-hud .xp-bar { background: rgba(255, 241, 214, .2); box-shadow: inset 0 1px 2px rgba(5, 29, 23, .45); }
+.top-hud.ui-modern-orchard-hud .xp-fill { background: var(--orchard-gold); }
+.top-hud.ui-modern-orchard-hud .ghost-button { width: 2.7rem; padding: .25rem; color: var(--orchard-cream); }
+.top-hud.ui-modern-orchard-hud .ghost-button:hover:not(:disabled) { border-image: none; color: var(--orchard-cream); background: var(--orchard-green); transform: translateY(-1px); }
+
+.top-hud.ui-modern-orchard-hud .camera-mode { gap: .18rem; padding: .18rem; }
+.top-hud.ui-modern-orchard-hud .camera-mode-button {
+  min-height: 2.15rem;
+  padding: .3rem .62rem;
+  border: 0;
+  border-image: none;
+  border-radius: .65rem;
+  color: var(--orchard-cream);
+  background: transparent;
+  font-family: "Nunito Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: .88rem;
+  font-weight: 800;
+}
+.top-hud.ui-modern-orchard-hud .camera-mode-button:hover:not(:disabled) { border-image: none; color: var(--orchard-cream); background: rgba(255, 241, 214, .13); }
+.top-hud.ui-modern-orchard-hud .camera-mode-button.is-active { border-image: none; color: var(--orchard-cocoa); background: var(--orchard-gold); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .52); }
+
+/* Navigation is an independent compact control stack rather than a bordered image frame. */
+.module-rail.ui-modern-orchard-hud {
+  gap: .42rem;
+  padding: 0;
+  border: 0;
+  border-image: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.module-rail.ui-modern-orchard-hud .module-launcher {
+  width: 3.15rem;
+  height: 3.15rem;
+  min-width: 3.15rem;
+  min-height: 3.15rem;
+  border: 2px solid rgba(255, 241, 214, .46);
+  border-image: none;
+  border-radius: 1rem;
+  color: var(--orchard-cream);
+  background: var(--orchard-forest);
+  box-shadow: 0 .28rem 0 rgba(10, 37, 31, .58), 0 .48rem .9rem rgba(10, 37, 31, .25);
+  filter: none;
+}
+.module-rail.ui-modern-orchard-hud .module-launcher:hover:not(:disabled) { border-image: none; color: var(--orchard-cream); background: var(--orchard-green); filter: none; transform: translateY(-2px); }
+.module-rail.ui-modern-orchard-hud .module-launcher.is-active { border-image: none; color: var(--orchard-cocoa); background: var(--orchard-orange); box-shadow: 0 .28rem 0 var(--orchard-orange-deep), 0 .48rem .9rem rgba(91, 42, 12, .32); }
+
+/* Construction: a new cream/orchard composition, deliberately not an override of the old image kit. */
+#build-panel.ui-modern-orchard-construction {
+  width: min(64rem, calc(100vw - 8.6rem));
+  height: min(76vh, 43rem);
+  max-height: calc(100dvh - var(--hud-height) - 1.25rem);
+  padding: 0;
+  border: 4px solid var(--orchard-forest);
+  border-image: none;
+  border-radius: 1.5rem;
+  background: var(--orchard-cream);
+  color: var(--orchard-cocoa);
+  box-shadow: var(--orchard-panel-shadow);
+  font-family: "Nunito Variable", "Noto Sans", "Noto Sans KR", "Noto Sans SC", system-ui, sans-serif;
+}
+
+#build-panel.ui-modern-orchard-construction .build-header {
+  min-height: 4rem;
+  padding: .65rem 1rem .6rem 1.18rem;
+  border: 0;
+  border-bottom: 4px solid var(--orchard-gold);
+  background: var(--orchard-forest);
+  color: var(--orchard-cream);
+  box-shadow: 0 .22rem 0 rgba(12, 43, 35, .26);
+  filter: none;
+}
+
+#build-panel.ui-modern-orchard-construction .build-header h2 {
+  gap: .62rem;
+  color: var(--orchard-cream);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(1.38rem, 2.15vw, 1.64rem);
+  font-weight: 850;
+  letter-spacing: .01em;
+}
+
+#build-panel.ui-modern-orchard-construction .build-title-icon { color: var(--orchard-gold); }
+#build-panel.ui-modern-orchard-construction .build-header-right { gap: .62rem; }
+#build-panel.ui-modern-orchard-construction .build-gold {
+  min-height: 2.35rem;
+  padding: .22rem .66rem;
+  border: 2px solid rgba(255, 241, 214, .34);
+  border-radius: .78rem;
+  color: var(--orchard-cream);
+  background: rgba(7, 31, 25, .52);
+  font-size: 1rem;
+  font-weight: 850;
+}
+#build-panel.ui-modern-orchard-construction .build-gold svg { color: var(--orchard-gold); }
+#build-panel.ui-modern-orchard-construction .panel-close {
+  width: 2.35rem;
+  height: 2.35rem;
+  border: 2px solid rgba(255, 241, 214, .58);
+  border-radius: .78rem;
+  color: var(--orchard-cocoa);
+  background: var(--orchard-gold);
+  box-shadow: 0 .16rem 0 rgba(102, 66, 12, .62);
+}
+#build-panel.ui-modern-orchard-construction .panel-close:hover:not(:disabled) { color: var(--orchard-cream); background: var(--orchard-orange); transform: translateY(-1px); }
+
+#build-panel.ui-modern-orchard-construction .build-body {
+  grid-template-columns: 10.5rem minmax(0, 1fr) 17rem;
+  background: var(--orchard-cream);
+}
+
+#build-panel.ui-modern-orchard-construction .shop-rail {
+  gap: .42rem;
+  padding: .72rem .58rem;
+  border-right: 1px solid var(--orchard-line);
+  background: #e6f0d5;
+  box-shadow: none;
+}
+
+#build-panel.ui-modern-orchard-construction .shop-rail-item,
+#build-panel.ui-modern-orchard-construction .shop-filter {
+  min-height: 3rem;
+  padding: .52rem .58rem;
+  border: 2px solid transparent;
+  border-image: none;
+  border-radius: .8rem;
+  color: var(--orchard-cocoa);
+  background: transparent;
+  box-shadow: none;
+  font-family: "Nunito Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: .95rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+#build-panel.ui-modern-orchard-construction .shop-rail-item svg { color: var(--orchard-green); }
+#build-panel.ui-modern-orchard-construction .shop-rail-item:hover:not(.is-active),
+#build-panel.ui-modern-orchard-construction .shop-filter:hover:not(.is-active) { color: var(--orchard-cocoa); background: rgba(49, 136, 93, .14); }
+#build-panel.ui-modern-orchard-construction .shop-rail-item.is-active,
+#build-panel.ui-modern-orchard-construction .shop-filter.is-active {
+  border-image: none;
+  border-color: var(--orchard-orange-deep);
+  color: var(--orchard-cocoa);
+  background: var(--orchard-orange);
+  box-shadow: 0 .22rem 0 var(--orchard-orange-deep), inset 0 1px 0 rgba(255, 255, 255, .42);
+}
+#build-panel.ui-modern-orchard-construction .shop-rail-item.is-active svg { color: var(--orchard-cocoa); }
+
+#build-panel.ui-modern-orchard-construction .build-center {
+  gap: .62rem;
+  padding: .78rem .9rem .9rem;
+  background: var(--orchard-cream-bright);
+}
+#build-panel.ui-modern-orchard-construction .shop-tools-summary { color: var(--orchard-forest); font-weight: 850; }
+#build-panel.ui-modern-orchard-construction .shop-tools-controls { gap: .52rem; padding: .15rem 0 .35rem; }
+#build-panel.ui-modern-orchard-construction .shop-search-input {
+  min-height: 2.7rem;
+  border: 2px solid rgba(32, 72, 63, .23);
+  border-radius: .82rem;
+  color: var(--orchard-cocoa);
+  background: #fffdf5;
+  box-shadow: inset 0 1px 2px rgba(56, 41, 31, .08);
+  font-size: .9rem;
+}
+#build-panel.ui-modern-orchard-construction .shop-search-input:focus { border-color: var(--orchard-green); outline: 2px solid rgba(49, 136, 93, .3); outline-offset: 1px; }
+
+#build-panel.ui-modern-orchard-construction .shop-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .82rem;
+  padding: .15rem .1rem .72rem;
+  scrollbar-color: var(--orchard-green) transparent;
+}
+
+#build-panel.ui-modern-orchard-construction .shop-card {
+  position: relative;
+  min-height: 0;
+  border: 2px solid #e3c379;
+  border-image: none;
+  border-radius: 1rem;
+  background: #fffdf5;
+  box-shadow: var(--orchard-card-shadow);
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+}
+#build-panel.ui-modern-orchard-construction .shop-card:hover:not(.is-selected) { border-image: none; border-color: var(--orchard-green); background: #fffdf5; box-shadow: 0 .46rem 0 #bdd68f, 0 .72rem 1.15rem rgba(56, 41, 31, .2); transform: translateY(-2px); }
+#build-panel.ui-modern-orchard-construction .shop-card.is-selected { border-image: none; border-color: var(--orchard-orange-deep); box-shadow: var(--orchard-focus); }
+#build-panel.ui-modern-orchard-construction .shop-card.is-locked { border-color: #c7bca5; background: #f1eadb; box-shadow: 0 .28rem 0 #c7bca5, 0 .45rem .84rem rgba(56, 41, 31, .13); }
+#build-panel.ui-modern-orchard-construction .shop-card.is-preview { border-color: #dfbd65; }
+#build-panel.ui-modern-orchard-construction .shop-card.is-unaffordable .shop-card-price { color: #a5482b; }
+
+#build-panel.ui-modern-orchard-construction .shop-card-thumb {
+  min-height: 8.4rem;
+  aspect-ratio: 1.22 / 1;
+  border-bottom: 1px solid rgba(56, 41, 31, .1);
+  background: linear-gradient(145deg, #fff9e9 10%, #e1efc9 100%);
+}
+#build-panel.ui-modern-orchard-construction .shop-card-thumb::after {
+  content: "";
+  position: absolute;
+  inset: auto .62rem .42rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: rgba(32, 72, 63, .14);
+  filter: blur(3px);
+}
+#build-panel.ui-modern-orchard-construction .shop-thumb-image { z-index: 1; padding: .45rem; }
+#build-panel.ui-modern-orchard-construction .shop-card-lock,
+#build-panel.ui-modern-orchard-construction .shop-card-preview {
+  z-index: 2;
+  right: .45rem;
+  bottom: .45rem;
+  padding: .3rem .46rem;
+  border: 1px solid rgba(255, 255, 255, .65);
+  border-radius: .65rem;
+  color: var(--orchard-cream);
+  background: var(--orchard-forest);
+  font-size: .76rem;
+  font-weight: 850;
+}
+#build-panel.ui-modern-orchard-construction .shop-card-preview { color: var(--orchard-cocoa); background: var(--orchard-gold); }
+#build-panel.ui-modern-orchard-construction .shop-card-meta { gap: .42rem; padding: .66rem .72rem .74rem; }
+#build-panel.ui-modern-orchard-construction .shop-card-name {
+  color: var(--orchard-cocoa);
+  font-size: 1.04rem;
+  font-weight: 900;
+  line-height: 1.18;
+}
+#build-panel.ui-modern-orchard-construction .shop-card-line { font-size: .88rem; }
+#build-panel.ui-modern-orchard-construction .shop-card-price {
+  gap: .28rem;
+  padding: .18rem .42rem;
+  border-radius: .5rem;
+  color: var(--orchard-cocoa);
+  background: #fff0c4;
+  font-size: .96rem;
+  font-weight: 900;
+}
+#build-panel.ui-modern-orchard-construction .shop-card-price svg,
+#build-panel.ui-modern-orchard-construction .shop-fact-price svg { color: #c87a16; }
+#build-panel.ui-modern-orchard-construction .shop-card-level { color: var(--orchard-forest); font-size: .78rem; font-weight: 800; }
+
+#build-panel.ui-modern-orchard-construction .shop-inspector {
+  gap: .72rem;
+  padding: .9rem .82rem .82rem;
+  border-left: 1px solid var(--orchard-line);
+  background: #f7efd9;
+  box-shadow: none;
+}
+#build-panel.ui-modern-orchard-construction .shop-inspector-name {
+  color: var(--orchard-cocoa);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: clamp(1.28rem, 2vw, 1.48rem);
+  font-weight: 850;
+  line-height: 1.05;
+}
+#build-panel.ui-modern-orchard-construction .shop-inspector-description,
+#build-panel.ui-modern-orchard-construction .shop-does-line,
+#build-panel.ui-modern-orchard-construction .shop-does-status,
+#build-panel.ui-modern-orchard-construction .shop-facts,
+#build-panel.ui-modern-orchard-construction .shop-stat { color: #695345; font-size: .88rem; line-height: 1.42; }
+#build-panel.ui-modern-orchard-construction .shop-inspector-picture {
+  min-height: 9.4rem;
+  max-height: 12.5rem;
+  border: 2px solid #dfc37f;
+  border-radius: 1rem;
+  background: linear-gradient(145deg, #fff9e9 12%, #dcecc8);
+}
+#build-panel.ui-modern-orchard-construction .shop-inspector-picture .shop-thumb-image { padding: .55rem; }
+#build-panel.ui-modern-orchard-construction .shop-does-title { color: var(--orchard-forest); font-size: .76rem; font-weight: 900; letter-spacing: .07em; }
+#build-panel.ui-modern-orchard-construction .shop-stat svg { color: var(--orchard-green); }
+#build-panel.ui-modern-orchard-construction .shop-stat-value,
+#build-panel.ui-modern-orchard-construction .shop-facts dd { color: var(--orchard-cocoa); font-weight: 850; }
+#build-panel.ui-modern-orchard-construction .shop-inspector-action { padding-top: .72rem; border-top: 1px solid var(--orchard-line); }
+#build-panel.ui-modern-orchard-construction .shop-inspector-price { color: #695345; font-size: .88rem; font-weight: 750; }
+#build-panel.ui-modern-orchard-construction .shop-inspector-price .shop-fact-price { color: var(--orchard-cocoa); font-size: 1.12rem; font-weight: 900; }
+#build-panel.ui-modern-orchard-construction .shop-inspector-state { color: var(--orchard-green); font-size: .82rem; font-weight: 800; }
+#build-panel.ui-modern-orchard-construction .shop-inspector-state.is-locked,
+#build-panel.ui-modern-orchard-construction .shop-inspector-state.is-unaffordable { color: #a5482b; }
+
+#build-panel.ui-modern-orchard-construction .shop-place {
+  min-height: 3rem;
+  border: 2px solid var(--orchard-orange-deep);
+  border-image: none;
+  border-radius: .9rem;
+  color: var(--orchard-cocoa);
+  background: var(--orchard-orange);
+  box-shadow: 0 .26rem 0 var(--orchard-orange-deep), inset 0 1px 0 rgba(255, 255, 255, .45);
+  font-family: "Baloo 2 Variable", "Noto Sans", system-ui, sans-serif;
+  font-size: 1.08rem;
+  font-weight: 850;
+}
+#build-panel.ui-modern-orchard-construction .shop-place:hover:not(:disabled) { border-image: none; color: var(--orchard-cocoa); background: #ff9a4b; transform: translateY(-1px); }
+#build-panel.ui-modern-orchard-construction .shop-place:disabled { border-image: none; border-color: #c6bba4; color: #74695d; background: #e8dfcd; box-shadow: none; }
+#build-panel.ui-modern-orchard-construction .shop-inspector-empty { color: #756352; font-size: .92rem; }
+#build-panel.ui-modern-orchard-construction .shop-inspector-empty svg { color: var(--orchard-orange); }
+
+@media (max-width: 900px) {
+  #build-panel.ui-modern-orchard-construction {
+    width: min(58rem, calc(100vw - 2rem));
+    max-height: calc(100dvh - 1.25rem);
+  }
+  #build-panel.ui-modern-orchard-construction .build-body { grid-template-columns: minmax(0, 1fr) 15rem; }
+  #build-panel.ui-modern-orchard-construction .shop-rail { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--orchard-line); }
+  #build-panel.ui-modern-orchard-construction .shop-rail-item { min-width: max-content; }
+}
+
+@media (max-width: 700px) {
+  .top-hud.ui-modern-orchard-hud { gap: .35rem; padding-inline: max(.5rem, env(safe-area-inset-left)) max(.5rem, env(safe-area-inset-right)); }
+  .top-hud.ui-modern-orchard-hud .brand { padding: .28rem .46rem; }
+  .top-hud.ui-modern-orchard-hud .brand h1 { font-size: .98rem; }
+  .top-hud.ui-modern-orchard-hud .hud-stat { min-height: 2.38rem; padding: .2rem .42rem; }
+  .top-hud.ui-modern-orchard-hud .hud-stat strong,
+  .top-hud.ui-modern-orchard-hud .hud-stat .big { font-size: .88rem; }
+  .top-hud.ui-modern-orchard-hud .camera-mode { display: none; }
+  .module-rail.ui-modern-orchard-hud { gap: .28rem; }
+  .module-rail.ui-modern-orchard-hud .module-launcher { width: var(--touch-target); height: var(--touch-target); min-width: var(--touch-target); min-height: var(--touch-target); border-radius: .82rem; }
+
+  #build-panel.ui-modern-orchard-construction {
+    top: max(.55rem, env(safe-area-inset-top));
+    left: .5rem;
+    width: calc(100vw - 1rem);
+    height: calc(100dvh - 1.1rem);
+    max-height: none;
+    border-width: 3px;
+    border-radius: 1.2rem;
+  }
+  #build-panel.ui-modern-orchard-construction .build-header { min-height: 3.7rem; padding: .5rem .62rem .48rem .78rem; }
+  #build-panel.ui-modern-orchard-construction .build-header h2 { font-size: 1.3rem; }
+  #build-panel.ui-modern-orchard-construction .build-gold { min-height: 2.16rem; max-width: 8.1rem; padding-inline: .42rem; font-size: .86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #build-panel.ui-modern-orchard-construction .panel-close { width: 2.16rem; height: 2.16rem; }
+  #build-panel.ui-modern-orchard-construction .build-body { display: flex; flex-direction: column; overflow-y: auto; }
+  #build-panel.ui-modern-orchard-construction .shop-rail { flex: 0 0 auto; flex-direction: row; min-height: 4.1rem; padding: .44rem .5rem; overflow-x: auto; overflow-y: hidden; }
+  #build-panel.ui-modern-orchard-construction .shop-rail-item { min-height: var(--touch-target); padding-inline: .62rem; font-size: .88rem; white-space: nowrap; }
+  #build-panel.ui-modern-orchard-construction .build-center { flex: 0 0 auto; min-height: 21rem; padding: .62rem; }
+  #build-panel.ui-modern-orchard-construction .shop-tools-controls { flex-direction: column; }
+  #build-panel.ui-modern-orchard-construction .shop-filters { width: 100%; }
+  #build-panel.ui-modern-orchard-construction .shop-filter { flex: 1; min-height: var(--touch-target); padding-inline: .32rem; font-size: .78rem; }
+  #build-panel.ui-modern-orchard-construction .shop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .62rem; overflow: visible; }
+  #build-panel.ui-modern-orchard-construction .shop-card-thumb { min-height: 7.1rem; }
+  #build-panel.ui-modern-orchard-construction .shop-card-meta { padding: .54rem .58rem .64rem; }
+  #build-panel.ui-modern-orchard-construction .shop-card-name { font-size: .94rem; }
+  #build-panel.ui-modern-orchard-construction .shop-card-price { font-size: .84rem; }
+  #build-panel.ui-modern-orchard-construction .shop-inspector { flex: 0 0 auto; min-height: 0; padding: .76rem; border-top: 1px solid var(--orchard-line); border-left: 0; }
+  #build-panel.ui-modern-orchard-construction .shop-inspector-picture { min-height: 10rem; max-height: 12rem; flex: 0 0 10rem; }
+  #build-panel.ui-modern-orchard-construction .shop-inspector-name { font-size: 1.3rem; }
+  #build-panel.ui-modern-orchard-construction .shop-inspector-action { position: sticky; bottom: 0; padding-bottom: max(.2rem, env(safe-area-inset-bottom)); background: #f7efd9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #build-panel.ui-modern-orchard-construction .shop-card { transition: none; }
+}

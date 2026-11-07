@@ -1,5 +1,6 @@
 import type {
   BuildCatalogEntryDTO,
+  AquaculturePondDTO,
   ConstructionDTO,
   CropDefinitionDTO,
   CropStateDTO,
@@ -58,6 +59,8 @@ export interface InteractionWorldInput {
    * long until it is; the renderer draws the depleted state and the registry stops offering the verb.
    */
   readonly resourceNodes?: readonly ResourceNodeDTO[];
+  /** Server-projected state for already placed aquaculture cages. */
+  readonly aquaculturePonds?: readonly AquaculturePondDTO[];
   /** Current epoch milliseconds, used only to phrase a growing crop's countdown. */
   readonly nowMs: number;
 }
@@ -100,6 +103,7 @@ export function interactionSearchRadiusCells(frame = worldFrame()): number {
  * Single-cell island scenery stays selectable in Estate view, where selection is the interaction.
  */
 export function worldObjectIsInteractable(row: ConstructionDTO): boolean {
+  if (row.forestry !== undefined) return true;
   if (row.source === "PLAYER_PLACED") return true;
   return row.footprint.widthCells > 1 || row.footprint.depthCells > 1;
 }
@@ -151,7 +155,7 @@ function treeTarget(tree: TreeStateDTO, definitions: readonly TreeDefinitionDTO[
     nameKey: definition?.displayNameKey ?? null,
     nameFallback: tree.definitionId,
     version: tree.version,
-    readyInSeconds: action === "HARVEST" ? null : Math.max(0, tree.secondsUntilReady)
+    readyInSeconds: action === "HARVEST" || action === "CHOP_TREE" ? null : Math.max(0, tree.secondsUntilReady)
   };
 }
 
@@ -166,7 +170,8 @@ function treeTarget(tree: TreeStateDTO, definitions: readonly TreeDefinitionDTO[
 function constructionTarget(
   row: ConstructionDTO,
   worldObjects: WorldObjectDefinitions,
-  catalog: readonly BuildCatalogEntryDTO[]
+  catalog: readonly BuildCatalogEntryDTO[],
+  aquaculturePond: AquaculturePondDTO | undefined
 ): InteractableTarget {
   const position = tileToWorld({ x: row.anchorX, y: row.anchorY }, worldFrame());
   const policy = objectPolicy(row, worldObjects, catalog);
@@ -174,7 +179,13 @@ function constructionTarget(
   // stall is a `FARM_MARKET` because game data says so, so a second stall - or a stall this build has
   // never seen - offers Trade without a line of client code changing.
   const service = worldObjects.get(row.entryId)?.service ?? null;
-  const action: InteractionAction = service === "FARM_MARKET" ? "TRADE" : "INSPECT";
+  const action: InteractionAction = aquaculturePond?.status === "EMPTY"
+    ? "STOCK_AQUACULTURE"
+    : aquaculturePond?.status === "READY"
+      ? "HARVEST_AQUACULTURE"
+      : row.forestry?.status === "READY"
+        ? "CHOP_CONSTRUCTION"
+        : service === "FARM_MARKET" ? "TRADE" : "INSPECT";
   return {
     key: `object:${row.constructionId}`,
     kind: "WORLD_OBJECT",
@@ -188,7 +199,8 @@ function constructionTarget(
     priority: INTERACTION_ACTION_PRIORITY[action],
     nameKey: policy?.displayNameKey ?? null,
     nameFallback: policy?.label ?? row.entryId,
-    version: row.version,
+    // Pond commands are guarded by the pond lifecycle version, not the construction edit version.
+    version: aquaculturePond?.version ?? row.forestry?.version ?? row.version,
     readyInSeconds: null
   };
 }
@@ -264,13 +276,21 @@ export function interactionTargets(input: InteractionWorldInput): readonly Inter
     targets.push(cropTarget(crop, input.cropDefinitions, input.nowMs));
   }
   for (const tree of input.trees) {
+    if (tree.storageState === "STORED") continue;
     targets.push(treeTarget(tree, input.treeDefinitions));
   }
   for (const row of input.constructions) {
     // Only rows that are standing: a stored object is the player's, and it is not on the island.
     if (row.state !== "ACTIVE") continue;
     if (!worldObjectIsInteractable(row)) continue;
-    targets.push(constructionTarget(row, input.worldObjects, input.buildCatalog));
+    targets.push(
+      constructionTarget(
+        row,
+        input.worldObjects,
+        input.buildCatalog,
+        input.aquaculturePonds?.find((pond) => pond.pondId === row.constructionId)
+      )
+    );
   }
   return targets;
 }

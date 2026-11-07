@@ -54,7 +54,8 @@ export {
  * lookup and a few `img.src` assignments.
  *
  * The art direction is deliberately plain and consistent: warm cream ground, one soft key light, a
- * three-quarter view, the object filling most of the frame, no horizon and no sky.
+ * three-quarter view, the object filling most of the frame, no horizon and no sky. Small item art can
+ * also arrive as a Vite-hashed transparent image and uses this same cache contract.
  */
 
 /** The camera's three-quarter bearing, in world units before normalisation. */
@@ -144,7 +145,9 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
     stageParts.scene.add(holder);
     if (ground !== null) ground.scale.setScalar(Math.max(1.2, framing.cameraDistance * 0.42));
 
-    const focus = new Vector3(0, framing.centerY * 0.9, 0);
+    // Aim at the visual centre. The old 0.9 bias reserved extra sky above an already conservative
+    // frame, making compact props look as though they were sitting at the bottom of an empty card.
+    const focus = new Vector3(0, framing.centerY, 0);
     stageParts.camera.position.copy(VIEW_DIRECTION).multiplyScalar(framing.cameraDistance).add(focus);
     stageParts.camera.lookAt(focus);
     stageParts.renderer.render(stageParts.scene, stageParts.camera);
@@ -223,7 +226,9 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
     // Frame the whole four-cell segment with grass around it: the card sells "a short piece of road in
     // a field", and a segment that runs off all four corners is a swatch, not a road.
     const focus = new Vector3(0, 0, length / 2);
-    const distance = length * 2.1;
+    // The segment used to sit at 2.1x its length, which made the field dominate the thing being sold.
+    // This remains far enough to keep all four cells and a readable grass rim in frame.
+    const distance = length * 1.65;
     stageParts.camera.position
       .copy(new Vector3(1, 1.35, 1.15).normalize())
       .multiplyScalar(distance)
@@ -247,7 +252,9 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
         return hit;
       }
       const result =
-        request.roadTierId !== null && isRoadTier(request.roadTierId)
+        request.imageUrl !== undefined && request.imageUrl !== null
+          ? { dataUrl: request.imageUrl, source: "IMAGE" as const }
+          : request.roadTierId !== null && isRoadTier(request.roadTierId)
           ? drawRoad(request.roadTierId)
           : request.modelId !== null
             ? await drawModel(request.modelId)

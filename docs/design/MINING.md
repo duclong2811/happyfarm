@@ -1,33 +1,29 @@
 # Mining
 
-Status: V15.2, first playable slice. Mining is the second Character profession: walk to a deposit, hold
+Status: V15.2, unified ore slice. Mining is the second Character profession: walk to the ore mine, hold
 the interaction, and the **server** decides what comes out and when the deposit returns. The generic
 lifecycle is `docs/design/RESOURCE_NODES.md`; the numbers are `docs/design/MINING_BALANCE.md`.
 
 ## The loop
 
 ```text
-explore the volcano flank -> [E] Mine -> wait ~6-13s -> material + XP -> node depleted
+follow the north road -> [E] Mine -> wait ~6s -> Quặng + XP -> node depleted
                                                                           |
                                           server clock passes availableAt -> node returns
 ```
 
 ## Where the deposits are
 
-Nine nodes on the volcano's flank and foothill, in fixed positions verified against the real terrain
-(walkable ground, away from the starter parcel):
+The active catalogue exposes one mine, while retired placements and definitions stay registered only
+for legacy settlement/replay compatibility:
 
 | Node | Definition | Position (tiles) |
 | --- | --- | --- |
-| `node_stone_ridge` | stone | 12, -12 |
-| `node_stone_west` | stone | -3, -23 |
-| `node_stone_south` | stone | 20, -30 |
-| `node_copper_east` | copper | 24, -23 |
-| `node_copper_north` | copper | 4, -16 |
-| `node_coal_west` | coal | -2, -24 |
-| `node_coal_deep` | coal | -3, -27 |
-| `node_iron_west` | iron | -2, -28 |
-| `node_iron_north` | iron | 12, -10 |
+| `node_stone_ridge` | `resource_ore` / Mỏ quặng | 12, -12 |
+
+The old stone/copper/coal/iron nodes are not returned by the active resource snapshot, so they cannot
+create a second reward source. Their definitions/items remain for already-recorded actions and inventory
+compatibility; no conversion of existing data is performed.
 
 They are **not** the island's decorative rocks. Scenery stays editable scenery - selectable, movable,
 storable, deletable in Estate view - while a resource node is a gameplay entity with its own id, its own
@@ -91,7 +87,7 @@ today.
 
 ## Inventory and market
 
-- A mined material is an ordinary `MATERIAL` item in the same inventory, with its own tab, drawn with the
+- `item_ore` is an ordinary `MATERIAL` item in the same inventory, with its own tab, drawn with the
   deposit's own model so the card shows the rock the ore came from.
 - Raw materials sell through the **same** market and the same economy settlement as produce, at
   deliberately conservative prices (1-4 gold). They are the inputs crafting and building will want, so

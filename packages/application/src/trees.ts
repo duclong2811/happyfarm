@@ -3,13 +3,17 @@ import {
   assertValidCoordinate,
   calculateTreeProduction,
   canHarvestTree,
+  createFarmTile,
   createTreeInstance,
   createXpAward,
   DomainError,
   isTreeUnlocked,
+  isUsableLand,
+  landOriginFor,
   parseItemDefinitionId,
   parseTreeDefinitionId,
   parseTreeInstanceId,
+  normaliseQuarterTurns,
   requiredLevelForTree,
   type FarmId,
   type ItemDefinitionId,
@@ -19,7 +23,6 @@ import {
   type TreeDefinition,
   type TreeInstance,
   type TreePhase,
-  type UnlockedLandPolicy,
   type XpAward
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
@@ -43,8 +46,12 @@ import type {
   InventoryRepository,
   ItemDefinitionRepository,
   PayloadFingerprint,
+  PlantBatchReceiptRepository,
   ProgressionRepository,
+  TilePlan,
+  TileTerrainLookup,
   TreeDefinitionRepository,
+  TreeHarvestBatchReceiptRepository,
   TreeHarvestSettlementRepository,
   TreeIdGenerator,
   TreeInstanceRepository
@@ -52,7 +59,12 @@ import type {
 
 const PLANT_TREE_OPERATION = "PLANT_TREE";
 const HARVEST_TREE_OPERATION = "HARVEST_TREE";
+const HARVEST_TREE_AREA_OPERATION = "HARVEST_TREE_AREA_GROUP";
 const REMOVE_TREE_OPERATION = "REMOVE_TREE";
+export const MAX_HARVEST_TREE_AREA_GROUP = 25;
+
+/** The area command is deliberately limited to repeating orchard fruit trees. */
+const REPEATING_FRUIT_TREE_DEFINITION_IDS = new Set(["tree_apple", "tree_orange", "tree_peach"]);
 
 /**
  * How many times a tree harvest re-reads progression after losing a race before giving up.
@@ -64,7 +76,8 @@ const PROGRESSION_ATTEMPTS = 8;
 
 export interface PlantTreeCommand extends TileCoordinate {
   readonly treeDefinitionId: string;
-  readonly expectedTileVersion: number;
+  /** The tile version the client read, or absent for a fresh natural-land cell (V14.5.2). */
+  readonly expectedTileVersion?: number | undefined;
   readonly requestId: string;
 }
 
@@ -81,13 +94,17 @@ export interface TreeState {
   readonly tileY: number;
   readonly plantedAt: string;
   readonly lastHarvestedAt: string | null;
-  readonly readyAt: string;
+  readonly readyAt: string | null;
   readonly secondsUntilReady: number;
   readonly ready: boolean;
   readonly phase: TreePhase;
   readonly growthStage: number;
   readonly growthProgress: number;
   readonly version: number;
+  readonly storageState: "ACTIVE" | "STORED";
+  readonly rotation: 0 | 1 | 2 | 3;
+  readonly storedAt: string | null;
+  readonly storedRemainingSeconds: number | null;
 }
 
 export class TreeStateProjector {
@@ -117,12 +134,15 @@ export class TreeStateProjector {
       phase: production.phase,
       growthStage: production.stage,
       growthProgress: production.progress,
-      version: tree.version
+      version: tree.version,
+      storageState: tree.storageState,
+      rotation: tree.rotation,
+      storedAt: tree.storedAt,
+      storedRemainingSeconds: tree.storedRemainingSeconds
     };
   }
 
-  projectMany(trees: readonly TreeInstance[]): readonly TreeState[] {
-    const serverTime = this.clock.now();
+  projectMany(trees: readonly TreeInstance[], serverTime = this.clock.now()): readonly TreeState[] {
     return trees.map((tree) => this.project(tree, serverTime));
   }
 }
@@ -145,7 +165,8 @@ export interface PlantTreeDependencies {
   readonly definitions: TreeDefinitionRepository;
   readonly progression: ProgressionRepository;
   readonly progressionDefinition: ProgressionDefinition;
-  readonly unlockedLand: UnlockedLandPolicy;
+  /** What the ground physically is, from the island's own geography. */
+  readonly terrain: TileTerrainLookup;
   readonly inventoryService: InventoryService;
   readonly ids: TreeIdGenerator;
   readonly fingerprints: PayloadFingerprint;
@@ -167,7 +188,7 @@ export class PlantTree {
       definitions,
       progression,
       progressionDefinition,
-      unlockedLand,
+      terrain,
       inventoryService,
       ids,
       fingerprints,
@@ -203,18 +224,25 @@ export class PlantTree {
       if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
       throw error;
     }
+    // V14.5.2: valid natural Home Island land is free to use, with no ownership row required. The
+    // island's classifier says whether the ground is usable; a fresh cell gets its tile row created
+    // with the planting.
+    const ground = terrain.classify({ x: command.x, y: command.y });
+    if (!isUsableLand(landOriginFor(ground))) {
+      throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot be planted");
+    }
     const tile = await tiles.find(farmId, command.x, command.y);
-    if (tile === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "Tile was not found");
-    if (!(await unlockedLand.isUnlocked(farmId, command))) {
-      throw new ApplicationError("INVALID_INPUT", "Tile is outside unlocked land");
-    }
-    try {
-      assertTilePlantable(tile);
-    } catch {
-      throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
-    }
-    if (tile.version !== command.expectedTileVersion) {
-      throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+    if (tile !== null) {
+      try {
+        assertTilePlantable(tile);
+      } catch {
+        throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
+      }
+      if (command.expectedTileVersion === undefined || tile.version !== command.expectedTileVersion) {
+        throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+      }
+    } else if (command.expectedTileVersion !== undefined) {
+      throw new ApplicationError("CONFLICT_STALE_STATE", "Tile state changed");
     }
     // Both occupants are checked before anything is written, and the database enforces the same
     // rule across both tables, so a concurrent planting of the other kind cannot slip between them.
@@ -257,6 +285,10 @@ export class PlantTree {
     );
 
     const now = clock.now();
+    const tilePlan: TilePlan =
+      tile === null
+        ? { kind: "CREATE", tile: createFarmTile(farmId, { x: command.x, y: command.y }, "SOIL", now) }
+        : { kind: "EXISTING", version: tile.version };
     const tree = createTreeInstance(
       ids.newTreeInstanceId(),
       farmId,
@@ -278,7 +310,7 @@ export class PlantTree {
     };
 
     try {
-      await trees.plantAtomically(tree, command.expectedTileVersion, saplingRemoval, sapling, record);
+      await trees.plantAtomically(tree, tilePlan, saplingRemoval, sapling, record);
       return new TreeStateProjector(definitions, clock).project(tree, now);
     } catch (error: unknown) {
       const racedRequest = await idempotency.find(actor.playerId, PLANT_TREE_OPERATION, command.requestId);
@@ -290,14 +322,13 @@ export class PlantTree {
         throw new ApplicationError("TILE_OCCUPIED", "Tile already has a tree");
       }
       const currentTile = await tiles.find(farmId, command.x, command.y);
-      if (currentTile === null) {
-        throw new ApplicationError("RESOURCE_NOT_FOUND", "Tile was not found");
-      }
-      if (currentTile.terrainType !== "SOIL") {
-        throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
-      }
-      if (currentTile.version !== command.expectedTileVersion) {
-        throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+      if (currentTile !== null) {
+        if (currentTile.terrainType !== "SOIL") {
+          throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
+        }
+        if (tilePlan.kind === "EXISTING" && currentTile.version !== tilePlan.version) {
+          throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+        }
       }
       // The batch rolls back as one unit, so a lost race leaves the sapling exactly where it was.
       const currentSapling = await inventory.find(actor.playerId, definition.saplingItemDefinitionId);
@@ -318,6 +349,134 @@ export class PlantTree {
     const tree = await this.dependencies.trees.findById(parseTreeInstanceId(record.resourceId));
     if (tree === null) throw new ApplicationError("INTERNAL_ERROR", "Stored command result is unavailable");
     return new TreeStateProjector(this.dependencies.definitions, this.dependencies.clock).project(tree);
+  }
+}
+
+export interface PlantTreeAreaCell extends TileCoordinate {
+  readonly expectedTileVersion?: number | undefined;
+}
+
+export interface PlantTreeAreaGroupCommand {
+  readonly requestId: string;
+  readonly treeDefinitionId: string;
+  readonly cells: readonly PlantTreeAreaCell[];
+}
+
+export type PlantTreeAreaSkipReason = "OCCUPIED" | "NOT_PLANTABLE" | "STALE" | "NO_SEEDS" | "LEVEL" | "NOT_FOUND";
+
+export interface PlantTreeAreaCellResult {
+  readonly x: number;
+  readonly y: number;
+  readonly status: "PLANTED" | "SKIPPED";
+  readonly treeInstanceId: string | null;
+  readonly reason: PlantTreeAreaSkipReason | null;
+}
+
+export interface PlantTreeAreaGroupResult {
+  readonly results: readonly PlantTreeAreaCellResult[];
+  readonly plantedCount: number;
+  readonly skippedCount: number;
+}
+
+export const MAX_PLANT_TREE_AREA_GROUP = 25;
+const PLANT_TREE_AREA_OPERATION = "PLANT_TREE_AREA_GROUP";
+
+/** Bounded tree planting that delegates each cell to the existing authoritative PlantTree command. */
+export class PlantTreeAreaGroup {
+  constructor(
+    private readonly farms: FarmRepository,
+    private readonly members: FarmMemberRepository,
+    private readonly plantTree: PlantTree,
+    private readonly receipts: PlantBatchReceiptRepository,
+    private readonly fingerprints: PayloadFingerprint,
+    private readonly clock: Clock
+  ) {}
+
+  async execute(actor: ActorContext | null, farmId: FarmId, command: PlantTreeAreaGroupCommand): Promise<PlantTreeAreaGroupResult> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if (command.cells.length === 0 || command.cells.length > MAX_PLANT_TREE_AREA_GROUP) {
+      throw new ApplicationError("INVALID_INPUT", "The planting group size is invalid");
+    }
+    if ((await this.farms.findById(farmId)) === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+    const keys = command.cells.map((cell) => `${String(cell.x)},${String(cell.y)}`);
+    if (new Set(keys).size !== keys.length) throw new ApplicationError("INVALID_INPUT", "A planting group cannot contain a duplicate cell");
+    const fingerprint = await this.fingerprints.hash(JSON.stringify([
+      farmId,
+      command.treeDefinitionId,
+      command.cells.map((cell) => [cell.x, cell.y, cell.expectedTileVersion])
+    ]));
+    const existing = await this.receipts.find(actor.playerId, command.requestId);
+    if (existing !== null) return this.replay(existing, fingerprint);
+
+    const results: PlantTreeAreaCellResult[] = [];
+    for (let index = 0; index < command.cells.length; index += 1) {
+      const cell = command.cells[index];
+      if (cell === undefined) continue;
+      try {
+        const planted = await this.plantTree.execute(actor, farmId, {
+          treeDefinitionId: command.treeDefinitionId,
+          x: cell.x,
+          y: cell.y,
+          ...(cell.expectedTileVersion === undefined ? {} : { expectedTileVersion: cell.expectedTileVersion }),
+          requestId: await this.derivedRequestId(command.requestId, index)
+        });
+        results.push({ x: cell.x, y: cell.y, status: "PLANTED", treeInstanceId: planted.treeInstanceId, reason: null });
+      } catch (error: unknown) {
+        const reason = plantingTreeSkipReason(error);
+        if (reason === null) throw error;
+        results.push({ x: cell.x, y: cell.y, status: "SKIPPED", treeInstanceId: null, reason });
+      }
+    }
+    const response = {
+      results,
+      plantedCount: results.filter((result) => result.status === "PLANTED").length,
+      skippedCount: results.filter((result) => result.status === "SKIPPED").length
+    } satisfies PlantTreeAreaGroupResult;
+    const record: IdempotencyRecord = {
+      actorPlayerId: actor.playerId,
+      operation: PLANT_TREE_AREA_OPERATION,
+      requestId: command.requestId,
+      payloadFingerprint: fingerprint,
+      resourceId: String(farmId),
+      responseJson: JSON.stringify(response),
+      status: "COMPLETED",
+      createdAt: this.clock.now()
+    };
+    if (await this.receipts.save(record)) return response;
+    const raced = await this.receipts.find(actor.playerId, command.requestId);
+    if (raced !== null) return this.replay(raced, fingerprint);
+    throw new ApplicationError("IDEMPOTENCY_CONFLICT", "The planting group could not be recorded");
+  }
+
+  private async derivedRequestId(groupRequestId: string, index: number): Promise<string> {
+    const digest = await this.fingerprints.hash(`${groupRequestId}:${String(index)}`);
+    return `tree-plant-area-${digest.slice(0, 70)}`;
+  }
+
+  private replay(record: IdempotencyRecord, fingerprint: string): PlantTreeAreaGroupResult {
+    if (record.payloadFingerprint !== fingerprint) throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
+    try {
+      const value = JSON.parse(record.responseJson) as PlantTreeAreaGroupResult;
+      if (!Array.isArray(value.results) || !Number.isSafeInteger(value.plantedCount) || !Number.isSafeInteger(value.skippedCount)) throw new Error("invalid stored result");
+      return value;
+    } catch {
+      throw new ApplicationError("INTERNAL_ERROR", "Stored planting group result is unavailable");
+    }
+  }
+}
+
+function plantingTreeSkipReason(error: unknown): PlantTreeAreaSkipReason | null {
+  if (!(error instanceof ApplicationError)) return null;
+  switch (error.code) {
+    case "TILE_OCCUPIED": return "OCCUPIED";
+    case "TILE_NOT_PLANTABLE": return "NOT_PLANTABLE";
+    case "CONFLICT_STALE_STATE": return "STALE";
+    case "INSUFFICIENT_ITEMS": return "NO_SEEDS";
+    case "TREE_LEVEL_REQUIRED": return "LEVEL";
+    case "TREE_DEFINITION_NOT_FOUND": return "NOT_FOUND";
+    default: return null;
   }
 }
 
@@ -513,6 +672,210 @@ export class HarvestTree {
   }
 }
 
+export interface HarvestTreeAreaGroupCommand {
+  readonly requestId: string;
+  readonly trees: readonly HarvestTreeAreaCandidate[];
+}
+
+export interface HarvestTreeAreaCandidate {
+  readonly treeInstanceId: string;
+  readonly expectedTreeVersion: number;
+}
+
+export type HarvestTreeAreaSkipReason =
+  | "NOT_READY"
+  | "NOT_REPEATABLE"
+  | "INVENTORY_FULL"
+  | "WAREHOUSE_FULL"
+  | "STALE"
+  | "NOT_OWNED"
+  | "NOT_FOUND"
+  | "NOT_ACTIVE";
+
+export interface HarvestTreeAreaTreeResult {
+  readonly treeInstanceId: string;
+  readonly status: "HARVESTED" | "SKIPPED";
+  readonly itemDefinitionId: string | null;
+  readonly quantityAdded: number;
+  readonly reason: HarvestTreeAreaSkipReason | null;
+}
+
+export interface HarvestTreeAreaGroupResult {
+  readonly results: readonly HarvestTreeAreaTreeResult[];
+  readonly harvestedCount: number;
+  readonly skippedCount: number;
+  readonly products: readonly { readonly itemDefinitionId: string; readonly quantity: number }[];
+}
+
+/**
+ * Bounded estate-management harvest orchestration.
+ *
+ * This is intentionally a group of the existing one-tree settlement, not a second reward path. Each
+ * tree is re-read and settled with its own derived idempotency key, so a lost response can retry a
+ * partially completed group without paying a cycle twice. The group receipt is only a replay envelope;
+ * it never grants inventory by itself. This route is the explicit Toàn cảnh management contract: it
+ * has no player position input and never treats client coordinates as proof of proximity. The server
+ * owns the work boundary (25 trees), readiness, ownership, versions and every settlement. Character
+ * range remains a separate single-tree interaction contract.
+ */
+export class HarvestTreeAreaGroup {
+  constructor(
+    private readonly farms: FarmRepository,
+    private readonly members: FarmMemberRepository,
+    private readonly trees: TreeInstanceRepository,
+    private readonly definitions: TreeDefinitionRepository,
+    private readonly harvestTree: HarvestTree,
+    private readonly receipts: TreeHarvestBatchReceiptRepository,
+    private readonly fingerprints: PayloadFingerprint,
+    private readonly clock: Clock
+  ) {}
+
+  async execute(
+    actor: ActorContext | null,
+    farmId: FarmId,
+    command: HarvestTreeAreaGroupCommand
+  ): Promise<HarvestTreeAreaGroupResult> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if (command.trees.length === 0 || command.trees.length > MAX_HARVEST_TREE_AREA_GROUP) {
+      throw new ApplicationError("INVALID_INPUT", "The harvest group size is invalid");
+    }
+    if ((await this.farms.findById(farmId)) === null) {
+      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    }
+    const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") {
+      throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+    }
+    const parsedCandidates = command.trees.map((candidate) => {
+      try {
+        return {
+          treeInstanceId: parseTreeInstanceId(candidate.treeInstanceId),
+          expectedTreeVersion: candidate.expectedTreeVersion
+        };
+      } catch {
+        throw new ApplicationError("INVALID_INPUT", "Tree instance ID is invalid");
+      }
+    });
+    if (new Set(parsedCandidates.map((candidate) => candidate.treeInstanceId)).size !== parsedCandidates.length) {
+      throw new ApplicationError("INVALID_INPUT", "A harvest group cannot contain a duplicate tree");
+    }
+
+    const fingerprint = await this.fingerprints.hash(
+      JSON.stringify([farmId, parsedCandidates.map((candidate) => [candidate.treeInstanceId, candidate.expectedTreeVersion])])
+    );
+    const existing = await this.receipts.find(actor.playerId, command.requestId);
+    if (existing !== null) return this.replay(existing, fingerprint);
+
+    const results: HarvestTreeAreaTreeResult[] = [];
+    for (let index = 0; index < parsedCandidates.length; index += 1) {
+      const candidate = parsedCandidates[index];
+      if (candidate === undefined) continue;
+      const tree = await this.trees.findById(candidate.treeInstanceId);
+      const definition = tree === null ? null : this.definitions.findById(tree.treeDefinitionId);
+      if (
+        tree !== null &&
+        tree.farmId === farmId &&
+        (definition === null || !REPEATING_FRUIT_TREE_DEFINITION_IDS.has(tree.treeDefinitionId))
+      ) {
+        results.push({
+          treeInstanceId: candidate.treeInstanceId,
+          status: "SKIPPED",
+          itemDefinitionId: null,
+          quantityAdded: 0,
+          reason: "NOT_REPEATABLE"
+        });
+        continue;
+      }
+
+      try {
+        const result = await this.harvestTree.execute(actor, farmId, {
+          treeInstanceId: candidate.treeInstanceId,
+          expectedTreeVersion: candidate.expectedTreeVersion,
+          requestId: await this.derivedRequestId(command.requestId, index)
+        });
+        results.push({
+          treeInstanceId: result.harvest.treeInstanceId,
+          status: "HARVESTED",
+          itemDefinitionId: result.harvest.itemDefinitionId,
+          quantityAdded: result.harvest.quantityAdded,
+          reason: null
+        });
+      } catch (error: unknown) {
+        const reason = batchSkipReason(error);
+        if (reason === null) throw error;
+        results.push({
+          treeInstanceId: candidate.treeInstanceId,
+          status: "SKIPPED",
+          itemDefinitionId: null,
+          quantityAdded: 0,
+          reason
+        });
+      }
+    }
+
+    const products = new Map<string, number>();
+    for (const result of results) {
+      if (result.itemDefinitionId === null) continue;
+      products.set(result.itemDefinitionId, (products.get(result.itemDefinitionId) ?? 0) + result.quantityAdded);
+    }
+    const response: HarvestTreeAreaGroupResult = {
+      results,
+      harvestedCount: results.filter((result) => result.status === "HARVESTED").length,
+      skippedCount: results.filter((result) => result.status === "SKIPPED").length,
+      products: [...products.entries()].map(([itemDefinitionId, quantity]) => ({ itemDefinitionId, quantity }))
+    };
+    const record: IdempotencyRecord = {
+      actorPlayerId: actor.playerId,
+      operation: HARVEST_TREE_AREA_OPERATION,
+      requestId: command.requestId,
+      payloadFingerprint: fingerprint,
+      resourceId: String(farmId),
+      responseJson: JSON.stringify(response),
+      status: "COMPLETED",
+      createdAt: this.clock.now()
+    };
+    if (await this.receipts.save(record)) return response;
+    const raced = await this.receipts.find(actor.playerId, command.requestId);
+    if (raced !== null) return this.replay(raced, fingerprint);
+    throw new ApplicationError("IDEMPOTENCY_CONFLICT", "The harvest group could not be recorded");
+  }
+
+  private async derivedRequestId(groupRequestId: string, index: number): Promise<string> {
+    const digest = await this.fingerprints.hash(`${groupRequestId}:${String(index)}`);
+    return `tree-area-${digest.slice(0, 72)}`;
+  }
+
+  private replay(record: IdempotencyRecord, fingerprint: string): HarvestTreeAreaGroupResult {
+    if (record.payloadFingerprint !== fingerprint) {
+      throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
+    }
+    try {
+      const value = JSON.parse(record.responseJson) as HarvestTreeAreaGroupResult;
+      if (!Array.isArray(value.results) || !Number.isSafeInteger(value.harvestedCount) || !Number.isSafeInteger(value.skippedCount) || !Array.isArray(value.products)) {
+        throw new Error("invalid stored result");
+      }
+      return value;
+    } catch {
+      throw new ApplicationError("INTERNAL_ERROR", "Stored harvest group result is unavailable");
+    }
+  }
+}
+
+function batchSkipReason(error: unknown): HarvestTreeAreaSkipReason | null {
+  if (!(error instanceof ApplicationError)) return null;
+  switch (error.code) {
+    case "TREE_NOT_READY": return "NOT_READY";
+    case "CONFLICT_STALE_STATE": return "STALE";
+    case "INVENTORY_LIMIT_EXCEEDED": return "INVENTORY_FULL";
+    case "WAREHOUSE_FULL": return "WAREHOUSE_FULL";
+    case "NOT_AUTHORIZED": return "NOT_OWNED";
+    case "TREE_NOT_FOUND": return "NOT_FOUND";
+    case "TREE_NOT_ACTIVE":
+    case "TREE_NOT_STORED": return "NOT_ACTIVE";
+    default: return null;
+  }
+}
+
 export interface RemoveTreeCommand {
   readonly treeInstanceId: string;
   readonly expectedTreeVersion: number;
@@ -621,6 +984,235 @@ export class RemoveTree {
     } catch {
       throw new ApplicationError("INTERNAL_ERROR", "Stored command result is unavailable");
     }
+  }
+}
+
+export const MOVE_TREE_OPERATION = "MOVE_TREE";
+export const ROTATE_TREE_OPERATION = "ROTATE_TREE";
+export const STORE_TREE_OPERATION = "STORE_TREE";
+export const RESTORE_TREE_OPERATION = "RESTORE_TREE";
+
+export interface TreeMoveCommand {
+  readonly treeInstanceId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly rotation: number;
+  readonly expectedTileVersion?: number | undefined;
+  readonly expectedTreeVersion: number;
+  readonly requestId: string;
+}
+
+export interface TreeRotateCommand {
+  readonly treeInstanceId: string;
+  readonly rotation: number;
+  readonly expectedTreeVersion: number;
+  readonly requestId: string;
+}
+
+export interface TreeStoreCommand {
+  readonly treeInstanceId: string;
+  readonly expectedTreeVersion: number;
+  readonly requestId: string;
+}
+
+export interface TreeRestoreCommand {
+  readonly treeInstanceId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly rotation: number;
+  readonly expectedTileVersion?: number | undefined;
+  readonly expectedTreeVersion: number;
+  readonly requestId: string;
+}
+
+export interface TreeManagementDependencies {
+  readonly farms: FarmRepository;
+  readonly members: FarmMemberRepository;
+  readonly tiles: FarmTileRepository;
+  readonly trees: TreeInstanceRepository;
+  readonly crops: CropInstanceRepository;
+  readonly constructions: { listBounds(farmId: FarmId): Promise<readonly { readonly minX: number; readonly maxX: number; readonly minY: number; readonly maxY: number }[]> };
+  readonly terrain: TileTerrainLookup;
+  readonly definitions: TreeDefinitionRepository;
+  readonly idempotency: IdempotencyRepository;
+  readonly fingerprints: PayloadFingerprint;
+  readonly clock: Clock;
+}
+
+/**
+ * Management is deliberately separate from forestry CHOP. It only changes the tree row and its
+ * occupancy; it never touches saplings, wood, Warehouse, or economy state.
+ */
+export class ManageTree {
+  constructor(private readonly dependencies: TreeManagementDependencies) {}
+
+  move(actor: ActorContext | null, farmId: FarmId, command: TreeMoveCommand): Promise<TreeState> {
+    return this.execute(actor, farmId, MOVE_TREE_OPERATION, command.treeInstanceId, command.expectedTreeVersion, command.requestId, {
+      kind: "MOVE", x: command.x, y: command.y, rotation: command.rotation, expectedTileVersion: command.expectedTileVersion
+    });
+  }
+
+  rotate(actor: ActorContext | null, farmId: FarmId, command: TreeRotateCommand): Promise<TreeState> {
+    return this.execute(actor, farmId, ROTATE_TREE_OPERATION, command.treeInstanceId, command.expectedTreeVersion, command.requestId, {
+      kind: "ROTATE", rotation: command.rotation
+    });
+  }
+
+  store(actor: ActorContext | null, farmId: FarmId, command: TreeStoreCommand): Promise<TreeState> {
+    return this.execute(actor, farmId, STORE_TREE_OPERATION, command.treeInstanceId, command.expectedTreeVersion, command.requestId, {
+      kind: "STORE"
+    });
+  }
+
+  restore(actor: ActorContext | null, farmId: FarmId, command: TreeRestoreCommand): Promise<TreeState> {
+    return this.execute(actor, farmId, RESTORE_TREE_OPERATION, command.treeInstanceId, command.expectedTreeVersion, command.requestId, {
+      kind: "RESTORE", x: command.x, y: command.y, rotation: command.rotation, expectedTileVersion: command.expectedTileVersion
+    });
+  }
+
+  private async execute(
+    actor: ActorContext | null,
+    farmId: FarmId,
+    operation: string,
+    treeInstanceId: string,
+    expectedTreeVersion: number,
+    requestId: string,
+    input: {
+      readonly kind: "MOVE" | "ROTATE" | "STORE" | "RESTORE";
+      readonly x?: number;
+      readonly y?: number;
+      readonly rotation?: number;
+      readonly expectedTileVersion?: number | undefined;
+    }
+  ): Promise<TreeState> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    let treeId: ReturnType<typeof parseTreeInstanceId>;
+    try { treeId = parseTreeInstanceId(treeInstanceId); } catch { throw new ApplicationError("INVALID_INPUT", "Tree instance ID is invalid"); }
+    if ((await this.dependencies.farms.findById(farmId)) === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    const membership = await this.dependencies.members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") throw new ApplicationError("NOT_AUTHORIZED", "Tree management is not allowed");
+
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([
+      operation, farmId, treeId, input.x, input.y, input.rotation, input.expectedTileVersion, expectedTreeVersion
+    ]));
+    const existing = await this.dependencies.idempotency.find(actor.playerId, operation, requestId);
+    if (existing !== null) return this.replay(existing, fingerprint);
+
+    const current = await this.dependencies.trees.findById(treeId);
+    if (current === null || current.farmId !== farmId) throw new ApplicationError("TREE_NOT_FOUND", "Tree was not found");
+    if (current.plantedByPlayerId !== actor.playerId) throw new ApplicationError("OBJECT_NOT_OWNED", "That tree belongs to another player");
+    if (current.version !== expectedTreeVersion) throw new ApplicationError("CONFLICT_STALE_STATE", "Tree version does not match");
+    if (input.kind !== "RESTORE") {
+      const lifecycleDefinition = this.dependencies.definitions.findById(current.treeDefinitionId);
+      if (lifecycleDefinition !== null && calculateTreeProduction(lifecycleDefinition, current, this.dependencies.clock.now()).phase === "DEPLETED") {
+        throw new ApplicationError("TREE_NOT_ACTIVE", "A chopped tree must be cleared before it can be managed");
+      }
+    }
+    if (input.kind === "MOVE" || input.kind === "STORE") {
+      if (current.storageState !== "ACTIVE") throw new ApplicationError("TREE_NOT_ACTIVE", "The tree is already in storage");
+    }
+    if (input.kind === "RESTORE" && current.storageState !== "STORED") {
+      throw new ApplicationError("TREE_NOT_STORED", "The tree is not in storage");
+    }
+
+    let next = current;
+    let tile: TilePlan | null = null;
+    const now = this.dependencies.clock.now();
+    if (input.kind === "MOVE" || input.kind === "RESTORE") {
+      const x = input.x as number;
+      const y = input.y as number;
+      await this.assertDestination(farmId, current, x, y, input.expectedTileVersion);
+      const targetTile = await this.dependencies.tiles.find(farmId, x, y);
+      tile = targetTile === null
+        ? { kind: "CREATE", tile: createFarmTile(farmId, { x, y }, "SOIL", now) }
+        : { kind: "EXISTING", version: targetTile.version };
+      const rotation = normaliseQuarterTurns(input.rotation as number);
+      next = { ...current, tileX: x, tileY: y, rotation, storageState: "ACTIVE", storedAt: null, version: current.version + 1, updatedAt: now };
+      if (input.kind === "RESTORE" && current.storedRemainingSeconds !== null) {
+        const definition = this.dependencies.definitions.findById(current.treeDefinitionId);
+        if (definition === null) throw new ApplicationError("TREE_DEFINITION_NOT_FOUND", "Tree definition was not found");
+        const cycleSeconds = current.lastHarvestedAt === null ? definition.firstReadySeconds : definition.regrowSeconds;
+        const elapsedSeconds = Math.max(0, cycleSeconds - current.storedRemainingSeconds);
+        const resumedAt = new Date(Date.parse(now) - elapsedSeconds * 1000).toISOString();
+        next = current.lastHarvestedAt === null
+          ? { ...next, plantedAt: resumedAt, storedRemainingSeconds: null }
+          : { ...next, lastHarvestedAt: resumedAt, storedRemainingSeconds: null };
+      } else {
+        next = { ...next, storedRemainingSeconds: null };
+      }
+    } else if (input.kind === "ROTATE") {
+      next = { ...current, rotation: normaliseQuarterTurns(input.rotation as number), version: current.version + 1, updatedAt: now };
+    } else {
+      const definition = this.dependencies.definitions.findById(current.treeDefinitionId);
+      if (definition === null) throw new ApplicationError("TREE_DEFINITION_NOT_FOUND", "Tree definition was not found");
+      const production = calculateTreeProduction(definition, current, now);
+      if (production.phase === "DEPLETED") throw new ApplicationError("TREE_NOT_ACTIVE", "A chopped tree must be cleared before planting again");
+      next = {
+        ...current,
+        storageState: "STORED",
+        storedAt: now,
+        storedRemainingSeconds: production.ready ? null : production.secondsUntilReady,
+        version: current.version + 1,
+        updatedAt: now
+      };
+    }
+
+    const result = new TreeStateProjector(this.dependencies.definitions, this.dependencies.clock).project(next, now);
+    const record: IdempotencyRecord = {
+      actorPlayerId: actor.playerId,
+      operation,
+      requestId,
+      payloadFingerprint: fingerprint,
+      resourceId: next.id,
+      responseJson: JSON.stringify(result),
+      status: "COMPLETED",
+      createdAt: now
+    };
+    try {
+      await this.dependencies.trees.manageAtomically(next, current.version, tile, record);
+      return result;
+    } catch (error: unknown) {
+      const raced = await this.dependencies.idempotency.find(actor.playerId, operation, requestId);
+      if (raced !== null) return this.replay(raced, fingerprint);
+      throw error;
+    }
+  }
+
+  private async assertDestination(
+    farmId: FarmId,
+    current: TreeInstance,
+    x: number,
+    y: number,
+    expectedTileVersion: number | undefined
+  ): Promise<void> {
+    try { assertValidCoordinate({ x, y }); } catch { throw new ApplicationError("INVALID_INPUT", "Tree destination is invalid"); }
+    if (!isUsableLand(landOriginFor(this.dependencies.terrain.classify({ x, y })))) {
+      throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot hold a tree");
+    }
+    const tile = await this.dependencies.tiles.find(farmId, x, y);
+    if (tile !== null) {
+      try { assertTilePlantable(tile); } catch { throw new ApplicationError("TILE_NOT_PLANTABLE", "That tile cannot hold a tree"); }
+      if (expectedTileVersion !== undefined && tile.version !== expectedTileVersion) throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+    } else if (expectedTileVersion !== undefined) {
+      throw new ApplicationError("CONFLICT_STALE_STATE", "Tile state changed");
+    }
+    const crop = await this.dependencies.crops.findAtTile(farmId, x, y);
+    if (crop !== null) throw new ApplicationError("TILE_OCCUPIED", "Tile already has a crop");
+    const tree = await this.dependencies.trees.findAtTile(farmId, x, y);
+    if (tree !== null && tree.id !== current.id) throw new ApplicationError("TILE_OCCUPIED", "Tile already has a tree");
+    const occupied = await this.dependencies.constructions.listBounds(farmId);
+    if (occupied.some((bounds) => x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY)) {
+      throw new ApplicationError("TILE_OCCUPIED", "Tile already has a construction");
+    }
+  }
+
+  private replay(record: IdempotencyRecord, fingerprint: string): TreeState {
+    if (record.payloadFingerprint !== fingerprint) throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
+    try {
+      const value = JSON.parse(record.responseJson) as TreeState;
+      if (value.treeInstanceId !== record.resourceId) throw new Error("invalid tree receipt");
+      return value;
+    } catch { throw new ApplicationError("INTERNAL_ERROR", "Stored tree management result is unavailable"); }
   }
 }
 

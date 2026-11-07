@@ -91,7 +91,7 @@ new domain rule, table, use case, route or settlement**. The verb is a value, no
 | same start/settle/cancel commands | same commands, same bodies, same guards |
 | same node-state table | same table, same `(zone_id, node_id)` key |
 
-What forestry added was data (three definitions, three drop tables, twelve placements, three tree
+What forestry added was data (three definitions, three drop tables, thirteen placements, three tree
 models and three stumps), one optional field (`depletedModelId`, because a tree has a better depleted
 picture than a smaller tree) and its own tests. `tests/api/forestry-loop.test.ts` drives a `CHOP` node
 and a `MINE` node through the same commands in one file.

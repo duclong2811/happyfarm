@@ -1,6 +1,6 @@
 # Island Warehouse (V16.2) - IMPLEMENTED
 
-Status: **IMPLEMENTED** (backend + API) as of V16.2. It is the first production economic
+Status: **IMPLEMENTED** (backend + API + client surface) as of V16.2. It is the first production economic
 infrastructure built on the V16 economy model. The five-profession model
 (`docs/economy/FIVE_ELEMENT_CAPACITY_MODEL.md`) is untouched: the warehouse contains no element
 assumptions and no processing specialisation.
@@ -66,12 +66,46 @@ The guard is shared, so every grant path behaves the same: the transaction rolls
 | Path | When the warehouse is full |
 | --- | --- |
 | Crop / tree harvest | Settlement aborts; the crop/tree stays and can be harvested after space is freed; no XP is written |
-| Fishing / gathering | Settlement aborts; the completed action stays ACTIVE and claimable; no re-roll, no item, no XP |
+| Fishing / gathering | Refused before the roll; the completed action stays ACTIVE and claimable; no re-draw, no item, no XP |
 | Shop buy | Aborts; **no gold is debited and no item is granted** |
 | Shop sell, consumption, planting | Always allowed - the guard only fires when a stack grows, so selling frees capacity immediately |
 
 The API maps the guard's database error to the stable code `WAREHOUSE_FULL` (HTTP 409), so the client
 gets a gameplay-meaningful error rather than a 500.
+
+### Rewards that are rolled must not be redrawn
+
+A fishing catch and a gather are *chosen* by a random port at settlement time, and the database guard
+only refuses when the batch runs. That ordering would let a full warehouse discard the drawn result and
+let the retry draw a different one. So both settlements ask a pre-flight question first:
+`assertWarehouseHasRoom` (`packages/application/src/storage.ts`) runs the same net-delta arithmetic
+*before* the roll. A fishing catch is exactly one item, so the question is exact; a gather reserves the
+largest quantity its table can produce, which is conservative on purpose. This pre-check does not
+reserve space: another grant can fill storage before the payout batch runs.
+
+V16.2.1 therefore pins server entropy on the action before payout (`0020_action_reward_rolls.sql`).
+Fishing stores one roll; gathering stores selection and quantity rolls together. A conditional write
+chooses one winner under concurrency, and every contender reads that same stored outcome. The rolls
+are immutable and survive a payout rollback, a new request ID, and a Worker restart. A retry of the
+same attempt uses the pinned rolls; it cannot obtain a different catch because storage filled after
+the pre-check. Rolls never appear in the client contract. XP, inventory, action completion, node
+depletion and the successful receipt still commit together in the original settlement transaction.
+
+The net-delta domain rule permits non-positive deltas even when legacy usage remains over capacity,
+matching the database guards. See `docs/qa/V16_2_1_WAREHOUSE_FULL_QA.md` for boundary and race evidence.
+
+## Upgrade settlement: the step marker
+
+`0019_warehouse_upgrade_marker.sql` adds `home_island_warehouses.last_upgrade_transaction_id`, the
+economy transaction that last raised the tier. The upgrade's idempotency receipt is written only when
+the row still names *that* transaction.
+
+Without it, two upgrades racing from the same tier could both settle: one moves the row, the other's
+step is refused by the `tier`/`version` guard, but its receipt was satisfied by the *winner's* tier and
+version - so it committed its ledger row and charged for a tier it never raised. With the marker the
+loser names the winner's transaction, so its whole batch rolls back and it fails closed.
+`UpgradeWarehouse` also re-reads the row on a lost race and answers `CONFLICT_STALE_STATE` when the tier
+moved, rather than retrying a step that belongs to the past.
 
 ## Legacy / grandfathering
 
@@ -90,8 +124,19 @@ new `WAREHOUSE_UPGRADE` reason (`reference_type = 'WAREHOUSE'`).
 
 ## API
 
-- `GET /warehouse` -> `{ warehouse: { tier, capacity, used, available, overCapacity, nextTier, nextUpgrade } }`
+- `GET /warehouse` -> `{ warehouse: { tier, tierDisplayNameKey, capacity, used, available, overCapacity, nextTier, nextCapacity, nextUpgrade } }`
 - `POST /warehouse/upgrade { requestId }` -> the same shape after the upgrade
+
+## Client surface
+
+One compact strip at the top of the existing Inventory panel (`#warehouse` in `index.html`,
+`renderWarehouse()` in `main.ts`): the tier name, `used / capacity`, a capacity bar, the next capacity
+and its cost, and an Upgrade button. It is the only management surface; Character View gets the same
+concise `WAREHOUSE_FULL` feedback through the shared error table and no panel of its own.
+
+The status is read with the rest of the account - on load and after a mutation that changed what the
+island holds - and never on a timer. There is no warehouse polling, no per-frame query, and an upgrade
+redraws only the strip.
 
 ## D1 / query behaviour
 
@@ -109,4 +154,5 @@ upgrade is one batch. This respects the V14.3.2 read-cost work.
   future transaction will call.
 - **Player market / NPC workers**: enforcement on delivery and output throttling both sit on the same
   capacity check.
-- **Warehouse 3D building and client UI surface**: not part of this commit (see the V16.2 report).
+- **Warehouse 3D building**: not part of this phase. The management surface is the Inventory strip
+  above.

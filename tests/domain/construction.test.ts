@@ -51,7 +51,6 @@ function cell(x: number, y: number, overrides: Partial<ConstructionCell> = {}): 
   return {
     x,
     y,
-    owned: true,
     terrain: "LAND",
     shallowWater: false,
     protectedGround: false,
@@ -138,8 +137,9 @@ describe("what may be built where", () => {
     expect(check({ balance: 899 })).toBe("INSUFFICIENT_FUNDS");
   });
 
-  it("refuses ground the farm does not own", () => {
-    expect(check({ cells: cellsFor(bounds, { owned: false }) })).toBe("NOT_OWNED");
+  it("allows natural ground the farm has no ownership row for (V14.5.2)", () => {
+    // Ownership is not a placement boundary: the natural Home Island is the player's land.
+    expect(check({ cells: cellsFor(bounds, { owned: false }) })).toBeNull();
   });
 
   it("refuses a footprint that leaves the island", () => {
@@ -169,11 +169,11 @@ describe("what may be built where", () => {
 
   it("checks every cell of a multi-cell footprint, not only the anchor", () => {
     const cells = cellsFor(bounds);
-    // The anchor and every other cell are owned; make the *far corner* unowned and the whole
-    // placement has to fail, which is the bug a single-cell check would hide.
+    // Make the *far corner* ground the island keeps and the whole placement has to fail, which is
+    // the bug a single-cell check would hide.
     const corner = cells[cells.length - 1];
     expect(corner).toBeDefined();
-    expect(check({ cells: cells.map((cell) => (cell === corner ? { ...cell, owned: false } : cell)) })).toBe("NOT_OWNED");
+    expect(check({ cells: cells.map((cell) => (cell === corner ? { ...cell, protectedGround: true } : cell)) })).toBe("BLOCKED");
   });
 
   it("refuses water for a building and dry land for a moored cage", () => {
@@ -248,10 +248,10 @@ describe("moving an existing object", () => {
     expect(moveRefusal(editCheck())).toBeNull();
   });
 
-  it("refuses a move onto ground the farm does not own", () => {
+  it("allows a move onto natural ground with no ownership row (V14.5.2)", () => {
     const bounds = constructionBounds({ x: 20, y: 20 }, definition.footprint);
     const cells = cellsInBounds(bounds).map((entry) => cell(entry.x, entry.y, { owned: false }));
-    expect(moveRefusal(editCheck({ cells }))).toBe("NOT_OWNED");
+    expect(moveRefusal(editCheck({ cells }))).toBeNull();
   });
 
   it("refuses a move into another object, but not into its own old cells", () => {
@@ -315,10 +315,10 @@ describe("turning an existing object", () => {
       rotationRefusal({
         definition,
         footprint: { widthCells: 3, depthCells: 4 },
-        cells: cells.map((entry) => ({ ...entry, owned: entry.x === 9 ? false : entry.owned })),
+        cells: cells.map((entry) => ({ ...entry, protectedGround: entry.x === 9 })),
         occupied: []
       })
-    ).toBe("NOT_OWNED");
+    ).toBe("BLOCKED");
     expect(rotationRefusal({ definition: { ...definition, rotatable: false }, footprint: definition.footprint, cells, occupied: [] })).toBe("NOT_ROTATABLE");
     expect(
       rotationRefusal({
@@ -422,10 +422,10 @@ describe("taking an object down", () => {
 describe("the ground rule is the same one in every direction", () => {
   it("answers a placement, a move and a turn through the same function", () => {
     const bounds = constructionBounds({ x: 4, y: 4 }, { widthCells: 1, depthCells: 1 });
-    const unowned = cellsInBounds(bounds).map((entry) => cell(entry.x, entry.y, { owned: false }));
+    const protectedCells = cellsInBounds(bounds).map((entry) => cell(entry.x, entry.y, { protectedGround: true }));
     const shape = { definition, footprint: { widthCells: 1, depthCells: 1 }, occupied: [] };
-    expect(groundRefusal({ ...shape, cells: unowned })).toBe("NOT_OWNED");
-    expect(moveRefusal({ ...shape, cells: unowned })).toBe("NOT_OWNED");
-    expect(rotationRefusal({ ...shape, cells: unowned })).toBe("NOT_OWNED");
+    expect(groundRefusal({ ...shape, cells: protectedCells })).toBe("BLOCKED");
+    expect(moveRefusal({ ...shape, cells: protectedCells })).toBe("BLOCKED");
+    expect(rotationRefusal({ ...shape, cells: protectedCells })).toBe("BLOCKED");
   });
 });

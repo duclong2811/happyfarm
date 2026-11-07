@@ -51,15 +51,36 @@ function mapOf(...cells: readonly WorldCell[]): typeof EMPTY_WORLD_CELL_MAP {
 const building: PreviewRequirement = {
   allowedTerrain: ["LAND"],
   footprint: { widthCells: 1, depthCells: 1 },
-  isRoad: false,
-  requiresOwnership: true
+  isRoad: false
 };
+
+/**
+ * V14.5.2: ownership is not a placement boundary.
+ *
+ * The natural Home Island is already the player's land, so a cell with no ownership row is not a
+ * refusal at all. The other refusals - ground the island keeps, what stands there, the asset's own
+ * terrain - are unchanged.
+ */
+describe("ownership is not a placement boundary", () => {
+  it("accepts natural ground with no ownership row", () => {
+    const map = mapOf(cell(0, 0, { owned: false }));
+    expect(previewRejection(map, { x: 0, y: 0 }, building)).toBeNull();
+  });
+
+  it("still refuses what is occupied, the wrong terrain, or guarded ground", () => {
+    const occupied = mapOf(cell(0, 0, { owned: false, occupancy: "SCENERY" }));
+    expect(previewRejection(occupied, { x: 0, y: 0 }, building)).toBe("OCCUPIED");
+    const water = mapOf(cell(0, 0, { owned: false, terrain: "WATER", shallowWater: false }));
+    expect(previewRejection(water, { x: 0, y: 0 }, building)).toBe("INVALID_TERRAIN");
+    const reserved = mapOf(cell(0, 0, { owned: false, reserved: true }));
+    expect(previewRejection(reserved, { x: 0, y: 0 }, building)).toBe("BLOCKED");
+  });
+});
 
 const road: PreviewRequirement = {
   allowedTerrain: ["LAND"],
   footprint: { widthCells: 1, depthCells: 1 },
-  isRoad: true,
-  requiresOwnership: true
+  isRoad: true
 };
 
 describe("the cells a footprint covers", () => {
@@ -113,14 +134,12 @@ describe("the preview rule", () => {
 
   it("refuses the wrong ground, but lets a water item use water", () => {
     const sea = cell(2, 2, { terrain: "WATER", shallowWater: true, owned: false });
-    expect(previewRejection(mapOf(sea), { x: 2, y: 2 }, building)).toBe("NOT_OWNED");
+    expect(previewRejection(mapOf(sea), { x: 2, y: 2 }, building)).toBe("INVALID_TERRAIN");
     // A moored asset asks for the shallows, and the shallows are what it gets.
     const cage: PreviewRequirement = {
       allowedTerrain: ["SHALLOW_WATER"],
       footprint: { widthCells: 1, depthCells: 1 },
-      isRoad: false,
-      // A cage is moored on water, which nobody owns in land terms yet: this entry does not ask.
-      requiresOwnership: false
+      isRoad: false
     };
     expect(previewRejection(mapOf(sea), { x: 2, y: 2 }, cage)).toBeNull();
     // Open water is not the shelf a cage is moored in.
@@ -144,11 +163,9 @@ describe("the preview rule", () => {
     expect(previewRejection(mapOf(onRoad), { x: 1, y: 1 }, road)).toBeNull();
   });
 
-  it("refuses land the player does not own when the entry asks for owned land", () => {
+  it("accepts land with no ownership row (V14.5.2)", () => {
     const unowned = cell(1, 1, { owned: false, legacyFarmTile: null });
-    expect(previewRejection(mapOf(unowned), { x: 1, y: 1 }, building)).toBe("NOT_OWNED");
-    const civic: PreviewRequirement = { ...building, requiresOwnership: false };
-    expect(previewRejection(mapOf(unowned), { x: 1, y: 1 }, civic)).toBeNull();
+    expect(previewRejection(mapOf(unowned), { x: 1, y: 1 }, building)).toBeNull();
   });
 
   it("allows an ordinary owned land cell, which is the common case - for every ordinary asset", () => {
@@ -163,11 +180,11 @@ describe("the preview rule", () => {
 
   it("checks every cell of a footprint, including the far corner", () => {
     const strip = [cell(0, 0), cell(1, 0), cell(2, 0), cell(0, 1), cell(1, 1), cell(2, 1)];
-    // The far corner is unowned; a rule that only looked at the anchor would call this legal.
-    const withCornerUnowned = strip.map((entry) => (entry.x === 2 && entry.z === 1 ? { ...entry, owned: false } : entry));
+    // The far corner is guarded ground; a rule that only looked at the anchor would call this legal.
+    const withCornerGuarded = strip.map((entry) => (entry.x === 2 && entry.z === 1 ? { ...entry, reserved: true } : entry));
     expect(
-      previewRejection(mapOf(...withCornerUnowned), { x: 1, y: 0 }, { ...building, footprint: { widthCells: 3, depthCells: 2 } })
-    ).toBe("NOT_OWNED");
+      previewRejection(mapOf(...withCornerGuarded), { x: 1, y: 0 }, { ...building, footprint: { widthCells: 3, depthCells: 2 } })
+    ).toBe("BLOCKED");
     expect(
       previewRejection(mapOf(...strip), { x: 1, y: 0 }, { ...building, footprint: { widthCells: 3, depthCells: 2 } })
     ).toBeNull();
@@ -187,7 +204,6 @@ describe("the reason line", () => {
     const reasons: readonly PreviewRejection[] = [
       "NO_CELL",
       "OUT_OF_WORLD",
-      "NOT_OWNED",
       "BLOCKED",
       "OCCUPIED",
       "INVALID_TERRAIN"
@@ -213,8 +229,7 @@ describe("a rotated footprint", () => {
   const barn: PreviewRequirement = {
     allowedTerrain: ["LAND"],
     footprint: { widthCells: 2, depthCells: 3 },
-    isRoad: false,
-    requiresOwnership: true
+    isRoad: false
   };
 
   it("is what the rule checks, not the catalogue's own numbers", () => {

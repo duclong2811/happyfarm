@@ -38,9 +38,10 @@ explore the island's woods -> [E] Chop -> wait 5-11s -> wood/hardwood/resin + XP
                                        server clock passes availableAt -> the tree returns
 ```
 
-Twelve wild trees stand in the island's two woodland masses (`wood_north` and `wood_east`), in fixed
-positions checked against the real terrain and kept at least four tiles from every mining deposit, so
-a player never finds two kinds of node inside one interaction range.
+Thirteen wild trees stand in the island's two woodland masses plus one starter-adjacent discovery tree
+(`wood_north`, `wood_east`, and the starter edge), in fixed positions checked against the real terrain
+and kept at least four tiles from every mining deposit, so a player never finds two kinds of node inside
+one interaction range.
 
 ## Interaction and authority
 

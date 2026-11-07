@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
   ActorContext,
@@ -44,10 +42,12 @@ import {
   Sha256Fingerprint,
   gameDataProgressionDefinition,
   gameDataStarterWorld,
-  gameDataTileTerrain
+  gameDataTileTerrain,
+  gameDataLandSale
 } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
+import { schemaSql } from "../support/migrations";
 
 /**
  * The whole mining loop, through the real API.
@@ -58,29 +58,9 @@ import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtu
  * attempts at one node are all refused a second reward.
  */
 
-const MIGRATIONS = [
-  "0001_phase_1_foundation.sql",
-  "0002_crop_simulation.sql",
-  "0003_inventory_and_harvest.sql",
-  "0004_economy_and_shop.sql",
-  "0005_player_progression.sql",
-  "0006_farm_expansion.sql",
-  "0007_seed_economy.sql",
-  "0008_tree_instances.sql",
-  "0009_starter_package.sql",
-  "0010_farm_constructions.sql",
-  "0011_construction_editing.sql",
-  "0012_world_objects.sql",
-  "0013_world_objects_v2.sql",
-  "0014_one_farm_per_player.sql",
-  "0015_player_identities.sql",
-  "0016_fishing_actions.sql",
-  "0017_resource_nodes.sql"
-]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+const MIGRATIONS = schemaSql();
 
-const STONE = { node: "node_stone_ridge", item: "item_stone", quantity: 2, actionSeconds: 6, regenerationSeconds: 120, xp: 3 };
+const STONE = { node: "node_stone_ridge", item: "item_ore", quantity: 2, actionSeconds: 6, regenerationSeconds: 120, xp: 3 };
 const IRON = { node: "node_iron_west", requiredLevel: 6 };
 
 class MutableClock implements Clock {
@@ -149,10 +129,12 @@ describe("the mining loop", () => {
   let clock: MutableClock;
   let auth: MutableAuth;
   let handle: (request: Request) => Promise<Response>;
+  let legacyActionSequence = 1;
 
   beforeEach(() => {
     db = new NodeD1Database(MIGRATIONS);
     clock = new MutableClock();
+    legacyActionSequence = 1;
     auth = new MutableAuth({ playerId: PLAYER_ONE_ID });
     db.sqlite
       .prepare(
@@ -179,6 +161,7 @@ describe("the mining loop", () => {
       progressionDefinition: gameDataProgressionDefinition,
       starterWorld: gameDataStarterWorld,
       terrain: gameDataTileTerrain,
+      landSale: gameDataLandSale,
       fishing: {
         catalogue: new GameDataFishingCatalogue(),
         ids: new MiningIds(),
@@ -228,6 +211,17 @@ describe("the mining loop", () => {
     return post(`/resource-actions/${actionId}/cancel`, { requestId, expectedActionVersion: version });
   }
 
+  function seedLegacyAction(): { actionId: string; version: number; secondsUntilReady: number; verb: string; nodeId: string; status: string } {
+    const actionId = `resact_33333333-3333-4333-8333-${String(legacyActionSequence++).padStart(12, "0")}`;
+    const readyAt = new Date(Date.parse(NOW) + STONE.actionSeconds * 1_000).toISOString();
+    db.sqlite
+      .prepare(
+        "INSERT INTO resource_actions (action_id, actor_player_id, zone_kind, zone_id, node_id, definition_id, verb, status, started_at, ready_at, settled_at, version, created_at, updated_at) VALUES (?, ?, 'HOME_ISLAND', ?, ?, 'resource_ore', 'MINE', 'ACTIVE', ?, ?, NULL, 1, ?, ?)"
+      )
+      .run(actionId, PLAYER_ONE_ID, `zone_home_island_${FARM_ONE_ID}`, STONE.node, NOW, readyAt, NOW, NOW);
+    return { actionId, version: 1, secondsUntilReady: STONE.actionSeconds, verb: "MINE", nodeId: STONE.node, status: "ACTIVE" };
+  }
+
   function held(itemDefinitionId: string, player = PLAYER_ONE_ID): number {
     const row = db.sqlite
       .prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?")
@@ -272,11 +266,11 @@ describe("the mining loop", () => {
   }
 
   async function startAndSettle(nodeId: string, step: string) {
-    const started = await start(nodeId, `res_start_${step}`);
-    expect(started.status, `start ${step}`).toBe(201);
-    const action = ((await body(started)) as {
-      data: { action: { actionId: string; version: number; secondsUntilReady: number; verb: string; nodeId: string } };
-    }).data.action;
+    const action = nodeId === STONE.node
+      ? seedLegacyAction()
+      : ((await body(await start(nodeId, `res_start_${step}`))) as {
+          data: { action: { actionId: string; version: number; secondsUntilReady: number; verb: string; nodeId: string } };
+        }).data.action;
     clock.advanceSeconds(STONE.actionSeconds + 1);
     const settled = await settle(action.actionId, action.version, `res_settle_${step}`);
     return { action, settled };
@@ -289,29 +283,90 @@ describe("the mining loop", () => {
     const response = await get("/resource-nodes");
     expect(response.status).toBe(200);
     const list = await nodes();
-    // Nine mining deposits and twelve wild forestry trees share one catalogue and one state table.
-    expect(list).toHaveLength(21);
+    // One active ore mine and thirteen wild forestry trees share one catalogue and one state table.
+    expect(list).toHaveLength(14);
     expect(list.every((node) => node.available)).toBe(true);
     expect(list.map((node) => node.nodeId)).toContain(STONE.node);
-    expect(list.map((node) => node.nodeId)).toContain(IRON.node);
+    expect(list.map((node) => node.nodeId)).not.toContain(IRON.node);
+  });
+
+  it("settles a legacy stone action with its original output and replays its receipt", async () => {
+    await createFarm();
+
+    // This row is the persisted shape of an action that started before unified ore was introduced:
+    // the stable node id is still node_stone_ridge, but the action captured resource_stone.
+    const legacyActionId = "resact_33333333-3333-4333-8333-333333333333";
+    db.sqlite
+      .prepare(
+        "INSERT INTO resource_actions (action_id, actor_player_id, zone_kind, zone_id, node_id, definition_id, verb, status, started_at, ready_at, settled_at, version, created_at, updated_at) VALUES (?, ?, 'HOME_ISLAND', ?, ?, 'resource_stone', 'MINE', 'ACTIVE', ?, ?, NULL, 1, ?, ?)"
+      )
+      .run(
+        legacyActionId,
+        PLAYER_ONE_ID,
+        `zone_home_island_${FARM_ONE_ID}`,
+        STONE.node,
+        NOW,
+        NOW,
+        NOW,
+        NOW
+      );
+
+    const settled = await settle(legacyActionId, 1, "legacy_stone_settle");
+    expect(settled.status).toBe(200);
+    const settledBody = await body(settled);
+    expect(settledBody).toMatchObject({
+      data: {
+        drop: { itemDefinitionId: "item_stone", quantity: 2 },
+        progression: { xpAwarded: 3 }
+      }
+    });
+    expect(held("item_stone")).toBe(2);
+    expect(held("item_ore")).toBe(0);
+
+    expect(
+      db.sqlite
+        .prepare("SELECT definition_id, status, version FROM resource_actions WHERE action_id = ?")
+        .get(legacyActionId)
+    ).toEqual({ definition_id: "resource_stone", status: "SETTLED", version: 2 });
+
+    // The old settlement receipt is authoritative: replaying its request returns the same old drop
+    // without consulting the now-active ore definition or granting a second inventory mutation.
+    const replay = await settle(legacyActionId, 1, "legacy_stone_settle");
+    expect(replay.status).toBe(200);
+    expect(await body(replay)).toEqual(settledBody);
+    expect(held("item_stone")).toBe(2);
+    expect(held("item_ore")).toBe(0);
+  });
+
+  it("rejects a direct start for a retired mining node instead of only hiding it from the snapshot", async () => {
+    await createFarm();
+
+    const rejected = await start(IRON.node, "retired_iron_direct_start");
+    expect(rejected.status).toBe(404);
+    const rejectedBody = (await body(rejected)) as { ok: boolean; error?: { code?: unknown; requestId?: unknown } };
+    expect(rejectedBody).toMatchObject({
+      ok: false,
+      error: { code: "RESOURCE_NODE_NOT_FOUND" }
+    });
+    expect(rejectedBody.error?.requestId).toEqual(expect.any(String));
+
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM resource_actions WHERE actor_player_id = ?")
+        .get(PLAYER_ONE_ID)
+    ).toEqual({ count: 0 });
   });
 
   it("mines, depletes, regenerates, mines again, and sells - with replay and races refused", async () => {
     await createFarm();
 
-    // 1. Iron is behind a level; a new player is refused before anything starts.
+    // 1. Retired mining identities are no longer offered as new starts.
     const locked = await start(IRON.node, "res_locked");
-    expect(locked.status).toBe(403);
-    await expect(body(locked)).resolves.toMatchObject({ ok: false, error: { code: "RESOURCE_LEVEL_REQUIRED" } });
+    expect(locked.status).toBe(404);
+    await expect(body(locked)).resolves.toMatchObject({ ok: false, error: { code: "RESOURCE_NODE_NOT_FOUND" } });
 
     // 2. Start stone. The client named a node; the server owns the wait and the verb.
-    const started = await start(STONE.node, "res_start_1");
-    expect(started.status).toBe(201);
-    const action = ((await body(started)) as {
-      data: {
-        action: { actionId: string; version: number; secondsUntilReady: number; verb: string; nodeId: string; status: string };
-      };
-    }).data.action;
+    const action = seedLegacyAction();
     expect(action).toMatchObject({
       nodeId: STONE.node,
       verb: "MINE",
@@ -355,11 +410,11 @@ describe("the mining loop", () => {
 
     // 7. The node is depleted and cannot be mined again yet.
     const depleted = await start(STONE.node, "res_depleted");
-    expect(depleted.status).toBe(409);
-    await expect(body(depleted)).resolves.toMatchObject({ ok: false, error: { code: "RESOURCE_NODE_DEPLETED" } });
+    expect(depleted.status).toBe(400);
+    await expect(body(depleted)).resolves.toMatchObject({ ok: false, error: { code: "INVALID_INPUT" } });
     const afterMining = (await nodes()).find((node) => node.nodeId === STONE.node);
-    expect(afterMining?.available).toBe(false);
-    expect(afterMining?.secondsUntilAvailable).toBeGreaterThan(0);
+    expect(afterMining?.available).toBe(true);
+    expect(afterMining?.secondsUntilAvailable).toBe(0);
 
     // 8. Regeneration is the server's clock and nothing else: no request in between.
     clock.advanceSeconds(STONE.regenerationSeconds + 1);
@@ -372,25 +427,24 @@ describe("the mining loop", () => {
 
     // 9. Cancel leaves the node untouched: no drop, no depletion.
     const cancelStart = await start(STONE.node, "res_start_cancel");
-    // The node was just mined, so it is depleted; wait it out first.
-    expect(cancelStart.status).toBe(409);
+    // New unified ore starts are assignment-only; the old node lifecycle remains covered by the
+    // persisted legacy action below.
+    expect(cancelStart.status).toBe(400);
     clock.advanceSeconds(STONE.regenerationSeconds + 1);
-    const cancellable = await start(STONE.node, "res_start_cancel_2");
-    const cancelAction = ((await body(cancellable)) as { data: { action: { actionId: string; version: number } } })
-      .data.action;
+    const cancelAction = seedLegacyAction();
     const cancelled = await cancel(cancelAction.actionId, cancelAction.version, "res_cancel_1");
     expect(cancelled.status).toBe(200);
     await expect(body(cancelled)).resolves.toEqual({ ok: true, data: { cancelled: true } });
     clock.advanceSeconds(STONE.actionSeconds + 1);
     expect((await settle(cancelAction.actionId, cancelAction.version, "res_settle_after_cancel")).status).toBe(409);
     // Not depleted by the cancel: a new gather starts immediately.
-    expect((await start(STONE.node, "res_start_after_cancel")).status).toBe(201);
+    expect(seedLegacyAction().status).toBe("ACTIVE");
 
     // 10. Sell the material through the same market as produce.
     const before = balance();
     const sold = await post("/shop/sell", {
       requestId: "res_sell_1",
-      shopEntryId: "shop_stone",
+      shopEntryId: "shop_ore",
       quantity: STONE.quantity
     });
     expect(sold.status).toBe(200);
@@ -399,8 +453,7 @@ describe("the mining loop", () => {
 
   it("settles exactly one of two concurrent attempts at one node", async () => {
     await createFarm();
-    const started = await start(STONE.node, "race_start");
-    const action = ((await body(started)) as { data: { action: { actionId: string; version: number } } }).data.action;
+    const action = seedLegacyAction();
     clock.advanceSeconds(STONE.actionSeconds + 1);
 
     const [first, second] = await Promise.all([
@@ -411,11 +464,11 @@ describe("the mining loop", () => {
     expect(held(STONE.item)).toBe(STONE.quantity);
     expect(xp()).toBe(STONE.xp);
 
-    // And two *separate* attempts at the same node can only deplete it once. The second action is
-    // seeded directly, which is what a second player in a shared zone would produce later.
+    // And two *separate* attempts at the same unified node can only settle against one actor timeline.
+    // The second action is seeded directly, which is what a persisted/replayed request would produce.
     db.sqlite
       .prepare(
-        "INSERT INTO resource_actions (action_id, actor_player_id, zone_kind, zone_id, node_id, definition_id, verb, status, started_at, ready_at, settled_at, version, created_at, updated_at) VALUES (?, ?, 'HOME_ISLAND', ?, ?, 'resource_stone', 'MINE', 'ACTIVE', ?, ?, NULL, 1, ?, ?)"
+        "INSERT INTO resource_actions (action_id, actor_player_id, zone_kind, zone_id, node_id, definition_id, verb, status, started_at, ready_at, settled_at, version, created_at, updated_at) VALUES (?, ?, 'HOME_ISLAND', ?, ?, 'resource_ore', 'MINE', 'ACTIVE', ?, ?, NULL, 1, ?, ?)"
       )
       .run(
         "resact_22222222-2222-4222-8222-222222222222",
@@ -444,7 +497,7 @@ describe("the mining loop", () => {
     await createFarm();
     const { settled } = await startAndSettle(STONE.node, "offline");
     expect(settled.status).toBe(200);
-    expect((await nodes()).find((node) => node.nodeId === STONE.node)?.available).toBe(false);
+    expect((await nodes()).find((node) => node.nodeId === STONE.node)?.available).toBe(true);
 
     // The player closes the game: no request at all until they return.
     clock.advanceSeconds(STONE.regenerationSeconds * 3);
@@ -476,8 +529,7 @@ describe("the mining loop", () => {
     expect((await settle("resact_11111111-1111-4111-8111-999999999999", 1, "missing_action")).status).toBe(404);
 
     // Another player's action is not theirs to settle.
-    const started = await start(STONE.node, "mine_start");
-    const action = ((await body(started)) as { data: { action: { actionId: string; version: number } } }).data.action;
+    const action = seedLegacyAction();
     clock.advanceSeconds(STONE.actionSeconds + 1);
     db.sqlite
       .prepare(

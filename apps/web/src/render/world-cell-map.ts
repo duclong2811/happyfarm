@@ -115,6 +115,8 @@ export interface WorldCellMapInput {
   }[];
   /** Cells the farm's own rows occupy: a crop or a tree standing on an owned tile. */
   readonly plantedTiles: readonly TileCoordinate[];
+  /** Server-owned natural resource nodes, which occupy a cell without becoming farm production. */
+  readonly resourceNodes?: readonly TileCoordinate[];
   readonly scenery: readonly CellScenerySource[];
   /** The road network's samples, as the renderer draws them. */
   readonly roads: readonly {
@@ -235,6 +237,7 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
   const frame = worldFrame(input.layout.pitch);
   const buildings = buildingCells(frame);
   const planted = new Set(input.plantedTiles.map((tile) => cellKey(tile.x, tile.y)));
+  const resources = new Set((input.resourceNodes ?? []).map((tile) => cellKey(tile.x, tile.y)));
   const owned = new Set(input.tiles.map((tile) => cellKey(tile.x, tile.y)));
   const built = new Set<string>();
   for (const construction of input.constructions) {
@@ -357,6 +360,8 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
           ? "BUILDING"
           : plantedHere
             ? "PRODUCTION"
+            : resources.has(key)
+              ? "RESOURCE"
             : sceneryKind === undefined
               ? "EMPTY"
               : "SCENERY";
@@ -369,13 +374,11 @@ export function buildWorldCellMap(input: WorldCellMapInput, island: TerrainShape
       // crater; a beach and the volcano's flanks do. Scenery never blocks, because a flower or a bush
       // must not make walking annoying - and a tree's trunk is already a collision circle.
       const walkable = capabilities.includes("WALK");
-      // The capability the land-use rule allows, narrowed to the land the server can actually grant:
-      // advertising a crop on ground the farm has no tile for would be a lie the client tells the
-      // player and the server then refuses. It is the *ownership* that narrows it, not the rectangle
-      // the catalogue could one day sell: locked plots are land nobody has yet.
+      // The capability the land-use rule allows. Ownership is deliberately *not* consulted: freeform
+      // development (V14.5.1B) makes a crop offer a purchase-and-plant on any workable cell, so the
+      // ground's own answer is the honest one and the server sells whatever land the action needs.
       const allowed = productionCapabilityFor(terrain, zone);
-      const capability: WorldCell["productionCapability"] =
-        allowed === "CROP" && !owned.has(key) ? "NONE" : allowed;
+      const capability: WorldCell["productionCapability"] = allowed;
       // What the island keeps for itself: a plot a later building is held for, and the furnished
       // clearings the composition layer dresses. Not an economic district - these are places the
       // island's own plan uses, and the player is not the one who decides them.

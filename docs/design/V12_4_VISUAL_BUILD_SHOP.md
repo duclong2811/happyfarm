@@ -1,5 +1,9 @@
 # V12.4: the visual build shop, asset thumbnails, and natural dirt roads
 
+Current presentation update: see [Build Shop visual rescue](build-shop-experiments/README.md).
+It supersedes the historical layout/card styling below, retains the shared thumbnail pipeline,
+and records the outstanding browser visual QA.
+
 Status: design of record for the V12.4 visual pass. Read this before changing the build panel, the
 thumbnail renderer, the placement preview, or the road's surface.
 

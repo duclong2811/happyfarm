@@ -3,14 +3,14 @@ import { FarmTileService } from "@happy-farm/application";
 import type {
   Clock,
   FarmMemberRepository,
-  FarmTileRepository
+  FarmTileRepository,
+  TileTerrainLookup
 } from "@happy-farm/application";
 import type {
   FarmId,
   FarmMember,
   FarmTile,
-  PlayerId,
-  UnlockedLandPolicy
+  PlayerId
 } from "@happy-farm/domain";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
@@ -27,10 +27,13 @@ class OwnerMemberships implements FarmMemberRepository {
   }
 }
 
-class ConfiguredLand implements UnlockedLandPolicy {
-  constructor(private readonly unlocked: boolean) {}
-  isUnlocked(): Promise<boolean> {
-    return Promise.resolve(this.unlocked);
+/** Natural dry land, or ground the island refuses. */
+class ConfiguredLand implements TileTerrainLookup {
+  constructor(private readonly usable: boolean) {}
+  classify(): { terrain: "LAND" | "WATER"; shallowWater: boolean; protectedGround: boolean } {
+    return this.usable
+      ? { terrain: "LAND", shallowWater: false, protectedGround: false }
+      : { terrain: "WATER", shallowWater: false, protectedGround: false };
   }
 }
 

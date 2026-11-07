@@ -175,6 +175,13 @@ describe("tree selection", () => {
     );
     expect(ready.canHarvestTree).toBe(true);
     expect(ready.canRemoveTree).toBe(true);
+
+    const depleted = describeSelection(
+      selectionInput({ trees: [tree(0, 0, { phase: "DEPLETED", ready: false, readyAt: null, secondsUntilReady: 0 })] })
+    );
+    expect(depleted.canHarvestTree).toBe(false);
+    expect(depleted.canRemoveTree).toBe(true);
+    expect(depleted.remainingSeconds).toBe(0);
   });
 
   it("carries the tree's own identity and revision, never a display name", () => {
@@ -230,6 +237,8 @@ describe("tree translations", () => {
       "dock.plantTree",
       "dock.removeTree",
       "dock.removeTree.confirm",
+      "dock.clearStump",
+      "dock.clearStump.confirm",
       "dock.saplingCount",
       "dock.noSapling",
       "plant.crops",
@@ -237,12 +246,15 @@ describe("tree translations", () => {
       "tree.state.GROWING",
       "tree.state.READY",
       "tree.state.REGROWING",
+      "tree.state.DEPLETED",
       "selection.tree.title",
       "selection.tree.growingDetail",
       "selection.tree.readyDetail",
       "selection.tree.regrowingDetail",
+      "selection.tree.depletedDetail",
       "status.plantedTree",
       "status.removedTree",
+      "status.clearedStump",
       "error.TREE_NOT_READY",
       "error.TREE_NOT_FOUND",
       "error.TREE_LEVEL_REQUIRED"

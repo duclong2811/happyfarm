@@ -1,0 +1,239 @@
+{
+  "schemaVersion": 1,
+  "themeId": "happyfarm-v2-vibrant-cozy-farm",
+  "status": "candidate",
+  "note": "All candidates, NOT production approved. Independent layered original vector art + RGBA exports. Some card states fixed-ratio decor.",
+  "assets": [
+    {
+      "id": "panel.shell",
+      "kind": "nine_slice",
+      "file": "export/panel-shell.png",
+      "density": 2,
+      "capInsets": {
+        "top": 130,
+        "right": 150,
+        "bottom": 150,
+        "left": 150
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/panel-shell.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "panel.header",
+      "kind": "nine_slice",
+      "file": "export/panel-header.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 110,
+        "bottom": 60,
+        "left": 110
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/panel-header.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.primary.normal",
+      "kind": "nine_slice",
+      "file": "export/button-primary-normal.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-primary-normal.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.primary.hover",
+      "kind": "nine_slice",
+      "file": "export/button-primary-hover.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-primary-hover.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.primary.pressed",
+      "kind": "nine_slice",
+      "file": "export/button-primary-pressed.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-primary-pressed.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.primary.disabled",
+      "kind": "nine_slice",
+      "file": "export/button-primary-disabled.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-primary-disabled.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.secondary.normal",
+      "kind": "nine_slice",
+      "file": "export/button-secondary-normal.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-secondary-normal.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.secondary.hover",
+      "kind": "nine_slice",
+      "file": "export/button-secondary-hover.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-secondary-hover.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.secondary.pressed",
+      "kind": "nine_slice",
+      "file": "export/button-secondary-pressed.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-secondary-pressed.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "button.secondary.disabled",
+      "kind": "nine_slice",
+      "file": "export/button-secondary-disabled.png",
+      "density": 2,
+      "capInsets": {
+        "top": 58,
+        "right": 92,
+        "bottom": 67,
+        "left": 92
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/button-secondary-disabled.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    },
+    {
+      "id": "card.item.normal",
+      "kind": "decor",
+      "file": "export/card-item-normal.png",
+      "density": 2,
+      "alphaRequired": true,
+      "sourceFile": "source/card-item-normal.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Fixed-ratio source; use as independent decor with DOM overlays"
+    },
+    {
+      "id": "card.item.hover",
+      "kind": "decor",
+      "file": "export/card-item-hover.png",
+      "density": 2,
+      "alphaRequired": true,
+      "sourceFile": "source/card-item-hover.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Fixed-ratio source; use as independent decor with DOM overlays"
+    },
+    {
+      "id": "card.item.selected",
+      "kind": "decor",
+      "file": "export/card-item-selected.png",
+      "density": 2,
+      "alphaRequired": true,
+      "sourceFile": "source/card-item-selected.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Fixed-ratio source; use as independent decor with DOM overlays"
+    },
+    {
+      "id": "card.item.disabled",
+      "kind": "decor",
+      "file": "export/card-item-disabled.png",
+      "density": 2,
+      "alphaRequired": true,
+      "sourceFile": "source/card-item-disabled.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Fixed-ratio source; use as independent decor with DOM overlays"
+    },
+    {
+      "id": "badge.price",
+      "kind": "nine_slice",
+      "file": "export/badge-price.png",
+      "density": 2,
+      "capInsets": {
+        "top": 48,
+        "right": 106,
+        "bottom": 46,
+        "left": 106
+      },
+      "alphaRequired": true,
+      "sourceFile": "source/badge-price.svg",
+      "license": "project-owned",
+      "status": "candidate",
+      "notes": "Pixel source insets; verify seams and CSS border-image-width in actual game."
+    }
+  ]
+}

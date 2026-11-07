@@ -137,9 +137,9 @@ describe("the character view", () => {
     expect(view.ready()).toBe(true);
   });
 
-  it("stays playable while the model is still loading, and reports a request that hangs", async () => {
+  it("stays playable while the model is still loading, and reports a slow request without a failure", async () => {
     // A loader that never settles: the placeholder keeps being drawn, the world-facing state is
-    // unaffected, and the only consequence is one line of diagnostics after the timeout.
+    // unaffected, and the timeout is only a slow-load diagnostic - not a failure raised to the UI.
     const { view, problems, lines } = await loadedView({ request: false, loadTimeoutMs: 0 });
     view.load({ loadModel: () => new Promise<Group | null>(() => undefined), animationsOf: () => [] });
     expect(view.ready()).toBe(false);
@@ -148,8 +148,25 @@ describe("the character view", () => {
     expect(view.root.visible).toBe(true);
     // The timeout is a report, not a failure: nothing is cancelled and nothing is retried.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(problems.some((line) => line.includes("had not loaded"))).toBe(true);
+    expect(problems).toHaveLength(0);
+    expect(lines.some((line) => line.includes("slow load") && line.includes("placeholder remains active"))).toBe(true);
     expect(lines.some((line) => line.startsWith("[character] loading "))).toBe(true);
+  });
+
+  it("swaps in a model that arrives after the slow-load diagnostic", async () => {
+    let resolve: ((model: Group) => void) | undefined;
+    const delayed = new Promise<Group>((complete) => { resolve = complete; });
+    const { view, fallback, problems, lines } = await loadedView({ request: false, loadTimeoutMs: 0 });
+    view.load({ loadModel: () => delayed, animationsOf: () => clips() });
+    await new Promise((wait) => setTimeout(wait, 5));
+    expect(view.usingFallback()).toBe(true);
+    expect(problems).toHaveLength(0);
+    resolve?.(syntheticModel());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(view.ready()).toBe(true);
+    expect(fallback.visible).toBe(false);
+    expect(lines.some((line) => line.startsWith("[character] loaded "))).toBe(true);
   });
 
   it("draws the fallback until the model arrives, then swaps to it", async () => {

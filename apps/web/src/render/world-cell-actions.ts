@@ -149,6 +149,8 @@ export function cellLandKey(cell: WorldCell): CellLandKey {
       return "cell.land.wild";
     case "NONE":
       return "cell.land.open";
+    default:
+      return "cell.land.open";
   }
 }
 
@@ -169,5 +171,7 @@ export function cellActionKey(id: CellActionId): string {
       return "cell.action.mine";
     case "AQUACULTURE":
       return "cell.action.aquaculture";
+    default:
+      return "cell.action.move";
   }
 }

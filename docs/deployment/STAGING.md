@@ -21,9 +21,13 @@ custom domain is the one to hand to testers: it is easier to type, and it is ver
 is scoped to the hostname it was created on (the cookie carries no `Domain`), so pick one URL per
 playtest - see the last section.
 
-Current deployment: Worker `happy-farm-staging`, version `24b24d4c-35bf-4d0b-9912-9be859c548fd`,
-deployed 2026-10-02 from the V14.3 Farm Market commit, bundles `assets/index-AI5KPUr1.js` and
-`assets/index-wmaDqDVj.css`. (V14.2 was `67678bb7-7dbd-4896-a343-34841cde3180`, V14.1
+Current deployment: Worker `happy-farm-staging`, version `1d703a89-f496-4ed6-ac84-328db7e9361c`,
+deployed 2026-10-04T06:26Z for **V16.2.2D2 (the rice/replanting-crop Auto vertical slice)**. Migrations
+`0025_assignment_auto_purchase.sql` and `0026_auto_execution.sql` were applied in the same pass, and the
+remote smoke ran the whole lifecycle on staging - load, walk, plant, authoritative growth, harvest into
+cargo, return and replant - recorded in `docs/qa/V16_2_2D2_RICE_AUTO_VERTICAL.md`. The version it
+replaced, `7a4f41c6-a2e8-456d-8c6b-1eb1737050ab` (V16.2.2D1), is the rollback target. (Earlier: V16.2.1
+baseline `879a109b-abea-4e81-9fe8-ceceb7871eed`, V14.2 `67678bb7-7dbd-4896-a343-34841cde3180`, V14.1
 `6d8b7e83-0b60-43ec-ac61-2ffd6d1a7031`, V13.6.3 `784f4e7f-607f-4106-92e9-34126df471d2`, V13.6.2
 `174b4e39-f0dd-46e6-84e3-de0b97c9ed01`, V13.6.1 `7df79218-2a86-4435-9cd9-a399f9415c93`.)
 
@@ -116,8 +120,8 @@ section stays as the record of what was needed and how it was checked.
 | Binding | `DB` |
 | Database | `happy-farm-staging` |
 | Id | `acc598c9-e726-46c8-b1a3-23e5b6a42d52` (committed in `wrangler.staging.toml`; not a secret) |
-| Migrations | **0001 - 0015 applied** |
-| Data after the V13.6.2 smoke test | 7 players, 7 identities (2 of them guest), 6 farms - nothing reset |
+| Migrations | **0001 - 0020 applied** (0016 - 0020 applied 2026-10-04, the V16.2.1 baseline) |
+| Data after the V16.2.1 baseline deploy | 22 players, 22 identities, 12 farms, 22 warehouses, 33 inventory rows - nothing reset |
 
 V13.6.1 added `0014_one_farm_per_player.sql`: a unique index on `farms(owner_player_id)`, so a phone
 that retries "create my farm" cannot end up with two farms - and with its gold and crops on the one it

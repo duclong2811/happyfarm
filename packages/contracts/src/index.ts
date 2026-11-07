@@ -4,6 +4,7 @@ const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}
 
 export const PlayerIdSchema = z.string().regex(new RegExp(`^player_${UUID_PATTERN}$`, "i"));
 export const FarmIdSchema = z.string().regex(new RegExp(`^farm_${UUID_PATTERN}$`, "i"));
+export const ProductionAssignmentIdSchema = z.string().regex(new RegExp(`^production_assignment_${UUID_PATTERN}$`, "i"));
 export const CropInstanceIdSchema = z.string().regex(new RegExp(`^cropinst_${UUID_PATTERN}$`, "i"));
 export const CropDefinitionIdSchema = z.string().regex(/^crop_[a-z0-9]+(?:_[a-z0-9]+)*$/);
 export const TreeInstanceIdSchema = z.string().regex(new RegExp(`^treeinst_${UUID_PATTERN}$`, "i"));
@@ -163,7 +164,43 @@ export const PlantCropRequestSchema = z
     cropDefinitionId: CropDefinitionIdSchema,
     x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
     y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
-    expectedTileVersion: z.number().int().positive()
+    /** Absent on a fresh natural-land cell: there is no tile row to version yet (V14.5.2). */
+    expectedTileVersion: z.number().int().positive().optional()
+  })
+  .strict();
+
+/** A bounded group for planting one crop definition across selected cells. */
+export const PlantCropAreaCellSchema = z
+  .object({
+    x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
+    y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
+    expectedTileVersion: z.number().int().positive().optional()
+  })
+  .strict();
+
+export const PlantCropAreaRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    cropDefinitionId: CropDefinitionIdSchema,
+    cells: z.array(PlantCropAreaCellSchema).min(1).max(25)
+  })
+  .strict();
+
+export const PlantCropAreaResultDTOSchema = z
+  .object({
+    x: z.number().int(),
+    y: z.number().int(),
+    status: z.enum(["PLANTED", "SKIPPED"]),
+    cropInstanceId: CropInstanceIdSchema.nullable(),
+    reason: z.enum(["OCCUPIED", "NOT_PLANTABLE", "STALE", "NO_SEEDS", "LEVEL", "NOT_FOUND"]).nullable()
+  })
+  .strict();
+
+export const PlantCropAreaGroupResponseSchema = z
+  .object({
+    results: z.array(PlantCropAreaResultDTOSchema).max(25),
+    plantedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative()
   })
   .strict();
 
@@ -264,7 +301,9 @@ export const GetTreeDefinitionsResponseSchema = z
  * without reimplementing the rule or trusting a local clock. `lastHarvestedAt` is null until the
  * first harvest, which is how a client tells first growth from regrowth.
  */
-export const TREE_PHASES = ["GROWING", "READY", "REGROWING"] as const;
+export const TREE_PHASES = ["GROWING", "READY", "REGROWING", "DEPLETED"] as const;
+export const TREE_STORAGE_STATES = ["ACTIVE", "STORED"] as const;
+const TreeRotationSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
 
 export const TreeStateDTOSchema = z
   .object({
@@ -274,13 +313,18 @@ export const TreeStateDTOSchema = z
     tileY: z.number().int(),
     plantedAt: z.iso.datetime(),
     lastHarvestedAt: z.iso.datetime().nullable(),
-    readyAt: z.iso.datetime(),
+    readyAt: z.iso.datetime().nullable(),
     secondsUntilReady: z.number().int().nonnegative(),
     ready: z.boolean(),
     phase: z.enum(TREE_PHASES),
     growthStage: z.number().int().nonnegative(),
     growthProgress: z.number().min(0).max(1),
-    version: z.number().int().positive()
+    version: z.number().int().positive(),
+    /** Optional for compatibility with clients reading a pre-0036 Worker; current Workers always send it. */
+    storageState: z.enum(TREE_STORAGE_STATES).optional(),
+    rotation: TreeRotationSchema.optional(),
+    storedAt: z.iso.datetime().nullable().optional(),
+    storedRemainingSeconds: z.number().int().nonnegative().nullable().optional()
   })
   .strict();
 
@@ -297,7 +341,43 @@ export const PlantTreeRequestSchema = z
     treeDefinitionId: TreeDefinitionIdSchema,
     x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
     y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
-    expectedTileVersion: z.number().int().positive()
+    /** Absent on a fresh natural-land cell: there is no tile row to version yet (V14.5.2). */
+    expectedTileVersion: z.number().int().positive().optional()
+  })
+  .strict();
+
+/** A bounded group for planting one tree definition across selected cells. */
+export const PlantTreeAreaCellSchema = z
+  .object({
+    x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
+    y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
+    expectedTileVersion: z.number().int().positive().optional()
+  })
+  .strict();
+
+export const PlantTreeAreaRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    treeDefinitionId: TreeDefinitionIdSchema,
+    cells: z.array(PlantTreeAreaCellSchema).min(1).max(25)
+  })
+  .strict();
+
+export const PlantTreeAreaResultDTOSchema = z
+  .object({
+    x: z.number().int(),
+    y: z.number().int(),
+    status: z.enum(["PLANTED", "SKIPPED"]),
+    treeInstanceId: TreeInstanceIdSchema.nullable(),
+    reason: z.enum(["OCCUPIED", "NOT_PLANTABLE", "STALE", "NO_SEEDS", "LEVEL", "NOT_FOUND"]).nullable()
+  })
+  .strict();
+
+export const PlantTreeAreaGroupResponseSchema = z
+  .object({
+    results: z.array(PlantTreeAreaResultDTOSchema).max(25),
+    plantedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative()
   })
   .strict();
 
@@ -336,6 +416,32 @@ export const RemoveTreeRequestSchema = z
 export const RemoveTreeResponseSchema = z
   .object({ removed: z.object({ treeInstanceId: TreeInstanceIdSchema }).strict() })
   .strict();
+
+const TreeManagementBaseSchema = z
+  .object({ requestId: RequestIdSchema, expectedTreeVersion: z.number().int().positive() })
+  .strict();
+
+export const MoveTreeRequestSchema = TreeManagementBaseSchema.extend({
+  x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
+  y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
+  rotation: TreeRotationSchema,
+  expectedTileVersion: z.number().int().positive().optional()
+}).strict();
+
+export const RotateTreeRequestSchema = TreeManagementBaseSchema.extend({
+  rotation: TreeRotationSchema
+}).strict();
+
+export const StoreTreeRequestSchema = TreeManagementBaseSchema;
+
+export const RestoreTreeRequestSchema = TreeManagementBaseSchema.extend({
+  x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
+  y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
+  rotation: TreeRotationSchema,
+  expectedTileVersion: z.number().int().positive().optional()
+}).strict();
+
+export const TreeManagementResponseSchema = z.object({ tree: TreeStateDTOSchema }).strict();
 
 export const InventoryEntryDTOSchema = z
   .object({
@@ -376,8 +482,79 @@ export const HarvestCropResponseSchema = z
   .object({ harvest: HarvestResultDTOSchema, progression: XpAwardDTOSchema })
   .strict();
 
+/** A bounded retryable group for ready crops in the estate-management area tool. */
+export const HarvestCropAreaCandidateSchema = z
+  .object({ cropInstanceId: CropInstanceIdSchema, expectedCropVersion: z.number().int().positive() })
+  .strict();
+
+export const HarvestCropAreaRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    crops: z.array(HarvestCropAreaCandidateSchema).min(1).max(25)
+  })
+  .strict();
+
+export const HarvestCropAreaResultDTOSchema = z
+  .object({
+    cropInstanceId: CropInstanceIdSchema,
+    status: z.enum(["HARVESTED", "SKIPPED"]),
+    itemDefinitionId: ItemDefinitionIdSchema.nullable(),
+    quantityAdded: z.number().int().nonnegative(),
+    reason: z.enum(["NOT_READY", "INVENTORY_FULL", "WAREHOUSE_FULL", "STALE", "NOT_OWNED", "NOT_FOUND", "NOT_ACTIVE"]).nullable()
+  })
+  .strict();
+
+export const HarvestCropAreaGroupResponseSchema = z
+  .object({
+    results: z.array(HarvestCropAreaResultDTOSchema).max(25),
+    harvestedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    products: z.array(z.object({ itemDefinitionId: ItemDefinitionIdSchema, quantity: z.number().int().positive() }).strict())
+  })
+  .strict();
+
 export const HarvestTreeResponseSchema = z
   .object({ harvest: TreeHarvestResultDTOSchema, progression: XpAwardDTOSchema })
+  .strict();
+
+/** A bounded retryable group for repeating fruit trees only. */
+export const HarvestTreeAreaCandidateSchema = z
+  .object({ treeInstanceId: TreeInstanceIdSchema, expectedTreeVersion: z.number().int().positive() })
+  .strict();
+
+export const HarvestTreeAreaRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    trees: z.array(HarvestTreeAreaCandidateSchema).min(1).max(25)
+  })
+  .strict();
+
+export const HarvestTreeAreaResultDTOSchema = z
+  .object({
+    treeInstanceId: TreeInstanceIdSchema,
+    status: z.enum(["HARVESTED", "SKIPPED"]),
+    itemDefinitionId: ItemDefinitionIdSchema.nullable(),
+    quantityAdded: z.number().int().nonnegative(),
+    reason: z.enum([
+      "NOT_READY",
+      "NOT_REPEATABLE",
+      "INVENTORY_FULL",
+      "WAREHOUSE_FULL",
+      "STALE",
+      "NOT_OWNED",
+      "NOT_FOUND",
+      "NOT_ACTIVE"
+    ]).nullable()
+  })
+  .strict();
+
+export const HarvestTreeAreaGroupResponseSchema = z
+  .object({
+    results: z.array(HarvestTreeAreaResultDTOSchema).max(25),
+    harvestedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    products: z.array(z.object({ itemDefinitionId: ItemDefinitionIdSchema, quantity: z.number().int().positive() }).strict())
+  })
   .strict();
 export const GetProgressionResponseSchema = z
   .object({ progression: PlayerProgressionDTOSchema })
@@ -442,7 +619,8 @@ export const BuildCatalogEntryDTOSchema = z
       "MONUMENT",
       "FENCE",
       "LIGHTING",
-      "WATERFRONT"
+      "WATERFRONT",
+      "AQUACULTURE"
     ]),
     displayNameKey: z.string().min(1).max(120),
     /**
@@ -559,6 +737,20 @@ export const ConstructionRotationSchema = z.union([z.literal(0), z.literal(1), z
  */
 export const ConstructionIdSchema = z.string().regex(/^construct_[0-9a-f-]{36}$/i);
 
+/** Server-owned forestry lifecycle attached to an editable tree construction. */
+export const ForestryConstructionStateDTOSchema = z
+  .object({
+    constructionId: ConstructionIdSchema,
+    entryId: z.string().regex(/^(place_[a-z0-9]+(?:_[a-z0-9]+)*|world\.[a-z0-9]+(?:_[a-z0-9]+)*)$/),
+    status: z.enum(["READY", "DEPLETED"]),
+    dropItemDefinitionId: ItemDefinitionIdSchema,
+    dropQuantity: z.number().int().positive(),
+    regenerationAt: z.iso.datetime().nullable(),
+    version: z.number().int().positive()
+  })
+  .strict();
+export type ForestryConstructionStateDTO = z.infer<typeof ForestryConstructionStateDTOSchema>;
+
 /**
  * A construction the player has actually built.
  *
@@ -616,10 +808,72 @@ export const ConstructionDTOSchema = z
      * A move, a turn or a removal is applied only if the version the client is editing is still the
      * version on the server, so two players (or two tabs) cannot both move the same barn.
      */
-    version: z.number().int().min(1)
+    version: z.number().int().min(1),
+    /** Present only for persisted pine/broadleaf trees that have a server forestry lifecycle. */
+    forestry: ForestryConstructionStateDTOSchema.optional()
   })
   .strict();
 export type ConstructionDTO = z.infer<typeof ConstructionDTOSchema>;
+
+export const ForestryConstructionChopRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedForestryVersion: z.number().int().positive()
+  })
+  .strict();
+export type ForestryConstructionChopRequest = z.infer<typeof ForestryConstructionChopRequestSchema>;
+
+export const ForestryConstructionChopResponseSchema = z
+  .object({
+    constructionId: ConstructionIdSchema,
+    itemDefinitionId: ItemDefinitionIdSchema,
+    quantityAdded: z.number().int().positive(),
+    state: ForestryConstructionStateDTOSchema,
+    progression: XpAwardDTOSchema
+  })
+  .strict();
+export type ForestryConstructionChopResponse = z.infer<typeof ForestryConstructionChopResponseSchema>;
+
+export const AquaculturePondStatusSchema = z.enum(["EMPTY", "STOCKED", "GROWING", "READY"]);
+export const AquaculturePondDTOSchema = z
+  .object({
+    pondId: ConstructionIdSchema,
+    farmId: FarmIdSchema,
+    itemDefinitionId: ItemDefinitionIdSchema.nullable(),
+    status: AquaculturePondStatusSchema,
+    stockedAt: z.iso.datetime().nullable(),
+    readyAt: z.iso.datetime().nullable(),
+    capacity: z.number().int().nonnegative(),
+    stockedCount: z.number().int().nonnegative(),
+    growingCount: z.number().int().nonnegative(),
+    readyCount: z.number().int().nonnegative(),
+    availableCapacity: z.number().int().nonnegative(),
+    cohorts: z.array(z.object({
+      cohortId: z.string(),
+      itemDefinitionId: ItemDefinitionIdSchema,
+      quantity: z.number().int().positive(),
+      stockedAt: z.iso.datetime(),
+      readyAt: z.iso.datetime()
+    }).strict()),
+    version: z.number().int().nonnegative()
+  })
+  .strict();
+export type AquaculturePondDTO = z.infer<typeof AquaculturePondDTOSchema>;
+
+export const AquaculturePondCommandSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedPondVersion: z.number().int().nonnegative(),
+    quantity: z.number().int().positive().max(10_000)
+  })
+  .strict();
+export type AquaculturePondCommand = z.infer<typeof AquaculturePondCommandSchema>;
+export const GetAquaculturePondsResponseSchema = z
+  .object({ ponds: z.array(AquaculturePondDTOSchema) })
+  .strict();
+export const AquaculturePondResponseSchema = z
+  .object({ pond: AquaculturePondDTOSchema })
+  .strict();
 
 /**
  * A placement command: what to build, where, and which way round.
@@ -815,6 +1069,7 @@ export const ShopEntryDTOSchema = z
     shopEntryId: ShopEntryIdSchema,
     itemDefinitionId: ItemDefinitionIdSchema,
     itemDisplayNameKey: z.string().min(1).max(120),
+    shopDisplayNameKey: z.string().min(1).max(120).nullable(),
     category: ItemCategorySchema,
     currencyId: CurrencyDefinitionIdSchema,
     currencyDisplayNameKey: z.string().min(1).max(120),
@@ -890,6 +1145,76 @@ export const ExpandFarmResultDTOSchema = z
 
 export const ExpandFarmResponseSchema = z.object({ expansion: ExpandFarmResultDTOSchema }).strict();
 
+/**
+ * How many cells one land quote or purchase may name.
+ *
+ * A whole plot cohort fits, a multi-cell building footprint fits many times over, and the cap keeps
+ * the payload and the write bounded. Mirrors `MAX_LAND_CELLS_PER_REQUEST` in `@happy-farm/application`.
+ */
+export const MAX_LAND_CELLS_PER_REQUEST = 256;
+
+/**
+ * The land-quote reasons, as the wire spells them.
+ *
+ * The wire's own copy of `LAND_CELL_REASONS` in `@happy-farm/domain`, kept here because the browser
+ * bundle may not import the domain package. `tests/contracts/land-validation.test.ts` pins the two
+ * lists equal, so the server cannot emit a reason the web parser rejects - the V14.5.1C bug was
+ * exactly that drift (a stale `NOT_ADJACENT`).
+ */
+export const LAND_CELL_QUOTE_REASONS = [
+  "ELIGIBLE",
+  "ALREADY_OWNED",
+  "NOT_SELLABLE",
+  "NOT_DEVELOPABLE",
+  "LEVEL_REQUIRED"
+] as const;
+
+export const LandCellQuoteDTOSchema = z
+  .object({
+    x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
+    y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y),
+    eligible: z.boolean(),
+    reason: z.enum(LAND_CELL_QUOTE_REASONS),
+    plotIndex: z.number().int().min(1).max(MAX_PLOT_INDEX).nullable(),
+    price: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    currencyId: CurrencyDefinitionIdSchema.nullable()
+  })
+  .strict();
+
+export const LandQuoteDTOSchema = z
+  .object({
+    cells: z.array(LandCellQuoteDTOSchema),
+    totalPrice: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    currencyId: CurrencyDefinitionIdSchema.nullable()
+  })
+  .strict();
+
+export const QuoteLandCellsRequestSchema = z
+  .object({
+    cells: z.array(TileCoordinateSchema).min(1).max(MAX_LAND_CELLS_PER_REQUEST)
+  })
+  .strict();
+
+export const QuoteLandCellsResponseSchema = z.object({ quote: LandQuoteDTOSchema }).strict();
+
+export const BuyLandCellsRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    cells: z.array(TileCoordinateSchema).min(1).max(MAX_LAND_CELLS_PER_REQUEST)
+  })
+  .strict();
+
+export const BuyLandCellsResultDTOSchema = z
+  .object({
+    cells: z.array(TileCoordinateSchema).min(1).max(MAX_LAND_CELLS_PER_REQUEST),
+    currencyId: CurrencyDefinitionIdSchema,
+    amountSpent: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    newBalance: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+  })
+  .strict();
+
+export const BuyLandCellsResponseSchema = z.object({ purchase: BuyLandCellsResultDTOSchema }).strict();
+
 /** One material the next warehouse upgrade consumes. */
 export const WarehouseMaterialCostSchema = z
   .object({
@@ -913,11 +1238,15 @@ export const WarehouseUpgradeCostDTOSchema = z
 export const WarehouseStatusDTOSchema = z
   .object({
     tier: z.number().int().min(0),
+    /** The tier's own name, from game data: the client never keeps a tier table of its own. */
+    tierDisplayNameKey: z.string().regex(/^warehouse\.tier\.[a-z0-9_]+\.name$/),
     capacity: z.number().int().nonnegative(),
     used: z.number().int().nonnegative(),
     available: z.number().int().nonnegative(),
     overCapacity: z.boolean(),
     nextTier: z.number().int().min(0).nullable(),
+    /** The capacity the next tier would hold, or null at the top of the ladder. */
+    nextCapacity: z.number().int().nonnegative().nullable(),
     nextUpgrade: WarehouseUpgradeCostDTOSchema.nullable()
   })
   .strict();
@@ -925,6 +1254,590 @@ export const WarehouseStatusDTOSchema = z
 export const GetWarehouseResponseSchema = z.object({ warehouse: WarehouseStatusDTOSchema }).strict();
 
 export const UpgradeWarehouseRequestSchema = z.object({ requestId: z.string().min(8).max(100) }).strict();
+export const SettleProductionAssignmentRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+export const SettleProductionAssignmentResponseSchema = z.object({
+  assignmentId: ProductionAssignmentIdSchema,
+  producedQuantity: z.number().int().nonnegative(),
+  settledThrough: z.string().min(1),
+  blockedReason: z.enum(["WAREHOUSE_FULL", "SOURCE_DEPLETED", "DISABLED", "NOT_READY"]).nullable(),
+  sourceDepleted: z.boolean(),
+  sourceRemaining: z.number().int().nonnegative().nullable()
+}).strict();
+export type SettleProductionAssignmentResponse = z.infer<typeof SettleProductionAssignmentResponseSchema>;
+export const ReconcileFarmProductionRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+export const ReconcileFarmProductionResponseSchema = z.object({
+  settlements: z.array(SettleProductionAssignmentResponseSchema),
+  producedItems: z.array(z.object({ itemDefinitionId: z.string().min(1), quantity: z.number().int().nonnegative() }).strict()),
+  blocked: z.array(z.object({ assignmentId: z.string().min(1), reason: z.string().min(1) }).strict())
+}).strict();
+export type ReconcileFarmProductionResponse = z.infer<typeof ReconcileFarmProductionResponseSchema>;
+export const OrchardVisualTargetSnapshotSchema = z.object({ treeId: z.string().min(1), treeDefinitionId: z.literal("tree_apple"), tileX: z.number().int(), tileY: z.number().int(), lifecycleState: z.literal("READY") }).strict();
+export const OrchardVisualAssignmentSnapshotSchema = z.object({ actorJobId: z.string().min(1), actorId: z.string().min(1), farmId: z.string().min(1), workSkillId: z.literal("orchard.apple"), executionMode: z.literal("RATE_PRODUCTION"), workArea: z.object({ id: z.string().min(1), cells: z.array(z.object({ x: z.number().int(), y: z.number().int() }).strict()) }).strict(), targets: z.array(OrchardVisualTargetSnapshotSchema) }).strict();
+export const GetOrchardVisualSnapshotResponseSchema = z.object({ assignments: z.array(OrchardVisualAssignmentSnapshotSchema) }).strict();
+export type OrchardVisualTargetSnapshot = z.infer<typeof OrchardVisualTargetSnapshotSchema>;
+export type OrchardVisualAssignmentSnapshot = z.infer<typeof OrchardVisualAssignmentSnapshotSchema>;
+
+/**
+ * Work Areas: player-named groups of cells a future Job may be asked to work.
+ *
+ * The wire carries a name, a kind and the cells the player selected, plus the version an edit was made
+ * against. It never carries an owner, a role, a farm, a zone or a server version the client would be
+ * trusted to be right about: every one of those is derived server-side from the authenticated actor
+ * and the route's farm. A display name is text, never identity, so two areas may honestly share one.
+ */
+export const WORK_AREA_KINDS = ["FARM", "ORCHARD", "FORESTRY", "MINING", "LIVESTOCK", "AQUACULTURE", "FISHERY"] as const;
+export const WorkAreaKindSchema = z.enum(WORK_AREA_KINDS);
+
+/**
+ * The bounded shape of a work area.
+ *
+ * Kept equal to `packages/domain`'s constants by `tests/contracts/work-area-contract.test.ts`; the
+ * client repeats them only so the editor can stop a selection before it is refused.
+ */
+export const MAX_WORK_AREA_CELLS = 256;
+export const MAX_WORK_AREA_NAME_LENGTH = 40;
+
+export const WorkAreaIdSchema = z.string().regex(new RegExp(`^workarea_${UUID_PATTERN}$`, "i"));
+
+/** One member cell. A cell is a farm-tile coordinate; membership is a list of these, never a rectangle. */
+export const WorkAreaCellSchema = z
+  .object({
+    x: z.number().int().min(MIN_TILE_X).max(MAX_TILE_X),
+    y: z.number().int().min(MIN_TILE_Y).max(MAX_TILE_Y)
+  })
+  .strict();
+
+/**
+ * A raw, untrimmed name.
+ *
+ * The bound is looser than the stored one on purpose: the server trims and normalises first, so a
+ * name with surrounding spaces is a legal request whose *stored* form must fit 40 characters. A name
+ * that is empty or all whitespace passes this schema and is refused by the server with a specific
+ * code, which is a message the panel can show.
+ */
+const WorkAreaNameInputSchema = z.string().min(1).max(80);
+const WorkAreaCellsInputSchema = z.array(WorkAreaCellSchema).min(1).max(MAX_WORK_AREA_CELLS);
+
+export const WorkAreaSummaryDTOSchema = z
+  .object({
+    workAreaId: WorkAreaIdSchema,
+    farmId: FarmIdSchema,
+    kind: WorkAreaKindSchema,
+    displayName: z.string().min(1).max(MAX_WORK_AREA_NAME_LENGTH),
+    // Existing areas may legitimately be empty while they are being configured. The write
+    // contracts still require at least one cell; this is only the read-side summary count.
+    cellCount: z.number().int().nonnegative(),
+    version: z.number().int().positive(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime()
+  })
+  .strict();
+
+export const WorkAreaDTOSchema = z
+  .object({
+    workAreaId: WorkAreaIdSchema,
+    farmId: FarmIdSchema,
+    kind: WorkAreaKindSchema,
+    displayName: z.string().min(1).max(MAX_WORK_AREA_NAME_LENGTH),
+    cells: z.array(WorkAreaCellSchema),
+    version: z.number().int().positive(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime()
+  })
+  .strict();
+
+export const ListWorkAreasResponseSchema = z.object({ workAreas: z.array(WorkAreaSummaryDTOSchema) }).strict();
+export const WorkAreaResponseSchema = z.object({ workArea: WorkAreaDTOSchema }).strict();
+
+export const CreateWorkAreaRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    kind: WorkAreaKindSchema,
+    name: WorkAreaNameInputSchema,
+    cells: WorkAreaCellsInputSchema
+  })
+  .strict();
+
+export const RenameWorkAreaRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    name: WorkAreaNameInputSchema,
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const ReplaceWorkAreaCellsRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    cells: WorkAreaCellsInputSchema,
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const DeleteWorkAreaRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const DeleteWorkAreaResponseSchema = z.object({ workAreaId: WorkAreaIdSchema }).strict();
+
+/**
+ * Actors and jobs: configuration of who should work where, never execution.
+ *
+ * The wire carries a work area, a profession and a *stable game-data target id*; it never carries an
+ * owner, a player, a control mode, a cost or a reward. The server derives the actor from the
+ * authenticated owner of the route's farm, and it resolves the target's display name itself - a
+ * translated label is never an authority, and never a key.
+ */
+export const ACTOR_KINDS = ["MAIN_CHARACTER", "NPC_WORKER", "VEHICLE", "SHIP"] as const;
+export const ActorKindSchema = z.enum(ACTOR_KINDS);
+
+export const CONTROL_MODES = ["PLAYER_CONTROLLED", "AUTO_CONTROLLED"] as const;
+export const ControlModeSchema = z.enum(CONTROL_MODES);
+
+export const ActorIdSchema = z.string().regex(new RegExp(`^actor_${UUID_PATTERN}$`, "i"));
+export const JobIdSchema = z.string().regex(new RegExp(`^job_${UUID_PATTERN}$`, "i"));
+
+/** The professions a job may name - the same list a Work Area is named with. */
+export const JOB_KINDS = WORK_AREA_KINDS;
+export const JobKindSchema = WorkAreaKindSchema;
+
+export const MAX_JOBS_PER_ACTOR = 24;
+
+export const ActorDTOSchema = z
+  .object({
+    actorId: ActorIdSchema,
+    kind: ActorKindSchema,
+    /** Who decides what the actor does next. Toggled by the control route, never by a client field. */
+    controlMode: ControlModeSchema,
+    version: z.number().int().positive()
+  })
+  .strict();
+
+export const JobDTOSchema = z
+  .object({
+    jobId: JobIdSchema,
+    actorId: ActorIdSchema,
+    workAreaId: WorkAreaIdSchema,
+    kind: JobKindSchema,
+    /** The stable game-data id the job works towards: a crop, a tree or a resource. */
+    targetDefinitionId: z.string().min(1).max(120),
+    /** The target's name key, resolved server-side so the client keeps no catalogue of its own. */
+    targetDisplayNameKey: z.string().min(1).max(120),
+    /** 1 is first. Dense across one actor's jobs, which reordering keeps true. */
+    priority: z.number().int().positive().max(MAX_JOBS_PER_ACTOR),
+    enabled: z.boolean(),
+    /** This assignment's own supply policy: may Auto buy an input it is missing? Default false. */
+    autoPurchaseSupplies: z.boolean(),
+    /** May Auto fund a missing supply by selling from the whitelist below? Default false. */
+    autoFundingEnabled: z.boolean(),
+    /**
+     * The emergency-funding whitelist, in priority order: index 0 is sold first.
+     *
+     * Only items the authoritative shop catalogue buys appear here, and the list is bounded by the
+     * domain's MAX_AUTO_FUNDING_ITEMS.
+     */
+    fundingItems: z.array(ItemDefinitionIdSchema).max(8),
+    version: z.number().int().positive(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime()
+  })
+  .strict();
+
+export const GetWorkersResponseSchema = z
+  .object({ actor: ActorDTOSchema, jobs: z.array(JobDTOSchema) })
+  .strict();
+export const JobResponseSchema = z.object({ job: JobDTOSchema }).strict();
+export const JobsResponseSchema = z.object({ jobs: z.array(JobDTOSchema) }).strict();
+export const DeleteJobResponseSchema = z.object({ jobId: JobIdSchema }).strict();
+
+export const CreateJobRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    workAreaId: WorkAreaIdSchema,
+    kind: JobKindSchema,
+    targetDefinitionId: z.string().min(1).max(120)
+  })
+  .strict();
+
+export const UpdateJobTargetRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    targetDefinitionId: z.string().min(1).max(120),
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const SetJobEnabledRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    enabled: z.boolean(),
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const ReorderJobsRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    /** Every job the actor holds, exactly once, in the wanted order. */
+    orderedJobIds: z.array(JobIdSchema).max(MAX_JOBS_PER_ACTOR),
+    /** The actor's version, so two tabs cannot interleave their reorders. */
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const DeleteJobRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+/**
+ * Auto: the control switch, one assignment policy, and the plan.
+ *
+ * The wire carries intent and the version the client read; it never carries a control mode, an owner,
+ * a price, a capacity or an action. The server decides everything the plan contains, and the plan is
+ * *only* a plan - every action kind below is something a later slice will perform, never something
+ * this one does.
+ */
+export const SetActorControlRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    /** The intent, not the mode: the server maps it to AUTO_CONTROLLED / PLAYER_CONTROLLED. */
+    startAuto: z.boolean(),
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const ActorControlDTOSchema = z
+  .object({
+    actorId: ActorIdSchema,
+    controlMode: ControlModeSchema,
+    version: z.number().int().positive()
+  })
+  .strict();
+
+export const ActorControlResponseSchema = z.object({ actor: ActorControlDTOSchema }).strict();
+
+export const SetAssignmentPolicyRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    autoPurchaseSupplies: z.boolean(),
+    expectedVersion: z.number().int().positive(),
+    /**
+     * The emergency-funding policy, when the caller is changing it.
+     *
+     * `items` is the priority order: index 0 is sold first. Absent leaves funding untouched, so an
+     * older client that only knows Auto Purchase keeps working unchanged.
+     */
+    funding: z
+      .object({
+        enabled: z.boolean(),
+        items: z.array(ItemDefinitionIdSchema).max(8)
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
+/** The next-action vocabulary, as the wire carries it. Stable ids, never display strings. */
+export const WORK_ACTION_KINDS = [
+  "LOAD_INPUT",
+  "PURCHASE_INPUT",
+  "FUND_AND_PURCHASE_INPUT",
+  "TRAVEL_TO_AREA",
+  "PLANT",
+  "HARVEST",
+  "MINE",
+  "CHOP",
+  "TRAVEL_TO_STORAGE",
+  "UNLOAD"
+] as const;
+
+export const WorkActionDTOSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("LOAD_INPUT"),
+      itemDefinitionId: ItemDefinitionIdSchema,
+      quantity: z.number().int().positive()
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("PURCHASE_INPUT"),
+      itemDefinitionId: ItemDefinitionIdSchema,
+      quantity: z.number().int().positive()
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("FUND_AND_PURCHASE_INPUT"),
+      itemDefinitionId: ItemDefinitionIdSchema,
+      quantity: z.number().int().positive(),
+      /** The whitelist sale that funds the purchase: minimum units, in the player's priority order. */
+      sales: z
+        .array(
+          z
+            .object({
+              itemDefinitionId: ItemDefinitionIdSchema,
+              quantity: z.number().int().positive(),
+              unitPrice: z.number().int().positive(),
+              proceeds: z.number().int().positive()
+            })
+            .strict()
+        )
+        .min(1)
+        .max(8)
+    })
+    .strict(),
+  z.object({ kind: z.literal("TRAVEL_TO_AREA") }).strict(),
+  z.object({ kind: z.literal("PLANT"), cells: z.number().int().positive() }).strict(),
+  z.object({ kind: z.literal("HARVEST"), cells: z.number().int().positive() }).strict(),
+  z.object({ kind: z.literal("MINE") }).strict(),
+  z.object({ kind: z.literal("CHOP") }).strict(),
+  z.object({ kind: z.literal("TRAVEL_TO_STORAGE") }).strict(),
+  z.object({ kind: z.literal("UNLOAD") }).strict()
+]);
+
+/** Why no action is planned. Derived server-side, never persisted, never a client input. */
+export const WAIT_REASONS = [
+  "NOT_AUTO_CONTROLLED",
+  "NO_ASSIGNMENT",
+  "ALL_DISABLED",
+  "DISABLED",
+  "WAITING_FOR_GROWTH",
+  "WAITING_FOR_RESOURCE",
+  "WAITING_FOR_SUPPLY",
+  "WAITING_FOR_FUNDS",
+  "WAITING_FOR_STORAGE",
+  "CARGO_FULL",
+  "NO_ELIGIBLE_TARGETS",
+  "UNSUPPORTED_SKILL",
+  "NOT_EXECUTABLE_YET"
+] as const;
+export const WaitReasonSchema = z.enum(WAIT_REASONS);
+
+export const LIFECYCLE_FAMILIES = [
+  "REPLANT_CROP",
+  "PERENNIAL_PRODUCTION",
+  "RESOURCE_NODE_GATHERING",
+  "FISHING",
+  "LIVESTOCK"
+] as const;
+export const LifecycleFamilySchema = z.enum(LIFECYCLE_FAMILIES);
+
+export const AutoAssignmentPlanDTOSchema = z
+  .object({
+    jobId: JobIdSchema,
+    priority: z.number().int().positive().max(MAX_JOBS_PER_ACTOR),
+    enabled: z.boolean(),
+    /** The derived Work Skill id, e.g. `farm.rice`. Never a translated label. */
+    skillId: z.string().min(1).max(120),
+    skillFamily: LifecycleFamilySchema,
+    action: WorkActionDTOSchema.nullable(),
+    waitReason: WaitReasonSchema.nullable(),
+    claimed: z.boolean()
+  })
+  .strict();
+
+export const AutoPlanDTOSchema = z
+  .object({
+    actorId: ActorIdSchema,
+    controlMode: ControlModeSchema,
+    action: WorkActionDTOSchema.nullable(),
+    jobId: JobIdSchema.nullable(),
+    waitReason: WaitReasonSchema.nullable(),
+    perAssignment: z.array(AutoAssignmentPlanDTOSchema)
+  })
+  .strict();
+
+export const AutoPlanResponseSchema = z.object({ plan: AutoPlanDTOSchema }).strict();
+
+/**
+ * The Auto step: one bounded transition, performed by the server.
+ *
+ * This is the only Auto request that changes anything, and it carries **no plan and no target** - just
+ * a request id. The server re-resolves from the world, decides the step, and either records a walk or
+ * performs one settlement. A client cannot name a cell, a crop, a quantity or a price, and cannot
+ * claim to have arrived: `arrivesAt` is the server's own clock, and every settlement behind it repeats
+ * the authorization and capacity checks the manual path uses.
+ */
+export const AUTO_STEP_PHASES = ["STOPPED", "TRAVELLING", "WORKED", "WAITING", "RETRY"] as const;
+export const AutoStepPhaseSchema = z.enum(AUTO_STEP_PHASES);
+
+export const AUTO_STEP_TOKENS = [
+  "LOAD_INPUT",
+  "PURCHASE_INPUT",
+  "FUND_AND_PURCHASE_INPUT",
+  "TRAVEL_TO_STORAGE",
+  "UNLOAD",
+  "PLANT",
+  "HARVEST",
+  "MINE"
+] as const;
+export const AutoStepTokenSchema = z.enum(AUTO_STEP_TOKENS);
+
+/** Where the actor is, or is walking to. `CELL` carries its tile; the buildings do not. */
+export const AutoAnchorDTOSchema = z
+  .object({
+    kind: z.enum(["WAREHOUSE", "MARKET", "CELL"]),
+    x: z.number().int().nullable(),
+    y: z.number().int().nullable()
+  })
+  .strict();
+
+export const AutoStepRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+
+export const AutoStepDTOSchema = z
+  .object({
+    controlMode: ControlModeSchema,
+    phase: AutoStepPhaseSchema,
+    step: AutoStepTokenSchema.nullable(),
+    waitReason: WaitReasonSchema.nullable(),
+    jobId: JobIdSchema.nullable(),
+    skillId: z.string().min(1).max(120).nullable(),
+    targetDefinitionId: z.string().min(1).max(120).nullable(),
+    targetDisplayNameKey: z.string().min(1).max(120).nullable(),
+    itemDefinitionId: ItemDefinitionIdSchema.nullable(),
+    quantity: z.number().int().positive().max(1_000_000).nullable(),
+    cell: z.object({ x: z.number().int(), y: z.number().int() }).strict().nullable(),
+    from: AutoAnchorDTOSchema.nullable(),
+    to: AutoAnchorDTOSchema.nullable(),
+    arrivesAt: z.iso.datetime().nullable(),
+    /** 0 means "there is nothing to wake up for; ask again when the player acts". */
+    retryAfterMs: z.number().int().nonnegative().max(3_600_000),
+    progress: z
+      .object({
+        planted: z.number().int().nonnegative(),
+        empty: z.number().int().nonnegative(),
+        mature: z.number().int().nonnegative()
+      })
+      .strict()
+      .nullable(),
+    cargo: z.object({ used: z.number().int().nonnegative(), capacity: z.number().int().positive() }).strict()
+  })
+  .strict();
+
+export const AutoStepResponseSchema = z.object({ step: AutoStepDTOSchema }).strict();
+
+/**
+ * One lazy reconciliation attempt.
+ *
+ * The request is a request id and nothing else: the server decides what time it is and how much of
+ * the elapsed Auto time may be settled. The response explains the pass - where it started, the
+ * effective target, the exact instant the timeline is settled through, what it did, and why it
+ * stopped - so the client can show "catching up" without ever claiming to know the time itself.
+ */
+export const AUTO_RECONCILE_STOP_REASONS = [
+  "NOT_AUTO_CONTROLLED",
+  "CAUGHT_UP",
+  "BLOCKED",
+  "BUDGET_EXHAUSTED",
+  "CONFLICT"
+] as const;
+export const AutoReconcileStopReasonSchema = z.enum(AUTO_RECONCILE_STOP_REASONS);
+
+export const AutoReconcileDTOSchema = z
+  .object({
+    startedAt: z.iso.datetime().nullable(),
+    targetAt: z.iso.datetime(),
+    reconciledThrough: z.iso.datetime(),
+    elapsedConsumedSeconds: z.number().nonnegative().max(30 * 24 * 60 * 60),
+    transitionsProcessed: z.number().int().nonnegative().max(10_000),
+    economicSettlements: z.number().int().nonnegative().max(10_000),
+    steps: z.number().int().nonnegative().max(10_000),
+    stopReason: AutoReconcileStopReasonSchema,
+    budgetExhausted: z.boolean(),
+    budget: z
+      .object({ transitions: z.number().int().positive().max(10_000), steps: z.number().int().positive().max(10_000) })
+      .strict()
+  })
+  .strict();
+
+export const AutoReconcileResponseSchema = z.object({ reconciliation: AutoReconcileDTOSchema }).strict();
+
+/**
+ * Actor cargo: what one actor is physically carrying.
+ *
+ * A separate container from the Home Warehouse, and the wire says so: this is what is *being carried*,
+ * not what is stored. The client never sends a capacity, an owner or a destination - it sends the
+ * version it read, and the server decides everything else.
+ */
+export const CargoStackDTOSchema = z
+  .object({
+    itemDefinitionId: z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    /** The item's name key, resolved server-side so the panel keeps no catalogue of its own. */
+    displayNameKey: z.string().min(1).max(120),
+    quantity: z.number().int().positive()
+  })
+  .strict();
+
+export const CargoDTOSchema = z
+  .object({
+    capacity: z.number().int().positive().max(1_000_000_000),
+    used: z.number().int().nonnegative(),
+    available: z.number().int().nonnegative(),
+    /** The container's own version: what an unload must present. */
+    version: z.number().int().positive(),
+    items: z.array(CargoStackDTOSchema)
+  })
+  .strict();
+
+export const CargoResponseSchema = z.object({ cargo: CargoDTOSchema }).strict();
+
+export const UnloadCargoRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    /** The cargo version the client read; a stale unload is refused rather than applied. */
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+/**
+ * Warehouse -> Cargo. The client names the item, a bounded quantity, and the cargo version it read:
+ * never an owner, a source, a capacity or a quantity of its own choosing.
+ */
+export const LoadCargoRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    itemDefinitionId: z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    quantity: z.number().int().positive().max(1_000),
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+/**
+ * A supply purchase whose goods are taken rather than stored.
+ *
+ * It names a shop entry, not a price or an item: the catalogue decides both, and the destination is
+ * the authenticated owner's Main Character.
+ */
+export const SupplyPurchaseRequestSchema = z
+  .object({
+    requestId: RequestIdSchema,
+    shopEntryId: ShopEntryIdSchema,
+    quantity: z.number().int().positive().max(1_000),
+    expectedVersion: z.number().int().positive()
+  })
+  .strict();
+
+export const SupplyPurchaseResultDTOSchema = z
+  .object({
+    itemDefinitionId: ItemDefinitionIdSchema,
+    quantity: z.number().int().positive(),
+    currencyId: CurrencyDefinitionIdSchema,
+    amountSpent: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    newBalance: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    cargo: CargoDTOSchema
+  })
+  .strict();
+
+export const SupplyPurchaseResponseSchema = z
+  .object({ purchase: SupplyPurchaseResultDTOSchema })
+  .strict();
 
 export const ErrorCodeSchema = z.enum([
   "INVALID_INPUT",
@@ -949,6 +1862,9 @@ export const ErrorCodeSchema = z.enum([
   "SHOP_ENTRY_NOT_ALLOWED",
   "PLOT_LEVEL_REQUIRED",
   "PLOT_LIMIT_REACHED",
+  "LAND_CELL_NOT_AVAILABLE",
+  "LAND_ALREADY_OWNED",
+  "LAND_NOT_DEVELOPABLE",
   "INVALID_QUANTITY",
   "WALLET_LIMIT_EXCEEDED",
   "ECONOMY_CONFLICT",
@@ -957,12 +1873,17 @@ export const ErrorCodeSchema = z.enum([
   "TREE_DEFINITION_NOT_FOUND",
   "TREE_NOT_FOUND",
   "TREE_NOT_READY",
+  "TREE_NOT_ACTIVE",
+  "TREE_NOT_STORED",
   "TREE_LEVEL_REQUIRED",
+  "FORESTRY_CONSTRUCTION_NOT_FOUND",
+  "FORESTRY_CONSTRUCTION_NOT_READY",
+  "FORESTRY_CONSTRUCTION_DEPLETED",
+  "FORESTRY_CONSTRUCTION_CONFLICT",
   "CONSTRUCTION_NOT_FOUND",
   "CONSTRUCTION_NOT_ALLOWED",
   "CONSTRUCTION_LEVEL_REQUIRED",
   "CONSTRUCTION_OCCUPIED",
-  "CONSTRUCTION_NOT_OWNED",
   "CONSTRUCTION_UNSUITABLE_GROUND",
   "CONSTRUCTION_BLOCKED",
   "CONSTRUCTION_OUTSIDE_WORLD",
@@ -977,6 +1898,7 @@ export const ErrorCodeSchema = z.enum([
   "FISHING_ACTION_NOT_FOUND",
   "FISHING_ZONE_NOT_ALLOWED",
   "FISHING_SPOT_DISABLED",
+  "FISHING_SPOT_DEPLETED",
   "FISHING_ALREADY_ACTIVE",
   "FISHING_NOT_READY",
   "FISHING_ACTION_NOT_ACTIVE",
@@ -995,6 +1917,31 @@ export const ErrorCodeSchema = z.enum([
   "REQUEST_ALREADY_PROCESSED",
   "CONFLICT_STALE_STATE",
   "IDEMPOTENCY_CONFLICT",
+  "WORK_AREA_NOT_FOUND",
+  "WORK_AREA_NAME_INVALID",
+  "WORK_AREA_CELL_INVALID",
+  "WORK_AREA_TOO_MANY_CELLS",
+  "WORK_AREA_IN_USE",
+  "ACTOR_NOT_FOUND",
+  "JOB_NOT_FOUND",
+  "JOB_TARGET_INVALID",
+  "JOB_KIND_UNAVAILABLE",
+  "JOB_AREA_MISMATCH",
+  "JOB_LIMIT_REACHED",
+  "JOB_REORDER_MISMATCH",
+  "INVALID_CARGO",
+  "CARGO_FULL",
+  "INVALID_FUNDING",
+  "SUPPLY_NOT_ALLOWED",
+  "AQUACULTURE_POND_NOT_FOUND",
+  "AQUACULTURE_AREA_REQUIRED",
+  "AQUACULTURE_POND_NOT_EMPTY",
+  "AQUACULTURE_POND_EMPTY",
+  "AQUACULTURE_POND_NOT_READY",
+  "AQUACULTURE_CAPACITY_EXCEEDED",
+  "AQUACULTURE_NOT_ENOUGH_GROWING",
+  "AQUACULTURE_NOT_ENOUGH_READY",
+  "AQUACULTURE_CONFLICT",
   "RATE_LIMITED",
   "INTERNAL_ERROR"
 ]);
@@ -1007,17 +1954,77 @@ export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export type WarehouseStatusDTO = z.infer<typeof WarehouseStatusDTOSchema>;
 export type GetWarehouseResponse = z.infer<typeof GetWarehouseResponseSchema>;
 export type UpgradeWarehouseRequest = z.infer<typeof UpgradeWarehouseRequestSchema>;
+export type WorkAreaKind = z.infer<typeof WorkAreaKindSchema>;
+export type WorkAreaCellDTO = z.infer<typeof WorkAreaCellSchema>;
+export type WorkAreaSummaryDTO = z.infer<typeof WorkAreaSummaryDTOSchema>;
+export type WorkAreaDTO = z.infer<typeof WorkAreaDTOSchema>;
+export type ListWorkAreasResponse = z.infer<typeof ListWorkAreasResponseSchema>;
+export type WorkAreaResponse = z.infer<typeof WorkAreaResponseSchema>;
+export type CreateWorkAreaRequest = z.infer<typeof CreateWorkAreaRequestSchema>;
+export type RenameWorkAreaRequest = z.infer<typeof RenameWorkAreaRequestSchema>;
+export type ReplaceWorkAreaCellsRequest = z.infer<typeof ReplaceWorkAreaCellsRequestSchema>;
+export type DeleteWorkAreaRequest = z.infer<typeof DeleteWorkAreaRequestSchema>;
+export type DeleteWorkAreaResponse = z.infer<typeof DeleteWorkAreaResponseSchema>;
+export type ActorKind = z.infer<typeof ActorKindSchema>;
+export type ControlMode = z.infer<typeof ControlModeSchema>;
+export type ActorDTO = z.infer<typeof ActorDTOSchema>;
+export type JobKind = z.infer<typeof JobKindSchema>;
+export type JobDTO = z.infer<typeof JobDTOSchema>;
+export type GetWorkersResponse = z.infer<typeof GetWorkersResponseSchema>;
+export type JobResponse = z.infer<typeof JobResponseSchema>;
+export type JobsResponse = z.infer<typeof JobsResponseSchema>;
+export type DeleteJobResponse = z.infer<typeof DeleteJobResponseSchema>;
+export type CreateJobRequest = z.infer<typeof CreateJobRequestSchema>;
+export type UpdateJobTargetRequest = z.infer<typeof UpdateJobTargetRequestSchema>;
+export type SetJobEnabledRequest = z.infer<typeof SetJobEnabledRequestSchema>;
+export type ReorderJobsRequest = z.infer<typeof ReorderJobsRequestSchema>;
+export type DeleteJobRequest = z.infer<typeof DeleteJobRequestSchema>;
+export type SetActorControlRequest = z.infer<typeof SetActorControlRequestSchema>;
+export type ActorControlDTO = z.infer<typeof ActorControlDTOSchema>;
+export type ActorControlResponse = z.infer<typeof ActorControlResponseSchema>;
+export type SetAssignmentPolicyRequest = z.infer<typeof SetAssignmentPolicyRequestSchema>;
+export type WorkActionDTO = z.infer<typeof WorkActionDTOSchema>;
+export type WaitReasonDTO = z.infer<typeof WaitReasonSchema>;
+export type LifecycleFamilyDTO = z.infer<typeof LifecycleFamilySchema>;
+export type AutoAssignmentPlanDTO = z.infer<typeof AutoAssignmentPlanDTOSchema>;
+export type AutoPlanDTO = z.infer<typeof AutoPlanDTOSchema>;
+export type AutoPlanResponse = z.infer<typeof AutoPlanResponseSchema>;
+export type AutoStepPhaseDTO = z.infer<typeof AutoStepPhaseSchema>;
+export type AutoStepTokenDTO = z.infer<typeof AutoStepTokenSchema>;
+export type AutoAnchorDTO = z.infer<typeof AutoAnchorDTOSchema>;
+export type AutoStepRequest = z.infer<typeof AutoStepRequestSchema>;
+export type AutoStepDTO = z.infer<typeof AutoStepDTOSchema>;
+export type AutoStepResponse = z.infer<typeof AutoStepResponseSchema>;
+export type AutoReconcileStopReasonDTO = z.infer<typeof AutoReconcileStopReasonSchema>;
+export type AutoReconcileDTO = z.infer<typeof AutoReconcileDTOSchema>;
+export type AutoReconcileResponse = z.infer<typeof AutoReconcileResponseSchema>;
+export type CargoStackDTO = z.infer<typeof CargoStackDTOSchema>;
+export type CargoDTO = z.infer<typeof CargoDTOSchema>;
+export type CargoResponse = z.infer<typeof CargoResponseSchema>;
+export type UnloadCargoRequest = z.infer<typeof UnloadCargoRequestSchema>;
+export type LoadCargoRequest = z.infer<typeof LoadCargoRequestSchema>;
+export type SupplyPurchaseRequest = z.infer<typeof SupplyPurchaseRequestSchema>;
+export type SupplyPurchaseResultDTO = z.infer<typeof SupplyPurchaseResultDTOSchema>;
+export type SupplyPurchaseResponse = z.infer<typeof SupplyPurchaseResponseSchema>;
 export type IdentityKindDTO = z.infer<typeof IdentityKindSchema>;
 export type SessionPlayerDTO = z.infer<typeof SessionPlayerDTOSchema>;
 export type GetSessionResponse = z.infer<typeof GetSessionResponseSchema>;
 export type ZoneKind = z.infer<typeof ZoneKindSchema>;
 export type ZoneRef = z.infer<typeof ZoneRefSchema>;
 export type PlantCropRequest = z.infer<typeof PlantCropRequestSchema>;
+export type PlantCropAreaCell = z.infer<typeof PlantCropAreaCellSchema>;
+export type PlantCropAreaRequest = z.infer<typeof PlantCropAreaRequestSchema>;
+export type PlantCropAreaResultDTO = z.infer<typeof PlantCropAreaResultDTOSchema>;
+export type PlantCropAreaGroupResponse = z.infer<typeof PlantCropAreaGroupResponseSchema>;
 export type CropStateDTO = z.infer<typeof CropStateDTOSchema>;
 export type HarvestCropRequest = z.infer<typeof HarvestCropRequestSchema>;
 export type UprootCropRequest = z.infer<typeof UprootCropRequestSchema>;
 export type UprootCropResponse = z.infer<typeof UprootCropResponseSchema>;
 export type HarvestResultDTO = z.infer<typeof HarvestResultDTOSchema>;
+export type HarvestCropAreaCandidate = z.infer<typeof HarvestCropAreaCandidateSchema>;
+export type HarvestCropAreaRequest = z.infer<typeof HarvestCropAreaRequestSchema>;
+export type HarvestCropAreaResultDTO = z.infer<typeof HarvestCropAreaResultDTOSchema>;
+export type HarvestCropAreaGroupResponse = z.infer<typeof HarvestCropAreaGroupResponseSchema>;
 export type PlayerProgressionDTO = z.infer<typeof PlayerProgressionDTOSchema>;
 export type XpAwardDTO = z.infer<typeof XpAwardDTOSchema>;
 export type CropDefinitionDTO = z.infer<typeof CropDefinitionDTOSchema>;
@@ -1032,15 +2039,28 @@ export type PlotDTO = z.infer<typeof PlotDTOSchema>;
 export type GetPlotsResponse = z.infer<typeof GetPlotsResponseSchema>;
 export type ExpandFarmRequest = z.infer<typeof ExpandFarmRequestSchema>;
 export type ExpandFarmResultDTO = z.infer<typeof ExpandFarmResultDTOSchema>;
+export type LandCellQuoteDTO = z.infer<typeof LandCellQuoteDTOSchema>;
+export type LandQuoteDTO = z.infer<typeof LandQuoteDTOSchema>;
+export type QuoteLandCellsRequest = z.infer<typeof QuoteLandCellsRequestSchema>;
+export type BuyLandCellsRequest = z.infer<typeof BuyLandCellsRequestSchema>;
+export type BuyLandCellsResultDTO = z.infer<typeof BuyLandCellsResultDTOSchema>;
 export type TreeDefinitionDTO = z.infer<typeof TreeDefinitionDTOSchema>;
 export type GetTreeDefinitionsResponse = z.infer<typeof GetTreeDefinitionsResponseSchema>;
 export type TreeStateDTO = z.infer<typeof TreeStateDTOSchema>;
 export type PlantTreeRequest = z.infer<typeof PlantTreeRequestSchema>;
+export type PlantTreeAreaCell = z.infer<typeof PlantTreeAreaCellSchema>;
+export type PlantTreeAreaRequest = z.infer<typeof PlantTreeAreaRequestSchema>;
+export type PlantTreeAreaResultDTO = z.infer<typeof PlantTreeAreaResultDTOSchema>;
+export type PlantTreeAreaGroupResponse = z.infer<typeof PlantTreeAreaGroupResponseSchema>;
 export type PlantTreeResponse = z.infer<typeof PlantTreeResponseSchema>;
 export type GetFarmTreesResponse = z.infer<typeof GetFarmTreesResponseSchema>;
 export type HarvestTreeRequest = z.infer<typeof HarvestTreeRequestSchema>;
 export type TreeHarvestResultDTO = z.infer<typeof TreeHarvestResultDTOSchema>;
 export type HarvestTreeResponse = z.infer<typeof HarvestTreeResponseSchema>;
+export type HarvestTreeAreaCandidate = z.infer<typeof HarvestTreeAreaCandidateSchema>;
+export type HarvestTreeAreaRequest = z.infer<typeof HarvestTreeAreaRequestSchema>;
+export type HarvestTreeAreaResultDTO = z.infer<typeof HarvestTreeAreaResultDTOSchema>;
+export type HarvestTreeAreaGroupResponse = z.infer<typeof HarvestTreeAreaGroupResponseSchema>;
 export type RemoveTreeRequest = z.infer<typeof RemoveTreeRequestSchema>;
 export type RemoveTreeResponse = z.infer<typeof RemoveTreeResponseSchema>;
 
@@ -1225,6 +2245,52 @@ export type StartResourceActionRequest = z.infer<typeof StartResourceActionReque
 export type SettleResourceActionRequest = z.infer<typeof SettleResourceActionRequestSchema>;
 export type ResourceDropDTO = z.infer<typeof ResourceDropDTOSchema>;
 export type SettleResourceActionResponse = z.infer<typeof SettleResourceActionResponseSchema>;
+
+export const NeighborPlaceSchema = z.enum(["HOME_ISLAND", "NEIGHBOR_ISLAND"]);
+export const NeighborPhaseSchema = z.enum(["GROWING", "STOCKED", "BUILT"]);
+export const NeighborIslandDTOSchema = z.object({
+  islandId: z.string().regex(/^neighbor_island_[a-z0-9_-]+$/),
+  zone: ZoneRefSchema,
+  center: z.object({ x: z.number(), z: z.number() }).strict(),
+  dock: z.object({ x: z.number(), z: z.number() }).strict(),
+  npc: z.object({ x: z.number(), z: z.number() }).strict()
+}).strict();
+export const NeighborNpcDTOSchema = z.object({
+  islandId: z.string().regex(/^neighbor_island_[a-z0-9_-]+$/),
+  npcId: z.string().regex(/^neighbor_npc_[a-z0-9_-]+$/),
+  displayNameKey: z.string().min(1).max(120),
+  phase: NeighborPhaseSchema,
+  jobKey: z.string().min(1).max(120),
+  stockQuantity: z.number().int().nonnegative(),
+  constructionLevel: z.number().int().nonnegative(),
+  plantedAt: z.iso.datetime(),
+  readyAt: z.iso.datetime(),
+  nextMilestoneAt: z.iso.datetime().nullable(),
+  secondsUntilNextMilestone: z.number().int().nonnegative(),
+  version: z.number().int().positive()
+}).strict();
+export const NeighborVisitDTOSchema = z.object({ currentPlace: NeighborPlaceSchema, currentIslandId: z.string().regex(/^neighbor_island_[a-z0-9_-]+$/).nullable(), version: z.number().int().positive() }).strict();
+export const NeighborSnapshotDTOSchema = z.object({
+  island: NeighborIslandDTOSchema,
+  npc: NeighborNpcDTOSchema,
+  visit: NeighborVisitDTOSchema,
+  islands: z.array(NeighborIslandDTOSchema.extend({ slot: z.enum(["MOC", "KIM", "THUY"]), seed: z.number().int(), templateVersion: z.number().int().positive() }).strict()).min(1).optional(),
+  npcs: z.array(NeighborNpcDTOSchema.extend({ slot: z.enum(["MOC", "KIM", "THUY"]), cycle: z.number().int().nonnegative(), nextActionAt: z.iso.datetime() }).strict()).min(1).optional()
+}).strict();
+export const GetNeighborResponseSchema = z.object({ neighbor: NeighborSnapshotDTOSchema }).strict();
+export const NeighborTravelRequestSchema = z.object({
+  requestId: RequestIdSchema,
+  expectedVersion: z.number().int().positive(),
+  destination: NeighborPlaceSchema,
+  islandId: z.string().regex(/^neighbor_island_[a-z0-9_-]+$/).optional()
+}).strict();
+export const NeighborTravelResponseSchema = z.object({ neighbor: NeighborSnapshotDTOSchema }).strict();
+export const NeighborTalkRequestSchema = z.object({ requestId: RequestIdSchema, expectedVersion: z.number().int().positive() }).strict();
+export const NeighborTalkResponseSchema = z.object({ neighbor: NeighborSnapshotDTOSchema, dialogueKey: z.string().min(1).max(120) }).strict();
+export type NeighborSnapshotDTO = z.infer<typeof NeighborSnapshotDTOSchema>;
+export type NeighborTravelRequest = z.infer<typeof NeighborTravelRequestSchema>;
+export type NeighborTalkRequest = z.infer<typeof NeighborTalkRequestSchema>;
+export type NeighborNpcDTO = z.infer<typeof NeighborNpcDTOSchema>;
 
 export type ApiSuccess<T> = { readonly ok: true; readonly data: T };
 export type ApiFailure = {

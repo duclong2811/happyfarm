@@ -3,12 +3,13 @@ import type { FarmId, ItemDefinitionId, PlayerId, TreeDefinitionId, TreeInstance
 import { meetsRequiredLevel } from "./progression";
 
 /**
- * A repeating producer: the second crop pattern.
+ * A server-timed producer: repeating orchard trees and one-shot Wildwood share one state model.
  *
  * A tree differs from an annual crop in exactly two ways, and both are visible here. It carries two
  * durations instead of one, because the first fruit takes as long as it takes and every fruit after
- * it takes the regrow duration; and harvesting it does not end its life, so the instance keeps a
- * record of the last harvest rather than being deleted.
+ * it may take the regrow duration. A one-shot definition marks the instance DEPLETED after its
+ * first harvest; the instance keeps its last harvest rather than being deleted so replay and
+ * clear-stump flows remain explicit.
  *
  * The definition is authoritative game data. Nothing in it is ever supplied by a client, and no use
  * case branches on a tree id: a second species is another row in `packages/game-data`.
@@ -22,6 +23,8 @@ export interface TreeDefinition {
   readonly firstReadySeconds: number;
   /** Seconds from one harvest to the next: the repeating cycle. */
   readonly regrowSeconds: number;
+  /** False for a planted tree that must be removed and replanted after its first harvest. */
+  readonly regenerates?: boolean;
   readonly growthStages: number;
   /**
    * The player level at which this tree becomes plantable. Absent means no requirement.
@@ -44,8 +47,9 @@ export interface TreeDefinition {
  * Only three fields carry time or lifecycle: `plantedAt`, `lastHarvestedAt`, and `version`. Ready
  * state, phase, remaining time, and growth stage are derived from those plus the definition, so a
  * tree can never hold two disagreeing answers, and a definition change re-derives consistently
- * instead of stranding a cached value. `last_harvestedAt` is null until the first harvest, which is
- * the only thing that distinguishes "still growing for the first time" from "regrowing".
+ * instead of stranding a cached value. `lastHarvestedAt` is null until the first harvest, which
+ * distinguishes first growth from regrowth; a one-shot definition projects a non-null value as
+ * DEPLETED rather than REGROWING.
  */
 export interface TreeInstance {
   readonly id: TreeInstanceId;
@@ -59,16 +63,23 @@ export interface TreeInstance {
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** A stored tree keeps its identity but does not occupy its saved tile. */
+  readonly storageState: "ACTIVE" | "STORED";
+  /** Quarter turns persisted by management commands. */
+  readonly rotation: 0 | 1 | 2 | 3;
+  readonly storedAt: string | null;
+  /** Remaining server seconds captured when a growing tree entered storage. */
+  readonly storedRemainingSeconds: number | null;
 }
 
-export type TreePhase = "GROWING" | "READY" | "REGROWING";
+export type TreePhase = "GROWING" | "READY" | "REGROWING" | "DEPLETED";
 
 /** Everything the read paths need to draw one tree, all of it derived from server time. */
 export interface TreeProduction {
   readonly phase: TreePhase;
   readonly ready: boolean;
   /** The instant the current cycle completes, as an ISO string. */
-  readonly readyAt: string;
+  readonly readyAt: string | null;
   /** Whole seconds until `readyAt`, never negative. Zero exactly when the tree is ready. */
   readonly secondsUntilReady: number;
   /** The instant the current cycle began: planting time, or the last harvest. */
@@ -110,7 +121,11 @@ export function createTreeInstance(
     lastHarvestedAt: null,
     version: 1,
     createdAt: timestamp,
-    updatedAt: timestamp
+    updatedAt: timestamp,
+    storageState: "ACTIVE",
+    rotation: 0,
+    storedAt: null,
+    storedRemainingSeconds: null
   };
 }
 
@@ -167,7 +182,62 @@ export function calculateTreeProduction(
     throw new DomainError("INVALID_TREE", "Tree timing data is invalid");
   }
 
+  if (instance.storageState === "STORED" && instance.storedRemainingSeconds !== null) {
+    const remaining = Math.min(cycleMsFor(definition, instance), Math.max(0, instance.storedRemainingSeconds));
+    const cycleMs = cycleMsFor(definition, instance);
+    const elapsedMs = Math.max(0, cycleMs - remaining * 1000);
+    const readyAtMs = serverMs + remaining * 1000;
+    const stage = Number(
+      (BigInt(Math.trunc(elapsedMs)) * BigInt(definition.growthStages - 1)) / BigInt(cycleMs)
+    );
+    return {
+      phase: harvestedMs === null ? "GROWING" : "REGROWING",
+      ready: false,
+      readyAt: new Date(readyAtMs).toISOString(),
+      secondsUntilReady: remaining,
+      cycleStartAt: new Date(serverMs - elapsedMs).toISOString(),
+      cycleSeconds: cycleMs / 1000,
+      elapsedSeconds: elapsedMs / 1000,
+      progress: elapsedMs / cycleMs,
+      stage
+    };
+  }
+
+  if (instance.storageState === "STORED" && harvestedMs !== null && definition.regenerates === false) {
+    return {
+      phase: "DEPLETED",
+      ready: false,
+      readyAt: null,
+      secondsUntilReady: 0,
+      cycleStartAt: new Date(harvestedMs).toISOString(),
+      cycleSeconds: 0,
+      elapsedSeconds: 0,
+      progress: 1,
+      stage: definition.growthStages - 1
+    };
+  }
+
+  if (instance.storageState === "STORED") {
+    // A stored READY tree stays READY. Its old timestamp remains the proof that it completed.
+    const active = calculateTreeProduction({ ...definition }, { ...instance, storageState: "ACTIVE" }, serverTime);
+    if (active.ready) return active;
+  }
+
   const cycleStartMs = harvestedMs ?? plantedMs;
+  if (harvestedMs !== null && definition.regenerates === false) {
+    const elapsedMs = Math.max(0, serverMs - harvestedMs);
+    return {
+      phase: "DEPLETED",
+      ready: false,
+      readyAt: null,
+      secondsUntilReady: 0,
+      cycleStartAt: new Date(harvestedMs).toISOString(),
+      cycleSeconds: 0,
+      elapsedSeconds: elapsedMs / 1000,
+      progress: 1,
+      stage: definition.growthStages - 1
+    };
+  }
   const cycleMs = harvestedMs === null ? firstReadyMs : regrowMs;
   const readyAtMs = cycleStartMs + cycleMs;
   if (!Number.isFinite(readyAtMs)) {
@@ -202,6 +272,10 @@ export function calculateTreeProduction(
     progress: clampedElapsedMs / cycleMs,
     stage
   };
+}
+
+function cycleMsFor(definition: TreeDefinition, instance: TreeInstance): number {
+  return (instance.lastHarvestedAt === null ? definition.firstReadySeconds : definition.regrowSeconds) * 1000;
 }
 
 export function canHarvestTree(

@@ -1,5 +1,7 @@
 import {
   assertFishingAction,
+  consumeFishingStock,
+  fishingStockAt,
   fishingReadyAt,
   isFishingReady,
   parseFishingActionId,
@@ -30,13 +32,18 @@ import type {
   FishingIdGenerator,
   FishingRandomPort,
   FishingSettlementRepository,
+  FishingSpotStateRepository,
   HomeIslandZoneResolver,
   IdempotencyRecord,
   IdempotencyRepository,
   InventoryRepository,
   PayloadFingerprint,
-  ProgressionRepository
+  ActorRepository,
+  ProgressionRepository,
+  WarehouseRepository,
+  WarehouseTierRepository
 } from "./ports";
+import { assertWarehouseHasRoom } from "./storage";
 
 /**
  * Fishing: the first profession that does not happen on the farm.
@@ -211,11 +218,16 @@ export class StartFishing {
     private readonly catalogue: FishingCataloguePort,
     private readonly ids: FishingIdGenerator,
     private readonly fingerprints: PayloadFingerprint,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    private readonly states?: FishingSpotStateRepository,
+    private readonly actors?: ActorRepository
   ) {}
 
   async execute(actor: ActorContext | null, command: StartFishingCommand): Promise<FishingActionView> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if (this.actors !== undefined && (await this.actors.findMainCharacter(actor.playerId))?.controlMode === "AUTO_CONTROLLED") {
+      throw new ApplicationError("CONFLICT_STALE_STATE", "The Main Character is Auto-controlled");
+    }
     const fingerprint = await this.fingerprints.hash(JSON.stringify([command.spotId]));
 
     const existing = await this.idempotency.find(actor.playerId, START_OPERATION, command.requestId);
@@ -234,6 +246,12 @@ export class StartFishing {
     }
     if (this.catalogue.findTable(spot.tableId) === null) {
       throw new ApplicationError("INTERNAL_ERROR", "Fishing spot has no catch table");
+    }
+    if (this.states !== undefined && this.states.isAvailable?.() !== false) {
+      const state = (await this.states.listByZone(zone.kind, zone.id)).find((entry) => entry.spotId === spot.id) ?? null;
+      if (fishingStockAt(state, spot.maxStock, spot.regenerationSeconds, this.clock.now()) === 0) {
+        throw new ApplicationError("FISHING_SPOT_DEPLETED", "This fishing spot is temporarily depleted");
+      }
     }
 
     const active = await this.actions.findActiveByActor(actor.playerId);
@@ -325,7 +343,16 @@ export class SettleFishing {
     private readonly idempotency: IdempotencyRepository,
     private readonly random: FishingRandomPort,
     private readonly fingerprints: PayloadFingerprint,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    /**
+     * The Home Island warehouse, when the host wired one.
+     *
+     * Used only for the pre-roll space check. The database guard is still the authority on the
+     * settlement; this exists so a full warehouse refuses *before* the catch is drawn.
+     */
+    private readonly warehouse?: WarehouseRepository,
+    private readonly tiers?: WarehouseTierRepository,
+    private readonly states?: FishingSpotStateRepository
   ) {}
 
   async execute(actor: ActorContext | null, command: SettleFishingCommand): Promise<FishingSettleView> {
@@ -360,7 +387,19 @@ export class SettleFishing {
 
     const table = this.catalogue.findTable(action.tableId);
     if (table === null) throw new ApplicationError("INTERNAL_ERROR", "Fishing table was not found");
-    const caught = selectCatch(table.entries, this.random.roll());
+    const spot = this.catalogue.findSpot(action.spotId);
+    if (spot === null) throw new ApplicationError("INTERNAL_ERROR", "Fishing spot was not found");
+    const stockState = this.states === undefined || this.states.isAvailable?.() === false
+      ? null
+      : (await this.states.listByZone(action.zoneKind, action.zoneId)).find((entry) => entry.spotId === action.spotId) ?? null;
+    const stockNow = fishingStockAt(stockState, spot.maxStock, spot.regenerationSeconds, this.clock.now());
+    if (stockNow === 0) throw new ApplicationError("FISHING_SPOT_DEPLETED", "This fishing spot is temporarily depleted");
+    // A catch is exactly one item, so the space the settle will take is known before the roll. Asking
+    // now avoids drawing for an already-full warehouse. Pinning below preserves the chosen roll even
+    // if another grant fills the warehouse before the settlement transaction runs.
+    await assertWarehouseHasRoom(this.warehouse, this.tiers, actor.playerId, 1);
+    const roll = await this.actions.pinRoll(action, () => this.random.roll());
+    const caught = selectCatch(table.entries, roll);
     const definition = this.catalogue.findFish(caught.fishId);
     if (definition === null) throw new ApplicationError("INTERNAL_ERROR", "Fish definition was not found");
     const addition = this.inventoryService.prepareAddition(actor.playerId, definition.itemDefinitionId, 1);
@@ -370,6 +409,20 @@ export class SettleFishing {
       itemDefinitionId: definition.itemDefinitionId,
       quantity: addition.quantity
     };
+    const stockConsumption = this.states === undefined || this.states.isAvailable?.() === false ? undefined : (() => {
+      const next = consumeFishingStock(stockNow, addition.quantity, this.clock.now());
+      return {
+        zoneKind: action.zoneKind,
+        zoneId: action.zoneId,
+        spotId: action.spotId,
+        expectedStock: stockState?.stock ?? spot.maxStock,
+        expectedLastRegeneratedAt: stockState?.lastRegeneratedAt ?? null,
+        expectedVersion: stockState?.version ?? null,
+        stock: next.stock,
+        lastRegeneratedAt: next.lastRegeneratedAt,
+        nextVersion: stockState === null ? 1 : stockState.version + 1
+      };
+    })();
 
     for (let attempt = 0; attempt < PROGRESSION_ATTEMPTS; attempt += 1) {
       const stored = await this.progression.find(actor.playerId);
@@ -406,7 +459,7 @@ export class SettleFishing {
         createdAt: award.timestamp
       };
       try {
-        await this.settlement.settleFishingAtomically(settledAction, addition, award, record);
+        await this.settlement.settleFishingAtomically(settledAction, addition, award, record, stockConsumption);
         return result;
       } catch (error: unknown) {
         if (error instanceof ApplicationError && error.code === "FISHING_CONFLICT") continue;

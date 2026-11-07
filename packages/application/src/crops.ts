@@ -3,23 +3,34 @@ import {
   assertValidCoordinate,
   calculateCropGrowth,
   createCropInstance,
+  createFarmTile,
   DomainError,
   isCropUnlocked,
+  isUsableLand,
+  landOriginFor,
   parseCropDefinitionId,
   parseCropInstanceId,
   requiredLevelFor,
   type CropDefinition,
   type CropInstance,
+  type ActorCargoItem,
+  type ActorId,
   type FarmId,
+  type InventoryItem,
   type ProgressionDefinition,
-  type TileCoordinate,
-  type UnlockedLandPolicy
+  type InventoryRemoval,
+  type TileCoordinate
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { requireMainCharacterPlayerControl } from "./jobs";
+import { autoTransitionId } from "./auto-plant";
 import type { InventoryService } from "./inventory";
 import { storedLevel } from "./progression";
 import type {
   ActorContext,
+  ActorRepository,
+  CargoRemoval,
+  CargoRepository,
   Clock,
   CropDefinitionRepository,
   CropIdGenerator,
@@ -32,14 +43,39 @@ import type {
   InventoryRepository,
   ItemDefinitionRepository,
   PayloadFingerprint,
-  ProgressionRepository
+  PlantBatchReceiptRepository,
+  ProgressionRepository,
+  TilePlan,
+  TileTerrainLookup
 } from "./ports";
 
 const PLANT_OPERATION = "PLANT_CROP";
+/**
+ * The Auto planting receipt, in its own namespace.
+ *
+ * A separate operation rather than the manual one so a request id can never collide across the two
+ * paths, and so a receipt records which container the seed actually came from.
+ */
+const AUTO_PLANT_OPERATION = "AUTO_PLANT_CROP";
+
+/** Which container a planting spends its seed from. */
+type PlantSeedSource = "WAREHOUSE" | "CARGO";
+
+/** The seed a planting will spend, and the removal the settlement is scoped to. */
+type ReadSeedResult =
+  | { readonly source: "WAREHOUSE"; readonly expected: InventoryItem; readonly removal: InventoryRemoval }
+  | { readonly source: "CARGO"; readonly expected: ActorCargoItem; readonly removal: CargoRemoval };
 
 export interface PlantCropCommand extends TileCoordinate {
   readonly cropDefinitionId: string;
-  readonly expectedTileVersion: number;
+  /**
+   * The tile version the client was looking at, or absent when the cell has no tile row yet.
+   *
+   * V14.5.2: any valid natural cell may be planted, so the first plant on a fresh cell has no row to
+   * version. An absent value means "this cell should not have a row"; a present one is guarded
+   * exactly as before.
+   */
+  readonly expectedTileVersion?: number | undefined;
   readonly requestId: string;
 }
 
@@ -82,8 +118,7 @@ export class CropStateProjector {
     };
   }
 
-  projectMany(crops: readonly CropInstance[]): readonly CropState[] {
-    const serverTime = this.clock.now();
+  projectMany(crops: readonly CropInstance[], serverTime = this.clock.now()): readonly CropState[] {
     return crops.map((crop) => this.project(crop, serverTime));
   }
 }
@@ -105,17 +140,89 @@ export interface PlantCropDependencies {
   readonly definitions: CropDefinitionRepository;
   readonly progression: ProgressionRepository;
   readonly progressionDefinition: ProgressionDefinition;
-  readonly unlockedLand: UnlockedLandPolicy;
+  /** What the ground physically is, from the island's own geography. */
+  readonly terrain: TileTerrainLookup;
   readonly inventoryService: InventoryService;
+  /**
+   * Where the seed comes from when the actor plants with what it is carrying.
+   *
+   * Optional so every existing construction of this use case - the manual path, and the tests that
+   * only ever plant from the Warehouse - keeps working unchanged. A host that wires them can plant
+   * from cargo; a host that does not answers with a clear internal error rather than a fallback to the
+   * warehouse, because silently spending stored seed for a physical planting would be a lie.
+   */
+  readonly actors?: ActorRepository;
+  readonly cargo?: CargoRepository;
+  readonly autoSettlement?: AutoPlantSettlement;
   readonly ids: CropIdGenerator;
   readonly fingerprints: PayloadFingerprint;
   readonly clock: Clock;
 }
 
+export interface AutoPlantSettlementContext {
+  readonly actorId: string;
+  readonly assignmentId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly eventTime: string;
+  readonly expectedAutoVersion: number;
+  readonly expectedSimulationAt: string | null;
+}
+
+export interface AutoPlantSettlement {
+  settle(input: {
+    readonly crop: CropInstance;
+    readonly tile: TilePlan;
+    readonly seedRemoval: CargoRemoval;
+    readonly expectedCargo: ActorCargoItem;
+    readonly idempotency: IdempotencyRecord;
+    readonly context: AutoPlantSettlementContext;
+  }): Promise<void>;
+}
+
 export class PlantCrop {
   constructor(private readonly dependencies: PlantCropDependencies) {}
 
-  async execute(actor: ActorContext | null, farmId: FarmId, command: PlantCropCommand): Promise<CropState> {
+  /** Plants from the Home Warehouse: the manual path, unchanged. */
+  execute(actor: ActorContext | null, farmId: FarmId, command: PlantCropCommand): Promise<CropState> {
+    return this.plant(actor, farmId, command, "WAREHOUSE");
+  }
+
+  /**
+   * Plants with a seed the actor is physically carrying: what Auto does.
+   *
+   * The same class, the same validation and the same settlement - only the container the seed leaves
+   * differs. There is deliberately no `AutoPlantCrop`: a second planting path with weaker rules is
+   * exactly the shape this shares to avoid.
+   */
+  executeFromCargo(actor: ActorContext | null, farmId: FarmId, command: PlantCropCommand): Promise<CropState> {
+    return this.plant(actor, farmId, command, "CARGO");
+  }
+
+  executeFromCargoAuto(
+    actor: ActorContext | null,
+    farmId: FarmId,
+    command: PlantCropCommand & AutoPlantSettlementContext
+  ): Promise<CropState> {
+    const { assignmentId, actorId, eventTime, expectedAutoVersion, expectedSimulationAt, ...plantCommand } = command;
+    return this.plant(actor, farmId, plantCommand, "CARGO", {
+      actorId,
+      assignmentId,
+      x: plantCommand.x,
+      y: plantCommand.y,
+      eventTime,
+      expectedAutoVersion,
+      expectedSimulationAt
+    });
+  }
+
+  private async plant(
+    actor: ActorContext | null,
+    farmId: FarmId,
+    command: PlantCropCommand,
+    source: PlantSeedSource,
+    autoContext?: AutoPlantSettlementContext
+  ): Promise<CropState> {
     const {
       farms,
       members,
@@ -126,21 +233,30 @@ export class PlantCrop {
       definitions,
       progression,
       progressionDefinition,
-      unlockedLand,
+      terrain,
       inventoryService,
+      actors,
+      cargo,
       ids,
       fingerprints,
       clock
     } = this.dependencies;
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if (autoContext === undefined) await requireMainCharacterPlayerControl(actors, actor.playerId);
 
+    const operation = source === "CARGO" ? AUTO_PLANT_OPERATION : PLANT_OPERATION;
+    const settlementRequestId =
+      source === "CARGO" && autoContext !== undefined
+        ? autoTransitionId({ ...autoContext, kind: "PLANT" })
+        : command.requestId;
     const fingerprint = await fingerprints.hash(
       JSON.stringify([
         farmId,
         command.x,
         command.y,
         command.cropDefinitionId,
-        command.expectedTileVersion
+        command.expectedTileVersion,
+        source
       ])
     );
     if ((await farms.findById(farmId)) === null) {
@@ -151,7 +267,7 @@ export class PlantCrop {
       throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
     }
 
-    const existingRequest = await idempotency.find(actor.playerId, PLANT_OPERATION, command.requestId);
+    const existingRequest = await idempotency.find(actor.playerId, operation, settlementRequestId);
     if (existingRequest !== null) {
       return this.replay(existingRequest, fingerprint);
     }
@@ -162,18 +278,26 @@ export class PlantCrop {
       if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
       throw error;
     }
+    // V14.5.2: the natural Home Island is the player's land, so a cell needs no ownership row to be
+    // planted. What it needs is to *be* usable natural land, which the island's own classifier
+    // answers; a cell with no tile row yet gets one written with the planting, for free.
+    const ground = terrain.classify(command);
+    if (!isUsableLand(landOriginFor(ground))) {
+      throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot be planted");
+    }
     const tile = await tiles.find(farmId, command.x, command.y);
-    if (tile === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "Tile was not found");
-    if (!(await unlockedLand.isUnlocked(farmId, command))) {
-      throw new ApplicationError("INVALID_INPUT", "Tile is outside unlocked land");
-    }
-    try {
-      assertTilePlantable(tile);
-    } catch {
-      throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
-    }
-    if (tile.version !== command.expectedTileVersion) {
-      throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+    if (tile !== null) {
+      try {
+        assertTilePlantable(tile);
+      } catch {
+        throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
+      }
+      if (command.expectedTileVersion === undefined || tile.version !== command.expectedTileVersion) {
+        throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+      }
+    } else if (command.expectedTileVersion !== undefined) {
+      // The client believed a row existed and it does not: somebody else's change won the race.
+      throw new ApplicationError("CONFLICT_STALE_STATE", "Tile state changed");
     }
     if ((await crops.findAtTile(farmId, command.x, command.y)) !== null) {
       throw new ApplicationError("TILE_OCCUPIED", "Tile already has a crop");
@@ -201,20 +325,20 @@ export class PlantCrop {
       );
     }
 
-    // Planting costs exactly one seed, and the crop definition -- never the client -- says which
-    // item that is. The row the removal is prepared against is the state read here, so a concurrent
-    // consumption either applies against it or rolls the whole planting back.
-    const seed = await inventory.find(actor.playerId, definition.seedItemDefinitionId);
-    if (seed === null || seed.quantity < 1) {
-      throw new ApplicationError("INSUFFICIENT_ITEMS", "Planting requires a seed for this crop");
-    }
-    const seedRemoval = inventoryService.prepareRemoval(
-      actor.playerId,
-      definition.seedItemDefinitionId,
-      1
-    );
+    // Planting costs exactly one seed, and the crop definition -- never the client -- says which item
+    // that is. What differs between the two paths is only *where* the seed is read from; the row the
+    // removal is prepared against is the state read here, so a concurrent consumption either applies
+    // against it or rolls the whole planting back.
+    const seedSource = await this.readSeed(actor, source, definition.seedItemDefinitionId, inventory, inventoryService, actors, cargo);
 
-    const now = clock.now();
+    // An Auto plant happens at the instant the executor is simulating (online: the server clock); the
+    // crop's own timestamps, its receipt and the state it reports all belong to that instant.
+    const now = autoContext?.eventTime ?? clock.now();
+    // The tile the settlement must see: the one the client read, or a fresh row for natural land.
+    const tilePlan: TilePlan =
+      tile === null
+        ? { kind: "CREATE", tile: createFarmTile(farmId, command, "SOIL", now) }
+        : { kind: "EXISTING", version: tile.version };
     const crop = createCropInstance(
       ids.newCropInstanceId(),
       farmId,
@@ -226,8 +350,8 @@ export class PlantCrop {
     );
     const record: IdempotencyRecord = {
       actorPlayerId: actor.playerId,
-      operation: PLANT_OPERATION,
-      requestId: command.requestId,
+      operation,
+      requestId: settlementRequestId,
       payloadFingerprint: fingerprint,
       resourceId: crop.id,
       responseJson: JSON.stringify({ cropInstanceId: crop.id }),
@@ -236,35 +360,116 @@ export class PlantCrop {
     };
 
     try {
-      await crops.plantAtomically(crop, command.expectedTileVersion, seedRemoval, seed, record);
+      if (seedSource.source === "WAREHOUSE") {
+        await crops.plantAtomically(crop, tilePlan, seedSource.removal, seedSource.expected, record);
+      } else if (autoContext !== undefined && this.dependencies.autoSettlement !== undefined) {
+        await this.dependencies.autoSettlement.settle({
+          crop,
+          tile: tilePlan,
+          seedRemoval: seedSource.removal,
+          expectedCargo: seedSource.expected,
+          idempotency: record,
+          context: autoContext
+        });
+      } else {
+        await crops.plantFromCargoAtomically(crop, tilePlan, seedSource.removal, seedSource.expected, record);
+      }
       return new CropStateProjector(definitions, clock).project(crop, now);
     } catch (error: unknown) {
-      const racedRequest = await idempotency.find(actor.playerId, PLANT_OPERATION, command.requestId);
+      const racedRequest = await idempotency.find(actor.playerId, operation, settlementRequestId);
       if (racedRequest !== null) return this.replay(racedRequest, fingerprint);
       if ((await crops.findAtTile(farmId, command.x, command.y)) !== null) {
         throw new ApplicationError("TILE_OCCUPIED", "Tile already has a crop");
       }
       const currentTile = await tiles.find(farmId, command.x, command.y);
-      if (currentTile === null) {
-        throw new ApplicationError("RESOURCE_NOT_FOUND", "Tile was not found");
-      }
-      if (currentTile.terrainType !== "SOIL") {
-        throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
-      }
-      if (currentTile.version !== command.expectedTileVersion) {
-        throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+      if (currentTile !== null) {
+        if (currentTile.terrainType !== "SOIL") {
+          throw new ApplicationError("TILE_NOT_PLANTABLE", "Tile is not plantable");
+        }
+        if (tilePlan.kind === "EXISTING" && currentTile.version !== tilePlan.version) {
+          throw new ApplicationError("CONFLICT_STALE_STATE", "Tile version does not match");
+        }
       }
       // The batch rolls back as one unit, so a lost race leaves the seed exactly where it was. Which
       // stable error the player sees is decided by re-reading the state they contended over.
-      const currentSeed = await inventory.find(actor.playerId, definition.seedItemDefinitionId);
-      if (currentSeed === null || currentSeed.quantity < 1) {
-        throw new ApplicationError("INSUFFICIENT_ITEMS", "Planting requires a seed for this crop");
-      }
-      if (currentSeed.version !== seed.version) {
-        throw new ApplicationError("CONFLICT_STALE_STATE", "Inventory changed concurrently");
+      if (seedSource.source === "WAREHOUSE") {
+        const currentSeed = await inventory.find(actor.playerId, definition.seedItemDefinitionId);
+        if (currentSeed === null || currentSeed.quantity < 1) {
+          throw new ApplicationError("INSUFFICIENT_ITEMS", "Planting requires a seed for this crop");
+        }
+        if (currentSeed.version !== seedSource.expected.version) {
+          throw new ApplicationError("CONFLICT_STALE_STATE", "Inventory changed concurrently");
+        }
+      } else {
+        const currentSeed = await this.currentCargoSeed(seedSource.expected.actorId, definition.seedItemDefinitionId);
+        if (currentSeed === null || currentSeed.quantity < 1) {
+          throw new ApplicationError("INSUFFICIENT_ITEMS", "Planting requires a seed for this crop");
+        }
+        if (currentSeed.version !== seedSource.expected.version) {
+          throw new ApplicationError("CONFLICT_STALE_STATE", "Cargo changed concurrently");
+        }
       }
       throw error;
     }
+  }
+
+  /**
+   * The seed this planting will spend, read from the container the caller named.
+   *
+   * The only branch in the whole planting path: which container is read, and therefore which
+   * settlement is written. Everything before and after - terrain, occupancy, tile version, crop
+   * definition, level, one-seed-per-crop - is the same code for the manual and the Auto path.
+   */
+  private async readSeed(
+    actor: ActorContext,
+    source: PlantSeedSource,
+    seedItemDefinitionId: CropDefinition["seedItemDefinitionId"],
+    inventory: InventoryRepository,
+    inventoryService: InventoryService,
+    actors: ActorRepository | undefined,
+    cargo: CargoRepository | undefined
+  ): Promise<ReadSeedResult> {
+    if (source === "WAREHOUSE") {
+      const seed = await inventory.find(actor.playerId, seedItemDefinitionId);
+      if (seed === null || seed.quantity < 1) {
+        throw new ApplicationError("INSUFFICIENT_ITEMS", "Planting requires a seed for this crop");
+      }
+      return {
+        source: "WAREHOUSE",
+        expected: seed,
+        removal: inventoryService.prepareRemoval(actor.playerId, seedItemDefinitionId, 1)
+      };
+    }
+    if (actors === undefined || cargo === undefined) {
+      throw new ApplicationError("INTERNAL_ERROR", "Planting from cargo is not available on this host");
+    }
+    const actorRow = await actors.findMainCharacter(actor.playerId);
+    if (actorRow === null) {
+      throw new ApplicationError("INSUFFICIENT_ITEMS", "The actor is not carrying a seed for this crop");
+    }
+    const stack = await this.currentCargoSeed(actorRow.id, seedItemDefinitionId);
+    if (stack === null || stack.quantity < 1) {
+      throw new ApplicationError("INSUFFICIENT_ITEMS", "The actor is not carrying a seed for this crop");
+    }
+    return {
+      source: "CARGO",
+      expected: stack,
+      removal: {
+        actorId: actorRow.id,
+        itemDefinitionId: seedItemDefinitionId,
+        quantity: 1,
+        expectedQuantity: stack.quantity,
+        expectedVersion: stack.version,
+        timestamp: this.dependencies.clock.now()
+      }
+    };
+  }
+
+  private async currentCargoSeed(actorId: ActorId, itemDefinitionId: CropDefinition["seedItemDefinitionId"]): Promise<ActorCargoItem | null> {
+    const cargo = this.dependencies.cargo;
+    if (cargo === undefined) return null;
+    const items = await cargo.listByActor(actorId);
+    return items.find((item) => item.itemDefinitionId === itemDefinitionId) ?? null;
   }
 
   private async replay(record: IdempotencyRecord, fingerprint: string): Promise<CropState> {
@@ -274,6 +479,139 @@ export class PlantCrop {
     const crop = await this.dependencies.crops.findById(parseCropInstanceId(record.resourceId));
     if (crop === null) throw new ApplicationError("INTERNAL_ERROR", "Stored command result is unavailable");
     return new CropStateProjector(this.dependencies.definitions, this.dependencies.clock).project(crop);
+  }
+}
+
+export interface PlantCropAreaCell extends TileCoordinate {
+  readonly expectedTileVersion?: number | undefined;
+}
+
+export interface PlantCropAreaGroupCommand {
+  readonly requestId: string;
+  readonly cropDefinitionId: string;
+  readonly cells: readonly PlantCropAreaCell[];
+}
+
+export type PlantCropAreaSkipReason = "OCCUPIED" | "NOT_PLANTABLE" | "STALE" | "NO_SEEDS" | "LEVEL" | "NOT_FOUND";
+
+export interface PlantCropAreaCellResult {
+  readonly x: number;
+  readonly y: number;
+  readonly status: "PLANTED" | "SKIPPED";
+  readonly cropInstanceId: string | null;
+  readonly reason: PlantCropAreaSkipReason | null;
+}
+
+export interface PlantCropAreaGroupResult {
+  readonly results: readonly PlantCropAreaCellResult[];
+  readonly plantedCount: number;
+  readonly skippedCount: number;
+}
+
+export const MAX_PLANT_CROP_AREA_GROUP = 25;
+const PLANT_CROP_AREA_OPERATION = "PLANT_CROP_AREA_GROUP";
+
+/**
+ * Bounded area planting for crops. Every cell delegates to the existing one-cell command, so terrain,
+ * ownership, level, seed debit, tile version and atomic settlement remain one contract rather than a
+ * weaker batch shortcut. The group receipt only makes a lost HTTP response replayable.
+ */
+export class PlantCropAreaGroup {
+  constructor(
+    private readonly farms: FarmRepository,
+    private readonly members: FarmMemberRepository,
+    private readonly plantCrop: PlantCrop,
+    private readonly receipts: PlantBatchReceiptRepository,
+    private readonly fingerprints: PayloadFingerprint,
+    private readonly clock: Clock
+  ) {}
+
+  async execute(actor: ActorContext | null, farmId: FarmId, command: PlantCropAreaGroupCommand): Promise<PlantCropAreaGroupResult> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if (command.cells.length === 0 || command.cells.length > MAX_PLANT_CROP_AREA_GROUP) {
+      throw new ApplicationError("INVALID_INPUT", "The planting group size is invalid");
+    }
+    if ((await this.farms.findById(farmId)) === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+    const keys = command.cells.map((cell) => `${String(cell.x)},${String(cell.y)}`);
+    if (new Set(keys).size !== keys.length) throw new ApplicationError("INVALID_INPUT", "A planting group cannot contain a duplicate cell");
+
+    const fingerprint = await this.fingerprints.hash(JSON.stringify([
+      farmId,
+      command.cropDefinitionId,
+      command.cells.map((cell) => [cell.x, cell.y, cell.expectedTileVersion])
+    ]));
+    const existing = await this.receipts.find(actor.playerId, command.requestId);
+    if (existing !== null) return this.replay(existing, fingerprint);
+
+    const results: PlantCropAreaCellResult[] = [];
+    for (let index = 0; index < command.cells.length; index += 1) {
+      const cell = command.cells[index];
+      if (cell === undefined) continue;
+      try {
+        const planted = await this.plantCrop.execute(actor, farmId, {
+          cropDefinitionId: command.cropDefinitionId,
+          x: cell.x,
+          y: cell.y,
+          ...(cell.expectedTileVersion === undefined ? {} : { expectedTileVersion: cell.expectedTileVersion }),
+          requestId: await this.derivedRequestId(command.requestId, index)
+        });
+        results.push({ x: cell.x, y: cell.y, status: "PLANTED", cropInstanceId: planted.cropInstanceId, reason: null });
+      } catch (error: unknown) {
+        const reason = plantingSkipReason(error);
+        if (reason === null) throw error;
+        results.push({ x: cell.x, y: cell.y, status: "SKIPPED", cropInstanceId: null, reason });
+      }
+    }
+    const response = {
+      results,
+      plantedCount: results.filter((result) => result.status === "PLANTED").length,
+      skippedCount: results.filter((result) => result.status === "SKIPPED").length
+    } satisfies PlantCropAreaGroupResult;
+    const record: IdempotencyRecord = {
+      actorPlayerId: actor.playerId,
+      operation: PLANT_CROP_AREA_OPERATION,
+      requestId: command.requestId,
+      payloadFingerprint: fingerprint,
+      resourceId: String(farmId),
+      responseJson: JSON.stringify(response),
+      status: "COMPLETED",
+      createdAt: this.clock.now()
+    };
+    if (await this.receipts.save(record)) return response;
+    const raced = await this.receipts.find(actor.playerId, command.requestId);
+    if (raced !== null) return this.replay(raced, fingerprint);
+    throw new ApplicationError("IDEMPOTENCY_CONFLICT", "The planting group could not be recorded");
+  }
+
+  private async derivedRequestId(groupRequestId: string, index: number): Promise<string> {
+    const digest = await this.fingerprints.hash(`${groupRequestId}:${String(index)}`);
+    return `crop-plant-area-${digest.slice(0, 70)}`;
+  }
+
+  private replay(record: IdempotencyRecord, fingerprint: string): PlantCropAreaGroupResult {
+    if (record.payloadFingerprint !== fingerprint) throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
+    try {
+      const value = JSON.parse(record.responseJson) as PlantCropAreaGroupResult;
+      if (!Array.isArray(value.results) || !Number.isSafeInteger(value.plantedCount) || !Number.isSafeInteger(value.skippedCount)) throw new Error("invalid stored result");
+      return value;
+    } catch {
+      throw new ApplicationError("INTERNAL_ERROR", "Stored planting group result is unavailable");
+    }
+  }
+}
+
+function plantingSkipReason(error: unknown): PlantCropAreaSkipReason | null {
+  if (!(error instanceof ApplicationError)) return null;
+  switch (error.code) {
+    case "TILE_OCCUPIED": return "OCCUPIED";
+    case "TILE_NOT_PLANTABLE": return "NOT_PLANTABLE";
+    case "CONFLICT_STALE_STATE": return "STALE";
+    case "INSUFFICIENT_ITEMS": return "NO_SEEDS";
+    case "CROP_LEVEL_REQUIRED": return "LEVEL";
+    case "CROP_DEFINITION_NOT_FOUND": return "NOT_FOUND";
+    default: return null;
   }
 }
 

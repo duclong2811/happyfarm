@@ -24,6 +24,10 @@ export const CONSTRUCTION_ID_KEY = "constructionId";
  */
 export const CONSTRUCTION_IDS_KEY = "constructionIds";
 
+/** Stable metadata keys for direct world-resource picking. */
+export const RESOURCE_NODE_ID_KEY = "resourceNodeId";
+export const FISHING_SPOT_ID_KEY = "fishingSpotId";
+
 /** The two things a `userData` bag and a parent pointer are all this needs. */
 export interface PickableNode {
   readonly userData: { readonly [key: string]: unknown };
@@ -69,6 +73,79 @@ export function constructionIdFromHits(
   for (const hit of hits) {
     const id = constructionIdFromNode(hit.object, hit.instanceId);
     if (id !== null) return id;
+  }
+  return null;
+}
+
+/** Resolve a ground ray against a server-provided construction footprint while its model is loading. */
+export function constructionIdFromWorldPoint(
+  point: { readonly worldX: number; readonly worldZ: number },
+  constructions: readonly {
+    readonly id: string;
+    readonly worldX: number;
+    readonly worldZ: number;
+    readonly widthCells: number;
+    readonly depthCells: number;
+  }[],
+  pitch: number
+): string | null {
+  if (!Number.isFinite(pitch) || pitch <= 0) return null;
+  let best: { readonly id: string; readonly distance: number } | null = null;
+  for (const construction of constructions) {
+    const offsetX = ((construction.widthCells - 1) / 2 - Math.floor((construction.widthCells - 1) / 2)) * pitch;
+    const offsetZ = ((construction.depthCells - 1) / 2 - Math.floor((construction.depthCells - 1) / 2)) * pitch;
+    const centreX = construction.worldX + offsetX;
+    const centreZ = construction.worldZ + offsetZ;
+    if (
+      Math.abs(point.worldX - centreX) > (construction.widthCells * pitch) / 2 ||
+      Math.abs(point.worldZ - centreZ) > (construction.depthCells * pitch) / 2
+    ) continue;
+    const distance = Math.hypot(point.worldX - centreX, point.worldZ - centreZ);
+    if (best === null || distance < best.distance || (distance === best.distance && construction.id < best.id)) {
+      best = { id: construction.id, distance };
+    }
+  }
+  return best?.id ?? null;
+}
+
+/** Resolves a resource/fishing id from a hit mesh or one of its GLB ancestors. */
+export function worldTargetIdFromNode(
+  node: PickableNode | null,
+  key: typeof RESOURCE_NODE_ID_KEY | typeof FISHING_SPOT_ID_KEY
+): string | null {
+  let current = node;
+  while (current !== null) {
+    const id = current.userData[key];
+    if (typeof id === "string" && id.length > 0) return id;
+    current = current.parent;
+  }
+  return null;
+}
+
+export type WorldPickTarget =
+  | { readonly kind: "RESOURCE_NODE" | "FISHING_SPOT"; readonly id: string }
+  | { readonly kind: "CONSTRUCTION"; readonly id: string };
+
+/**
+ * Resolves a tap after the renderer has collected direct and ground-fallback candidates.
+ *
+ * Direct resource hits must win over a nearby construction because the resource mesh is the thing
+ * the player actually pointed at. A direct construction hit still wins over a resource's ground
+ * fallback, which preserves management clicks on placed objects while their model is visible.
+ */
+export function prioritizeWorldPick(input: {
+  readonly directWorldTarget: Exclude<WorldPickTarget, { readonly kind: "CONSTRUCTION" }> | null;
+  readonly directConstructionId: string | null;
+  readonly fallbackWorldTarget: Exclude<WorldPickTarget, { readonly kind: "CONSTRUCTION" }> | null;
+  readonly fallbackConstructionId: string | null;
+}): WorldPickTarget | null {
+  if (input.directWorldTarget !== null) return input.directWorldTarget;
+  if (input.directConstructionId !== null) {
+    return { kind: "CONSTRUCTION", id: input.directConstructionId };
+  }
+  if (input.fallbackWorldTarget !== null) return input.fallbackWorldTarget;
+  if (input.fallbackConstructionId !== null) {
+    return { kind: "CONSTRUCTION", id: input.fallbackConstructionId };
   }
   return null;
 }

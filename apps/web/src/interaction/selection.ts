@@ -94,6 +94,21 @@ export function selectInteractionCandidate(
 }
 
 /**
+ * Re-resolve the target the player explicitly tapped, when one exists.
+ *
+ * A direct world tap owns the target while the character walks toward it.  Activation must use the
+ * same ownership rule as the prompt; falling back to the globally nearest target here can make E act
+ * on a different crop/object (or look like a no-op) when another target becomes nearer on the way.
+ */
+export function selectFocusedInteractionCandidate(
+  index: InteractionIndex,
+  focused: InteractableTarget | null,
+  query: InteractionQuery
+): InteractionCandidate | null {
+  return focused === null ? selectInteractionCandidate(index, query) : interactionCandidateFrom([focused], query);
+}
+
+/**
  * What activating a candidate does, once the world has been asked again.
  *
  * `selected` is the candidate the prompt was drawn for; `fresh` is what discovery returns for where
@@ -114,6 +129,12 @@ export type InteractionActivation =
       readonly expectedTreeVersion: number;
     }
   | {
+      readonly kind: "CHOP_FORESTRY_CONSTRUCTION";
+      readonly constructionId: string;
+      readonly expectedForestryVersion: number;
+      readonly target: InteractionCandidate;
+    }
+  | {
       /** A place that offers a service: walking up to the market stall and trading at it. */
       readonly kind: "TRADE";
       readonly service: "FARM_MARKET";
@@ -123,6 +144,18 @@ export type InteractionActivation =
       /** Water the player can cast into. The server owns the spot, the wait and the catch. */
       readonly kind: "FISH";
       readonly spotId: string;
+      readonly target: InteractionCandidate;
+    }
+  | {
+      readonly kind: "STOCK_AQUACULTURE";
+      readonly pondId: string;
+      readonly expectedPondVersion: number;
+      readonly target: InteractionCandidate;
+    }
+  | {
+      readonly kind: "HARVEST_AQUACULTURE";
+      readonly pondId: string;
+      readonly expectedPondVersion: number;
       readonly target: InteractionCandidate;
     }
   | {
@@ -145,13 +178,37 @@ export function interactionActivation(
   if (fresh.key !== selected.key) return { kind: "STALE", reason: "CHANGED" };
   if (fresh.action === "TRADE") return { kind: "TRADE", service: "FARM_MARKET", target: fresh };
   if (fresh.action === "FISH") return { kind: "FISH", spotId: fresh.targetId, target: fresh };
+  if (fresh.action === "STOCK_AQUACULTURE") {
+    return {
+      kind: "STOCK_AQUACULTURE",
+      pondId: fresh.targetId,
+      expectedPondVersion: fresh.version,
+      target: fresh
+    };
+  }
+  if (fresh.action === "HARVEST_AQUACULTURE") {
+    return {
+      kind: "HARVEST_AQUACULTURE",
+      pondId: fresh.targetId,
+      expectedPondVersion: fresh.version,
+      target: fresh
+    };
+  }
   if (fresh.action === "MINE" || fresh.action === "CHOP") {
     return { kind: "GATHER", nodeId: fresh.targetId, verb: fresh.action, target: fresh };
   }
-  if (fresh.action === "HARVEST") {
+  if (fresh.action === "HARVEST" || fresh.action === "CHOP_TREE") {
     return fresh.kind === "TREE"
       ? { kind: "HARVEST_TREE", treeInstanceId: fresh.targetId, expectedTreeVersion: fresh.version }
       : { kind: "HARVEST_CROP", cropInstanceId: fresh.targetId, expectedCropVersion: fresh.version };
+  }
+  if (fresh.action === "CHOP_CONSTRUCTION") {
+    return {
+      kind: "CHOP_FORESTRY_CONSTRUCTION",
+      constructionId: fresh.targetId,
+      expectedForestryVersion: fresh.version,
+      target: fresh
+    };
   }
   return { kind: "INSPECT", target: fresh };
 }

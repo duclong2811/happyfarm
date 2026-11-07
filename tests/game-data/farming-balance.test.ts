@@ -142,7 +142,8 @@ describe("the orchard economy", () => {
   });
 
   it("makes each later species a bigger, slower investment", () => {
-    const byLevel = [...TREES].sort((left, right) => left.requiredLevel - right.requiredLevel);
+    // Wildwood is a level-1 forestry material producer, not the level-gated orchard progression.
+    const byLevel = TREES.filter((tree) => tree.id !== "tree_wildwood").sort((left, right) => left.requiredLevel - right.requiredLevel);
     for (let index = 1; index < byLevel.length; index += 1) {
       const previous = byLevel[index - 1];
       const current = byLevel[index];
@@ -151,6 +152,13 @@ describe("the orchard economy", () => {
       expect(current?.cycleSeconds ?? 0).toBeGreaterThan(previous?.cycleSeconds ?? 0);
       expect(current?.revenuePerCycle ?? 0).toBeGreaterThan(previous?.revenuePerCycle ?? 0);
     }
+  });
+
+  it("models Wildwood as one productive cycle plus a paid replant", () => {
+    const wildwood = TREES.find((tree) => tree.id === "tree_wildwood");
+    expect(wildwood).toMatchObject({ regenerates: false, firstReadySeconds: 3600, cycleSeconds: 3600, yieldPerCycle: 12, sellPrice: 1 });
+    expect(wildwood?.netProfitPerCycle).toBe(9);
+    expect(wildwood?.netGoldPerMinute).toBeCloseTo(0.15, 10);
   });
 });
 
@@ -174,18 +182,20 @@ describe("the catalogue and the market stay consistent", () => {
     }
   });
 
-  it("leaves no item that can be bought and sold in the same breath", () => {
-    // A single entry with both a buy and a sell price is the shape an arbitrage loop would take.
+  it("keeps the only stocking exception above its sell value", () => {
+    // Aquaculture intentionally buys one input through the existing fish item. Its buy price must
+    // remain above the one-unit harvest sell price; every other entry remains one-directional.
     for (const entry of shops) {
-      expect(
-        entry.buyPrice !== undefined && entry.sellPrice !== undefined,
-        entry.id
-      ).toBe(false);
+      if (entry.id === "shop_fish_tilapia") {
+        expect(entry.buyPrice).toBeGreaterThan(entry.sellPrice ?? 0);
+      } else {
+        expect(entry.buyPrice !== undefined && entry.sellPrice !== undefined, entry.id).toBe(false);
+      }
     }
     // And no seed or sapling is ever sellable, nor any produce buyable.
     for (const entry of shops) {
       const category = itemRegistry.get(entry.itemDefinitionId)?.category;
-      if (entry.buyPrice !== undefined) expect(category, entry.id).toBe("SEED");
+      if (entry.buyPrice !== undefined && entry.id !== "shop_fish_tilapia") expect(category, entry.id).toBe("SEED");
       // What the market buys is gathered goods: a harvested crop, a caught fish, or a mined material.
       if (entry.sellPrice !== undefined) expect(["CROP", "FISH", "MATERIAL"], entry.id).toContain(category);
     }

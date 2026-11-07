@@ -9,7 +9,7 @@ import type { PlotDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type TileCoordinate } from "../../apps/web/src/render/layout";
 import { worldFrame, worldToTile } from "../../apps/web/src/render/layout";
 import {
-  APRON_MARGIN_TILES,
+  FIELD_FRAME_MARGIN_TILES,
   buildFarmWorld,
   landFrame,
   plotRing,
@@ -175,28 +175,22 @@ describe("buildFarmWorld", () => {
     expect(grown.meadows).toEqual(small.meadows);
     expect(grown.landmarks).toEqual(small.landmarks);
     expect(grown.terrain).toEqual(small.terrain);
-    // The apron and the bed are the exception, and deliberately so: they follow the land the farm
-    // owns, which is why the alpha's field sat in the middle of a paved yard.
-    expect(grown.apron).not.toEqual(small.apron);
-    expect(grown.bed).not.toEqual(small.bed);
+    // V14.5.1: buying land changes nothing about the island's surface any more. Only the default
+    // camera framing follows what the farm owns, so the field stops being a brown rectangle and
+    // stays grass.
+    expect(grown.farmHalfExtentWorld).toBeGreaterThan(small.farmHalfExtentWorld);
+    expect(Object.keys(grown)).not.toContain("apron");
+    expect(Object.keys(grown)).not.toContain("bed");
   });
 
-  it("keeps the cultivated apron around the field the farm owns, not the whole reserve", () => {
+  it("frames the owned field without painting any ground for it", () => {
     const world = worldFor(starterTiles(), CATALOGUE);
-    expect(world.apron).not.toBeNull();
-    expect(world.bed).not.toBeNull();
-    const apron = world.apron;
-    if (apron === null) throw new Error("the starter farm must have an apron");
-    const bed = world.bed;
-    if (bed === null) throw new Error("the starter farm must have a bed");
-    // Twelve tiles of field, plus the margin on both sides.
-    expect(apron.widthWorld).toBeCloseTo((INITIAL_LAND_SIZE + APRON_MARGIN_TILES * 2) * 1.08, 6);
-    expect(apron.depthWorld).toBeCloseTo(apron.widthWorld, 6);
-    // The bed is the tile area itself, so a gap between two slabs shows soil rather than the apron.
-    expect(bed.widthWorld).toBeCloseTo(INITIAL_LAND_SIZE * 1.08, 6);
-    expect(apron.widthWorld).toBeGreaterThan(bed.widthWorld);
-    // And the whole thing is far smaller than the fence it stands inside.
-    expect(apron.widthWorld).toBeLessThan(FENCE.bounds.maxX - FENCE.bounds.minX);
+    // Twelve tiles of field plus a little grass on each side, and far smaller than the fence.
+    expect(world.farmHalfExtentWorld).toBeCloseTo(
+      (INITIAL_LAND_SIZE / 2 + FIELD_FRAME_MARGIN_TILES) * 1.08,
+      6
+    );
+    expect(world.farmHalfExtentWorld * 2).toBeLessThan(FENCE.bounds.maxX - FENCE.bounds.minX);
   });
 
   it("lays locked plot squares outside the unlocked field", () => {
@@ -231,10 +225,10 @@ describe("buildFarmWorld", () => {
       // The land the farm works is the one place nothing grows. The rest of the reserve is land the
       // catalogue has not sold yet, and unbought land is countryside rather than a cleared board.
       const overOwnedLand =
-        tile.x >= -1 - APRON_MARGIN_TILES &&
-        tile.x <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES &&
-        tile.y >= -1 - APRON_MARGIN_TILES &&
-        tile.y <= INITIAL_LAND_SIZE - 1 + APRON_MARGIN_TILES;
+        tile.x >= -1 - FIELD_FRAME_MARGIN_TILES &&
+        tile.x <= INITIAL_LAND_SIZE - 1 + FIELD_FRAME_MARGIN_TILES &&
+        tile.y >= -1 - FIELD_FRAME_MARGIN_TILES &&
+        tile.y <= INITIAL_LAND_SIZE - 1 + FIELD_FRAME_MARGIN_TILES;
       expect(overOwnedLand, `${entry.kind} at ${String(tile.x)},${String(tile.y)}`).toBe(false);
     }
   });

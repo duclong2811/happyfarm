@@ -101,6 +101,8 @@ export interface PlayerCharacterPose {
   readonly elapsedWalk: number;
   /** Whether the player is holding the run key. Presentation only; the runtime owns the speed. */
   readonly running?: boolean;
+  /** Whether the character is mid-gesture on a job: a work stoop, not a step. Presentation only. */
+  readonly working?: boolean;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -302,6 +304,9 @@ export interface PlayerCharacterView {
 /** The bob the fallback avatar had before there was a model: it keeps the old look intact. */
 const FALLBACK_BOB_WORLD = 0.035;
 const FALLBACK_STEP_FREQUENCY = 9;
+/** A work gesture's stoop: a little deeper and slower than a step, so it reads as doing, not walking. */
+const WORK_BOB_WORLD = 0.09;
+const WORK_BOB_FREQUENCY = 7;
 /**
  * How long a character request may take before it is *reported* as slow.
  *
@@ -328,6 +333,8 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
   let clips: ReadonlyMap<string, AnimationClip> = new Map();
   let available: readonly string[] = [];
   let animationState: CharacterAnimationState | null = null;
+  /** Seconds spent in the current work gesture: the clock its stoop is drawn from. */
+  let workSeconds = 0;
   let current: AnimationAction | null = null;
   let loading = false;
   let disposed = false;
@@ -361,6 +368,15 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
         "the placeholder character is being drawn instead"
     );
     log(`[character] failed to load ${modelFileName()}; using placeholder (${message})`);
+  }
+
+  /** A slow cosmetic request is not a failed request: keep the placeholder without raising an error. */
+  function reportSlow(timeoutMs: number): void {
+    const url = CHARACTER_MODEL_URL_BY_ID.get(config.modelId) ?? config.modelId;
+    log(
+      `[character] slow load ${modelFileName()} (${url}); ` +
+        `the placeholder remains active until it arrives (>${String(timeoutMs)} ms)`
+    );
   }
 
   /**
@@ -449,7 +465,7 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
         typeof setTimeout === "function"
           ? setTimeout(() => {
               if (settled || disposed) return;
-              report(`it had not loaded after ${String(timeoutMs)} ms`);
+              reportSlow(timeoutMs);
             }, timeoutMs)
           : null;
       const settle = (): void => {
@@ -484,6 +500,13 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
       }
       root.visible = true;
       root.rotation.y = characterOrientationYaw(pose.facingYaw, config);
+      // A restored tab hands in a huge delta; the mixer clamps nothing, so the caller's seconds are
+      // bounded the same way the player runtime bounds its own.
+      const seconds = Number.isFinite(deltaSeconds) ? Math.min(Math.max(deltaSeconds, 0), 0.25) : 0;
+      // A working character stoops and rises on its own clock. Presentation only: no clip is required
+      // for it, so a model with no work animation still looks like it is doing something.
+      workSeconds = pose.working === true ? workSeconds + seconds : 0;
+      const workBob = pose.working === true ? Math.abs(Math.sin(workSeconds * WORK_BOB_FREQUENCY)) * WORK_BOB_WORLD : 0;
 
       if (mixer === null) {
         // The fallback has no clips, so its walk is the old step bob, driven by the same elapsed-walk
@@ -492,11 +515,11 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
           pose.movementState === "WALKING"
             ? Math.abs(Math.sin(pose.elapsedWalk * FALLBACK_STEP_FREQUENCY)) * FALLBACK_BOB_WORLD
             : 0;
-        root.position.set(pose.worldX, pose.worldY + bob, pose.worldZ);
+        root.position.set(pose.worldX, pose.worldY + bob - workBob, pose.worldZ);
         return;
       }
 
-      root.position.set(pose.worldX, pose.worldY, pose.worldZ);
+      root.position.set(pose.worldX, pose.worldY - workBob, pose.worldZ);
       const state = characterAnimationStateFor({
         moving: pose.movementState === "WALKING",
         running: pose.running === true
@@ -504,9 +527,6 @@ export function createPlayerCharacterView(options: PlayerCharacterViewOptions): 
       const change = characterAnimationChange(animationState, state, config, available);
       if (change !== null) play(change);
       animationState = state;
-      // A restored tab hands in a huge delta; the mixer clamps nothing, so the caller's seconds are
-      // bounded the same way the player runtime bounds its own.
-      const seconds = Number.isFinite(deltaSeconds) ? Math.min(Math.max(deltaSeconds, 0), 0.25) : 0;
       mixer.update(seconds);
     },
     dispose(): void {

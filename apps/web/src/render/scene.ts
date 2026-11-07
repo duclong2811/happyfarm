@@ -4,6 +4,7 @@
   BackSide,
   Box3,
   BufferAttribute,
+  CanvasTexture,
   Color,
   DirectionalLight,
   DoubleSide,
@@ -25,6 +26,8 @@
   Quaternion,
   Raycaster,
   Scene,
+  Sprite,
+  SpriteMaterial,
   SphereGeometry,
   Vector2,
   Vector3,
@@ -52,27 +55,41 @@ import { createSharedAssets, tileColorFor, type SharedAssets } from "./materials
 import { createPointerGesture } from "./pointer-gesture";
 import { buildInstancedObjects, buildScenery } from "./scenery";
 import { buildLandmarkNode } from "./landmarks";
-import { buildInteractionGrid } from "./interaction-grid";
+import { buildInteractionGrid, plantingHintCells } from "./interaction-grid";
 import { worldToCell } from "./world-cell";
+import { bootPerfInteractionTrace, bootPerfInteractionTraceId } from "../boot-performance";
 import {
   planCellOverlay,
   buildCellOutlines,
   buildDebugGrid,
-  buildOwnedLandOverlay,
   buildSelectionQuad
 } from "./world-cell-overlay";
-import { CONSTRUCTION_ID_KEY, constructionIdFromHits, tapTargetFor } from "./object-picking";
+import {
+  CONSTRUCTION_ID_KEY,
+  RESOURCE_NODE_ID_KEY,
+  constructionIdFromHits,
+  constructionIdFromWorldPoint,
+  prioritizeWorldPick,
+  tapTargetFor,
+  worldTargetIdFromNode
+} from "./object-picking";
 import { CELL_OVERLAY_LIFT_WORLD } from "./world-cell-overlay";
 import { CELL_OVERLAY_TILE_LIFT_WORLD } from "./world-cell-overlay";
 import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
 import { worldFrame } from "./layout";
-import { buildLockedPlotOverlay, buildTerrain, TILE_THICKNESS } from "./terrain";
-import { GROUND_SURFACE_Y, terrainHeightAt } from "./terrain-height";
-import type { FarmSceneInput, SceneTile, SceneTree } from "./view-model";
+import { buildLockedPlotOverlay, buildTerrain, TILE_SURFACE_Y, TILE_THICKNESS } from "./terrain";
+import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt } from "./terrain-height";
+import {
+  resourceClusterPieces,
+  resourceNodePickRadius
+} from "./resource-cluster";
+import { NEIGHBOR_PREVIEW_WATER_SCALE, neighborForestLayout, neighborGroundHeight, neighborIslandTemplate, neighborWorldPoint, type NeighborIslandKind } from "./neighbor-island-template";
+import { MOC_PREVIEW_LAYOUT, mocPresentationDockWorld, mocPreviewForestPlacements, mocPreviewPlacement } from "../moc-island-preview-data";
+import { tileDrawsSoil, type FarmSceneInput, type SceneTile, type SceneTree } from "./view-model";
 import { buildFarmWorld } from "./world";
 import { EMPTY_WORLD_CELL_MAP } from "./world-cell";
-import { STATIC_OBSTACLES } from "./world-config";
+import { ISLAND_HALF_WIDTH_WORLD, ISLAND_SHAPE, LANDMARKS_WORLD, STATIC_OBSTACLES, WOODLANDS, WORLD_CENTER_WORLD } from "./world-config";
 import {
   CAMERA_TRANSITION_SECONDS,
   cameraModeToggleRequested,
@@ -109,6 +126,8 @@ import { buildRoadSpec, ROAD_LIFT_WORLD } from "./roads";
 import { ROAD_SEGMENT_CELLS } from "@happy-farm/game-data";
 import { ribbonSurface } from "./road-surface";
 import { tileToWorld } from "./layout";
+import type { PreviewGround } from "./placement-preview";
+import { resourceNodeLayerSignature } from "./resource-layer";
 
 /**
  * Three.js view of the farm.
@@ -125,7 +144,7 @@ import { tileToWorld } from "./layout";
 
 /** Legacy margin kept for callers that framed the old flat ground plane. */
 export const GROUND_MARGIN = 1.5;
-export { TILE_THICKNESS };
+export { TILE_SURFACE_Y, TILE_THICKNESS };
 /** Height of a fully grown placeholder crop, in world units. */
 export const CROP_MAX_HEIGHT = 0.95;
 /** A just-planted crop still has to be visible, so growth never scales below this. */
@@ -206,6 +225,7 @@ export interface SceneConstruction {
  */
 export interface SceneResourceNode {
   readonly id: string;
+  readonly definitionId: string;
   readonly modelId: string;
   /**
    * What a depleted node draws instead, when the definition has a better answer than shrinking.
@@ -217,6 +237,60 @@ export interface SceneResourceNode {
   readonly available: boolean;
 }
 
+/** Read-only presentation proof used by the HUD's resource locator. */
+export type ResourceNodePresentationResult =
+  | {
+      readonly status: "READY";
+      readonly modelId: string;
+      readonly worldX: number;
+      readonly worldY: number;
+      readonly worldZ: number;
+    }
+  | {
+      readonly status: "NODE_MISSING" | "ASSET_UNAVAILABLE" | "MESH_MISSING" | "HIDDEN";
+      readonly modelId: string | null;
+    };
+
+/** A fishing spot's authoritative place, used only to resolve a direct water tap. */
+export interface SceneFishingSpot {
+  readonly id: string;
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly pickRadiusWorld: number;
+}
+
+export type SceneWorldTarget =
+  | { readonly kind: "RESOURCE_NODE"; readonly id: string }
+  | { readonly kind: "FISHING_SPOT"; readonly id: string }
+  | { readonly kind: "NEIGHBOR_DOCK"; readonly id: string }
+  | { readonly kind: "NEIGHBOR_NPC"; readonly id: string };
+
+export interface SceneNeighborIsland {
+  readonly islandId: string;
+  readonly center: { readonly x: number; readonly z: number };
+  readonly dock: { readonly x: number; readonly z: number };
+  readonly npc: { readonly x: number; readonly z: number };
+  readonly slot?: NeighborIslandKind;
+  readonly seed?: number;
+  readonly npcJobKey?: string;
+  readonly npcStartedAt?: string;
+  readonly npcNextActionAt?: string;
+  readonly npcCycle?: number;
+  /** Legacy authoritative construction phase used to decide whether a completed building is visible. */
+  readonly npcConstructionPhase?: string;
+}
+
+/** HOME-only low-detail preview: presentation only, never a walkable or selectable island. */
+export interface SceneNeighborIslandPreview {
+  readonly islandId: string;
+  readonly center: { readonly x: number; readonly z: number };
+  /** HOME uses the authored home-island outline; neighbours use their persisted template slot. */
+  readonly slot: NeighborIslandKind | "HOME";
+  readonly seed?: number;
+}
+
+/** A distant HOME-only marker. It has no pick target, actor, or collision contribution. */
+
 export interface PlacementPreview {
   /** The GLB to ghost, or null for a road - which is drawn as a segment of its own surface instead. */
   readonly modelId: string | null;
@@ -226,6 +300,8 @@ export interface PlacementPreview {
   readonly depthCells: number;
   /** Whether the cell the player has selected may hold this. Drives the footprint's colour only. */
   readonly valid: boolean;
+  /** Terrain classes accepted by the authoritative placement rule, used only for visual guidance. */
+  readonly allowedTerrain: readonly PreviewGround[];
   /** Which way the thing faces, in radians about Y. */
   readonly rotationY: number;
 }
@@ -249,6 +325,40 @@ export class FarmRendererUnavailableError extends Error {
     this.name = "FarmRendererUnavailableError";
     this.cause = cause;
   }
+}
+
+/**
+ * Everything the work-area editor draws, as one value.
+ *
+ * A `null` state means "not editing": no lattice, no marks, nothing left on the island. Every list is
+ * a cell list because the durable model is cells - the rectangle never reaches this layer.
+ */
+export interface WorkAreaEditState {
+  /** Cells already in the draft: the committed membership plus anything picked this session. */
+  readonly draft: readonly TileCoordinate[];
+  /** The rectangle between the armed corner and the pointer, as cells that would be added. */
+  readonly preview: readonly TileCoordinate[];
+  /** Cells inside the preview's rectangle that this kind of area cannot be worked on. */
+  readonly invalid: readonly TileCoordinate[];
+  /** The cell under the pointer, or null. */
+  readonly hover: TileCoordinate | null;
+  /** The first corner already taken, or null when the editor is waiting for one. */
+  readonly corner: TileCoordinate | null;
+}
+
+/** The two-corner estate-harvest selection, kept separate from work-area editing. */
+export interface AreaHarvestEditState {
+  readonly first: TileCoordinate | null;
+  readonly second: TileCoordinate | null;
+  readonly cells: readonly TileCoordinate[];
+  /** Optional refused cells, drawn over the preview so area tools can distinguish skips. */
+  readonly invalid?: readonly TileCoordinate[];
+  /** Valid cells beyond the current seed/sapling budget, drawn separately from invalid terrain. */
+  readonly shortage?: readonly TileCoordinate[];
+  /** Harvest cells that exist but are not ready yet. */
+  readonly waiting?: readonly TileCoordinate[];
+  /** Cell under the pointer/touch, used for the compact reason hint. */
+  readonly focus?: TileCoordinate | null;
 }
 
 export interface FarmSceneOptions {
@@ -280,6 +390,14 @@ export interface FarmSceneOptions {
    */
   readonly onCellSelected?: (cell: TileCoordinate) => void;
   /**
+   * Called with the island cell under the pointer, or null when it leaves the ground.
+   *
+   * Already coalesced to one call per frame and only when the cell *changes*, exactly like the
+   * renderer's own hover marker. The host uses it for purely local feedback - the work-area editor's
+   * hover and rectangle preview - so it must stay free of network or database work.
+   */
+  readonly onCellHovered?: (cell: TileCoordinate | null) => void;
+  /**
    * Called when the player clicked one of their own built things, by that thing's id.
    *
    * Only fires while object picking is enabled (see `setObjectPicking`): while something is in hand
@@ -287,7 +405,11 @@ export interface FarmSceneOptions {
    * The renderer reports the id and decides nothing - what may be done to an object is the server's
    * rule, and the panel that offers it is the caller's.
    */
-  readonly onObjectSelected?: (constructionId: string) => void;
+  readonly onObjectSelected?: (constructionId: string, traceId?: string | null) => void;
+  /** Called for a direct tap on a resource mesh or authoritative fishing-spot water region. */
+  readonly onWorldTargetSelected?: (target: SceneWorldTarget) => void;
+  /** Called with an exact open-ground hit while an active neighbour island is being visited. */
+  readonly onGroundPositionSelected?: (position: { readonly worldX: number; readonly worldZ: number }) => void;
   /**
    * Called when the player pressed the camera-mode shortcut.
    *
@@ -324,6 +446,8 @@ export interface FarmSceneOptions {
    * so this is a diagnosis for the caller to report, not a failure the caller has to recover from.
    */
   readonly onAssetProblem?: (assetId: string, error: unknown) => void;
+  /** Development-only boot measurement: called after the first renderer frame completes. */
+  readonly onFirstFrame?: () => void;
 }
 
 export interface FarmSceneHandle {
@@ -357,6 +481,17 @@ export interface FarmSceneHandle {
   estateFollowBehaviour(): EstateFollowBehaviour;
   /** Marks the object the interaction prompt is offering, or clears the mark with null. */
   setInteractionTarget(cell: TileCoordinate | null): void;
+  /**
+   * The work-area editor's whole view: enables the subtle lattice, and draws the draft, the rectangle
+   * preview, the cells that cannot be worked, the hovered cell and the first corner.
+   *
+   * One call for one state, because these are one picture and a caller should not be able to leave
+   * half of it behind. `null` leaves edit mode: the lattice and every mark are removed. Rebuilt only
+   * when the state actually changes, so a pointer resting on a cell costs nothing.
+   */
+  setWorkAreaEdit(state: WorkAreaEditState | null): void;
+  /** Draws the two selected corners and local harvest rectangle without participating in picking. */
+  setAreaHarvestEdit(state: AreaHarvestEditState | null): void;
   /** Plays the short harvest bow: a cosmetic beat, started when an interaction is accepted. */
   playHarvestGesture(): void;
   /** Where a cell's ground lands on the canvas, for HUD that belongs to a place. */
@@ -422,6 +557,16 @@ export interface FarmSceneHandle {
    * completes). A depleted deposit is drawn as a smaller rubble stub, so the place stays legible.
    */
   setResourceNodes(nodes: readonly SceneResourceNode[]): void;
+  /** Ensures a server-reported node has loaded art and a visible pick root before the camera moves. */
+  prepareResourceNode(nodeId: string): Promise<ResourceNodePresentationResult>;
+  /** Supplies authoritative fishing places for direct water hit-testing. */
+  setFishingSpots(spots: readonly SceneFishingSpot[]): void;
+  /** Draws the server-identified neighbour island, or clears it when returning home. */
+  setNeighborIsland(island: SceneNeighborIsland | null): void;
+  /** Draws low-detail silhouettes on HOME without adding collision, actors, or pick targets. */
+  setNeighborIslandPreviews(islands: readonly SceneNeighborIslandPreview[]): void;
+  /** Moves the estate camera to a world-space place without inventing a cell coordinate. */
+  focusWorld(worldX: number, worldZ: number, distance?: number, yaw?: number): void;
   /**
    * Whether a click on a built thing selects it.
    *
@@ -432,14 +577,6 @@ export interface FarmSceneHandle {
   setObjectPicking(enabled: boolean): void;
   /** Marks one built thing as the object the player is editing, or clears the mark with null. */
   setObjectSelection(constructionId: string | null): void;
-  /**
-   * Draws the cells the player owns, or clears the mark with null.
-   *
-   * The host decides *when*: while something is in hand for placement or a move, and nowhere else.
-   * The renderer decides *how*: one instanced quad per cell, one draw call for the parcel, rebuilt
-   * only when the cell list actually changes - never per frame, and never per pointer event.
-   */
-  setOwnershipOverlay(cells: readonly TileCoordinate[] | null): void;
   /**
    * Turns the developer overlay on or off: every cell, colour-coded by land use.
    *
@@ -491,6 +628,15 @@ export interface FarmScenePlayer {
    * ignores it still draws the right position; a character with no run clip borrows the walk one.
    */
   readonly running?: boolean;
+  /**
+   * Whether the character is mid-gesture on a job.
+   *
+   * Presentation only, and deliberately separate from `movementState`: an Auto-driven character
+   * planting or harvesting is standing still and doing something, which is neither "idle" nor
+   * "walking". The view answers it with a small steady stoop, because no shipped model has a work clip
+   * yet - and a gesture that cannot be drawn is better than a character that looks switched off.
+   */
+  readonly working?: boolean;
 }
 
 /** Whether the scene is showing the planting grid. Presentation only; the server owns the rules. */
@@ -576,6 +722,17 @@ function createSkyDome(): Mesh {
  */
 const TREE_MODEL_SCALE = 2.6 / 1.708;
 
+/** Mộc's mature canopy envelope; the authored placement scale still supplies per-tree variation. */
+const MOC_MATURE_TREE_HEIGHT = 3.8;
+
+function mocTreeWorldScale(model: Object3D, placementScale: number): number {
+  model.updateMatrixWorld(true);
+  const rawHeight = new Box3().setFromObject(model).getSize(new Vector3()).y;
+  return rawHeight > 0.001
+    ? placementScale * Math.max(1, MOC_MATURE_TREE_HEIGHT / rawHeight)
+    : placementScale;
+}
+
 /** How tall a resource deposit is drawn, in world metres: a lump of rock, not a mountain. */
 const RESOURCE_NODE_MODEL_SCALE = 1.2;
 /** What is left of a depleted deposit: the same model, shrunk to rubble so the place stays legible. */
@@ -597,6 +754,8 @@ function treeStageScale(tree: SceneTree): number {
       return 0.55 + 0.35 * tree.growthProgress;
     case "REGROWING":
     case "READY":
+      return 1;
+    case "DEPLETED":
       return 1;
   }
 }
@@ -637,7 +796,9 @@ function treePlant(
   tree: SceneTree
 ): Group {
   const plant = new Group();
-  plant.position.set(tile.worldX, TILE_THICKNESS, tile.worldZ);
+  // A production tree stands on grass, so its base is the island's ground, not a soil pad.
+  plant.position.set(tile.worldX, GROUND_SURFACE_Y, tile.worldZ);
+  plant.rotation.y = (tree.rotation ?? 0) * (Math.PI / 2);
   plant.scale.setScalar(TREE_MODEL_SCALE * treeStageScale(tree));
   if (model === undefined) {
     const trunk = new Mesh(assets.cylinder, assets.wood);
@@ -731,6 +892,266 @@ function buildPlayerAvatar(assets: SharedAssets, farmer: Object3D | undefined): 
   return avatar;
 }
 
+function neighborTerrainGeometry(
+  template: ReturnType<typeof neighborIslandTemplate>,
+  center: { readonly x: number; readonly z: number },
+  scale: number,
+  topBase: number,
+  bottomY: number,
+  reliefScale: number
+): BufferGeometry {
+  const sectors = 72;
+  const rings = 12;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const point = (angle: number, fraction: number): { x: number; z: number } => {
+    const p = neighborWorldPoint(template, center, angle, fraction);
+    return { x: center.x + (p.x - center.x) * scale, z: center.z + (p.z - center.z) * scale };
+  };
+  const height = (x: number, z: number): number => {
+    const sourceX = (x - center.x) / Math.max(scale, 0.0001);
+    const sourceZ = (z - center.z) / Math.max(scale, 0.0001);
+    return topBase + neighborGroundHeight(template, sourceX, sourceZ) * reliefScale;
+  };
+  positions.push(center.x, height(center.x, center.z), center.z);
+  for (let ring = 1; ring <= rings; ring += 1) {
+    const fraction = ring / rings;
+    for (let sector = 0; sector < sectors; sector += 1) {
+      const angle = (sector / sectors) * Math.PI * 2;
+      const p = point(angle, fraction);
+      positions.push(p.x, height(p.x, p.z), p.z);
+    }
+  }
+  const topIndex = (ring: number, sector: number): number => 1 + (ring - 1) * sectors + (sector % sectors);
+  for (let sector = 0; sector < sectors; sector += 1) indices.push(0, topIndex(1, sector + 1), topIndex(1, sector));
+  for (let ring = 1; ring < rings; ring += 1) {
+    for (let sector = 0; sector < sectors; sector += 1) {
+      const next = (sector + 1) % sectors;
+      indices.push(topIndex(ring, sector), topIndex(ring + 1, next), topIndex(ring + 1, sector));
+      indices.push(topIndex(ring, sector), topIndex(ring, next), topIndex(ring + 1, next));
+    }
+  }
+  const sideStart = positions.length / 3;
+  for (let sector = 0; sector < sectors; sector += 1) {
+    const p = point((sector / sectors) * Math.PI * 2, 1);
+    positions.push(p.x, height(p.x, p.z), p.z, p.x, bottomY, p.z);
+  }
+  for (let sector = 0; sector < sectors; sector += 1) {
+    const next = (sector + 1) % sectors;
+    const a = sideStart + sector * 2;
+    const b = sideStart + next * 2;
+    indices.push(a, b + 1, a + 1, a, b, b + 1);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Shore only: unlike the former filled beach disc it cannot cover an interior water channel. */
+function neighborShoreRingGeometry(
+  template: ReturnType<typeof neighborIslandTemplate>,
+  center: { readonly x: number; readonly z: number },
+  innerScale: number,
+  outerScale: number,
+  topY: number,
+  bottomY: number
+): BufferGeometry {
+  const sectors = 72;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const point = (angle: number, scale: number): { x: number; z: number } => {
+    const p = neighborWorldPoint(template, center, angle, 1);
+    return { x: center.x + (p.x - center.x) * scale, z: center.z + (p.z - center.z) * scale };
+  };
+  for (let index = 0; index < sectors; index += 1) {
+    const angle = index / sectors * Math.PI * 2;
+    const inner = point(angle, innerScale);
+    const outer = point(angle, outerScale);
+    positions.push(inner.x, topY, inner.z, outer.x, topY, outer.z, outer.x, bottomY, outer.z);
+  }
+  for (let index = 0; index < sectors; index += 1) {
+    const next = (index + 1) % sectors;
+    const a = index * 3;
+    const b = next * 3;
+    // Up-facing ring, then the outer skirt.
+    indices.push(a, b + 1, a + 1, a, b, b + 1, a + 1, b + 1, b + 2, a + 1, b + 2, a + 2);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * Presentation geometry for an inland lagoon/pond. The analytic water mask in the template uses
+ * the same ellipse, so the visible edge, terrain cut and movement collision cannot disagree.
+ */
+function neighborWaterBodyGeometry(
+  water: ReturnType<typeof neighborIslandTemplate>["waterChannels"][number],
+  center: { readonly x: number; readonly z: number },
+  scale: number,
+  y: number
+): BufferGeometry {
+  const segments = 40;
+  const positions: number[] = [center.x + water.x * scale, y, center.z + water.z * scale];
+  const cosine = Math.cos(water.rotation);
+  const sine = Math.sin(water.rotation);
+  for (let index = 0; index < segments; index += 1) {
+    const angle = index / segments * Math.PI * 2;
+    const along = Math.cos(angle) * water.length;
+    const across = Math.sin(angle) * water.width;
+    positions.push(
+      center.x + (water.x + along * cosine - across * sine) * scale,
+      y,
+      center.z + (water.z + along * sine + across * cosine) * scale
+    );
+  }
+  const indices: number[] = [];
+  for (let index = 0; index < segments; index += 1) {
+    indices.push(0, index + 1, ((index + 1) % segments) + 1);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Wet-sand bank around the same water ellipse; it is not a gameplay pond instance. */
+function neighborWaterBankGeometry(
+  water: ReturnType<typeof neighborIslandTemplate>["waterChannels"][number],
+  center: { readonly x: number; readonly z: number },
+  scale: number,
+  y: number
+): BufferGeometry {
+  const segments = 40;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const cosine = Math.cos(water.rotation);
+  const sine = Math.sin(water.rotation);
+  const point = (angle: number, multiplier: number): [number, number] => {
+    const along = Math.cos(angle) * water.length * multiplier;
+    const across = Math.sin(angle) * water.width * multiplier;
+    return [
+      center.x + (water.x + along * cosine - across * sine) * scale,
+      center.z + (water.z + along * sine + across * cosine) * scale
+    ];
+  };
+  for (let index = 0; index < segments; index += 1) {
+    const angle = index / segments * Math.PI * 2;
+    const [innerX, innerZ] = point(angle, 1.0);
+    const [outerX, outerZ] = point(angle, 1.18);
+    positions.push(innerX, y, innerZ, outerX, y, outerZ);
+  }
+  for (let index = 0; index < segments; index += 1) {
+    const next = (index + 1) % segments;
+    const a = index * 2;
+    const b = next * 2;
+    indices.push(a, b, a + 1, a + 1, b, b + 1);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** A low-poly ridge surface with a rounded footprint, not a stretched rock primitive. */
+function neighborRidgeGeometry(
+  ridge: ReturnType<typeof neighborIslandTemplate>["ridgeLines"][number],
+  horizontalScale: number,
+  verticalScale: number,
+  baseY: number
+): BufferGeometry {
+  const lengthSegments = 10;
+  const widthSegments = 4;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const crossSection = [0, 0.56, 1, 0.56, 0];
+  for (let lengthIndex = 0; lengthIndex <= lengthSegments; lengthIndex += 1) {
+    const along = lengthIndex / lengthSegments * 2 - 1;
+    const endTaper = Math.pow(Math.max(0, 1 - Math.abs(along)), 0.72);
+    const wave = 0.92 + 0.08 * Math.cos(lengthIndex * 1.7 + ridge.rotation);
+    for (let widthIndex = 0; widthIndex <= widthSegments; widthIndex += 1) {
+      const across = widthIndex / widthSegments * 2 - 1;
+      const profile = crossSection[widthIndex] ?? 0;
+      const shoulder = ridge.width * 0.5 * across * horizontalScale;
+      const ridgeHeight = ridge.height * verticalScale * endTaper * wave * profile;
+      positions.push(shoulder, baseY + ridgeHeight, ridge.length * 0.5 * along * horizontalScale);
+    }
+  }
+  const rowWidth = widthSegments + 1;
+  for (let lengthIndex = 0; lengthIndex < lengthSegments; lengthIndex += 1) {
+    for (let widthIndex = 0; widthIndex < widthSegments; widthIndex += 1) {
+      const a = lengthIndex * rowWidth + widthIndex;
+      const b = a + 1;
+      const c = a + rowWidth;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Low-detail HOME projection from the same authored home outline/terrain, never a guessed oval. */
+function homeIslandLodGeometry(
+  center: { readonly x: number; readonly z: number },
+  scale: number,
+  topBase: number,
+  bottomY: number,
+  heightAt: (worldX: number, worldZ: number) => number
+): BufferGeometry {
+  const sectors = 96;
+  const rings = 16;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const point = (angle: number, fraction: number): { x: number; z: number; sourceX: number; sourceZ: number } => {
+    const source = islandRimPoint(angle, ISLAND_SHAPE);
+    const sourceX = WORLD_CENTER_WORLD.worldX + (source.worldX - WORLD_CENTER_WORLD.worldX) * fraction;
+    const sourceZ = WORLD_CENTER_WORLD.worldZ + (source.worldZ - WORLD_CENTER_WORLD.worldZ) * fraction;
+    return { x: center.x + (sourceX - WORLD_CENTER_WORLD.worldX) * scale, z: center.z + (sourceZ - WORLD_CENTER_WORLD.worldZ) * scale, sourceX, sourceZ };
+  };
+  positions.push(center.x, topBase + heightAt(WORLD_CENTER_WORLD.worldX, WORLD_CENTER_WORLD.worldZ) * scale, center.z);
+  for (let ring = 1; ring <= rings; ring += 1) {
+    for (let sector = 0; sector < sectors; sector += 1) {
+      const p = point(sector / sectors * Math.PI * 2, ring / rings);
+      positions.push(p.x, topBase + heightAt(p.sourceX, p.sourceZ) * scale, p.z);
+    }
+  }
+  const topIndex = (ring: number, sector: number): number => 1 + (ring - 1) * sectors + (sector % sectors);
+  for (let sector = 0; sector < sectors; sector += 1) indices.push(0, topIndex(1, sector + 1), topIndex(1, sector));
+  for (let ring = 1; ring < rings; ring += 1) {
+    for (let sector = 0; sector < sectors; sector += 1) {
+      const next = (sector + 1) % sectors;
+      indices.push(topIndex(ring, sector), topIndex(ring + 1, next), topIndex(ring + 1, sector));
+      indices.push(topIndex(ring, sector), topIndex(ring, next), topIndex(ring + 1, next));
+    }
+  }
+  const sideStart = positions.length / 3;
+  for (let sector = 0; sector < sectors; sector += 1) {
+    const p = point(sector / sectors * Math.PI * 2, 1);
+    positions.push(p.x, topBase + heightAt(p.sourceX, p.sourceZ) * scale, p.z, p.x, bottomY, p.z);
+  }
+  for (let sector = 0; sector < sectors; sector += 1) {
+    const next = (sector + 1) % sectors;
+    const a = sideStart + sector * 2;
+    const b = sideStart + next * 2;
+    indices.push(a, b + 1, a + 1, a, b, b + 1);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOptions = {}): FarmSceneHandle {
   /**
    * The quality the host asked for, resolved once.
@@ -766,6 +1187,160 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // The island's resource nodes: a handful of deposits drawn from their own models, rebuilt when the
   // server reports a depletion or a regeneration rather than every frame.
   const resourceGroup = new Group();
+  const neighborGroup = new Group();
+  const neighborGeometries: BufferGeometry[] = [];
+  const neighborCollisionDebugGroup = new Group();
+  const neighborCollisionDebugGeometries: BufferGeometry[] = [];
+  const neighborCollisionDebugMaterial = new LineBasicMaterial({ color: 0x86e8ff, transparent: true, opacity: 0.92, depthTest: false });
+  const neighborPreviewGroup = new Group();
+  const neighborPreviewGeometries: BufferGeometry[] = [];
+  const islandDebugEnabled = import.meta.env.DEV && new URLSearchParams(window.location.search).get("debug") === "1";
+  type IslandDebugIdentity = {
+    readonly islandId: string;
+    readonly templateId: string;
+    readonly center: { readonly x: number; readonly z: number };
+    readonly lod: "FULL" | "LOD";
+  };
+  const islandDebugEntries: { readonly root: Object3D; readonly sprite: Sprite; readonly context: CanvasRenderingContext2D; readonly texture: CanvasTexture; readonly identity: IslandDebugIdentity }[] = [];
+
+  function attachIslandDebugLabel(root: Object3D, identity: IslandDebugIdentity, height: number): void {
+    (root.userData as Record<string, unknown>).islandDebug = identity;
+    if (!islandDebugEnabled) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = 640; canvas.height = 176;
+    const context = canvas.getContext("2d");
+    if (context === null) return;
+    const texture = new CanvasTexture(canvas);
+    texture.colorSpace = renderer.outputColorSpace;
+    const sprite = new Sprite(new SpriteMaterial({ map: texture, depthTest: false, depthWrite: false, transparent: true }));
+    sprite.scale.set(30, 8.25, 1);
+    sprite.position.set(identity.center.x, height, identity.center.z);
+    root.add(sprite);
+    islandDebugEntries.push({ root, sprite, context, texture, identity });
+  }
+
+  function clearIslandDebugLabels(root: Object3D): void {
+    for (let index = islandDebugEntries.length - 1; index >= 0; index -= 1) {
+      const entry = islandDebugEntries[index];
+      if (entry === undefined || entry.root !== root) continue;
+      entry.texture.dispose();
+      entry.sprite.material.dispose();
+      islandDebugEntries.splice(index, 1);
+    }
+  }
+
+  function refreshIslandDebugLabels(): void {
+    if (!islandDebugEnabled) return;
+    const currentIslandId = neighborIsland?.islandId ?? "HOME_ISLAND";
+    const rows: Record<string, unknown>[] = [];
+    for (const entry of islandDebugEntries) {
+      const distance = camera.position.distanceTo(entry.sprite.position);
+      const { context, identity } = entry;
+      context.clearRect(0, 0, 640, 176);
+      context.fillStyle = "rgba(8, 22, 34, 0.82)";
+      context.fillRect(0, 0, 640, 176);
+      context.strokeStyle = identity.lod === "FULL" ? "#ffd66b" : "#93dcff";
+      context.lineWidth = 4; context.strokeRect(2, 2, 636, 172);
+      context.fillStyle = "#ffffff"; context.font = "bold 24px monospace";
+      context.fillText(`${identity.lod} ${identity.templateId}  ${identity.islandId}`, 14, 34);
+      context.font = "20px monospace";
+      context.fillText(`center=(${identity.center.x.toFixed(1)},${identity.center.z.toFixed(1)})  distance=${distance.toFixed(1)}`, 14, 72);
+      context.fillText(`currentIslandId=${currentIslandId}`, 14, 110);
+      context.fillText("hover/click identity is renderer metadata", 14, 148);
+      entry.texture.needsUpdate = true;
+      rows.push({ ...identity, distanceToCamera: Number(distance.toFixed(3)), currentIslandId });
+    }
+    (window as unknown as { __happyFarmIslandDebug?: readonly Record<string, unknown>[] }).__happyFarmIslandDebug = rows;
+  }
+
+  /** Dev-only runtime inventory of render groups; it never enters the production UI or game state. */
+  function refreshIslandRuntimeStats(): void {
+    if (!islandDebugEnabled) return;
+    const bounds = (center: { readonly x: number; readonly z: number }, halfX: number, halfZ: number) => ({
+      minX: Number((center.x - halfX).toFixed(2)),
+      maxX: Number((center.x + halfX).toFixed(2)),
+      minZ: Number((center.z - halfZ).toFixed(2)),
+      maxZ: Number((center.z + halfZ).toFixed(2))
+    });
+    const rows: Record<string, unknown>[] = [];
+    const homeCenter = { x: WORLD_CENTER_WORLD.worldX, z: WORLD_CENTER_WORLD.worldZ };
+    const homeTrees = state.world.scenery.filter((item) => item.kind === "tree" || item.kind === "pine").length;
+    rows.push({
+      islandId: "HOME_ISLAND",
+      element: neighborIsland === null ? "worldGroup" : "neighborPreviewGroup",
+      source: "HOME_STATE",
+      center: homeCenter,
+      bounds: bounds(homeCenter, state.world.islandHalfWidthWorld, state.world.islandHalfDepthWorld),
+      lod: neighborIsland === null ? "ACTIVE" : "LOD",
+      terrainGroups: 2,
+      trees: homeTrees,
+      buildings: constructions.length,
+      props: state.world.compositions.props.length,
+      renderChildren: neighborIsland === null ? worldGroup.children.length : neighborPreviewGroup.children.length
+    });
+    for (const preview of neighborPreviews) {
+      if (preview.slot === "HOME") continue;
+      const template = neighborIslandTemplate(preview.slot);
+      const forest = template.kind === "MOC" ? mocPreviewForestPlacements() : neighborForestLayout(template, preview.seed ?? 0);
+      const trees = forest.length + (template.kind === "MOC" ? 0 : template.supportLocal.filter((item) => item.kind === "TREE").length);
+      const props = template.presentationProps.length
+        + template.supportLocal.filter((item) => item.kind === "ROCK" || item.kind === "BUSH").length
+        + template.oreLocal.length + template.landmarks.length + 7;
+      const root = neighborPreviewGroup.children.find((child) => (child.userData as Record<string, unknown>).islandDebug !== undefined && ((child.userData as Record<string, unknown>).islandDebug as { islandId?: string }).islandId === preview.islandId);
+      rows.push({
+        islandId: preview.islandId,
+        element: "neighborPreviewGroup",
+        source: template.kind === "MOC" ? "MOC_PREVIEW_LAYOUT" : "SNAPSHOT_TEMPLATE",
+        center: preview.center,
+        bounds: bounds(preview.center, template.radiusX * NEIGHBOR_PREVIEW_WATER_SCALE * 1.2, template.radiusZ * NEIGHBOR_PREVIEW_WATER_SCALE * 1.2),
+        lod: "LOD",
+        terrainGroups: 7 + template.ridgeLines.length + template.waterChannels.length * 2 + (template.kind === "THUY" ? 3 : 0),
+        trees,
+        buildings: 2,
+        props,
+        renderChildren: root?.children.length ?? 0
+      });
+    }
+    if (neighborIsland !== null) {
+      const template = neighborIslandTemplate(neighborIsland.slot ?? "MOC");
+      const forest = template.kind === "MOC" ? mocPreviewForestPlacements() : neighborForestLayout(template, neighborIsland.seed ?? 0);
+      const trees = forest.length + (template.kind === "MOC" ? 0 : template.supportLocal.filter((item) => item.kind === "TREE").length);
+      const props = template.presentationProps.length
+        + template.supportLocal.filter((item) => item.kind === "ROCK" || item.kind === "BUSH").length
+        + template.oreLocal.length + template.landmarks.length + 7;
+      rows.push({
+        islandId: neighborIsland.islandId,
+        element: "neighborGroup",
+        source: template.kind === "MOC" ? "MOC_PREVIEW_LAYOUT" : "SNAPSHOT_TEMPLATE",
+        center: neighborIsland.center,
+        bounds: bounds(neighborIsland.center, template.radiusX * 1.2, template.radiusZ * 1.2),
+        lod: "ACTIVE",
+        terrainGroups: 7 + template.ridgeLines.length + template.waterChannels.length * 2 + (template.kind === "THUY" ? 3 : 0),
+        trees,
+        buildings: neighborIsland.npcConstructionPhase === "BUILT" || neighborIsland.npcConstructionPhase === undefined ? 2 : 0,
+        props,
+        renderChildren: neighborGroup.children.length
+      });
+    }
+    const renderedIdentityRows = rows.map((row) => ({
+      islandId: row.islandId,
+      element: row.element,
+      lod: row.lod,
+      source: row.source
+    }));
+    (window as unknown as {
+      __happyFarmIslandIdentityAudit?: Record<string, unknown>
+    }).__happyFarmIslandIdentityAudit = {
+      rendered: renderedIdentityRows,
+      duplicateIslandIds: neighborIdentityAudit.removedDuplicateIslandIds,
+      removedActiveIslandIds: neighborIdentityAudit.removedActiveIslandIds,
+      inputIslandIds: neighborIdentityAudit.inputIslandIds,
+      visibleIslandIds: neighborIdentityAudit.visibleIslandIds,
+      activeIslandId: neighborIsland?.islandId ?? "HOME_ISLAND",
+      duplicateRender: renderedIdentityRows.some((row, index) => renderedIdentityRows.some((other, otherIndex) => index !== otherIndex && row.islandId === other.islandId))
+    };
+    (window as unknown as { __happyFarmIslandRuntime?: readonly Record<string, unknown>[] }).__happyFarmIslandRuntime = rows;
+  }
   // The overlay follows progression (locked land changes when a plot is bought), so it is rebuilt
   // with the dynamic layer instead of living in the static cache.
   const overlayGroup = new Group();
@@ -818,13 +1393,12 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const interactionGroup = new Group();
   // The cell overlay: the island's own selection feedback, and the debug lattice when asked for.
   const cellOverlayGroup = new Group();
-  /**
-   * The ownership mark: the cells the player actually owns, drawn only while they are using the land.
-   *
-   * Its own group because it is a *mode*, not a layer: placement and a move turn it on, finishing
-   * either turns it off, and normal play never sees it.
-   */
-  const ownershipGroup = new Group();
+  // The editor's subtle lattice: one instanced outline per workable cell of the island.
+  const workAreaGridGroup = new Group();
+  // The editor's marks: draft cells, the rectangle preview, refused cells, hover and the first corner.
+  const workAreaMarkGroup = new Group();
+  // The harvest rectangle has its own visual layer and is never part of the picker candidates.
+  const areaHarvestMarkGroup = new Group();
   /**
    * The placement ghost: what the build shop says the player is about to put down.
    *
@@ -848,11 +1422,16 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     cropGroup,
     treeGroup,
     resourceGroup,
+    neighborPreviewGroup,
+    neighborGroup,
+    neighborCollisionDebugGroup,
     overlayGroup,
     overlayDetailGroup,
     interactionGroup,
     cellOverlayGroup,
-    ownershipGroup,
+    workAreaGridGroup,
+    workAreaMarkGroup,
+    areaHarvestMarkGroup,
     previewGroup,
     constructionGroup,
     playerGroup
@@ -919,6 +1498,24 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const pickedInstances = new Map<Object3D, readonly TileCoordinate[]>();
   const raycaster = new Raycaster();
   const pointer = new Vector2();
+  let neighborIsland: SceneNeighborIsland | null = null;
+  let neighborNpcNode: Group | null = null;
+  let neighborNpcTool: Object3D | null = null;
+  let neighborNpcPhase: string | null = null;
+  let neighborPreviews: readonly SceneNeighborIslandPreview[] = [];
+  let neighborIdentityAudit: {
+    readonly inputIslandIds: readonly string[];
+    readonly visibleIslandIds: readonly string[];
+    readonly removedDuplicateIslandIds: readonly string[];
+    readonly removedActiveIslandIds: readonly string[];
+  } = { inputIslandIds: [], visibleIslandIds: [], removedDuplicateIslandIds: [], removedActiveIslandIds: [] };
+  const neighborPreviewDetailRoots = new Map<Group, {
+    readonly center: { readonly x: number; readonly z: number };
+    readonly radius: number;
+    readonly details: Group;
+    rootVisible: boolean;
+    detailsVisible: boolean;
+  }>();
   const emptyLayout = layoutFarmTiles([]);
   let state: FarmSceneInput = {
     layout: emptyLayout,
@@ -1002,6 +1599,12 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   let groundMesh: Object3D | null = null;
   /** The cell the player has selected, or null. Presentation only; it is never sent anywhere. */
   let selectedCell: TileCoordinate | null = null;
+  // The work-area editor's whole picture, or null outside edit mode.
+  let workAreaEdit: WorkAreaEditState | null = null;
+  let workAreaEditSignature = "off";
+  let areaHarvestEdit: AreaHarvestEditState | null = null;
+  let areaHarvestEditSignature = "off";
+  let workAreaGridGeometry: BufferGeometry | null = null;
   /** Developer overlay. Off in every shipped path. */
   let debugMode = false;
   /** The overlay's own instanced geometry, kept so a rebuild can release the one it replaces. */
@@ -1044,7 +1647,14 @@ let interactionGeometry: BufferGeometry | null = null;
       // the primitive fallback with the model - and never moves the camera.
       worldSignature = "";
     }
+    // Resource nodes request their model lazily. If the first rebuild ran before the GLB arrived,
+    // `library.get()` intentionally returned undefined and left that node out; rebuild the resource
+    // layer when the shared model lands so a transient loading race cannot hide the node until the
+    // next resource refresh.
+    rebuildResourceNodes();
     if (modelId === "character_farmer") rebuildAvatar();
+    if (neighborIsland !== null) rebuildNeighborIsland();
+    if (neighborPreviews.length > 0) rebuildNeighborIslandPreviews();
     applyState(state);
     draw();
   });
@@ -1125,6 +1735,8 @@ let interactionGeometry: BufferGeometry | null = null;
     return { growing, ready };
   }
 
+  let firstFrameReported = false;
+
   function draw(): void {
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
@@ -1132,7 +1744,33 @@ let interactionGeometry: BufferGeometry | null = null;
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    updateNeighborPreviewLod();
+    refreshIslandDebugLabels();
+    refreshIslandRuntimeStats();
     renderer.render(scene, camera);
+    // Dev-only observability for browser acceptance evidence; it does not drive gameplay or polling.
+    const cameraStats = cameraRig.state;
+    (window as unknown as { __happyFarmRenderStats?: Record<string, number | boolean | string | null> }).__happyFarmRenderStats = {
+      calls: renderer.info.render.calls,
+      triangles: renderer.info.render.triangles,
+      geometries: renderer.info.memory.geometries,
+      textures: renderer.info.memory.textures,
+      neighborPreviewVisible: neighborPreviewGroup.visible,
+      neighborPreviewChildren: neighborPreviewGroup.children.length,
+      neighborFullVisible: neighborGroup.visible,
+      neighborFullChildren: neighborGroup.children.length,
+      neighborNpcX: neighborNpcNode?.position.x ?? null,
+      neighborNpcZ: neighborNpcNode?.position.z ?? null,
+      neighborNpcPhase,
+      cameraYaw: cameraStats.yaw,
+      cameraDistance: cameraStats.distance,
+      cameraTargetX: cameraStats.targetX,
+      cameraTargetZ: cameraStats.targetZ
+    };
+    if (!firstFrameReported) {
+      firstFrameReported = true;
+      options.onFirstFrame?.();
+    }
   }
 
   /**
@@ -1142,6 +1780,32 @@ let interactionGeometry: BufferGeometry | null = null;
    * haze over the fields. One comparison per camera update, and the group toggles with it.
    */
   const DETAIL_DISTANCE_LIMIT = 55;
+
+  /**
+   * Distant islands use a bounded medium-detail layer, but its detail is still chosen from the
+   * camera's actual distance.  This prevents a nearby island from collapsing to a flat marker while
+   * keeping small props out of the far horizon.  The island identity and authored outline stay in the
+   * base layer at every distance.
+   */
+  function updateNeighborPreviewLod(): void {
+    if (neighborPreviewDetailRoots.size === 0) return;
+    const viewportHeight = Math.max(1, canvas.clientHeight);
+    const halfFov = (camera.fov * Math.PI) / 360;
+    for (const [root, entry] of neighborPreviewDetailRoots) {
+      const dx = camera.position.x - entry.center.x;
+      const dz = camera.position.z - entry.center.z;
+      const distance = Math.max(1, Math.hypot(dx, dz));
+      const projectedRadius = (entry.radius / distance) * (viewportHeight / Math.max(0.01, Math.tan(halfFov)));
+      const rootEnter = distance < CAMERA_FAR && projectedRadius > 8;
+      const rootExit = distance < CAMERA_FAR && projectedRadius > 6;
+      const detailEnter = projectedRadius > 16;
+      const detailExit = projectedRadius > 13;
+      entry.rootVisible = entry.rootVisible ? rootExit : rootEnter;
+      entry.detailsVisible = entry.detailsVisible ? detailExit : detailEnter;
+      root.visible = entry.rootVisible;
+      entry.details.visible = entry.detailsVisible && entry.rootVisible;
+    }
+  }
 
   function updateDetailVisibility(): void {
     // The active camera's own distance: the estate view switches the small scenery off as it pulls
@@ -1154,6 +1818,14 @@ let interactionGeometry: BufferGeometry | null = null;
 
   /** The ground under a world position, in the same terms the props and the roads use. */
   function groundHeightAt(worldX: number, worldZ: number): number {
+    if (neighborIsland !== null) {
+      const template = neighborIslandTemplate(neighborIsland.slot ?? "MOC");
+      const localX = worldX - neighborIsland.center.x;
+      const localZ = worldZ - neighborIsland.center.z;
+      if (Math.hypot(localX / template.radiusX, localZ / template.radiusZ) <= 1.08) {
+        return GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, localX, localZ);
+      }
+    }
     return GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, state.world.terrain);
   }
 
@@ -1302,26 +1974,30 @@ let interactionGeometry: BufferGeometry | null = null;
     playerGroup.visible = playerPose !== null;
     characterView.update(playerPose, Number.isFinite(deltaMs) && deltaMs > 0 ? deltaMs / 1000 : 0);
     updateHarvestGesture(deltaMs);
+    updateNeighborNpcPose(Date.now());
   }
 
   /**
-   * Rebuilds the planting grid from the tiles on screen.
+   * Rebuilds the planting hint: one outline on the cell the player is pointing at.
    *
-   * Called when the mode changes and when the farm state does, never per frame: the grid is a
-   * function of which tiles are plantable and where they are, and both of those only move when the
-   * server says so.
+   * V14.5.1B: the old version outlined *every* plantable tile, which painted the whole owned parcel
+   * as a grid and read as "you may only farm here". The candidate is one cell, so the hint is one
+   * cell - the selected one, when the server's own rows say a seed may go there. Called on a mode or
+   * selection change, never per frame.
    */
   function rebuildInteractionGrid(): void {
     interactionGroup.clear();
     interactionGeometry?.dispose();
     interactionGeometry = null;
     if (interactionMode === "NONE") return;
-    const plantable = state.tiles.filter((tile) => tile.plantable);
+    const selected = selectedCell;
+    if (selected === null) return;
+    const plantable = plantingHintCells(state.tiles, selected);
     interactionGeometry = buildInteractionGrid(
       interactionGroup,
       plantable,
       state.layout.tileSize,
-      TILE_THICKNESS + 0.015,
+      TILE_SURFACE_Y + 0.015,
       assets.interactionGrid
     );
   }
@@ -1338,21 +2014,7 @@ let interactionGeometry: BufferGeometry | null = null;
     cellOverlayGeometry?.dispose();
     cellOverlayGeometry = null;
     const plan = planCellOverlay(state.cells, selectedCell === null ? null : { cell: selectedCell }, debugMode);
-    // The farm's own tiles are a layer of ground nine centimetres thick, so a cell the player owns
-    // has to be marked on top of them rather than inside them.
-    const owned = state.world.inner;
-    const liftFor = (x: number, z: number): number =>
-      owned !== null && x >= owned.minX && x <= owned.maxX && z >= owned.minY && z <= owned.maxY
-        ? CELL_OVERLAY_TILE_LIFT_WORLD
-        : CELL_OVERLAY_LIFT_WORLD;
-    const overlayHeightAt = (worldX: number, worldZ: number): number => {
-      const cell = worldToCell({ worldX, worldZ }, state.cells.frame);
-      const onSea = state.cells.cells.get(cellKey(cell.x, cell.y))?.terrain === "WATER";
-      // Open water has its own surface: a selected aquaculture cell is marked on the sea the cages
-      // float in rather than at the height of the ground six tenths of a metre beneath it.
-      const base = onSea ? SEA_SURFACE_Y : GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, state.world.terrain);
-      return base + liftFor(cell.x, cell.y);
-    };
+    const overlayHeightAt = cellOverlayHeightAt;
     if (plan.debugCells.length > 0) {
       cellOverlayGeometry = buildDebugGrid(cellOverlayGroup, plan.debugCells, state.layout.pitch, assets.cellDebug, overlayHeightAt);
       return;
@@ -1370,18 +2032,115 @@ let interactionGeometry: BufferGeometry | null = null;
     );
   }
 
+  /**
+   * Where a cell mark lies, for every overlay layer.
+   *
+   * The farm's own tiles are a layer of ground nine centimetres thick, so a cell the player owns has
+   * to be marked on top of them rather than inside them; open water has its own surface, so a cell
+   * marked on the sea sits on the water the cages float in rather than six tenths of a metre below.
+   * One function because the selection and the work-area draft must agree about where the ground is.
+   */
+  function cellOverlayHeightAt(worldX: number, worldZ: number): number {
+    const cell = worldToCell({ worldX, worldZ }, state.cells.frame);
+    const onSea = state.cells.cells.get(cellKey(cell.x, cell.y))?.terrain === "WATER";
+    const owned = state.world.inner;
+    const onFarmLayer =
+      owned !== null && cell.x >= owned.minX && cell.x <= owned.maxX && cell.y >= owned.minY && cell.y <= owned.maxY;
+    const base = onSea ? SEA_SURFACE_Y : GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, state.world.terrain);
+    return base + (onFarmLayer ? CELL_OVERLAY_TILE_LIFT_WORLD : CELL_OVERLAY_LIFT_WORLD);
+  }
+
+  /** Drops the editor's lattice and the geometry behind it. */
+  function disposeWorkAreaGrid(): void {
+    workAreaGridGroup.clear();
+    workAreaGridGeometry?.dispose();
+    workAreaGridGeometry = null;
+  }
+
+  /**
+   * The editor's lattice: one faint outline per cell the island actually is.
+   *
+   * Built once when the editor opens and thrown away when it closes, so normal play still shows no
+   * grid at all. It covers the land, not the open sea, because a rectangle on water is never valid
+   * for any kind that the land supplies and drawing it would be the spreadsheet the brief refuses.
+   */
+  function rebuildWorkAreaGrid(): void {
+    disposeWorkAreaGrid();
+    const cells = [...state.cells.cells.values()]
+      .filter((cell) => cell.terrain !== "WATER")
+      .map((cell) => ({ x: cell.x, y: cell.z }));
+    workAreaGridGeometry = buildCellOutlines(
+      workAreaGridGroup,
+      cells,
+      state.layout.pitch,
+      assets.cellWorkAreaGrid,
+      cellOverlayHeightAt
+    );
+  }
+
+  /**
+   * The editor's marks, drawn in a fixed order so each state reads over the one below it.
+   *
+   * Refused ground first, then the rectangle preview, then the committed draft, then the hovered cell
+   * and finally the first corner. Each layer is lifted a hair above the one below it, because two
+   * translucent squares at exactly the same height flicker against each other.
+   */
+  function rebuildWorkAreaMarks(): void {
+    workAreaMarkGroup.clear();
+    const edit = workAreaEdit;
+    if (edit === null) return;
+    const draw = (cells: readonly TileCoordinate[], material: MeshBasicMaterial, layer: number): void => {
+      if (cells.length === 0) return;
+      const height = (worldX: number, worldZ: number): number => cellOverlayHeightAt(worldX, worldZ) + layer * 0.006;
+      for (const cell of cells) {
+        const world = state.cells.cells.get(cellKey(cell.x, cell.y));
+        if (world === undefined) continue;
+        const quad = buildSelectionQuad(world, state.cells, material, height);
+        quad.renderOrder = layer;
+        workAreaMarkGroup.add(quad);
+      }
+    };
+    draw(edit.invalid, assets.cellWorkAreaInvalid, 1);
+    draw(edit.preview, assets.cellWorkAreaPreview, 2);
+    draw(edit.draft, assets.cellWorkArea, 3);
+    draw(edit.hover === null ? [] : [edit.hover], assets.cellWorkAreaHover, 4);
+    draw(edit.corner === null ? [] : [edit.corner], assets.cellWorkAreaCorner, 5);
+  }
+
+  /** Draws the harvest rectangle as a local presentation layer; raycast candidates never include it. */
+  function rebuildAreaHarvestMarks(): void {
+    areaHarvestMarkGroup.clear();
+    const edit = areaHarvestEdit;
+    if (edit === null) return;
+    const draw = (cells: readonly TileCoordinate[], material: MeshBasicMaterial, layer: number): void => {
+      const height = (worldX: number, worldZ: number): number => cellOverlayHeightAt(worldX, worldZ) + layer * 0.008;
+      for (const cell of cells) {
+        const world = state.cells.cells.get(cellKey(cell.x, cell.y));
+        if (world === undefined) continue;
+        const quad = buildSelectionQuad(world, state.cells, material, height);
+        quad.renderOrder = layer;
+        areaHarvestMarkGroup.add(quad);
+      }
+    };
+    draw(edit.cells, assets.cellWorkAreaPreview, 1);
+    draw([...(edit.shortage ?? []), ...(edit.waiting ?? [])], assets.cellWorkAreaShortage, 2);
+    draw(edit.invalid ?? [], assets.cellWorkAreaInvalid, 3);
+    if (edit.focus !== null && edit.focus !== undefined) draw([edit.focus], assets.cellWorkAreaHover, 4);
+    draw([edit.first, edit.second].filter((cell): cell is TileCoordinate => cell !== null), assets.cellWorkAreaCorner, 5);
+  }
+
   function updateMarkers(): void {
     const selected = state.tiles.find((tile) => tile.selected);
     selectionMarker.visible = selected !== undefined;
     if (selected !== undefined) {
-      selectionMarker.position.set(selected.worldX, TILE_THICKNESS + 0.02, selected.worldZ);
+      selectionMarker.position.set(selected.worldX, TILE_SURFACE_Y + 0.02, selected.worldZ);
       selectionMarker.scale.set(state.layout.tileSize * 0.62, state.layout.tileSize * 0.62, 1);
     }
     if (hoverMarker !== null) {
       const hovered = state.tiles.find((tile) => coordinateEquals(tile, hoveredCoordinate));
       hoverMarker.visible = hovered !== undefined;
       if (hovered !== undefined) {
-        hoverMarker.position.set(hovered.worldX, TILE_THICKNESS + 0.025, hovered.worldZ);
+        hoverMarker.position.set(hovered.worldX, TILE_SURFACE_Y + 0.025, hovered.worldZ);
         hoverMarker.scale.set(state.layout.tileSize * 0.56, state.layout.tileSize * 0.56, 1);
       }
     }
@@ -1392,37 +2151,39 @@ let interactionGeometry: BufferGeometry | null = null;
   }
 
   /**
-   * Every unlocked tile slab, as one `InstancedMesh`.
+   * The soil pad under every *cultivated* tile, as one `InstancedMesh`.
    *
-   * A mature farm owns more than a thousand tiles, and one mesh each was a thousand draw calls a
-   * frame - twice over, once for the camera and once for the shadow map. Instancing collapses that to
-   * one, and colour-per-instance keeps the soil variation that per-tile meshes used to carry. The
-   * instance order is the same order `state.tiles` arrived in, which is what lets a click resolve
-   * back to the authoritative coordinate.
+   * Ownership is not terrain: an owned cell that carries nothing is plain grass and draws nothing at
+   * all, so buying land never turns the island brown. Only a cell with a crop on it gets a pad, whose
+   * top is `TILE_SURFACE_Y` - the height the crop itself stands on. A mature farm owns more than a
+   * thousand tiles but plants far fewer, so this is also a smaller batch than the old all-tiles pass.
+   *
+   * The instance order is the order `state.tiles` arrived in, which is what lets a click resolve back
+   * to the authoritative coordinate.
    */
   function buildTileSlabs(tiles: readonly SceneTile[]): void {
-    if (tiles.length === 0) return;
-    const slabs = new InstancedMesh(assets.box, assets.tileSurface, tiles.length);
+    const cultivated = tiles.filter(tileDrawsSoil);
+    if (cultivated.length === 0) return;
+    const slabs = new InstancedMesh(assets.box, assets.tileSurface, cultivated.length);
     const matrix = new Matrix4();
     const position = new Vector3();
     const scale = new Vector3();
     const rotation = new Quaternion();
     const colour = new Color();
     const coordinates: TileCoordinate[] = [];
-    tiles.forEach((tile, index) => {
+    cultivated.forEach((tile, index) => {
       coordinates.push({ x: tile.tileX, y: tile.tileY });
-      position.set(tile.worldX, TILE_THICKNESS / 2, tile.worldZ);
-      // The tiles meet, exactly. The 8% gap that used to separate them was what made the farm read
-      // as a board of squares from the estate camera: a field is one surface, and the rows in it are
-      // drawn as furrows rather than as the seams between two hundred little plates. The footprint is
-      // the *pitch*, so two neighbours touch rather than leaving a sliver of the bed showing.
+      // The pad stands on the ground, so its top - not its centre - is the surface a crop reads.
+      position.set(tile.worldX, GROUND_SURFACE_Y + TILE_THICKNESS / 2, tile.worldZ);
+      // The footprint is the *pitch*, so two cultivated neighbours touch rather than leaving a sliver
+      // of grass between two tilled patches.
       const footprint = state.layout.tileSize + state.layout.tileGap;
       scale.set(footprint, TILE_THICKNESS, footprint);
       matrix.compose(position, rotation, scale);
       slabs.setMatrixAt(index, matrix);
       slabs.setColorAt(
         index,
-        colour.setHex(tileColorFor(tile.terrainType, tile.crop !== null, tile.tileX, tile.tileY))
+        colour.setHex(tileColorFor(tile.terrainType, true, tile.tileX, tile.tileY))
       );
     });
     slabs.instanceMatrix.needsUpdate = true;
@@ -1436,7 +2197,7 @@ let interactionGeometry: BufferGeometry | null = null;
   function modelPlant(tile: SceneTile, variants: ModelVariants, mature: boolean, height: number): Group {
     const plant = new Group();
     plant.add((mature ? variants.ready : variants.growing).clone(true));
-    plant.position.set(tile.worldX, TILE_THICKNESS, tile.worldZ);
+    plant.position.set(tile.worldX, TILE_SURFACE_Y, tile.worldZ);
     plant.scale.setScalar(height);
     plant.traverse((child) => {
       child.castShadow = true;
@@ -1447,7 +2208,7 @@ let interactionGeometry: BufferGeometry | null = null;
   /** Placeholder crop for a definition with no shipped model: a cone on the tile centre. */
   function placeholderCrop(tile: SceneTile, material: Material, height: number): Mesh {
     const mesh = new Mesh(assets.cone, material);
-    mesh.position.set(tile.worldX, TILE_THICKNESS + height / 2, tile.worldZ);
+    mesh.position.set(tile.worldX, TILE_SURFACE_Y + height / 2, tile.worldZ);
     mesh.scale.set(state.layout.tileSize * CROP_RADIUS_FACTOR, height, state.layout.tileSize * CROP_RADIUS_FACTOR);
     mesh.castShadow = true;
     return mesh;
@@ -1480,9 +2241,9 @@ let interactionGeometry: BufferGeometry | null = null;
    * `mature`, which is compared exactly.
    */
   function dynamicSignatureOf(input: FarmSceneInput): string {
-    // Progression first: the locked ring, the apron and the field blocks follow the plots the player
-    // owns, so a purchase changes this layer without changing the island. The bounds and the counts
-    // are enough to tell every state apart without walking the scenery.
+    // Progression first: the locked ring and the field blocks follow the plots the player owns, so a
+    // purchase changes this layer without changing the island. The bounds and the counts are enough to
+    // tell every state apart without walking the scenery.
     const inner = input.world.inner;
     const outer = input.world.outer;
     const bounds = (value: typeof inner): string =>
@@ -1507,7 +2268,7 @@ let interactionGeometry: BufferGeometry | null = null;
             : `,c${crop.definitionId},${Math.round(crop.heightFraction * 100).toString()},${crop.mature ? "1" : "0"}`) +
           (tree === null
             ? ""
-            : `,r${tree.definitionId},${tree.visualStage},${Math.round(tree.growthProgress * 100).toString()}`)
+            : `,r${tree.definitionId},${tree.visualStage},${Math.round(tree.growthProgress * 100).toString()},${String(tree.rotation ?? 0)}`)
       );
     }
     return parts.join(";");
@@ -1550,9 +2311,10 @@ let interactionGeometry: BufferGeometry | null = null;
         cameraRig.moveTargetTo(cameraHomeX, cameraHomeZ);
         cameraFramed = true;
       }
-      // Fog the colour of the sky's horizon band, starting well past the field: the far shore and the
-      // hills dissolve into the sky instead of ending against a hard edge.
-      scene.fog = new Fog(HORIZON_COLOR, worldExtent * 2, worldExtent * 5);
+      // Fog is measured in camera-to-surface distance by Three.js, not by island identity. The near
+      // edge stays crisp, while a neighbour at the edge of the archipelago loses contrast naturally;
+      // no fixed opacity is assigned to an inactive island.
+      scene.fog = new Fog(HORIZON_COLOR, worldExtent * 1.25, worldExtent * 3.4);
       sky.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
       // The sun and its shadow box follow the island rather than sitting at the coordinate origin.
       sun.position.set(
@@ -1618,7 +2380,12 @@ let interactionGeometry: BufferGeometry | null = null;
         // A tree the player planted is looked at from arm's length, so it draws the curated
         // broadleaf rather than anything cheap: one model for every planted tree, cached like the
         // rest, and the per-instance cost is a clone of a scene the world already loaded.
-        const treePlantNode = treePlant(tile, assets, sceneryModel("tree_broad_3"), tree);
+        // Wildwood is a player-owned forestry tree, so use the existing Wildwood asset. Static
+        // environment tree_broad remains a world object and never enters this tree-instance path.
+        const treeModelId = tree.phase === "DEPLETED" && tree.definitionId === "tree_wildwood"
+          ? "resource_wildwood_stump"
+          : tree.definitionId === "tree_wildwood" ? "resource_wildwood" : "tree_broad_3";
+        const treePlantNode = treePlant(tile, assets, sceneryModel(treeModelId), tree);
         treeGroup.add(treePlantNode);
         pickTargets.set(treePlantNode, coordinate);
         // A production tree whose cycle is ready says so the same way a mature crop does: the same ring
@@ -1627,12 +2394,12 @@ let interactionGeometry: BufferGeometry | null = null;
         if (tree.ready) {
           const ring = new Mesh(assets.ring, assets.ready);
           ring.rotation.x = -Math.PI / 2;
-          ring.position.set(tile.worldX, TILE_THICKNESS + 0.03, tile.worldZ);
+          ring.position.set(tile.worldX, TILE_SURFACE_Y + 0.03, tile.worldZ);
           ring.scale.set(state.layout.tileSize * 0.46, state.layout.tileSize * 0.46, 1);
           treeGroup.add(ring);
           const spark = new Mesh(assets.octa, assets.ready);
           spark.rotation.y = Math.PI / 4;
-          spark.position.set(tile.worldX, TILE_THICKNESS + 1.9, tile.worldZ);
+          spark.position.set(tile.worldX, TILE_SURFACE_Y + 1.9, tile.worldZ);
           spark.scale.setScalar(0.13);
           treeGroup.add(spark);
         }
@@ -1650,12 +2417,12 @@ let interactionGeometry: BufferGeometry | null = null;
       if (crop.mature) {
         const ring = new Mesh(assets.ring, assets.ready);
         ring.rotation.x = -Math.PI / 2;
-        ring.position.set(tile.worldX, TILE_THICKNESS + 0.03, tile.worldZ);
+        ring.position.set(tile.worldX, TILE_SURFACE_Y + 0.03, tile.worldZ);
         ring.scale.set(state.layout.tileSize * 0.42, state.layout.tileSize * 0.42, 1);
         cropGroup.add(ring);
         const spark = new Mesh(assets.octa, assets.ready);
         spark.rotation.y = Math.PI / 4;
-        spark.position.set(tile.worldX, TILE_THICKNESS + height + 0.28, tile.worldZ);
+        spark.position.set(tile.worldX, TILE_SURFACE_Y + height + 0.28, tile.worldZ);
         spark.scale.setScalar(0.13);
         cropGroup.add(spark);
       }
@@ -1664,6 +2431,9 @@ let interactionGeometry: BufferGeometry | null = null;
     updateMarkers();
     updateCamera();
     rebuildCellOverlay();
+    // The work-area editor draws on the same ground, so both its lattice and its marks move with it.
+    if (workAreaGridGeometry !== null) rebuildWorkAreaGrid();
+    rebuildWorkAreaMarks();
     // The ground under a preview changes with the world - a plot bought, a model arriving - so the
     // ghost is rebuilt with the layer it stands on rather than left where it was.
     rebuildPreview();
@@ -1685,6 +2455,7 @@ let interactionGeometry: BufferGeometry | null = null;
   /** What the player has built, and the last signature drawn, so a poll that changed nothing is free. */
   let constructions: readonly SceneConstruction[] = [];
   let resourceNodes: readonly SceneResourceNode[] = [];
+  let fishingSpots: readonly SceneFishingSpot[] = [];
   let resourceNodeSignature: string | null = null;
   let constructionSignature = "";
   let constructionToken = 0;
@@ -1693,32 +2464,6 @@ let interactionGeometry: BufferGeometry | null = null;
   let objectPickingEnabled = true;
   /** Where each drawn construction stands, so the marker can be placed without touching the scene. */
   const constructionSites = new Map<string, SceneConstruction>();
-  /** The ownership mark's own geometry and the list it was built from, so a repeat costs nothing. */
-  let ownershipGeometry: BufferGeometry | null = null;
-  let ownershipSignature = "";
-
-  function rebuildOwnership(cells: readonly TileCoordinate[] | null): void {
-    const signature = cells === null ? "" : `${String(cells.length)}:${cells.map((cell) => `${String(cell.x)},${String(cell.y)}`).join(";")}`;
-    if (signature === ownershipSignature) return;
-    ownershipSignature = signature;
-    ownershipGroup.clear();
-    ownershipGeometry?.dispose();
-    ownershipGeometry = null;
-    if (cells === null || cells.length === 0) {
-      draw();
-      return;
-    }
-    const base = GROUND_SURFACE_Y + 0.02;
-    ownershipGeometry = buildOwnedLandOverlay(
-      ownershipGroup,
-      cells,
-      state.cells.frame,
-      assets.cellOwned,
-      (worldX, worldZ) => base + terrainHeightAt(worldX, worldZ, state.world.terrain)
-    );
-    draw();
-  }
-
   /**
    * Draws the island's deposits.
    *
@@ -1728,19 +2473,28 @@ let interactionGeometry: BufferGeometry | null = null;
    * nodes that a signature gate and a rebuild per change is cheaper than any cleverness.
    */
   function rebuildResourceNodes(): void {
-    const signature = resourceNodes
-      .map((node) => `${node.id}:${node.modelId}:${node.depletedModelId ?? ""}:${node.available ? "1" : "0"}`)
-      .join("|");
+    // Resolve once for both the signature and the draw. A row may already be in the farm response
+    // while its GLB is still in flight; readiness is therefore part of the presentation signature.
+    // When the shared library announces the late model, pending -> ready invalidates this gate and
+    // the node is added without another farm/resource response.
+    const resolved = resourceNodes.map((node) => {
+      const depleted = !node.available && node.depletedModelId !== null;
+      const modelId = depleted ? node.depletedModelId : node.modelId;
+      return { node, depleted, modelId, model: library.get(modelId) };
+    });
+    const signature = resourceNodeLayerSignature(
+      resolved.map(({ node }) => node),
+      (modelId) => resolved.some((entry) => entry.modelId === modelId && entry.model !== undefined)
+    );
     if (signature === resourceNodeSignature) return;
     resourceNodeSignature = signature;
     resourceGroup.clear();
-    for (const node of resourceNodes) {
-      // A tree names its stump; a rock has nothing better than a smaller rock, so it shrinks.
-      const depleted = !node.available && node.depletedModelId !== null;
-      const modelId = depleted ? node.depletedModelId : node.modelId;
-      const model = library.get(modelId);
-      if (model === undefined) continue;
-      const plant = model.clone(true);
+    for (const { node, depleted, model } of resolved) {
+      // A tree names its stump; a rock has nothing better than a smaller rock, so it shrinks. The
+      // marker remains drawable while the GLB is pending, so a late asset cannot make a valid node
+      // disappear from the world or force the player to guess where to click.
+      const plant = new Group();
+      (plant.userData as Record<string, unknown>)[RESOURCE_NODE_ID_KEY] = node.id;
       const scale =
         RESOURCE_NODE_MODEL_SCALE * (node.available || depleted ? 1 : RESOURCE_NODE_DEPLETED_SCALE);
       plant.scale.setScalar(scale);
@@ -1749,11 +2503,896 @@ let interactionGeometry: BufferGeometry | null = null;
         GROUND_SURFACE_Y + terrainHeightAt(node.worldX, node.worldZ, state.world.terrain),
         node.worldZ
       );
-      plant.traverse((child) => {
-        child.castShadow = node.available;
-      });
+      const pieces = resourceClusterPieces(node);
+      for (const piece of pieces) {
+        const pieceRoot = model?.clone(true) ?? new Group();
+        (pieceRoot.userData as Record<string, unknown>)[RESOURCE_NODE_ID_KEY] = node.id;
+        const pieceTerrainY = terrainHeightAt(
+          node.worldX + piece.offsetX,
+          node.worldZ + piece.offsetZ,
+          state.world.terrain
+        );
+        pieceRoot.position.set(
+          piece.offsetX,
+          pieceTerrainY - terrainHeightAt(node.worldX, node.worldZ, state.world.terrain),
+          piece.offsetZ
+        );
+        pieceRoot.rotation.y = piece.rotationY;
+        pieceRoot.scale.setScalar(piece.scale);
+        pieceRoot.traverse((child) => {
+          child.castShadow = node.available;
+        });
+        plant.add(pieceRoot);
+      }
+      // The small gold ring is the resource affordance: it distinguishes a harvestable node from
+      // decorative world trees even when the Wildwood GLB is still arriving or is visually occluded.
+      // It is a child of the tagged root, so it remains part of the same RESOURCE_NODE pick target.
+      const resourceMarker = new Mesh(assets.ring, assets.ready);
+      resourceMarker.rotation.x = -Math.PI / 2;
+      resourceMarker.position.y = 0.025;
+      resourceMarker.scale.setScalar(node.definitionId === "resource_ore" ? 0.82 : 0.34);
+      resourceMarker.renderOrder = 2;
+      resourceMarker.castShadow = false;
+      resourceMarker.receiveShadow = false;
+      plant.add(resourceMarker);
       resourceGroup.add(plant);
     }
+  }
+
+  function setFishingSpotMetadata(spots: readonly SceneFishingSpot[]): void {
+    fishingSpots = spots;
+  }
+
+  const NEIGHBOR_DOCK_ID = "neighbor-dock";
+  const NEIGHBOR_NPC_ID = "neighbor-npc";
+  function tagNeighbor(object: Object3D, kind: "NEIGHBOR_DOCK" | "NEIGHBOR_NPC", id: string): void {
+    (object.userData as Record<string, unknown>).neighborTarget = { kind, id };
+  }
+  function neighborTargetFromNode(node: Object3D): SceneWorldTarget | null {
+    let current: Object3D | null = node;
+    while (current !== null) {
+      const value = (current.userData as Record<string, unknown>).neighborTarget;
+      if (typeof value === "object" && value !== null) {
+        const target = value as { kind?: string; id?: string };
+        if ((target.kind === "NEIGHBOR_DOCK" || target.kind === "NEIGHBOR_NPC") && typeof target.id === "string") {
+          return { kind: target.kind, id: target.id };
+        }
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+  function rebuildNeighborCollisionDebug(
+    template: ReturnType<typeof neighborIslandTemplate>,
+    center: { readonly x: number; readonly z: number }
+  ): void {
+    neighborCollisionDebugGroup.visible = islandDebugEnabled;
+    if (!islandDebugEnabled) return;
+    const segments: number[] = [];
+    const addSegment = (ax: number, az: number, bx: number, bz: number, y: number): void => {
+      segments.push(ax, y, az, bx, y, bz);
+    };
+    const boundarySamples = 96;
+    for (let index = 0; index < boundarySamples; index += 1) {
+      const angle = index / boundarySamples * Math.PI * 2;
+      const nextAngle = (index + 1) / boundarySamples * Math.PI * 2;
+      const start = neighborWorldPoint(template, center, angle, 1);
+      const end = neighborWorldPoint(template, center, nextAngle, 1);
+      addSegment(start.x, start.z, end.x, end.z, GROUND_SURFACE_Y + 0.34);
+    }
+    for (const channel of template.waterChannels) {
+      const cosine = Math.cos(channel.rotation);
+      const sine = Math.sin(channel.rotation);
+      const edge: { x: number; z: number }[] = [];
+      for (let index = 0; index < 32; index += 1) {
+        const angle = index / 32 * Math.PI * 2;
+        const along = Math.cos(angle) * channel.length;
+        const across = Math.sin(angle) * channel.width;
+        edge.push({
+          x: center.x + channel.x + along * cosine - across * sine,
+          z: center.z + channel.z + along * sine + across * cosine
+        });
+      }
+      for (let index = 0; index < edge.length; index += 1) {
+        const start = edge[index];
+        const end = edge[(index + 1) % edge.length];
+        if (start === undefined || end === undefined) continue;
+        addSegment(start.x, start.z, end.x, end.z, SEA_SURFACE_Y + 0.02);
+      }
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(new Float32Array(segments), 3));
+    neighborCollisionDebugGeometries.push(geometry);
+    neighborCollisionDebugGroup.add(new LineSegments(geometry, neighborCollisionDebugMaterial));
+  }
+  function rebuildNeighborIsland(): void {
+    clearIslandDebugLabels(neighborGroup);
+    neighborGroup.clear();
+    for (const geometry of neighborGeometries) geometry.dispose();
+    neighborGeometries.length = 0;
+    neighborNpcNode = null;
+    neighborNpcTool = null;
+    neighborNpcPhase = null;
+    neighborCollisionDebugGroup.clear();
+    for (const geometry of neighborCollisionDebugGeometries) geometry.dispose();
+    neighborCollisionDebugGeometries.length = 0;
+    if (neighborIsland === null) {
+      neighborGroup.visible = false;
+      neighborCollisionDebugGroup.visible = false;
+      return;
+    }
+    const { center } = neighborIsland;
+    const template = neighborIslandTemplate(neighborIsland.slot ?? "MOC");
+    const mocLayout = template.kind === "MOC" ? MOC_PREVIEW_LAYOUT : null;
+    rebuildNeighborCollisionDebug(template, center);
+    attachIslandDebugLabel(neighborGroup, {
+      islandId: neighborIsland.islandId,
+      templateId: template.kind,
+      center,
+      lod: "FULL"
+    }, GROUND_SURFACE_Y + template.relief * 2 + 14);
+    const addLoadedModel = (modelId: string, parent: Object3D, position: { readonly x: number; readonly y: number; readonly z: number }, scale: number, rotationY = 0): Object3D | null => {
+      const source = library.get(modelId);
+      if (source === undefined) {
+        void library.load(modelId);
+        return null;
+      }
+      const model = source.clone(true);
+      model.position.set(position.x, position.y, position.z);
+      model.scale.setScalar(scale);
+      model.rotation.y = rotationY;
+      model.traverse((child) => { child.castShadow = true; child.receiveShadow = true; });
+      parent.add(model);
+      return model;
+    };
+    // A broad render-only ocean prevents the custom island shell from ending in a hard blue ring.
+    // It has no collision, pick target, terrain sample, or network/state representation.
+    const oceanGeometry = new PlaneGeometry(720, 720, 1, 1);
+    oceanGeometry.rotateX(-Math.PI / 2);
+    const ocean = new Mesh(oceanGeometry, assets.waterDeep);
+    ocean.position.set(center.x, SEA_SURFACE_Y, center.z);
+    ocean.renderOrder = -2;
+    neighborGeometries.push(oceanGeometry);
+    neighborGroup.add(ocean);
+    const waterGeometry = neighborTerrainGeometry(template, center, 1.20, GROUND_SURFACE_Y - 0.28, GROUND_SURFACE_Y - 0.5, 0);
+    const water = new Mesh(waterGeometry, assets.waterDeep);
+    neighborGeometries.push(waterGeometry);
+    neighborGroup.add(water);
+    const beachGeometry = neighborShoreRingGeometry(template, center, 1, 1.09, GROUND_SURFACE_Y + 0.01, GROUND_SURFACE_Y - 0.35);
+    const beach = new Mesh(beachGeometry, assets.wetSand);
+    neighborGeometries.push(beachGeometry);
+    neighborGroup.add(beach);
+    // Do not use terrainGrass here: it requires vertex colours, while this custom island geometry
+    // intentionally uses analytic normals only. A vertex-colour material without a colour attribute
+    // is the direct cause of the former black island surface.
+    const landGeometry = neighborTerrainGeometry(template, center, 1, GROUND_SURFACE_Y + 0.18, GROUND_SURFACE_Y - 0.2, 1);
+    const land = new Mesh(landGeometry, assets.meadow);
+    neighborGeometries.push(landGeometry);
+    neighborGroup.add(land);
+    // The HOME ground remains in worldGroup while visiting; picking must follow the active island.
+    groundMesh = land;
+    // Profession terrain is part of the island, not a prop laid over a flat field. Ridges use a
+    // shallow, faceted landform mesh; a stretched octahedron here reads as a paper triangle. Thủy's
+    // channels sit in the cuts made by neighborGroundHeight so water never becomes a blue decal on
+    // solid land.
+    for (const ridge of template.ridgeLines) {
+      const ridgeGeometry = neighborRidgeGeometry(
+        ridge,
+        1,
+        template.kind === "KIM" ? 0.46 : 0.36,
+        0
+      );
+      const ridgeNode = new Mesh(ridgeGeometry, assets.stone);
+      ridgeNode.rotation.y = ridge.rotation;
+      ridgeNode.position.set(
+        center.x + ridge.x,
+        GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, ridge.x, ridge.z),
+        center.z + ridge.z
+      );
+      ridgeNode.castShadow = true;
+      neighborGeometries.push(ridgeGeometry);
+      neighborGroup.add(ridgeNode);
+    }
+    for (const channel of template.waterChannels) {
+      const bankGeometry = neighborWaterBankGeometry(channel, center, 1, SEA_SURFACE_Y + 0.005);
+      const bank = new Mesh(bankGeometry, assets.wetSand);
+      neighborGeometries.push(bankGeometry);
+      neighborGroup.add(bank);
+      const channelGeometry = neighborWaterBodyGeometry(channel, center, 1, SEA_SURFACE_Y - 0.035);
+      const channelWater = new Mesh(channelGeometry, assets.water);
+      channelWater.renderOrder = 1;
+      neighborGeometries.push(channelGeometry);
+      neighborGroup.add(channelWater);
+    }
+    const localDock = mocLayout?.dock.land ?? template.dockLocal;
+    const localNpc = template.npcLocal;
+    const localHouse = mocPreviewPlacement("farmhouse") ?? template.houseLocal;
+    const localStore = mocPreviewPlacement("storage-barn-t1") ?? template.storeLocal;
+    const localWork = mocPreviewPlacement("workbench") ?? template.workLocal;
+    const presentationDock = mocLayout === null ? { x: center.x + localDock.x, z: center.z + localDock.z } : mocPresentationDockWorld(center);
+    const presentationNpc = { x: center.x + localNpc.x, z: center.z + localNpc.z };
+    const path = new Mesh(assets.box, assets.dirt);
+    path.scale.set(Math.hypot(localNpc.x - localDock.x, localNpc.z - localDock.z) * 0.5, 0.08, 0.9);
+    path.position.set(
+      (presentationDock.x + presentationNpc.x) / 2,
+      GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, (presentationDock.x + presentationNpc.x) / 2 - center.x, (presentationDock.z + presentationNpc.z) / 2 - center.z),
+      (presentationDock.z + presentationNpc.z) / 2
+    );
+    path.rotation.y = Math.atan2(presentationNpc.z - presentationDock.z, presentationNpc.x - presentationDock.x);
+    if (template.kind !== "MOC") neighborGroup.add(path);
+    const housePath = new Mesh(assets.box, assets.dirt);
+    housePath.scale.set(Math.hypot(localHouse.x - localNpc.x, localHouse.z - localNpc.z) * 0.5, 0.06, 0.82);
+    housePath.position.set(
+      center.x + (localHouse.x + localNpc.x) / 2,
+      GROUND_SURFACE_Y + 0.62 + neighborGroundHeight(template, (localHouse.x + localNpc.x) / 2, (localHouse.z + localNpc.z) / 2),
+      center.z + (localHouse.z + localNpc.z) / 2
+    );
+    housePath.rotation.y = Math.atan2(localHouse.z - localNpc.z, localHouse.x - localNpc.x);
+    if (template.kind !== "MOC") neighborGroup.add(housePath);
+    const dockNode = new Group();
+    const dockMesh = new Mesh(assets.box, assets.stakeWood);
+    dockMesh.scale.set(3.2, 0.25, 1.2);
+    dockMesh.position.y = 0.55;
+    dockNode.add(dockMesh);
+    const dockMark = new Mesh(assets.ring, assets.ready);
+    dockMark.rotation.x = -Math.PI / 2; dockMark.position.y = 0.03; dockMark.scale.setScalar(1.35);
+    dockNode.add(dockMark);
+    if (mocLayout !== null) {
+      const bridgeAngle = Math.atan2(mocLayout.dock.water.z - mocLayout.dock.land.z, mocLayout.dock.water.x - mocLayout.dock.land.x);
+      const bridgeLength = Math.hypot(mocLayout.dock.water.x - mocLayout.dock.land.x, mocLayout.dock.water.z - mocLayout.dock.land.z);
+      const bridge = new Mesh(assets.box, assets.stakeWood);
+      bridge.scale.set(bridgeLength * 0.5, 0.18, 0.95);
+      bridge.position.set(bridgeLength * 0.5, 0.08, 0);
+      dockNode.add(bridge);
+      // Keep the bridge's local +X axis aligned with the shoreline normal. The old code rotated
+      // both the bridge and its parent, rotating the offset twice and pushing the bridge inland.
+      dockNode.rotation.y = bridgeAngle;
+      for (const fraction of [0.35, 0.72]) {
+        const post = new Mesh(assets.cylinder, assets.stakeWood);
+        post.scale.set(0.12, 0.46, 0.12);
+        post.position.set(bridgeLength * fraction, -0.22, 0);
+        dockNode.add(post);
+      }
+    }
+    dockNode.position.set(presentationDock.x, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, localDock.x, localDock.z), presentationDock.z);
+    tagNeighbor(dockNode, "NEIGHBOR_DOCK", NEIGHBOR_DOCK_ID);
+    neighborGroup.add(dockNode);
+    const constructionBuilt = neighborIsland.npcConstructionPhase === undefined || neighborIsland.npcConstructionPhase === "BUILT";
+    const house = new Group();
+    const walls = new Mesh(assets.box, assets.barnWall); walls.scale.set(3.2, 2.2, 2.8); walls.position.y = 1.45;
+    const roof = new Mesh(assets.roof, assets.barnRoof); roof.scale.set(2.4, 1.3, 2.4); roof.position.y = 4.0;
+    const facade = new Mesh(assets.box, assets.barnWall); facade.scale.set(2.7, 1.7, 0.35); facade.position.set(0, 1.55, 1.5);
+    const door = new Mesh(assets.box, assets.stakeWood); door.scale.set(0.58, 1.1, 0.12); door.position.set(0, 1.1, 1.88);
+    house.add(walls, roof, facade, door); house.position.set(center.x + localHouse.x, GROUND_SURFACE_Y + 0.45 + neighborGroundHeight(template, localHouse.x, localHouse.z), center.z + localHouse.z);
+    const plot = new Mesh(assets.box, assets.bareEarth); plot.scale.set(4.8, 0.08, 3.0); plot.position.set(center.x + localHouse.x, GROUND_SURFACE_Y + 0.48 + neighborGroundHeight(template, localHouse.x, localHouse.z), center.z + localHouse.z); neighborGroup.add(plot);
+    if (constructionBuilt) {
+      const houseModel = addLoadedModel(template.kind === "MOC" ? "farm.barn.t2" : "farm.barn.t1", neighborGroup, { x: center.x + localHouse.x, y: GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, localHouse.x, localHouse.z), z: center.z + localHouse.z }, template.kind === "MOC" ? 6.4 : 4.9);
+      // The primitive is a loading fallback only; once the authored building arrives it must not
+      // double the silhouette and make the island look like two tiny houses on a lawn.
+      if (houseModel === null) neighborGroup.add(house);
+    } else {
+      const foundation = new Mesh(assets.box, assets.stakeWood);
+      foundation.scale.set(4.6, 0.18, 2.8);
+      foundation.position.set(center.x + localHouse.x, GROUND_SURFACE_Y + 0.62 + neighborGroundHeight(template, localHouse.x, localHouse.z), center.z + localHouse.z);
+      neighborGroup.add(foundation);
+    }
+    const treeSources = ["tree_broad_1", "tree_broad_2", "tree_broad_3", "tree_broad_4", "tree_pine_1", "tree_pine_2", "tree_pine_3"]
+      .map((modelId) => {
+        const source = library.get(modelId);
+        if (source === undefined) void library.load(modelId);
+        return source;
+      })
+      .filter((model): model is Object3D => model !== undefined);
+    const treeSource = treeSources[0] ?? library.get("resource_wildwood") ?? sceneryModel("tree_broad_1");
+    const forestLayout = template.kind === "MOC"
+      ? mocPreviewForestPlacements().map((placement) => ({ ...placement, modelId: placement.modelId }))
+      : neighborForestLayout(template, neighborIsland.seed ?? 0).map((tree) => ({ ...tree, modelId: undefined as string | undefined, rotationY: 0 }));
+    for (const [index, tree] of forestLayout.entries()) {
+      const authoredTreeSource = tree.modelId === undefined ? undefined : library.get(tree.modelId);
+      if (tree.modelId !== undefined && authoredTreeSource === undefined) void library.load(tree.modelId);
+      const selectedTreeSource = authoredTreeSource ?? (tree.modelId === undefined ? treeSources[index % Math.max(1, treeSources.length)] ?? treeSource : undefined);
+      const treeNode = selectedTreeSource?.clone(true) ?? new Group();
+      if (selectedTreeSource === undefined) {
+        const trunk = new Mesh(assets.cylinder, assets.wood);
+        trunk.scale.set(0.16 * tree.scale, 0.9 * tree.scale, 0.16 * tree.scale);
+        trunk.position.y = 0.62;
+        const canopy = new Mesh(assets.cone, assets.foliage);
+        canopy.scale.set(0.9 * tree.scale, 1.8 * tree.scale, 0.9 * tree.scale);
+        canopy.position.y = 1.87 * tree.scale;
+        treeNode.add(trunk, canopy);
+      }
+      treeNode.scale.setScalar(selectedTreeSource === undefined ? 1 : mocTreeWorldScale(treeNode, tree.scale));
+      treeNode.rotation.y = tree.rotationY;
+      treeNode.position.set(center.x + tree.x, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, tree.x, tree.z), center.z + tree.z);
+      treeNode.traverse((child) => { child.castShadow = true; child.receiveShadow = true; });
+      neighborGroup.add(treeNode);
+    }
+    for (const ore of template.oreLocal) {
+      const modelId = ore.kind === "IRON" ? "resource_iron" : ore.kind === "COPPER" ? "resource_copper" : "resource_stone";
+      const model = addLoadedModel(modelId, neighborGroup, {
+        x: center.x + ore.x,
+        y: GROUND_SURFACE_Y + 0.22 + neighborGroundHeight(template, ore.x, ore.z),
+        z: center.z + ore.z
+      }, 1.45 * ore.scale);
+      if (model === null) {
+        const outcrop = new Mesh(assets.octa, assets.stone);
+        outcrop.scale.set(ore.scale * 1.2, ore.scale * 1.8, ore.scale * 1.2);
+        outcrop.position.set(center.x + ore.x, GROUND_SURFACE_Y + 0.45 + neighborGroundHeight(template, ore.x, ore.z), center.z + ore.z);
+        neighborGroup.add(outcrop);
+      }
+    }
+    for (const landmark of template.landmarks) {
+      if (landmark.kind === "GROVE") {
+        const grove = new Mesh(assets.torus, assets.forestFloor);
+        grove.scale.set(4.2, 0.18, 3.2); grove.rotation.x = Math.PI / 2;
+        grove.position.set(center.x + landmark.x, GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, landmark.x, landmark.z), center.z + landmark.z);
+        neighborGroup.add(grove);
+      } else if (landmark.kind === "LOOKOUT") {
+        const lookout = new Mesh(assets.octa, assets.stone);
+        lookout.scale.set(1.5, 0.8, 1.2);
+        lookout.position.set(center.x + landmark.x, GROUND_SURFACE_Y + 0.5 + neighborGroundHeight(template, landmark.x, landmark.z), center.z + landmark.z);
+        neighborGroup.add(lookout);
+      } else {
+        const marker = new Mesh(assets.box, assets.stone);
+        marker.scale.set(1.3, 0.7, 0.9);
+        marker.position.set(center.x + landmark.x, GROUND_SURFACE_Y + 0.45 + neighborGroundHeight(template, landmark.x, landmark.z), center.z + landmark.z);
+        neighborGroup.add(marker);
+      }
+    }
+    // A lived-in working yard: the dock path continues to a visible workplace and a small store.
+    const work = template.kind === "MOC" ? { x: localWork.x, z: localWork.z } : template.workLocal;
+    const workPath = new Mesh(assets.box, assets.dirt);
+    workPath.scale.set(Math.hypot(work.x - localNpc.x, work.z - localNpc.z) * 0.5, 0.06, 0.72);
+    workPath.position.set(
+      center.x + (work.x + localNpc.x) / 2,
+      GROUND_SURFACE_Y + 0.62 + neighborGroundHeight(template, (work.x + localNpc.x) / 2, (work.z + localNpc.z) / 2),
+      center.z + (work.z + localNpc.z) / 2
+    );
+    workPath.rotation.y = Math.atan2(work.z - localNpc.z, work.x - localNpc.x);
+    if (template.kind === "MOC") {
+      const addMocPath = (start: { readonly x: number; readonly z: number }, end: { readonly x: number; readonly z: number }, width: number): void => {
+        const segment = new Mesh(assets.box, assets.dirt);
+        segment.scale.set(Math.hypot(end.x - start.x, end.z - start.z) * 0.5, 0.055, width);
+        segment.position.set(
+          center.x + (start.x + end.x) * 0.5,
+          GROUND_SURFACE_Y + 0.61 + neighborGroundHeight(template, (start.x + end.x) * 0.5, (start.z + end.z) * 0.5),
+          center.z + (start.z + end.z) * 0.5
+        );
+        segment.rotation.y = Math.atan2(end.z - start.z, end.x - start.x);
+        neighborGroup.add(segment);
+      };
+      for (const route of MOC_PREVIEW_LAYOUT.routes) {
+        for (let index = 1; index < route.points.length; index += 1) {
+          const start = route.points[index - 1];
+          const end = route.points[index];
+          if (start !== undefined && end !== undefined) addMocPath(start, end, 0.82);
+        }
+      }
+    }
+    if (template.kind !== "MOC") neighborGroup.add(workPath);
+    const workPad = new Mesh(assets.cylinder, assets.bareEarth);
+    workPad.scale.set(3.4, 0.08, 2.4); workPad.rotation.x = 0; workPad.position.set(center.x + work.x, GROUND_SURFACE_Y + 0.61 + neighborGroundHeight(template, work.x, work.z), center.z + work.z);
+    neighborGroup.add(workPad);
+    const woodYardPlacement = template.kind === "MOC" ? mocPreviewPlacement("woodYard") : undefined;
+    const woodYardCenter = woodYardPlacement === undefined ? { x: work.x + 3.1, z: work.z + 0.4 } : { x: woodYardPlacement.x, z: woodYardPlacement.z };
+    const woodYard = new Mesh(assets.box, assets.bareEarth);
+    woodYard.scale.set(5.2, 0.08, 3.6);
+    woodYard.position.set(center.x + woodYardCenter.x, GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, woodYardCenter.x, woodYardCenter.z), center.z + woodYardCenter.z);
+    neighborGroup.add(woodYard);
+    const store = new Group();
+    const storeBody = new Mesh(assets.box, assets.barnWall); storeBody.scale.set(2.6, 1.65, 2.2); storeBody.position.y = 1.2;
+    const storeRoof = new Mesh(assets.roof, assets.barnRoof); storeRoof.scale.set(2.0, 1.0, 2.0); storeRoof.position.y = 3.0;
+    store.add(storeBody, storeRoof); store.position.set(center.x + localStore.x, GROUND_SURFACE_Y + 0.45 + neighborGroundHeight(template, localStore.x, localStore.z), center.z + localStore.z);
+    if (constructionBuilt) {
+      const storeModel = addLoadedModel(template.kind === "KIM" ? "farm.silo_house.t2" : "farm.barn.t1", neighborGroup, { x: center.x + localStore.x, y: GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, localStore.x, localStore.z), z: center.z + localStore.z }, template.kind === "KIM" ? 5.6 : 3.7);
+      if (storeModel === null) neighborGroup.add(store);
+    } else {
+      const storePad = new Mesh(assets.box, assets.bareEarth);
+      storePad.scale.set(2.8, 0.08, 2.2);
+      storePad.position.set(center.x + localStore.x, GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, localStore.x, localStore.z), center.z + localStore.z);
+      neighborGroup.add(storePad);
+    }
+    const storePath = new Mesh(assets.box, assets.dirt);
+    storePath.scale.set(Math.hypot(localStore.x - localNpc.x, localStore.z - localNpc.z) * 0.5, 0.06, 0.7);
+    storePath.position.set(center.x + (localStore.x + localNpc.x) / 2, GROUND_SURFACE_Y + 0.62 + neighborGroundHeight(template, (localStore.x + localNpc.x) / 2, (localStore.z + localNpc.z) / 2), center.z + (localStore.z + localNpc.z) / 2);
+    storePath.rotation.y = Math.atan2(localStore.z - localNpc.z, localStore.x - localNpc.x);
+    if (template.kind !== "MOC") neighborGroup.add(storePath);
+    if (template.kind === "THUY") {
+      const pondAccessStarts = [work, localStore, localHouse];
+      for (const [index, pond] of template.waterChannels.entries()) {
+        const start = pondAccessStarts[index] ?? localStore;
+        const end = { x: pond.x, z: pond.z - pond.length * 0.92 };
+        const servicePath = new Mesh(assets.box, assets.dirt);
+        servicePath.scale.set(Math.hypot(end.x - start.x, end.z - start.z) * 0.5, 0.045, 0.52);
+        servicePath.position.set(
+          center.x + (start.x + end.x) / 2,
+          GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, (start.x + end.x) / 2, (start.z + end.z) / 2),
+          center.z + (start.z + end.z) / 2
+        );
+        servicePath.rotation.y = Math.atan2(end.z - start.z, end.x - start.x);
+        neighborGroup.add(servicePath);
+      }
+    }
+    if (template.kind === "MOC") {
+      for (const placement of MOC_PREVIEW_LAYOUT.placements) {
+        if (placement.group === "FOREST_BACK" || placement.group === "FOREST_LEFT" || placement.group === "FOREST_RIGHT" || placement.id === "storage-barn-t1" || placement.group === "DOCK" || placement.modelId.startsWith("__procedural:")) continue;
+        addLoadedModel(placement.modelId, neighborGroup, {
+          x: center.x + placement.x,
+          y: GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, placement.x, placement.z),
+          z: center.z + placement.z
+        }, placement.scale, placement.rotationY);
+      }
+    } else {
+      addLoadedModel("prop_workbench", neighborGroup, { x: center.x + work.x, y: GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, work.x, work.z), z: center.z + work.z }, 1.25);
+      addLoadedModel("prop_anvil_log", neighborGroup, { x: center.x + work.x + 1.1, y: GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, work.x, work.z), z: center.z + work.z + 0.4 }, 1.05);
+      addLoadedModel("prop_crate_wooden", neighborGroup, { x: center.x + work.x - 1.1, y: GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, work.x, work.z), z: center.z + work.z - 0.45 }, 1.15);
+      for (const prop of template.presentationProps) {
+        addLoadedModel(prop.id, neighborGroup, {
+          x: center.x + prop.x,
+          y: GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, prop.x, prop.z),
+          z: center.z + prop.z
+        }, prop.scale);
+      }
+    }
+    const logStack = new Group();
+    for (let index = 0; index < 4; index += 1) {
+      const log = new Mesh(assets.cylinder, assets.wood);
+      log.rotation.z = Math.PI / 2;
+      log.scale.set(0.34, 1.35, 0.34);
+      log.position.set(center.x + work.x + 4.4 + (index % 2) * 0.72, GROUND_SURFACE_Y + 0.9 + neighborGroundHeight(template, work.x + 4.4 + (index % 2) * 0.72, work.z + 0.3) + Math.floor(index / 2) * 0.48, center.z + work.z + 0.3);
+      logStack.add(log);
+    }
+    neighborGroup.add(logStack);
+    for (const [detailIndex, detail] of template.supportLocal.entries()) {
+      if (template.kind === "MOC" && detail.kind === "TREE") continue;
+      const y = GROUND_SURFACE_Y + 0.5 + neighborGroundHeight(template, detail.x, detail.z);
+      if (detail.kind === "ROCK") {
+        const rockModelId = `rock_boulder_${String((detailIndex % 3) + 1)}`;
+        const rockModel = addLoadedModel(rockModelId, neighborGroup, { x: center.x + detail.x, y, z: center.z + detail.z }, 1.35 * detail.scale);
+        if (rockModel === null) {
+          const rock = new Mesh(assets.octa, assets.stone); rock.scale.setScalar(detail.scale); rock.position.set(center.x + detail.x, y, center.z + detail.z); neighborGroup.add(rock);
+        }
+      } else if (detail.kind === "WATER" && template.terrainKind !== "COAST") {
+        const pool = new Mesh(assets.cylinder, assets.water); pool.scale.set(detail.scale * 1.7, 0.04, detail.scale); pool.position.set(center.x + detail.x, y - 0.2, center.z + detail.z); neighborGroup.add(pool);
+      } else if (detail.kind === "WATER") {
+        // Coast channels are drawn from template.waterChannels; support water never becomes a
+        // central decorative pool on Thủy.
+      } else if (detail.kind === "BUSH") {
+        const bushModelId = detailIndex % 2 === 0 ? "bush_leafy" : "bush_flowering";
+        const bushSource = library.get(bushModelId);
+        if (bushSource === undefined) void library.load(bushModelId);
+        if (bushSource !== undefined) {
+          const bush = bushSource.clone(true);
+          bush.scale.setScalar(1.7 * detail.scale);
+          bush.position.set(center.x + detail.x, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, detail.x, detail.z), center.z + detail.z);
+          bush.traverse((child) => { child.castShadow = true; child.receiveShadow = true; });
+          neighborGroup.add(bush);
+        } else {
+          const bush = new Mesh(assets.cone, assets.foliage);
+          bush.scale.set(0.85 * detail.scale, 0.65 * detail.scale, 0.85 * detail.scale);
+          bush.position.set(center.x + detail.x, y + 0.35 * detail.scale, center.z + detail.z);
+          neighborGroup.add(bush);
+        }
+      } else {
+        const source = treeSources[detailIndex % Math.max(1, treeSources.length)] ?? treeSource ?? sceneryModel("tree_broad_1");
+        if (source !== undefined) {
+          const treeNode = source.clone(true);
+          treeNode.scale.setScalar((template.kind === "MOC" ? 3.8 : 3.15) * detail.scale);
+          treeNode.position.set(center.x + detail.x, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, detail.x, detail.z), center.z + detail.z);
+          treeNode.traverse((child) => { child.castShadow = true; child.receiveShadow = true; });
+          neighborGroup.add(treeNode);
+          continue;
+        }
+        const trunk = new Mesh(assets.cylinder, assets.wood); trunk.scale.set(0.18 * detail.scale, 1.0 * detail.scale, 0.18 * detail.scale); trunk.position.set(center.x + detail.x, y + 0.55 * detail.scale, center.z + detail.z);
+        const crown = new Mesh(assets.cone, assets.foliage); crown.scale.set(0.95 * detail.scale, 1.9 * detail.scale, 0.95 * detail.scale); crown.position.set(center.x + detail.x, trunk.position.y + 1.15 * detail.scale, center.z + detail.z); neighborGroup.add(trunk, crown);
+      }
+    }
+    const npcNode = new Group();
+    const body = new Mesh(assets.cylinder, assets.playerBody); body.scale.set(0.28, 0.75, 0.28); body.position.y = 0.75;
+    const head = new Mesh(assets.sphere, assets.playerSkin); head.scale.setScalar(0.27); head.position.y = 1.45;
+    const marker = new Mesh(assets.ring, assets.selection); marker.rotation.x = -Math.PI / 2; marker.scale.setScalar(0.55); marker.position.y = 0.03;
+    if (addLoadedModel("character.player_farmer", npcNode, { x: 0, y: 0, z: 0 }, 1.05) === null) npcNode.add(body, head, marker);
+    const tool = addLoadedModel("prop_axe", npcNode, { x: 0.42, y: 0.9, z: 0.16 }, 1.15);
+    if (tool !== null) neighborNpcTool = tool;
+    else {
+      const fallbackTool = new Group();
+      const handle = new Mesh(assets.cylinder, assets.wood);
+      handle.scale.set(0.07, 0.62, 0.07); handle.position.y = 0.35;
+      const blade = new Mesh(assets.box, assets.stone);
+      blade.scale.set(0.22, 0.18, 0.06); blade.position.set(0.12, 0.68, 0);
+      fallbackTool.add(handle, blade); fallbackTool.position.set(0.42, 0.2, 0.16);
+      neighborNpcTool = fallbackTool; npcNode.add(fallbackTool);
+    }
+    neighborNpcNode = npcNode;
+    updateNeighborNpcPose(Date.now());
+    tagNeighbor(npcNode, "NEIGHBOR_NPC", NEIGHBOR_NPC_ID); neighborGroup.add(npcNode);
+    neighborGroup.visible = true;
+  }
+
+  /** HOME-only low-detail preview: presentation only, never a walkable or selectable island. */
+  function rebuildNeighborIslandPreviews(): void {
+    clearIslandDebugLabels(neighborPreviewGroup);
+    neighborPreviewGroup.clear();
+    neighborPreviewDetailRoots.clear();
+    for (const geometry of neighborPreviewGeometries) geometry.dispose();
+    neighborPreviewGeometries.length = 0;
+    neighborPreviewGroup.visible = neighborPreviews.length > 0;
+    if (!neighborPreviewGroup.visible) return;
+
+    const previewScale = NEIGHBOR_PREVIEW_WATER_SCALE;
+    const addPreviewModel = (
+      parent: Group,
+      modelId: string,
+      center: { readonly x: number; readonly z: number },
+      localX: number,
+      localZ: number,
+      scale: number,
+      y = GROUND_SURFACE_Y + 0.2,
+      rotationY = 0
+    ): boolean => {
+      const source = library.get(modelId);
+      if (source === undefined) {
+        void library.load(modelId);
+        return false;
+      }
+      const model = source.clone(true);
+      model.position.set(center.x + localX * previewScale, y, center.z + localZ * previewScale);
+      model.scale.setScalar((modelId.startsWith("tree_") ? mocTreeWorldScale(model, scale) : scale) * previewScale);
+      model.rotation.y = rotationY;
+      model.traverse((child) => { child.castShadow = false; child.receiveShadow = true; });
+      parent.add(model);
+      return true;
+    };
+
+    const addPreviewTree = (
+      parent: Group,
+      center: { readonly x: number; readonly z: number },
+      localX: number,
+      localZ: number,
+      scale: number,
+      modelId = "tree_broad_2",
+      groundY = GROUND_SURFACE_Y + 0.18,
+      rotationY = 0
+    ): void => {
+      // Use the same measured model envelope as the active scene. The placement scale is seeded per
+      // tree, so mature canopies vary while remaining visibly taller than the player.
+      if (addPreviewModel(parent, modelId, center, localX, localZ, scale, groundY, rotationY)) return;
+      const trunk = new Mesh(assets.cylinder, assets.wood);
+      trunk.scale.set(0.1 * scale * previewScale, 0.5 * scale * previewScale, 0.1 * scale * previewScale);
+      trunk.position.set(center.x + localX * previewScale, groundY + 0.52 * scale * previewScale, center.z + localZ * previewScale);
+      const crown = new Mesh(assets.cone, assets.foliage);
+      crown.scale.set(0.55 * scale * previewScale, 1.0 * scale * previewScale, 0.55 * scale * previewScale);
+      crown.position.set(center.x + localX * previewScale, groundY + 1.2 * scale * previewScale, center.z + localZ * previewScale);
+      parent.add(trunk, crown);
+    };
+
+    for (const preview of neighborPreviews) {
+      const root = new Group();
+      const details = new Group();
+      root.add(details);
+      neighborPreviewGroup.add(root);
+      if (preview.slot === "HOME") {
+        const waterGeometry = homeIslandLodGeometry(preview.center, previewScale * 1.14, GROUND_SURFACE_Y - 0.28, GROUND_SURFACE_Y - 0.5, () => 0);
+        const water = new Mesh(waterGeometry, assets.waterDeep);
+        const landGeometry = homeIslandLodGeometry(preview.center, previewScale, GROUND_SURFACE_Y + 0.18, GROUND_SURFACE_Y - 0.2, (x, z) => terrainHeightAt(x, z, state.world.terrain));
+        const land = new Mesh(landGeometry, assets.meadow);
+        neighborPreviewGeometries.push(waterGeometry, landGeometry);
+        root.add(water, land);
+        // HOME uses its actual authored landmark layout and building builders, transformed into the
+        // same preview frame. This keeps the distant silhouette recognisable without rendering crops,
+        // actors or player-owned detail.
+        for (const landmark of LANDMARKS_WORLD) {
+          const node = buildLandmarkNode(assets, landmark.kind, null, buildingModel);
+          if (node === null) continue;
+          node.position.set(
+            preview.center.x + (landmark.worldX - WORLD_CENTER_WORLD.worldX) * previewScale,
+            GROUND_SURFACE_Y + terrainHeightAt(landmark.worldX, landmark.worldZ, state.world.terrain) * previewScale,
+            preview.center.z + (landmark.worldZ - WORLD_CENTER_WORLD.worldZ) * previewScale
+          );
+          node.rotation.y = landmark.rotationY;
+          node.scale.multiplyScalar(previewScale);
+          root.add(node);
+        }
+        for (const woodland of WOODLANDS) {
+          for (let index = 0; index < 8; index += 1) {
+            const angle = (index / 8) * Math.PI * 2 + woodland.rotationY;
+            const localX = woodland.center.x - WORLD_CENTER_WORLD.worldX + Math.cos(angle) * woodland.radiusX * 0.72;
+            const localZ = woodland.center.y - WORLD_CENTER_WORLD.worldZ + Math.sin(angle) * woodland.radiusY * 0.72;
+            addPreviewTree(
+              details,
+              preview.center,
+              localX,
+              localZ,
+              0.8 + (index % 3) * 0.1,
+              index % 2 === 0 ? "tree_broad_3" : "tree_pine_2",
+              GROUND_SURFACE_Y + terrainHeightAt(
+                WORLD_CENTER_WORLD.worldX + localX,
+                WORLD_CENTER_WORLD.worldZ + localZ,
+                state.world.terrain
+              ) * previewScale
+            );
+          }
+        }
+        neighborPreviewDetailRoots.set(root, { center: preview.center, radius: ISLAND_HALF_WIDTH_WORLD * previewScale, details, rootVisible: true, detailsVisible: true });
+        attachIslandDebugLabel(root, { islandId: preview.islandId, templateId: "HOME_WORLD_V5", center: preview.center, lod: "LOD" }, GROUND_SURFACE_Y + 12);
+        continue;
+      }
+      const template = neighborIslandTemplate(preview.slot);
+      const center = preview.center;
+      const mocLayout = template.kind === "MOC" ? MOC_PREVIEW_LAYOUT : null;
+      const localHouse = mocPreviewPlacement("farmhouse") ?? template.houseLocal;
+      const localStore = mocPreviewPlacement("storage-barn-t1") ?? template.storeLocal;
+      const waterGeometry = neighborTerrainGeometry(template, center, previewScale * 1.12, GROUND_SURFACE_Y - 0.28, GROUND_SURFACE_Y - 0.5, 0);
+      const water = new Mesh(waterGeometry, assets.waterDeep);
+      neighborPreviewGeometries.push(waterGeometry);
+      root.add(water);
+
+      const beachGeometry = neighborShoreRingGeometry(template, center, previewScale * 0.94, previewScale * 1.08, GROUND_SURFACE_Y + 0.01, GROUND_SURFACE_Y - 0.35);
+      const beach = new Mesh(beachGeometry, assets.wetSand);
+      neighborPreviewGeometries.push(beachGeometry);
+      root.add(beach);
+
+      const landGeometry = neighborTerrainGeometry(template, center, previewScale, GROUND_SURFACE_Y + 0.18, GROUND_SURFACE_Y - 0.2, previewScale);
+      const land = new Mesh(landGeometry, assets.meadow);
+      neighborPreviewGeometries.push(landGeometry);
+      root.add(land);
+
+      for (const ridge of template.ridgeLines) {
+        const ridgeGeometry = neighborRidgeGeometry(ridge, previewScale, previewScale * 0.46, 0);
+        const ridgeNode = new Mesh(ridgeGeometry, assets.stone);
+        ridgeNode.rotation.y = ridge.rotation;
+        ridgeNode.position.set(
+          center.x + ridge.x * previewScale,
+          GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, ridge.x, ridge.z) * previewScale,
+          center.z + ridge.z * previewScale
+        );
+        root.add(ridgeNode);
+        neighborPreviewGeometries.push(ridgeGeometry);
+      }
+      for (const channel of template.waterChannels) {
+        const bankGeometry = neighborWaterBankGeometry(channel, center, previewScale, SEA_SURFACE_Y + 0.005);
+        const bank = new Mesh(bankGeometry, assets.wetSand);
+        root.add(bank);
+        neighborPreviewGeometries.push(bankGeometry);
+        const channelGeometry = neighborWaterBodyGeometry(channel, center, previewScale, SEA_SURFACE_Y - 0.04);
+        const channelWater = new Mesh(channelGeometry, assets.water);
+        root.add(channelWater);
+        neighborPreviewGeometries.push(channelGeometry);
+      }
+
+      const addPreviewPath = (start: { readonly x: number; readonly z: number }, end: { readonly x: number; readonly z: number }, width: number): void => {
+        const path = new Mesh(assets.box, assets.dirt);
+        path.scale.set(Math.hypot(end.x - start.x, end.z - start.z) * 0.5 * previewScale, 0.045 * previewScale, width * previewScale);
+        path.position.set(
+          center.x + (start.x + end.x) * 0.5 * previewScale,
+          GROUND_SURFACE_Y + 0.58 + neighborGroundHeight(template, (start.x + end.x) / 2, (start.z + end.z) / 2) * previewScale,
+          center.z + (start.z + end.z) * 0.5 * previewScale
+        );
+        path.rotation.y = Math.atan2(end.z - start.z, end.x - start.x);
+        root.add(path);
+      };
+      if (mocLayout !== null) {
+        for (const route of mocLayout.routes) {
+          for (let index = 1; index < route.points.length; index += 1) {
+            const start = route.points[index - 1];
+            const end = route.points[index];
+            if (start !== undefined && end !== undefined) addPreviewPath(start, end, 0.82);
+          }
+        }
+        const dockNode = new Mesh(assets.box, assets.stakeWood);
+        dockNode.scale.set(3.2 * previewScale, 0.2 * previewScale, 1.1 * previewScale);
+        dockNode.position.set(center.x + mocLayout.dock.land.x * previewScale, GROUND_SURFACE_Y + 0.44, center.z + mocLayout.dock.land.z * previewScale);
+        dockNode.rotation.y = Math.atan2(mocLayout.dock.water.z - mocLayout.dock.land.z, mocLayout.dock.water.x - mocLayout.dock.land.x);
+        root.add(dockNode);
+        const bridge = new Mesh(assets.box, assets.stakeWood);
+        bridge.scale.set(Math.hypot(mocLayout.dock.water.x - mocLayout.dock.land.x, mocLayout.dock.water.z - mocLayout.dock.land.z) * 0.5 * previewScale, 0.12 * previewScale, 0.8 * previewScale);
+        bridge.position.set(
+          center.x + (mocLayout.dock.land.x + mocLayout.dock.water.x) * 0.5 * previewScale,
+          GROUND_SURFACE_Y + 0.3,
+          center.z + (mocLayout.dock.land.z + mocLayout.dock.water.z) * 0.5 * previewScale
+        );
+        bridge.rotation.y = dockNode.rotation.y;
+        root.add(bridge);
+        for (const fraction of [0.35, 0.72]) {
+          const post = new Mesh(assets.cylinder, assets.stakeWood);
+          post.scale.set(0.08 * previewScale, 0.32 * previewScale, 0.08 * previewScale);
+          post.position.set(
+            center.x + (mocLayout.dock.land.x + (mocLayout.dock.water.x - mocLayout.dock.land.x) * fraction) * previewScale,
+            GROUND_SURFACE_Y - 0.02,
+            center.z + (mocLayout.dock.land.z + (mocLayout.dock.water.z - mocLayout.dock.land.z) * fraction) * previewScale
+          );
+          root.add(post);
+        }
+      } else {
+        addPreviewPath(template.dockLocal, template.npcLocal, 0.9);
+        addPreviewPath(template.npcLocal, localHouse, 0.82);
+        addPreviewPath(template.npcLocal, template.workLocal, 0.72);
+        addPreviewPath(template.npcLocal, localStore, 0.7);
+      }
+      if (template.kind === "THUY") {
+        const pondAccessStarts = [template.workLocal, localStore, localHouse];
+        for (const [index, pond] of template.waterChannels.entries()) {
+          const start = pondAccessStarts[index] ?? localStore;
+          addPreviewPath(start, { x: pond.x, z: pond.z - pond.length * 0.92 }, 0.52);
+        }
+      }
+
+      // These details come from the same authored support and forest layout as the full island.
+      for (const detail of template.supportLocal.filter((item) => item.kind !== "WATER" && (template.kind !== "MOC" || item.kind !== "TREE"))) {
+        const localX = detail.x;
+        const localZ = detail.z;
+        const y = GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, localX, localZ) * previewScale;
+        if (detail.kind === "ROCK") {
+          const rockModelId = `rock_boulder_${String((template.supportLocal.indexOf(detail) % 3) + 1)}`;
+          if (!addPreviewModel(details, rockModelId, center, localX, localZ, 1.35 * detail.scale, y)) {
+            const rock = new Mesh(assets.octa, assets.stone);
+            rock.scale.set(0.75 * detail.scale * previewScale, 1.35 * detail.scale * previewScale, 0.75 * detail.scale * previewScale);
+            rock.position.set(center.x + localX * previewScale, y, center.z + localZ * previewScale);
+            details.add(rock);
+          }
+        } else if (detail.kind === "BUSH") {
+          const bushModelId = template.supportLocal.indexOf(detail) % 2 === 0 ? "bush_leafy" : "bush_flowering";
+          if (!addPreviewModel(details, bushModelId, center, localX, localZ, 1.7 * detail.scale, y)) {
+            const bush = new Mesh(assets.cone, assets.foliage);
+            bush.scale.set(0.45 * detail.scale, 0.36 * detail.scale, 0.45 * detail.scale);
+            bush.position.set(center.x + localX * previewScale, y + 0.42 * detail.scale * previewScale, center.z + localZ * previewScale);
+            details.add(bush);
+          }
+        } else {
+          addPreviewTree(details, center, localX, localZ, detail.scale, "tree_broad_2", y);
+        }
+      }
+      const forestLayout = template.kind === "MOC"
+        ? mocPreviewForestPlacements()
+        : neighborForestLayout(template, preview.seed ?? 0).map((tree, index) => ({ ...tree, modelId: index % 3 === 0 ? "tree_pine_2" : "tree_broad_2", rotationY: 0 }));
+      for (const tree of forestLayout) {
+        addPreviewTree(details, center, tree.x, tree.z, tree.scale, tree.modelId, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, tree.x, tree.z) * previewScale, tree.rotationY);
+      }
+      for (const ore of template.oreLocal) {
+        const outcrop = new Mesh(assets.octa, assets.stone);
+        outcrop.scale.set(0.55 * ore.scale * previewScale, 0.9 * ore.scale * previewScale, 0.55 * ore.scale * previewScale);
+        outcrop.position.set(center.x + ore.x * previewScale, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, ore.x, ore.z) * previewScale, center.z + ore.z * previewScale);
+        details.add(outcrop);
+      }
+      if (mocLayout !== null) {
+        for (const placement of mocLayout.placements) {
+          if (placement.group === "FOREST_BACK" || placement.group === "FOREST_LEFT" || placement.group === "FOREST_RIGHT" || placement.id === "storage-barn-t1" || placement.group === "DOCK" || placement.modelId.startsWith("__procedural:")) continue;
+          addPreviewModel(details, placement.modelId, center, placement.x, placement.z, placement.scale, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, placement.x, placement.z) * previewScale, placement.rotationY);
+        }
+      } else {
+        for (const prop of template.presentationProps) {
+          addPreviewModel(
+            details,
+            prop.id,
+            center,
+            prop.x,
+            prop.z,
+            prop.scale,
+            GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, prop.x, prop.z) * previewScale
+          );
+        }
+      }
+      for (const landmark of template.landmarks) {
+        if (landmark.kind === "GROVE") {
+          for (let index = 0; index < 5; index += 1) {
+            const treeX = landmark.x + (index - 2) * 2.2;
+            const treeZ = landmark.z + (index % 2) * 1.7;
+            addPreviewTree(details, center, treeX, treeZ, 0.9, "tree_broad_3", GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, treeX, treeZ) * previewScale);
+          }
+        } else if (landmark.kind === "LOOKOUT") {
+          const lookout = new Mesh(assets.octa, assets.stone);
+          lookout.scale.set(1.8 * previewScale, 3.0 * previewScale, 1.8 * previewScale);
+          lookout.position.set(center.x + landmark.x * previewScale, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, landmark.x, landmark.z) * previewScale + 1.5 * previewScale, center.z + landmark.z * previewScale);
+          root.add(lookout);
+        } else {
+          const stone = new Mesh(assets.octa, assets.stone);
+          stone.scale.set(1.4 * previewScale, 1.1 * previewScale, 1.4 * previewScale);
+          stone.position.set(center.x + landmark.x * previewScale, GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, landmark.x, landmark.z) * previewScale + 0.55 * previewScale, center.z + landmark.z * previewScale);
+          root.add(stone);
+        }
+      }
+      const buildingId = preview.slot === "MOC" ? "farm.barn.t2" : preview.slot === "KIM" ? "farm.silo_house.t2" : "farm.openbarn.t1";
+      const houseY = GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, localHouse.x, localHouse.z) * previewScale;
+      if (!addPreviewModel(root, buildingId, center, localHouse.x, localHouse.z, preview.slot === "MOC" ? 6.4 : 5.4, houseY)) {
+        const silhouetteHouse = new Group();
+        const silhouetteBody = new Mesh(assets.box, assets.barnWall);
+        silhouetteBody.scale.set(1.5 * previewScale, 1.0 * previewScale, 1.2 * previewScale); silhouetteBody.position.y = 0.65 * previewScale;
+        const silhouetteRoof = new Mesh(assets.roof, assets.barnRoof);
+        silhouetteRoof.scale.set(1.2 * previewScale, 0.6 * previewScale, 1.1 * previewScale); silhouetteRoof.position.y = 1.55 * previewScale;
+        silhouetteHouse.add(silhouetteBody, silhouetteRoof);
+        silhouetteHouse.position.set(center.x + localHouse.x * previewScale, houseY, center.z + localHouse.z * previewScale);
+        root.add(silhouetteHouse);
+      }
+      const storeId = preview.slot === "KIM" ? "farm.silo_house.t2" : "farm.barn.t1";
+      const storeY = GROUND_SURFACE_Y + 0.18 + neighborGroundHeight(template, localStore.x, localStore.z) * previewScale;
+      if (!addPreviewModel(root, storeId, center, localStore.x, localStore.z, preview.slot === "KIM" ? 4.3 : 3.4, storeY)) {
+        const storeSilhouette = new Group();
+        const storeBody = new Mesh(assets.box, assets.barnWall);
+        storeBody.scale.set(0.92 * previewScale, 0.68 * previewScale, 0.82 * previewScale);
+        storeBody.position.y = 0.5 * previewScale;
+        const storeRoof = new Mesh(assets.roof, assets.barnRoof);
+        storeRoof.scale.set(0.8 * previewScale, 0.42 * previewScale, 0.78 * previewScale);
+        storeRoof.position.y = 1.1 * previewScale;
+        storeSilhouette.add(storeBody, storeRoof);
+        storeSilhouette.position.set(center.x + localStore.x * previewScale, storeY, center.z + localStore.z * previewScale);
+        root.add(storeSilhouette);
+      }
+      neighborPreviewDetailRoots.set(root, { center, radius: template.radiusX * previewScale, details, rootVisible: true, detailsVisible: true });
+      attachIslandDebugLabel(root, { islandId: preview.islandId, templateId: template.kind, center, lod: "LOD" }, GROUND_SURFACE_Y + template.relief * 1.2 + 10);
+    }
+    updateNeighborPreviewLod();
+  }
+
+  /** Client-only projection of the server schedule; it never writes phase, stock or rewards. */
+  function updateNeighborNpcPose(nowMs: number): void {
+    if (neighborIsland === null || neighborNpcNode === null) return;
+    const template = neighborIslandTemplate(neighborIsland.slot ?? "MOC");
+    const center = neighborIsland.center;
+    const home = { x: neighborIsland.npc.x - center.x, z: neighborIsland.npc.z - center.z };
+    const workPlacement = mocPreviewPlacement("workbench");
+    const storePlacement = mocPreviewPlacement("storage-barn-t1");
+    const work = template.kind === "MOC" && workPlacement !== undefined ? { x: workPlacement.x, z: workPlacement.z } : template.workLocal;
+    const store = template.kind === "MOC" && storePlacement !== undefined ? { x: storePlacement.x, z: storePlacement.z } : template.storeLocal;
+    const phases = ["preparing", "working", "waiting", "stocked"] as const;
+    const durationMs = (phase: typeof phases[number]): number => phase === "preparing" ? 10_000 : phase === "working" ? 20_000 : phase === "waiting" ? 30_000 : 10_000;
+    const nextPhase = (phase: typeof phases[number]): typeof phases[number] => {
+      const next = phases[(phases.indexOf(phase) + 1) % phases.length];
+      return next === undefined ? "preparing" : next;
+    };
+    let phase = (neighborIsland.npcJobKey?.split(".").pop() ?? "preparing") as typeof phases[number];
+    if (!phases.includes(phase)) phase = "preparing";
+    let end = Date.parse(neighborIsland.npcNextActionAt ?? "");
+    // The server timestamp is authoritative for where the cycle currently is. Once it has passed,
+    // the client may continue the already-known four-step presentation locally; it never changes
+    // stock/cycle or sends a write, and the next authoritative snapshot re-aligns this projection.
+    if (Number.isFinite(end)) {
+      let guard = 0;
+      // A closed tab may return with a stale-but-valid timestamp. Continue only the known local
+      // presentation schedule; no phase, stock, or cycle is written back to the server.
+      while (nowMs >= end && guard++ < 10000) {
+        phase = nextPhase(phase);
+        end += durationMs(phase);
+      }
+    }
+    const start = Number.isFinite(end) ? end - durationMs(phase) : Number.NaN;
+    const from = phase === "preparing" ? store : phase === "stocked" ? store : phase === "waiting" ? work : home;
+    const to = phase === "preparing" ? home : phase === "stocked" ? store : phase === "waiting" ? store : work;
+    const progress = Number.isFinite(start) && Number.isFinite(end) && end > start
+      ? Math.max(0, Math.min(1, (nowMs - start) / (end - start)))
+      : phase === "working" || phase === "waiting" ? 1 : 0;
+    const eased = progress * progress * (3 - 2 * progress);
+    const localX = from.x + (to.x - from.x) * eased;
+    const localZ = from.z + (to.z - from.z) * eased;
+    neighborNpcNode.position.set(center.x + localX, GROUND_SURFACE_Y + 0.45 + neighborGroundHeight(template, localX, localZ), center.z + localZ);
+    neighborNpcNode.rotation.y = phase === "working" ? Math.sin(nowMs / 180) * 0.18 : Math.atan2(to.z - from.z, to.x - from.x);
+    neighborNpcPhase = phase;
+    if (neighborNpcTool !== null) {
+      neighborNpcTool.visible = phase === "working";
+      neighborNpcTool.rotation.z = phase === "working" ? -0.85 + Math.sin(nowMs / 150) * 0.9 : -0.35;
+      neighborNpcTool.rotation.x = phase === "working" ? Math.sin(nowMs / 150) * 0.25 : 0;
+    }
+  }
+
+  function raycastNeighborTargetAt(clientX: number, clientY: number): SceneWorldTarget | null {
+    const bounds = canvas.getBoundingClientRect(); if (bounds.width === 0 || bounds.height === 0) return null;
+    pointer.set(((clientX - bounds.left) / bounds.width) * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    // HOME uses the already-authored quay/construction layers as the travel affordance. The full
+    // neighbor scene remains the only source of neighbor terrain/collision/NPC geometry after travel.
+    const roots = neighborIsland === null ? [worldGroup, constructionGroup] : [neighborGroup];
+    for (const hit of raycaster.intersectObjects(roots, true)) {
+      const target = neighborTargetFromNode(hit.object); if (target !== null) return target;
+    }
+    return null;
+  }
+
+  function raycastGroundPositionAt(clientX: number, clientY: number): { readonly worldX: number; readonly worldZ: number } | null {
+    if (groundMesh === null) return null;
+    const bounds = canvas.getBoundingClientRect(); if (bounds.width === 0 || bounds.height === 0) return null;
+    pointer.set(((clientX - bounds.left) / bounds.width) * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObject(groundMesh, true)[0];
+    return hit === undefined ? null : { worldX: hit.point.x, worldZ: hit.point.z };
   }
 
   /** A cheap identity for the construction layer: ids, models, places, and turns. */
@@ -1811,6 +3450,9 @@ let interactionGeometry: BufferGeometry | null = null;
       });
       // What a click on the model resolves to, through the one key constant the picker reads.
       (node.userData as Record<string, unknown>)[CONSTRUCTION_ID_KEY] = item.id;
+      // The player's existing harbor is the HOME travel affordance. It is only an interaction tag:
+      // no remote island geometry, collision, or NPC is attached to HOME by this marker.
+      if (item.landmarkKind === "HARBOR") tagNeighbor(node, "NEIGHBOR_DOCK", NEIGHBOR_DOCK_ID);
       constructionGroup.add(node);
     }
 
@@ -1885,7 +3527,34 @@ let interactionGeometry: BufferGeometry | null = null;
 
     const pitch = state.layout.pitch;
     const centre = tileToWorld(selectedCell, worldFrame(pitch));
-    const groundY = GROUND_SURFACE_Y + terrainHeightAt(centre.worldX, centre.worldZ, state.world.terrain);
+    const selectedWorldCell = state.cells.cells.get(cellKey(selectedCell.x, selectedCell.y));
+    const onWater = selectedWorldCell?.terrain === "WATER";
+    const groundY = onWater
+      ? SEA_SURFACE_Y
+      : GROUND_SURFACE_Y + terrainHeightAt(centre.worldX, centre.worldZ, state.world.terrain);
+
+    // Aquaculture placement is the one placement mode where the valid area is not land. Draw the
+    // already-classified shallow shelf once when the preview changes, so players can distinguish it
+    // from open water without changing terrain, collision, or server eligibility.
+    if (preview.allowedTerrain.includes("SHALLOW_WATER")) {
+      const shallowCells = [...state.cells.cells.values()]
+        .filter((cell) => cell.shallowWater)
+        .map((cell) => ({ x: cell.x, y: cell.z }));
+      const shallowGeometry = buildCellOutlines(
+        previewGroup,
+        shallowCells,
+        pitch,
+        assets.shallowWaterPreview,
+        () => {
+          return SEA_SURFACE_Y + 0.018;
+        }
+      );
+      if (shallowGeometry !== null) {
+        previewDisposers.push(() => {
+          shallowGeometry.dispose();
+        });
+      }
+    }
 
     // The footprint: a translucent patch of ground the size of the cells the thing would take, with a
     // lip around it. The lip is what makes the answer visible at all: a ghost scaled to its own
@@ -1895,7 +3564,12 @@ let interactionGeometry: BufferGeometry | null = null;
     const depth = preview.depthCells * pitch;
     const footprintGeometry = new PlaneGeometry(width + pitch * 0.4, depth + pitch * 0.4);
     const footprintMaterial = new MeshBasicMaterial({
-      color: preview.valid ? 0x63b354 : 0xc4553f,
+      // Valid is green; invalid is red. There is no land-purchase state (V14.5.2).
+      color: preview.valid
+        ? preview.allowedTerrain.includes("SHALLOW_WATER")
+          ? 0x39b8c7
+          : 0x63b354
+        : 0xc4553f,
       transparent: true,
       // A fill you can see through and a perimeter you cannot miss: the V12.4 patch was legible in the
       // screenshot and nearly invisible in play, which is the wrong way round.
@@ -1913,7 +3587,11 @@ let interactionGeometry: BufferGeometry | null = null;
     // and the world underneath is still readable while a player decides.
     const perimeterGeometry = new EdgesGeometry(footprintGeometry);
     const perimeterMaterial = new LineBasicMaterial({
-      color: preview.valid ? 0x2f7d33 : 0x9b2f1c,
+      color: preview.valid
+        ? preview.allowedTerrain.includes("SHALLOW_WATER")
+          ? 0x147b88
+          : 0x2f7d33
+        : 0x9b2f1c,
       transparent: true,
       opacity: 0.95,
       depthWrite: false
@@ -2086,6 +3764,9 @@ let interactionGeometry: BufferGeometry | null = null;
       if (unchanged) return;
       hoveredCoordinate = coordinate;
       canvas.style.cursor = coordinate === null ? "grab" : "pointer";
+      // The host's own hover feedback (the work-area editor's preview) rides the same coalesced call,
+      // so it can never cost more than the renderer's own marker already does.
+      options.onCellHovered?.(coordinate);
       updateMarkers();
       draw();
     });
@@ -2137,8 +3818,8 @@ let interactionGeometry: BufferGeometry | null = null;
    * something is in hand a click means "put it here", so the thing under the pointer must not swallow
    * it. The nearest hit wins, in the same way the cell raycast takes the nearest intersection.
    */
-  function raycastConstructionAt(clientX: number, clientY: number): string | null {
-    if (!objectPickingEnabled || constructionGroup.children.length === 0) return null;
+  function raycastConstructionAt(clientX: number, clientY: number, includeGroundFallback = true): string | null {
+    if (!objectPickingEnabled) return null;
     const bounds = canvas.getBoundingClientRect();
     if (bounds.width === 0 || bounds.height === 0) return null;
     pointer.set(
@@ -2148,7 +3829,67 @@ let interactionGeometry: BufferGeometry | null = null;
     raycaster.setFromCamera(pointer, camera);
     // Recursive, against the whole group: a construction is a tree of cloned meshes, and the hit is
     // usually a leaf several levels below the node that carries the id.
-    return constructionIdFromHits(raycaster.intersectObjects(constructionGroup.children, true));
+    const direct = constructionIdFromHits(raycaster.intersectObjects(constructionGroup.children, true));
+    if (direct !== null) return direct;
+    if (!includeGroundFallback) return null;
+    const groundHit = groundMesh === null ? undefined : raycaster.intersectObject(groundMesh, true)[0];
+    if (groundHit === undefined) return null;
+    return constructionIdFromWorldPoint(
+      { worldX: groundHit.point.x, worldZ: groundHit.point.z },
+      [...constructionSites.values()],
+      worldFrame(state.layout.pitch).pitch
+    );
+  }
+
+  /**
+   * Resolves direct world-resource taps without scanning the world every frame.
+   *
+   * GLB hits use stable metadata on the cloned resource root. The positional fallback is only used
+   * for a ground/water hit, which keeps a temporarily unloaded resource selectable without inventing
+   * a second render object or changing the server's target identity.
+   */
+  function raycastWorldTargetAt(
+    clientX: number,
+    clientY: number,
+    includeGroundFallback = true
+  ): { readonly kind: "RESOURCE_NODE" | "FISHING_SPOT"; readonly id: string } | null {
+    const bounds = canvas.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) return null;
+    pointer.set(
+      ((clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((clientY - bounds.top) / bounds.height) * 2 + 1
+    );
+    raycaster.setFromCamera(pointer, camera);
+    const resourceHits = raycaster.intersectObjects(resourceGroup.children, true);
+    for (const hit of resourceHits) {
+      const id = worldTargetIdFromNode(hit.object, RESOURCE_NODE_ID_KEY);
+      if (id !== null) return { kind: "RESOURCE_NODE", id };
+    }
+    if (!includeGroundFallback) return null;
+
+    const terrainHit = groundMesh === null ? undefined : raycaster.intersectObject(groundMesh, true)[0];
+    const point = terrainHit?.point;
+    if (point === undefined) return null;
+
+    let nearestResource: { readonly id: string; readonly distance: number } | null = null;
+    for (const node of resourceNodes) {
+      const distance = Math.hypot(point.x - node.worldX, point.z - node.worldZ);
+      if (distance > resourceNodePickRadius(node)) continue;
+      if (nearestResource === null || distance < nearestResource.distance) {
+        nearestResource = { id: node.id, distance };
+      }
+    }
+    if (nearestResource !== null) return { kind: "RESOURCE_NODE", id: nearestResource.id };
+
+    let nearestSpot: { readonly id: string; readonly distance: number } | null = null;
+    for (const spot of fishingSpots) {
+      const distance = Math.hypot(point.x - spot.worldX, point.z - spot.worldZ);
+      if (distance > spot.pickRadiusWorld) continue;
+      if (nearestSpot === null || distance < nearestSpot.distance) {
+        nearestSpot = { id: spot.id, distance };
+      }
+    }
+    return nearestSpot === null ? null : { kind: "FISHING_SPOT", id: nearestSpot.id };
   }
 
   /**
@@ -2317,9 +4058,12 @@ let interactionGeometry: BufferGeometry | null = null;
       cameraTransition.advance(deltaMs / 1000);
       if (!cameraTransition.isActive()) cameraTransition = null;
     }
+    // The NPC schedule is a presentation projection of server timestamps. This keeps its route and
+    // working pose moving while visited without adding a network timer or a D1 read to the frame loop.
+    updateNeighborNpcPose(Date.now());
     updateCamera();
     draw();
-    if (cameraTransition !== null || cameraRig.isSettling() || characterCamera.isSettling() || gestureElapsedMs >= 0) {
+    if (cameraTransition !== null || cameraRig.isSettling() || characterCamera.isSettling() || gestureElapsedMs >= 0 || neighborIsland !== null) {
       scheduleCameraFrame();
     }
     else lastFrameTime = 0;
@@ -2339,6 +4083,7 @@ let interactionGeometry: BufferGeometry | null = null;
    * so a drag still tracks the pointer exactly and costs one render per frame.
    */
   let drawHandle: number | null = null;
+  let pointerTraceId: string | null = null;
 
   function scheduleDraw(): void {
     if (drawHandle !== null || disposed) return;
@@ -2374,6 +4119,13 @@ let interactionGeometry: BufferGeometry | null = null;
       }
       if (role === "IGNORE") return;
     }
+    pointerTraceId = bootPerfInteractionTraceId();
+    bootPerfInteractionTrace(pointerTraceId, "pointer_received", {
+      pointerType: event.pointerType,
+      button: event.button,
+      clientX: event.clientX,
+      clientY: event.clientY
+    });
     gesture.down({ id: event.pointerId, x: event.clientX, y: event.clientY });
   }
 
@@ -2447,12 +4199,50 @@ let interactionGeometry: BufferGeometry | null = null;
     const tap = wasDragging ? false : gesture.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!tap) return;
-    // A tap on one of the player's own objects selects the object; anything else selects the cell. The
-    // priority is one decision, in one place (`tapTargetFor`), so "placement wins over picking" cannot
-    // drift between the raycasts and the callback.
-    const pickedObject = raycastConstructionAt(event.clientX, event.clientY);
-    if (tapTargetFor({ objectPickingEnabled, constructionId: pickedObject }) === "OBJECT") {
-      options.onObjectSelected?.(pickedObject as string);
+    // Resolve direct mesh hits before ground fallbacks. A resource mesh is an explicit interaction
+    // affordance and must not be swallowed by a nearby construction footprint; a direct construction
+    // hit still keeps its management capability, and only the final construction branch uses
+    // tapTargetFor so placement mode remains authoritative.
+    const traceId = pointerTraceId;
+    pointerTraceId = null;
+    const neighborTarget = raycastNeighborTargetAt(event.clientX, event.clientY);
+    if (neighborTarget !== null) {
+      options.onWorldTargetSelected?.(neighborTarget);
+      return;
+    }
+    // A visited neighbour has no HOME resource or construction map. Do this before the HOME
+    // world/construction fallbacks: their world-space footprints can overlap the neighbour's
+    // coordinates and would otherwise expose actions such as Move/Rotate/Delete for a HOME object
+    // while the player is standing on Mộc. Remote LODs are intentionally not in this raycast path.
+    if (neighborIsland !== null) {
+      const ground = raycastGroundPositionAt(event.clientX, event.clientY);
+      if (ground !== null) options.onGroundPositionSelected?.(ground);
+      return;
+    }
+    const directWorldTarget = raycastWorldTargetAt(event.clientX, event.clientY, false);
+    const directConstructionId = raycastConstructionAt(event.clientX, event.clientY, false);
+    const fallbackWorldTarget = raycastWorldTargetAt(event.clientX, event.clientY, true);
+    const fallbackConstructionId = raycastConstructionAt(event.clientX, event.clientY, true);
+    const picked = prioritizeWorldPick({
+      directWorldTarget,
+      directConstructionId,
+      fallbackWorldTarget,
+      fallbackConstructionId
+    });
+    bootPerfInteractionTrace(traceId, "object_picker_result", {
+      constructionId: picked?.kind === "CONSTRUCTION" ? picked.id : null,
+      targetFound: picked !== null && picked.kind === "CONSTRUCTION"
+    });
+    bootPerfInteractionTrace(traceId, "world_picker_result", {
+      targetFound: picked !== null && picked.kind !== "CONSTRUCTION",
+      targetKind: picked !== null && picked.kind !== "CONSTRUCTION" ? picked.kind : null
+    });
+    if (picked?.kind === "CONSTRUCTION" && tapTargetFor({ objectPickingEnabled, constructionId: picked.id }) === "OBJECT") {
+      options.onObjectSelected?.(picked.id, traceId);
+      return;
+    }
+    if (picked !== null && picked.kind !== "CONSTRUCTION") {
+      options.onWorldTargetSelected?.(picked);
       return;
     }
     // Both views report the cell that was tapped, and the host decides what it means: estate view
@@ -2460,6 +4250,10 @@ let interactionGeometry: BufferGeometry | null = null;
     // only opens the contextual surface for a cell that offers something (see
     // `groundTapOpensContext`). Neither is click-to-move - walking to a cell is the Go control's job.
     const coordinate = raycastTileAt(event.clientX, event.clientY);
+    bootPerfInteractionTrace(traceId, "cell_raycast_result", {
+      tileX: coordinate?.x ?? null,
+      tileY: coordinate?.y ?? null
+    });
     if (coordinate !== null) options.onCellSelected?.(coordinate);
   }
 
@@ -2692,8 +4486,73 @@ let interactionGeometry: BufferGeometry | null = null;
       if (same) return;
       selectedCell = cell === null ? null : { x: cell.x, y: cell.y };
       rebuildCellOverlay();
+      // The planting hint is about one cell now, so it follows the selection.
+      rebuildInteractionGrid();
       // A ghost follows the selection: moving the click moves what the player is about to place.
       rebuildPreview();
+      draw();
+    },
+    setWorkAreaEdit(state: WorkAreaEditState | null): void {
+      const next =
+        state === null
+          ? null
+          : {
+              draft: state.draft.map((cell) => ({ x: cell.x, y: cell.y })),
+              preview: state.preview.map((cell) => ({ x: cell.x, y: cell.y })),
+              invalid: state.invalid.map((cell) => ({ x: cell.x, y: cell.y })),
+              hover: state.hover === null ? null : { x: state.hover.x, y: state.hover.y },
+              corner: state.corner === null ? null : { x: state.corner.x, y: state.corner.y }
+            };
+      const key = (cells: readonly TileCoordinate[]): string =>
+        cells.map((cell) => `${String(cell.x)},${String(cell.y)}`).join(";");
+      const signature =
+        next === null
+          ? "off"
+          : [
+              key(next.draft),
+              key(next.preview),
+              key(next.invalid),
+              next.hover === null ? "" : `${String(next.hover.x)},${String(next.hover.y)}`,
+              next.corner === null ? "" : `${String(next.corner.x)},${String(next.corner.y)}`
+            ].join("|");
+      // A pointer resting on one cell, or a redraw for any other reason, costs nothing here.
+      if (signature === workAreaEditSignature) return;
+      workAreaEditSignature = signature;
+      workAreaEdit = next;
+      const editing = next !== null;
+      workAreaGridGroup.visible = editing;
+      workAreaMarkGroup.visible = editing;
+      if (editing) {
+        if (workAreaGridGeometry === null) rebuildWorkAreaGrid();
+      } else {
+        disposeWorkAreaGrid();
+      }
+      rebuildWorkAreaMarks();
+      draw();
+    },
+    setAreaHarvestEdit(state: AreaHarvestEditState | null): void {
+      const next =
+        state === null
+          ? null
+          : {
+              first: state.first === null ? null : { x: state.first.x, y: state.first.y },
+              second: state.second === null ? null : { x: state.second.x, y: state.second.y },
+              cells: state.cells.map((cell) => ({ x: cell.x, y: cell.y })),
+              invalid: (state.invalid ?? []).map((cell) => ({ x: cell.x, y: cell.y })),
+              shortage: (state.shortage ?? []).map((cell) => ({ x: cell.x, y: cell.y })),
+              waiting: (state.waiting ?? []).map((cell) => ({ x: cell.x, y: cell.y })),
+              focus: state.focus === null || state.focus === undefined ? null : { x: state.focus.x, y: state.focus.y }
+            };
+      const key = (cell: TileCoordinate | null): string => cell === null ? "" : `${String(cell.x)},${String(cell.y)}`;
+      const cellsKey = (cells: readonly TileCoordinate[]): string => cells.map((cell) => key(cell)).join(";");
+      const signature = next === null
+        ? "off"
+        : `${key(next.first)}|${key(next.second)}|${cellsKey(next.cells)}|${cellsKey(next.invalid)}|${cellsKey(next.shortage)}|${cellsKey(next.waiting)}|${key(next.focus)}`;
+      if (signature === areaHarvestEditSignature) return;
+      areaHarvestEditSignature = signature;
+      areaHarvestEdit = next;
+      areaHarvestMarkGroup.visible = next !== null;
+      rebuildAreaHarvestMarks();
       draw();
     },
     setPlacementPreview(next: PlacementPreview | null): void {
@@ -2711,6 +4570,130 @@ let interactionGeometry: BufferGeometry | null = null;
       rebuildResourceNodes();
       draw();
     },
+    async prepareResourceNode(nodeId: string): Promise<ResourceNodePresentationResult> {
+      const node = resourceNodes.find((candidate) => candidate.id === nodeId);
+      if (node === undefined) return { status: "NODE_MISSING", modelId: null };
+      const modelId = !node.available && node.depletedModelId !== null
+        ? node.depletedModelId
+        : node.modelId;
+      const model = await library.load(modelId);
+      if (model === null || disposed) return { status: "ASSET_UNAVAILABLE", modelId };
+      if (model.getObjectByProperty("isMesh", true) === undefined) {
+        return { status: "MESH_MISSING", modelId };
+      }
+
+      // `onArrive` normally rebuilt this layer already. Repeating the signature-gated call here makes
+      // the locator deterministic even when the promise and the arrival listener resolve in the same
+      // microtask: success is reported only after the real pick root exists.
+      rebuildResourceNodes();
+      const root = resourceGroup.children.find(
+        (child) => (child.userData as Record<string, unknown>)[RESOURCE_NODE_ID_KEY] === nodeId
+      );
+      if (root === undefined) return { status: "MESH_MISSING", modelId };
+      root.updateMatrixWorld(true);
+      const mesh = root.getObjectByProperty("isMesh", true);
+      const bounds = new Box3().setFromObject(root);
+      const size = bounds.getSize(new Vector3());
+      if (mesh === undefined || !size.x || !size.y || !size.z) {
+        return { status: "MESH_MISSING", modelId };
+      }
+      let visibleParent: Object3D | null = root;
+      while (visibleParent !== null) {
+        if (!visibleParent.visible) return { status: "HIDDEN", modelId };
+        visibleParent = visibleParent.parent;
+      }
+      // This proves that a real mesh with non-zero bounds is attached to the visible scene graph. It
+      // deliberately does not claim camera visibility: occlusion is a runtime visual concern, not a
+      // GLB HTTP/root.visible shortcut.
+      draw();
+      return {
+        status: "READY",
+        modelId,
+        worldX: root.position.x,
+        worldY: root.position.y,
+        worldZ: root.position.z
+      };
+    },
+    setFishingSpots(next: readonly SceneFishingSpot[]): void {
+      setFishingSpotMetadata(next);
+    },
+    setNeighborIsland(next: SceneNeighborIsland | null): void {
+      const previousId = neighborIsland?.islandId ?? null;
+      const nextId = next?.islandId ?? null;
+      if (previousId === nextId && next !== null && neighborIsland !== null &&
+        neighborIsland.center.x === next.center.x && neighborIsland.center.z === next.center.z &&
+        neighborIsland.npc.x === next.npc.x && neighborIsland.npc.z === next.npc.z &&
+        neighborIsland.slot === next.slot && neighborIsland.seed === next.seed && neighborIsland.npcJobKey === next.npcJobKey &&
+        neighborIsland.npcStartedAt === next.npcStartedAt && neighborIsland.npcNextActionAt === next.npcNextActionAt &&
+        neighborIsland.npcCycle === next.npcCycle &&
+        neighborIsland.npcConstructionPhase === next.npcConstructionPhase) return;
+      neighborIsland = next === null ? null : {
+        islandId: next.islandId,
+        center: { x: next.center.x, z: next.center.z },
+        dock: { x: next.dock.x, z: next.dock.z },
+        npc: { x: next.npc.x, z: next.npc.z },
+        ...(next.slot === undefined ? {} : { slot: next.slot }),
+        ...(next.seed === undefined ? {} : { seed: next.seed }),
+        ...(next.npcJobKey === undefined ? {} : { npcJobKey: next.npcJobKey }),
+        ...(next.npcStartedAt === undefined ? {} : { npcStartedAt: next.npcStartedAt }),
+        ...(next.npcNextActionAt === undefined ? {} : { npcNextActionAt: next.npcNextActionAt }),
+        ...(next.npcCycle === undefined ? {} : { npcCycle: next.npcCycle }),
+        ...(next.npcConstructionPhase === undefined ? {} : { npcConstructionPhase: next.npcConstructionPhase })
+      };
+      const homeVisible = next === null;
+      for (const group of [
+        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup,
+        overlayGroup, overlayDetailGroup, interactionGroup, cellOverlayGroup,
+        workAreaGridGroup, workAreaMarkGroup, areaHarvestMarkGroup, previewGroup,
+        constructionGroup
+      ]) group.visible = homeVisible;
+      rebuildNeighborIsland();
+      neighborPreviewGroup.visible = neighborPreviews.length > 0;
+      scheduleCameraFrame(); draw();
+    },
+    setNeighborIslandPreviews(next: readonly SceneNeighborIslandPreview[]): void {
+      const inputIslandIds = next.map((item) => item.islandId);
+      const seenIslandIds = new Set<string>();
+      const removedDuplicateIslandIds: string[] = [];
+      const removedActiveIslandIds: string[] = [];
+      const normalized = next.filter((item) => {
+        if (item.islandId === neighborIsland?.islandId) {
+          removedActiveIslandIds.push(item.islandId);
+          return false;
+        }
+        if (seenIslandIds.has(item.islandId)) {
+          removedDuplicateIslandIds.push(item.islandId);
+          return false;
+        }
+        seenIslandIds.add(item.islandId);
+        return true;
+      });
+      neighborIdentityAudit = {
+        inputIslandIds,
+        visibleIslandIds: normalized.map((item) => item.islandId),
+        removedDuplicateIslandIds,
+        removedActiveIslandIds
+      };
+      const signature = normalized.map((item) => `${item.islandId}:${item.slot}:${String(item.seed ?? 0)}:${String(item.center.x)}:${String(item.center.z)}`).join("|");
+      const previousSignature = neighborPreviews.map((item) => `${item.islandId}:${item.slot}:${String(item.seed ?? 0)}:${String(item.center.x)}:${String(item.center.z)}`).join("|");
+      if (signature === previousSignature) {
+        refreshIslandRuntimeStats();
+        return;
+      }
+      neighborPreviews = normalized.map((item) => ({ islandId: item.islandId, center: { x: item.center.x, z: item.center.z }, slot: item.slot, ...(item.seed === undefined ? {} : { seed: item.seed }) }));
+      rebuildNeighborIslandPreviews();
+      draw();
+    },
+    focusWorld(worldX: number, worldZ: number, distance?: number, yaw?: number): void {
+      if (!Number.isFinite(worldX) || !Number.isFinite(worldZ)) return;
+      // Travel focus is an arrival state, not a loose recenter hint: land on the persisted dock now so
+      // the first frame after a visit (and after F5) is visibly the dock rather than the island centre.
+      setEstateFollow(estateFollowAfterFocus(estateFollow, clockNow()));
+      cameraRig.moveTargetTo(worldX, worldZ);
+      if (distance !== undefined) cameraRig.setDistance(distance);
+      if (yaw !== undefined) cameraRig.setYaw(yaw);
+      scheduleCameraFrame(); updateCamera(); draw();
+    },
     setObjectPicking(enabled: boolean): void {
       objectPickingEnabled = enabled;
     },
@@ -2719,9 +4702,6 @@ let interactionGeometry: BufferGeometry | null = null;
       selectedObjectId = constructionId;
       updateObjectMarker();
       draw();
-    },
-    setOwnershipOverlay(cells: readonly TileCoordinate[] | null): void {
-      rebuildOwnership(cells);
     },
     focusOnCell(cell: TileCoordinate): void {
       aimEstateAtCell(cell);
@@ -2758,6 +4738,17 @@ let interactionGeometry: BufferGeometry | null = null;
       cropGroup.clear();
       treeGroup.clear();
       resourceGroup.clear();
+      neighborPreviewGroup.clear();
+      neighborPreviewDetailRoots.clear();
+      for (const geometry of neighborPreviewGeometries) geometry.dispose();
+      neighborPreviewGeometries.length = 0;
+      neighborGroup.clear();
+      for (const geometry of neighborGeometries) geometry.dispose();
+      neighborGeometries.length = 0;
+      neighborCollisionDebugGroup.clear();
+      for (const geometry of neighborCollisionDebugGeometries) geometry.dispose();
+      neighborCollisionDebugGeometries.length = 0;
+      neighborCollisionDebugMaterial.dispose();
       overlayGroup.clear();
       interactionGroup.clear();
       interactionGeometry?.dispose();
@@ -2783,9 +4774,6 @@ let interactionGeometry: BufferGeometry | null = null;
       stopListening();
       previewGroup.clear();
       constructionGroup.clear();
-      ownershipGroup.clear();
-      ownershipGeometry?.dispose();
-      ownershipGeometry = null;
       for (const dispose of previewDisposers) dispose();
       previewDisposers = [];
       placementPreview = null;

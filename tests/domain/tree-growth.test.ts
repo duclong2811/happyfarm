@@ -33,6 +33,17 @@ const APPLE: TreeDefinition = {
   }
 };
 
+const WILDWOOD: TreeDefinition = {
+  id: parseTreeDefinitionId("tree_wildwood"),
+  displayNameKey: "tree.wildwood.name",
+  saplingItemDefinitionId: parseItemDefinitionId("item_wildwood_sapling"),
+  firstReadySeconds: 3600,
+  regrowSeconds: 3600,
+  growthStages: 4,
+  regenerates: false,
+  harvest: { itemDefinitionId: parseItemDefinitionId("item_wood"), baseQuantity: 12, xp: 5 }
+};
+
 const PLANTED_AT = "2026-01-01T00:00:00.000Z";
 
 const TREE_ID = parseTreeInstanceId("treeinst_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -90,6 +101,13 @@ describe("tree production cycle", () => {
     expect(ready.ready).toBe(true);
     // A shorter regrow than the first growth is exactly why the two durations are separate.
     expect(ready.readyAt).toBe("2026-01-01T05:15:00.000Z");
+  });
+
+  it("depletes a one-shot Wildwood tree after harvest and never schedules regrowth", () => {
+    const tree = { ...instance(), treeDefinitionId: WILDWOOD.id, lastHarvestedAt: "2026-01-01T01:00:00.000Z" };
+    const depleted = calculateTreeProduction(WILDWOOD, tree, "2026-01-03T01:00:00.000Z");
+    expect(depleted).toMatchObject({ phase: "DEPLETED", ready: false, readyAt: null, secondsUntilReady: 0, cycleSeconds: 0 });
+    expect(canHarvestTree(tree, WILDWOOD, "2026-01-03T01:00:00.000Z")).toBe(false);
   });
 
   it("stays ready instead of accumulating cycles while the player is away", () => {

@@ -358,3 +358,107 @@ High-value entities should expose version/state guards where useful. Durable Obj
 - Destructive changes require explicit migration/rollback strategy and data impact note.
 - Declare foreign-key deletion/update behavior explicitly and verify that foreign-key enforcement is active where supported.
 - Add indexes intentionally based on query patterns; do not index every field automatically.
+
+## Work areas (V16.2.2A)
+
+A Work Area is a **player-named group of cells** a future Job may be asked to work. It is
+orchestration metadata only: not ownership, not a land-use decision, not a placement reservation and
+not occupancy. A cell in an area is still free for any crop, tree, building or node the ordinary rules
+allow, and creating an area costs no gold and writes no `farm_tiles` row.
+
+| Table | Columns | Notes |
+| --- | --- | --- |
+| `work_areas` | `id` (`workarea_<uuid>`), `farm_id` FK, `zone_kind`/`zone_id`, `kind`, `display_name`, `version`, `created_by_player_id` FK, `created_at`, `updated_at` | `kind` is `FARM \| ORCHARD \| FORESTRY \| MINING \| LIVESTOCK \| AQUACULTURE` by CHECK; the name is 1-40 characters; indexes `(farm_id, created_at, id)` and `(zone_id, created_at, id)` |
+| `work_area_cells` | `work_area_id` FK, `x`, `y` | membership is explicit rows, never a rectangle; PK `(work_area_id, x, y)`; `work_area_id` cascades on delete; `(work_area_id, y, x)` serves the index-only membership read |
+
+- Identity is the id. A display name is player text: trimmed, NFC-normalised, and duplicates are
+  allowed, because two areas may honestly share one.
+- The zone columns are a *location*, never authority (ADR 0027). They exist so a future expansion
+  island or shared ground is another row rather than a redesign.
+- Membership is bounded server-side (256 cells) and validated against the ground's capabilities;
+  overlap between areas is permitted by design.
+- Reads: `GET /farms/:id/work-areas` (names and counts) and `GET /farms/:id/work-areas/:workAreaId`
+  (membership). Writes are `POST` create (idempotent), rename, cells and delete (version-guarded);
+  reads require farm membership, writes require OWNER.
+
+## Actors and jobs (V16.2.2B)
+
+The durable *configuration* of automation. **A job is not an execution**: creating one plants
+nothing, harvests nothing, moves nobody and writes no inventory, experience, gold or warehouse row.
+There is no cargo, route, activity or simulation state in these tables.
+
+| Table | Columns | Notes |
+| --- | --- | --- |
+| `actors` | `id` (`actor_<uuid>`), `owner_player_id` FK, `kind`, `control_mode`, `zone_kind`/`zone_id`, `version`, `created_at`, `updated_at` | `kind` is `MAIN_CHARACTER \| NPC_WORKER \| VEHICLE \| SHIP` by CHECK (only the first exists today); `control_mode` is `PLAYER_CONTROLLED \| AUTO_CONTROLLED`; **`UNIQUE (owner_player_id) WHERE kind = 'MAIN_CHARACTER'`** is "exactly one Main Character per player" |
+| `actor_jobs` | `id` (`job_<uuid>`), `actor_id` FK CASCADE, `farm_id` FK CASCADE, `work_area_id` FK **RESTRICT**, `kind`, `target_definition_id`, `priority`, `enabled`, `auto_purchase_supplies`, `version`, timestamps | `kind` is the work-area vocabulary; `priority` is dense 1..24 (the domain's `MAX_JOBS_PER_ACTOR`); `enabled` is 0/1; `auto_purchase_supplies` is 0/1 (migration 0025, default 0 - an assignment never starts spending gold because a build shipped) and is the only policy the Auto supply ladder reads; indexes `(actor_id, priority, id)` and `(work_area_id, id)` |
+| `actor_auto_state` | `actor_id` PK FK CASCADE, `anchor_kind` (`WAREHOUSE \| MARKET \| CELL`), `anchor_x`/`anchor_y`, `travel_kind`, `travel_x`/`travel_y`, `travel_arrives_at`, `version`, `updated_at` | Where an Auto-driven actor **is** (the last walk's anchor) and where it is **walking to**, with the time the server will consider it arrived. One row per actor, one guarded upsert per transition, no per-frame position, no path, no waypoint, no event log. The anchors are the only position state in the game (migration 0026) |
+
+- An actor is not a player. `owner_player_id` is identity, and the actor's own id is what a job
+  references - so a later slice's NPCs, carts and ships are new rows, not a re-identification.
+- Activity (`IDLE`/`TRAVELLING`/`WORKING`/`HAULING`/`WAITING_FOR_STORAGE`) and the resolver's wait
+  reasons are **not** persisted: only a working executor can produce the first, and a stored wait
+  reason would go stale against the next read. `control_mode` is stored because V16.2.2D1's Auto switch
+  writes it, and it is written by control alone - it moves no cargo, no assignment, no gold and no XP.
+- **D1 can PLAN; D1 does not EXECUTE.** The plan is derived per read from the actor, its cargo, its
+  assignments, its areas' cells, the farm's crops/trees/constructions, the zone's node states, the
+  wallet and the warehouse. No table holds a plan, a step, a route, an activity or a simulation
+  watermark.
+- **D2 executes the replanting crop family**, and `actor_auto_state` is the whole of what it persists
+  between steps: an anchor, a walk and an arrival time. `harvest_settlements.destination` (0026,
+  default `WAREHOUSE`) is what lets one settlement rule feed either container: `CARGO` credits the
+  actor's cargo through the same trigger, and the cargo capacity trigger is the authority on whether it
+  fits.
+- A job's target is a stable game-data id (`crop_*`, `tree_*`, `resource_*`) validated against the
+  served catalogues; a translated label is never stored as authority.
+- `work_area_id` is `ON DELETE RESTRICT`: an area named by a job cannot be deleted, and
+  `DeleteWorkArea` refuses first with `WORK_AREA_IN_USE` so the player is told to remove the job.
+- Reorder replaces the actor's whole order atomically under the actor's version; delete renumbers the
+  survivors in the same transaction, so priorities are always dense and duplicate-free.
+- Reads: `GET /farms/:id/workers` (the owner's Main Character and its jobs). Writes: create
+  (idempotent), target, enabled, order, delete (version-guarded). All require OWNER.
+
+## Actor cargo (V16.2.2C)
+
+A **separate container** from the Home Warehouse. `inventory_items` is what is stored;
+`actor_cargo_items` is what is being carried. Nothing moves between them except the one authoritative
+transfer, and nothing about existing stock changes: every row that existed before this slice is, and
+stays, warehouse inventory.
+
+| Table / column | Notes |
+| --- | --- |
+| `actors.cargo_capacity` | Cargo units the actor can carry. Defaults to the game-data starter (30, provisional); a backpack, cart or ship is a different number for the same code |
+| `actors.cargo_version` | The container's **own** version, separate from the actor's configuration version, bumped by every cargo mutation |
+| `actors.cargo_transfer_id` | The request id of the transfer that last moved the container - the marker that makes one transfer provable, so a losing concurrent unload cannot pay out twice |
+| `actor_cargo_items` | PK `(actor_id, item_definition_id)`; `quantity` 1.. (a zero row should be deleted); FK `actor_id` cascades; index `(actor_id, item_definition_id)`. Triggers `cargo_capacity_guard_insert`/`_update` `RAISE(ABORT, 'cargo_full')` |
+
+- The unit is the warehouse's unit: one item is one cargo unit. Weight and volume are a later
+  evolution, deliberately not invented now.
+- Only physical stackables may be carried: `CARGO_ITEM_CATEGORIES` in the domain is the explicit
+  boundary, and the grant primitive refuses anything outside it. Gold and experience are not items.
+- The transfer is all-or-nothing and idempotent: one transaction moves every carried stack into the
+  warehouse, or none of it, with the receipt that makes a replay a no-op. If the destination refuses,
+  the cargo stays on the actor - the state a future executor reads as waiting for storage.
+- Reads: `GET /farms/:id/cargo`. Writes: `POST /farms/:id/cargo/unload` (request id + expected cargo
+  version). There is no grant route; authorized by farm ownership, like the rest of the worker panel.
+- **Transitional**: manual production still settles to the warehouse while the cargo/transfer
+  foundation is proven; the execution slices migrate those paths deliberately.
+
+### Bidirectional cargo (V16.2.2C.6)
+
+Both directions now exist, and both are one transaction with a receipt:
+
+| Operation | Route | Effect |
+| --- | --- | --- |
+| LOAD | `POST /farms/:id/cargo/load` | `inventory_items` decreases by exactly the row state the caller read; `actor_cargo_items` grows; the container version advances; an emptied warehouse row is removed |
+| PURCHASE | `POST /farms/:id/cargo/purchase` | the ordinary shop settlement (wallet + `SHOP_BUY` ledger row + receipt) with the goods landing in `actor_cargo_items` instead of `inventory_items` |
+| UNLOAD | `POST /farms/:id/cargo/unload` | V16.2.2C, unchanged |
+
+- **No new tables and no new columns**: LOAD reuses `actors.cargo_transfer_id` as its per-request
+  marker, and a purchase reuses the existing cargo row plus the existing economy settlement. No
+  migration exists for this slice.
+- LOAD's guard is the cargo version *and* the exact warehouse row (quantity and version), so a
+  concurrent sale fails the whole load rather than crediting cargo from a subtraction that did not
+  happen; the cargo capacity trigger remains the authority on whether the goods fit.
+- Only supply categories (`SEED` today) may be bought into cargo; the destination is always the
+  authenticated owner's Main Character, and no route accepts an owner, a capacity or a price.
+- Ordinary `POST /shop/buy` and all manual production still settle to the Warehouse.

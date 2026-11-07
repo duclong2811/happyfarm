@@ -1,6 +1,7 @@
 import {
   cellsInBounds,
   constructionRefusal,
+  createFarmTile,
   createConstructionInstance,
   createStarterConstructionInstance,
   moveConstruction,
@@ -26,6 +27,7 @@ import {
   type CurrencyDefinition,
   type ConstructionId,
   type FarmId,
+  type FarmTile,
   type PlayerId,
   type Wallet
 } from "@happy-farm/domain";
@@ -33,6 +35,7 @@ import { ApplicationError } from "./errors";
 import type { EconomyService } from "./economy";
 import type {
   ActorContext,
+  AquaculturePondRepository,
   Clock,
   ConstructionDefinitionRepository,
   ConstructionIdGenerator,
@@ -151,7 +154,7 @@ export class PlaceConstruction {
       minY: anchor.y - Math.floor((footprint.depthCells - 1) / 2),
       maxY: anchor.y - Math.floor((footprint.depthCells - 1) / 2) + footprint.depthCells - 1
     });
-    const cells = await this.groundCells(farmId, wanted);
+    const { cells, tilesToCreate } = await this.groundCells(farmId, wanted);
 
     const refusal = constructionRefusal({
       definition,
@@ -202,7 +205,7 @@ export class PlaceConstruction {
     };
 
     try {
-      await constructions.placeAtomically({ construction, economy: debit }, record);
+      await constructions.placeAtomically({ construction, economy: debit, tiles: tilesToCreate }, record);
       return construction;
     } catch (error: unknown) {
       const raced = await idempotency.find(actor.playerId, PLACE_CONSTRUCTION_OPERATION, command.requestId);
@@ -266,11 +269,11 @@ export class PlaceConstruction {
   /**
    * The ground under a footprint, as the server knows it.
    *
-   * The server's own land is `farm_tiles`: an existing row *is* owned dry soil, and a missing row is
-   * ground this farm does not have. The island's finer terrain - beach, the shallows a cage needs, the
-   * harbour's water - is *world* data that lives in the client today, so a water asset cannot be
-   * placed by this command yet: `terrain` is LAND for an owned tile and WATER for one that is not
-   * owned, and the refusal that follows is the honest one.
+   * V14.5.2: the natural Home Island is already the player's land, so a missing `farm_tiles` row is
+   * *not* a refusal. The island's own classifier decides what the ground is, and a footprint on valid
+   * natural land gets its tile rows created with the placement (free - the only money is the asset's
+   * own price). `farm_tiles` keeps recording the cells the farm has state on, which is what the crop
+   * foreign key and the construction triggers read.
    *
    * Nothing here asks what the land is *for*. That was the old rule, and it is why a broadleaf tree
    * could be refused on land the player plainly owned: the ground had to be inside a district rather
@@ -279,25 +282,26 @@ export class PlaceConstruction {
   private async groundCells(
     farmId: FarmId,
     wanted: readonly { readonly x: number; readonly y: number }[]
-  ): Promise<readonly ConstructionCell[]> {
+  ): Promise<{ readonly cells: readonly ConstructionCell[]; readonly tilesToCreate: readonly FarmTile[] }> {
     const cells: ConstructionCell[] = [];
+    const tilesToCreate: FarmTile[] = [];
+    const now = this.dependencies.clock.now();
     for (const cell of wanted) {
       const tile = await this.dependencies.tiles.find(farmId, cell.x, cell.y);
-      // Ownership is the farm's rows; everything else about the ground is the island's geography,
-      // through the one classifier the renderer also reads. Before V13.3 this said "an owned tile is
-      // land", which was true by luck rather than by rule.
       const ground = this.dependencies.terrain.classify(cell);
+      // A cell the farm has no row for yet is a fresh natural-land cell: the settlement creates the
+      // row it needs, with no land charge.
+      if (tile === null) tilesToCreate.push(createFarmTile(farmId, cell, "SOIL", now));
       cells.push({
         x: cell.x,
         y: cell.y,
-        owned: tile !== null,
         terrain: ground.terrain,
         shallowWater: ground.shallowWater,
         protectedGround: ground.protectedGround,
         occupied: false
       });
     }
-    return cells;
+    return { cells, tilesToCreate };
   }
 }
 
@@ -393,6 +397,8 @@ export interface ConstructionEditDependencies {
   readonly idempotency: IdempotencyRepository;
   readonly fingerprints: PayloadFingerprint;
   readonly clock: Clock;
+  /** Optional only for hosts that do not mount aquaculture; production API supplies the guard. */
+  readonly aquaculturePonds?: Pick<AquaculturePondRepository, "findByConstruction">;
 }
 
 /**
@@ -411,8 +417,6 @@ function constructionRefusalError(refusal: ConstructionRefusal): { readonly code
       return { code: "INSUFFICIENT_FUNDS", message: "Not enough gold" };
     case "OUTSIDE_ISLAND":
       return { code: "CONSTRUCTION_OUTSIDE_WORLD", message: "The footprint leaves the world" };
-    case "NOT_OWNED":
-      return { code: "CONSTRUCTION_NOT_OWNED", message: "That land is not owned" };
     case "BLOCKED":
       return { code: "CONSTRUCTION_BLOCKED", message: "The island keeps that ground" };
     case "INVALID_TERRAIN":
@@ -490,22 +494,26 @@ async function editGroundCells(
   dependencies: ConstructionEditDependencies,
   farmId: FarmId,
   wanted: readonly { readonly x: number; readonly y: number }[]
-): Promise<readonly ConstructionCell[]> {
+): Promise<{ readonly cells: readonly ConstructionCell[]; readonly tilesToCreate: readonly FarmTile[] }> {
   const cells: ConstructionCell[] = [];
+  const tilesToCreate: FarmTile[] = [];
+  const now = dependencies.clock.now();
   for (const cell of wanted) {
     const tile = await dependencies.tiles.find(farmId, cell.x, cell.y);
     const ground = dependencies.terrain.classify(cell);
+    // A destination cell the farm has no row for yet is fresh natural land: it is not a refusal, and
+    // the settlement writes the row it needs (V14.5.2).
+    if (tile === null) tilesToCreate.push(createFarmTile(farmId, cell, "SOIL", now));
     cells.push({
       x: cell.x,
       y: cell.y,
-      owned: tile !== null,
       terrain: ground.terrain,
       shallowWater: ground.shallowWater,
       protectedGround: ground.protectedGround,
       occupied: false
     });
   }
-  return cells;
+  return { cells, tilesToCreate };
 }
 
 /**
@@ -585,7 +593,11 @@ export class RelocateConstruction {
     const anchor = input.anchor ?? { x: construction.anchorX, y: construction.anchorY };
     const rotation: QuarterTurns = normaliseQuarterTurns(input.rotation);
     const footprint = rotatedFootprint(definition.footprint, rotation);
-    const cells = await editGroundCells(this.dependencies, farmId, wantedCells(anchor, footprint));
+    const { cells, tilesToCreate } = await editGroundCells(
+      this.dependencies,
+      farmId,
+      wantedCells(anchor, footprint)
+    );
     const occupied = await constructions.listBounds(farmId);
     const check = { definition, footprint, cells, occupied, ignoreBounds: construction.bounds };
     const refusal = input.operation === ROTATE_CONSTRUCTION_OPERATION ? rotationRefusal(check) : moveRefusal(check);
@@ -608,7 +620,7 @@ export class RelocateConstruction {
     };
     try {
       await constructions.relocateAtomically(
-        { construction: moved, expectedVersion: construction.version },
+        { construction: moved, expectedVersion: construction.version, tiles: tilesToCreate },
         record
       );
       return moved;
@@ -678,6 +690,12 @@ export class RemoveConstruction {
     );
     if (construction.version !== command.expectedVersion) {
       throw new ApplicationError("CONFLICT_STALE_STATE", "That object has changed since you looked at it");
+    }
+    if (definition.category === "AQUACULTURE" && this.dependencies.aquaculturePonds !== undefined) {
+      const pond = await this.dependencies.aquaculturePonds.findByConstruction(farmId, construction.id);
+      if (pond?.cohorts.some((cohort) => cohort.quantity > 0) === true) {
+        throw new ApplicationError("AQUACULTURE_POND_NOT_EMPTY", "Harvest or withdraw every fish before removing the cage");
+      }
     }
     const refusal = removalRefusal(definition);
     if (refusal !== null) {
@@ -913,7 +931,10 @@ export class StoreConstruction {
       createdAt: now
     };
     try {
-      await constructions.setStoredAtomically({ construction: stored, expectedVersion: construction.version }, record);
+      await constructions.setStoredAtomically(
+        { construction: stored, expectedVersion: construction.version, tiles: [] },
+        record
+      );
       return stored;
     } catch (error: unknown) {
       const raced = await idempotency.find(actor.playerId, STORE_CONSTRUCTION_OPERATION, command.requestId);
@@ -980,7 +1001,11 @@ export class RestoreConstruction {
     const rotation: QuarterTurns = normaliseQuarterTurns(command.rotation);
     const footprint = rotatedFootprint(definition.footprint, rotation);
     const anchor = { x: command.anchorX, y: command.anchorY };
-    const cells = await editGroundCells(this.dependencies, farmId, wantedCells(anchor, footprint));
+    const { cells, tilesToCreate } = await editGroundCells(
+      this.dependencies,
+      farmId,
+      wantedCells(anchor, footprint)
+    );
     // Every *other* active object is an obstacle; a stored one occupies nothing, which the repository's
     // occupancy list already reflects.
     const occupied = await constructions.listBounds(farmId);
@@ -1003,7 +1028,10 @@ export class RestoreConstruction {
       createdAt: now
     };
     try {
-      await constructions.setStoredAtomically({ construction: restored, expectedVersion: construction.version }, record);
+      await constructions.setStoredAtomically(
+        { construction: restored, expectedVersion: construction.version, tiles: tilesToCreate },
+        record
+      );
       return restored;
     } catch (error: unknown) {
       const raced = await idempotency.find(actor.playerId, RESTORE_CONSTRUCTION_OPERATION, command.requestId);

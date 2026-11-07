@@ -5,9 +5,8 @@ import { itemRegistry } from "../items";
  * Fishing: the world's first non-farming profession.
  *
  * The definitions here are static game data, not rows: Home Island's water is authored, the spots do
- * not move, and nothing depletes, so a table for them would be a second copy of the map. A future
- * shared or depletable fishing ground adds persistence to *that* zone, not to this catalogue - see
- * `docs/design/FISHING.md`.
+ * do not move. Mutable stock is deliberately separate in the fishing_spot_states table; these values
+ * are the authoritative stock bounds and regeneration policy, not player state.
  *
  * A fish is an ordinary inventory item with a `FISH` category, a sell price, and an XP reward; a
  * fishing table says which fish a spot can produce and how likely each one is; a fishing spot names the
@@ -72,7 +71,10 @@ export const FishingSpotSchema = z
     /** How far from the spot the client offers the interaction, in tiles. The server ignores it. */
     interactionRadiusTiles: z.number().positive().max(12),
     tableId: z.string().regex(/^fishtable_[a-z0-9]+(?:_[a-z0-9]+)*$/),
-    enabled: z.boolean()
+    enabled: z.boolean(),
+    maxStock: z.number().int().positive().max(1_000_000).optional(),
+    regenerationSeconds: z.number().int().positive().max(31_536_000).optional(),
+    productionUnitsPerHour: z.number().int().nonnegative().max(1_000_000).optional()
   })
   .strict();
 
@@ -124,11 +126,11 @@ export const fishingTableRegistry = registry(z.array(FishingTableSchema).parse([
 export const fishingSpotRegistry = registry(z.array(FishingSpotSchema).parse([
   // The island's pond: three spots on its bank, all reachable on foot from the farm. A tile is
   // ~1.08 m, so a spot sitting just inside the water is 1-2 m from walkable ground.
-  { id: "spot_pond_north", displayNameKey: "spot.pond_north.name", zoneKind: "HOME_ISLAND", position: { x: -3, y: 42 }, interactionRadiusTiles: 3, tableId: "fishtable_freshwater", enabled: true },
-  { id: "spot_pond_west", displayNameKey: "spot.pond_west.name", zoneKind: "HOME_ISLAND", position: { x: -7.5, y: 44.7 }, interactionRadiusTiles: 3, tableId: "fishtable_freshwater", enabled: true },
-  { id: "spot_pond_east", displayNameKey: "spot.pond_east.name", zoneKind: "HOME_ISLAND", position: { x: 1, y: 45 }, interactionRadiusTiles: 3, tableId: "fishtable_freshwater", enabled: true },
+  { id: "spot_pond_north", displayNameKey: "spot.pond_north.name", zoneKind: "HOME_ISLAND", position: { x: -3, y: 42 }, interactionRadiusTiles: 3, tableId: "fishtable_freshwater", enabled: true, maxStock: 5, regenerationSeconds: 120, productionUnitsPerHour: 1 },
+  { id: "spot_pond_west", displayNameKey: "spot.pond_west.name", zoneKind: "HOME_ISLAND", position: { x: -7.5, y: 44.7 }, interactionRadiusTiles: 3, tableId: "fishtable_freshwater", enabled: true, maxStock: 5, regenerationSeconds: 120, productionUnitsPerHour: 1 },
+  { id: "spot_pond_east", displayNameKey: "spot.pond_east.name", zoneKind: "HOME_ISLAND", position: { x: 1, y: 45 }, interactionRadiusTiles: 3, tableId: "fishtable_freshwater", enabled: true, maxStock: 5, regenerationSeconds: 120, productionUnitsPerHour: 1 },
   // The harbour's quay: open sea a step off the deck.
-  { id: "spot_harbour_quay", displayNameKey: "spot.harbour_quay.name", zoneKind: "HOME_ISLAND", position: { x: 56.5, y: 53.5 }, interactionRadiusTiles: 3, tableId: "fishtable_coastal", enabled: true }
+  { id: "spot_harbour_quay", displayNameKey: "spot.harbour_quay.name", zoneKind: "HOME_ISLAND", position: { x: 56.5, y: 53.5 }, interactionRadiusTiles: 3, tableId: "fishtable_coastal", enabled: true, maxStock: 8, regenerationSeconds: 90, productionUnitsPerHour: 1 }
 ]), "fishing spot");
 
 export const fish = [...fishRegistry.values()];

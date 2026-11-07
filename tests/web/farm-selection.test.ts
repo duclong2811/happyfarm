@@ -76,6 +76,31 @@ function input(overrides: Partial<SelectionInput> = {}): SelectionInput {
 }
 
 describe("describeSelection", () => {
+  it("offers planting on natural land the farm has no row for (V14.5.2)", () => {
+    // No farm tile row: the island says the cell is developable and empty, the crop is chosen and in
+    // stock, so the dock offers the plant - no purchase, no ownership.
+    const view = describeSelection(
+      input({ selected: { x: 40, y: 40 }, unowned: { plantable: true } })
+    );
+    expect(view).toMatchObject({
+      kind: "open",
+      coordinate: { x: 40, y: 40 },
+      terrainType: null,
+      canPlant: true,
+      plantOption: "crop",
+      plantBlocked: null
+    });
+  });
+
+  it("treats an unowned cell the island will not develop as an ordinary missing tile", () => {
+    const view = describeSelection(
+      input({ selected: { x: 40, y: 40 }, unowned: { plantable: false } })
+    );
+    expect(view.kind).toBe("missing");
+    expect(view.canPlant).toBe(false);
+    expect(view.plantBlocked).toBe("unlocked-land");
+  });
+
   it("offers planting for an empty soil tile holding an unlocked crop with seeds", () => {
     const view = describeSelection(
       input({ tiles: [tile(2, 3)], selected: { x: 2, y: 3 } })
@@ -268,7 +293,9 @@ describe("describeSelection", () => {
 describe("formatRemainingGrowth", () => {
   it("phrases seconds, minutes, hours, and unknown time in English", () => {
     expect(formatRemainingGrowth(45, en)).toBe("45s left");
+    expect(formatRemainingGrowth(45.9, en)).toBe("45s left");
     expect(formatRemainingGrowth(150, en)).toBe("2m 30s left");
+    expect(formatRemainingGrowth(150.9, en)).toBe("2m 30s left");
     expect(formatRemainingGrowth(7200, en)).toBe("2h left");
     expect(formatRemainingGrowth(0, en)).toBe("ready any moment");
     expect(formatRemainingGrowth(null, en)).toBe("growth time unavailable");

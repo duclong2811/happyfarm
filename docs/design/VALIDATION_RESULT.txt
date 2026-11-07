@@ -1,0 +1,18 @@
+CHECK panel.shell: 1100x900, alpha=0..255
+CHECK panel.header: 920x176, alpha=0..255
+CHECK button.primary.normal: 520x168, alpha=0..255
+CHECK button.primary.hover: 520x168, alpha=0..255
+CHECK button.primary.pressed: 520x168, alpha=0..255
+CHECK button.primary.disabled: 520x168, alpha=0..255
+CHECK button.secondary.normal: 520x168, alpha=0..255
+CHECK button.secondary.hover: 520x168, alpha=0..255
+CHECK button.secondary.pressed: 520x168, alpha=0..255
+CHECK button.secondary.disabled: 520x168, alpha=0..255
+CHECK card.item.normal: 360x480, alpha=0..255
+CHECK card.item.hover: 360x480, alpha=0..255
+CHECK card.item.selected: 360x480, alpha=0..255
+CHECK card.item.disabled: 360x480, alpha=0..255
+CHECK badge.price: 420x140, alpha=0..255
+
+PASS metadata/alpha/cap-inset checks for 15 asset(s). Visual QA still required.
+

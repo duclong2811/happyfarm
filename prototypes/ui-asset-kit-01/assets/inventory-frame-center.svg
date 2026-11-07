@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="wood" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#b96b27"/>
+      <stop offset="0.45" stop-color="#7b3e17"/>
+      <stop offset="1" stop-color="#4a210d"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#fff5d8"/>
+      <stop offset="1" stop-color="#eacb91"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="92" height="92" rx="18" fill="url(#wood)" stroke="#321708" stroke-width="4"/>
+  <rect x="10" y="10" width="76" height="76" rx="12" fill="url(#paper)" stroke="#d8943a" stroke-width="3"/>
+  <path d="M14 16h68M14 80h68" stroke="#fff2bd" stroke-opacity=".5" stroke-width="2"/>
+</svg>

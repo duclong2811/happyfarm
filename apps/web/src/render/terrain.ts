@@ -12,7 +12,7 @@ import {
   type MeshStandardMaterial,
   type Object3D
 } from "three";
-import { tileToWorld, worldFrame, type FarmLayout } from "./layout";
+import type { FarmLayout } from "./layout";
 import type { SharedAssets } from "./materials";
 import {
   districtOutlineScale,
@@ -42,35 +42,35 @@ import { ROAD_SHOULDER_WORLD } from "./world-config";
 import { buildScenery } from "./scenery";
 
 /**
- * The static world's geometry: the island and its elevation, the beach and the shallows, the field's
- * apron, the meadow patches, the fence, the pond, the barn, the landmarks, and the treatment of the
- * land the farm has not bought yet.
+ * The static world's geometry: the island and its elevation, the beach and the shallows, the meadow
+ * patches, the fence, the pond, the barn, the landmarks, and the treatment of the land the farm has
+ * not bought yet.
  *
  * Everything here is a projection of `FarmWorld`, which is itself derived from server land plus the
  * static world config. Nothing decides which land is unlocked: a locked square is drawn only where the
- * server's plot catalogue says the farm does not own it yet.
+ * server's plot catalogue says the farm does not own it yet. Owned ground carries no terrain of its
+ * own - the island's grass is the default, and soil appears only where a cell is actually cultivated.
  */
 
 /** Placeholder slab thickness. Real tile art replaces this rather than describing it. */
 /**
- * How thick a tile slab is.
+ * How thick one cultivated tile's soil pad is.
  *
- * Lowered in V12.1 from 0.09. The player's land is a patch of ground, not a board laid on it, and a
- * nine-centimetre step around twelve tiles of field read as exactly the raised platform the brief
- * removes. Slabs still stand clear of the soil bed - which is what makes a field a field rather than
- * a decal - but the step is now the thickness of a thick tile, not a kerb.
+ * Ownership is not terrain. An owned cell that carries nothing is plain grass and draws no pad at
+ * all; only a cell that is actually cultivated shows soil, as a shallow slab standing on the ground.
+ * The pad is what keeps a planted tile legibly worked without turning the whole owned parcel into a
+ * field - see `TILE_SURFACE_Y` for the height everything standing on a planted tile reads from.
  */
 export const TILE_THICKNESS = 0.045;
 
-const APRON_TOP_Y = -0.01;
 /**
- * Top of the darker soil bed that sits under the whole reserved field.
+ * The world height of a cultivated tile's soil surface.
  *
- * The tile slabs stand on it and the gaps between them show it, so the pitch between tiles reads as
- * a furrow line rather than as a seam between two floating boxes. It is a hair under the slabs' own
- * base, so it never pokes through them.
+ * One tile thickness above the island's flat ground (`GROUND_SURFACE_Y`). A crop, a ripeness ring
+ * and a selection marker all measure from here, so an empty owned cell - which has no pad and no
+ * crop - stays the grass of the island around it.
  */
-const FIELD_BED_TOP_Y = -0.004;
+export const TILE_SURFACE_Y = GROUND_SURFACE_Y + TILE_THICKNESS;
 /** Top of the island's ground surface where it is flat: level with the old grass slab. */
 const ISLAND_TOP_Y = GROUND_SURFACE_Y;
 /** How far the beach reaches past the ground surface, in world metres. */
@@ -374,56 +374,6 @@ function addIsland(group: Group, assets: SharedAssets, world: FarmWorld): Mesh {
   return ground;
 }
 
-/**
- * The soil under the field the player works, and the furrows across it.
- *
- * The apron hugs the land the farm owns rather than the whole reserve, so the field has a worked
- * margin and the reserve around it stays ground. The furrows are what makes it read as a field
- * instead of a brown rectangle: one ridge along every tile boundary, drawn as a single instanced
- * mesh, at the height the tile slabs' own surface sits at.
- */
-function addFieldGround(group: Group, assets: SharedAssets, world: FarmWorld, layout: FarmLayout): void {
-  if (world.apron !== null) {
-    // Top at the apron level, thick enough to stand proud of the grass on every side.
-    group.add(
-      box(assets, assets.dirt, world.apron.widthWorld, 0.3, world.apron.depthWorld, world.apron.worldX, APRON_TOP_Y - 0.15, world.apron.worldZ)
-    );
-  }
-  if (world.bed !== null) {
-    group.add(
-      box(assets, assets.dirtDark, world.bed.widthWorld, 0.02, world.bed.depthWorld, world.bed.worldX, FIELD_BED_TOP_Y - 0.01, world.bed.worldZ)
-    );
-  }
-  // The furrows: one ridge along every tile boundary of the land the farm owns, from the same
-  // `inner` bounds the tiles themselves are laid out from, so a bought plot's rows line up with the
-  // rows that were already there.
-  const owned = world.inner;
-  if (owned === null) return;
-  const ridges: { readonly worldX: number; readonly worldZ: number; readonly length: number }[] = [];
-  const centreX = (owned.minX + owned.maxX + 1) / 2;
-  const widthWorld = (owned.maxX - owned.minX + 1) * layout.pitch;
-  for (let y = owned.minY; y <= owned.maxY + 1; y += 1) {
-    const position = tileToWorld({ x: centreX, y: y - 0.5 }, worldFrame(layout.pitch));
-    ridges.push({ worldX: position.worldX, worldZ: position.worldZ, length: widthWorld });
-  }
-  if (ridges.length === 0) return;
-  const mesh = new InstancedMesh(assets.box, assets.dirtDark, ridges.length);
-  const matrix = new Matrix4();
-  const position = new Vector3();
-  const scale = new Vector3();
-  const rotation = new Quaternion();
-  ridges.forEach((ridge, index) => {
-    position.set(ridge.worldX, TILE_THICKNESS + 0.004, ridge.worldZ);
-    scale.set(ridge.length, 0.012, 0.3);
-    matrix.compose(position, rotation, scale);
-    mesh.setMatrixAt(index, matrix);
-  });
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.receiveShadow = true;
-  mesh.computeBoundingSphere();
-  group.add(mesh);
-}
-
 /** How far each road layer is lifted, so the layers stack instead of fighting. */
 const ROAD_SHOULDER_LIFT = -0.006;
 /**
@@ -642,8 +592,8 @@ function meadowMaterial(assets: SharedAssets, kind: MeadowSpec["kind"]): MeshSta
     case "MEADOW":
       return assets.meadow;
     case "DIRT":
-      // Muted earth rather than the apron's working brown: this is ground nobody has touched, and it
-      // must not read as a second dirt road.
+      // Muted earth for an authored patch: this is ground nobody has touched, and it must not read as
+      // a road or as a cultivated plot.
       return assets.bareEarth;
     case "SAND":
       return assets.sand;
@@ -849,6 +799,9 @@ function addHarbour(group: Group, assets: SharedAssets, harbour: FarmWorld["harb
   const cos = Math.cos(harbour.rotationY);
   const sin = Math.sin(harbour.rotationY);
   const pier = new Group();
+  // HOME travel is attached to the authored quay itself. This is presentation metadata only: the
+  // remote island is still absent until the server confirms travel, and no HOME collision is added.
+  (pier.userData as Record<string, unknown>).neighborTarget = { kind: "NEIGHBOR_DOCK", id: "neighbor-dock" };
   pier.position.set(harbour.worldX, ISLAND_TOP_Y, harbour.worldZ);
   // Local +z is the bearing the deck runs on, so the whole structure can be built in its own frame.
   pier.rotation.y = harbour.rotationY;
@@ -972,7 +925,11 @@ export function buildTerrain(
   assets: SharedAssets,
   world: FarmWorld,
   layout: FarmLayout
-): Object3D {
+): Object3D | null {
+  // The scene exists before the farm bootstrap has returned. EMPTY_WORLD has no terrain extents, so
+  // sampling its height function would divide by zero and write NaN vertices into the first ground
+  // mesh. There is no ground to draw until the server supplies at least one land/preview row.
+  if (world.outer === null) return null;
   const ground = addIsland(group, assets, world);
   addMeadows(group, assets, world);
   addPlaza(group, assets, world.plaza);
@@ -998,6 +955,8 @@ export function buildLockedPlotOverlay(
   layout: FarmLayout,
   getModel: (id: string) => Object3D | undefined = () => undefined
 ): void {
-  addFieldGround(group, assets, world, layout);
+  // Owned ground is grass now: there is no apron, no soil bed and no furrow lattice tied to
+  // ownership. The only thing that draws terrain here is the locked ring of plots the farm has not
+  // bought yet.
   buildScenery(group, assets, world.lockedScenery, getModel);
 }

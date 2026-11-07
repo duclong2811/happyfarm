@@ -5,6 +5,7 @@ import {
   createCurrencyRegistry,
   createItemRegistry,
   createShopRegistry,
+  aquacultureDefinition,
   crops,
   currencies,
   currencyRegistry,
@@ -15,6 +16,19 @@ import {
   validateCropItemReferences,
   validateDefinitions
 } from "@happy-farm/game-data";
+
+describe("aquaculture item contract", () => {
+  it("keeps input fingerlings and harvest adult fish distinct", () => {
+    expect(aquacultureDefinition.stockingItemDefinitionId).toBe("item_fish_tilapia");
+    expect(aquacultureDefinition.harvestItemDefinitionId).toBe("item_fish_tilapia_adult");
+    expect(itemRegistry.get(aquacultureDefinition.stockingItemDefinitionId)?.displayNameKey).toBe("item.fish_tilapia.name");
+    expect(itemRegistry.get(aquacultureDefinition.harvestItemDefinitionId)?.displayNameKey).toBe("item.fish_tilapia_adult.name");
+    const adultSale = shops.find((entry) => entry.id === "shop_fish_tilapia_adult");
+    expect(adultSale).toMatchObject({ itemDefinitionId: "item_fish_tilapia_adult", sellPrice: 5 });
+    expect(shops.find((entry) => entry.id === "shop_fish_tilapia")?.sellPrice).toBe(2);
+    expect(adultSale?.buyPrice).toBeUndefined();
+  });
+});
 
 describe("game-data validation", () => {
   it("accepts stable semantic IDs and rejects malformed definitions", () => {
@@ -244,9 +258,10 @@ describe("game-data validation", () => {
       const harvestRevenue = (produceEntry?.sellPrice ?? 0) * crop.harvest.baseQuantity;
       expect(harvestRevenue, crop.id).toBeGreaterThan(seedPrice);
     }
-    // No item is both bought and sold, so there is no buy-then-sell-again arbitrage anywhere.
+    // Aquaculture intentionally buys the stocking fish, but above its one-unit harvest sell value.
     for (const entry of shops) {
-      expect(entry.buyPrice !== undefined && entry.sellPrice !== undefined, entry.id).toBe(false);
+      if (entry.id === "shop_fish_tilapia") expect(entry.buyPrice).toBeGreaterThan(entry.sellPrice ?? 0);
+      else expect(entry.buyPrice !== undefined && entry.sellPrice !== undefined, entry.id).toBe(false);
     }
   });
 

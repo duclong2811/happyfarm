@@ -15,7 +15,6 @@ import {
   editableActions,
   ownedBounds,
   ownedCells,
-  ownershipOverlayFor,
   refundPreview,
   selectedRow
 } from "../../apps/web/src/object-editing";
@@ -182,8 +181,8 @@ describe("what the editor offers", () => {
   });
 });
 
-describe("showing the player their own land", () => {
-  it("marks exactly the cells the server says the farm owns", () => {
+describe("the developer's own-land diagnostic", () => {
+  it("reads exactly the cells the server says the farm owns", () => {
     const cells = starterCells();
     const owned = ownedCells(cells);
     expect(owned).toHaveLength(INITIAL_LAND_SIZE * INITIAL_LAND_SIZE);
@@ -196,14 +195,6 @@ describe("showing the player their own land", () => {
       expect(cells.cells.get(`${String(cell.x)},${String(cell.y)}`)?.owned).toBe(true);
     }
     expect(owned.some((cell) => cell.x > 11 || cell.y > 11)).toBe(false);
-  });
-
-  it("draws the mark only while the player is using the land", () => {
-    const cells = starterCells();
-    expect(ownershipOverlayFor({ placing: true, moving: false, cells })).toHaveLength(144);
-    expect(ownershipOverlayFor({ placing: false, moving: true, cells })).toHaveLength(144);
-    // Normal play: no grid, no ownership, no mark - the island stays a place rather than a spreadsheet.
-    expect(ownershipOverlayFor({ placing: false, moving: false, cells })).toBeNull();
   });
 });
 

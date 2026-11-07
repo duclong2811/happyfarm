@@ -93,3 +93,20 @@ export function buildInteractionGrid(
   group.add(mesh);
   return geometry;
 }
+
+/**
+ * The tiles the planting hint outlines.
+ *
+ * Exactly one: the cell the player has selected, and only when the server's own rows say a seed may
+ * go there. V14.5.1B replaced "every plantable tile" - which drew the whole owned parcel as a grid
+ * and read as a placement boundary - with the candidate the player is actually considering.
+ */
+export function plantingHintCells(
+  tiles: readonly SceneTile[],
+  selected: { readonly x: number; readonly y: number } | null
+): readonly SceneTile[] {
+  if (selected === null) return [];
+  return tiles.filter(
+    (tile) => tile.plantable && tile.tileX === selected.x && tile.tileY === selected.y
+  );
+}

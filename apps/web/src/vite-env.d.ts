@@ -7,3 +7,16 @@ declare module "*.glb?url" {
   const url: string;
   export default url;
 }
+
+declare module "*.svg?url" {
+  const url: string;
+  export default url;
+}
+
+interface ImportMetaEnv {
+  readonly DEV: boolean;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

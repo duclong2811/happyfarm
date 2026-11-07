@@ -9,6 +9,8 @@ export const ShopEntrySchema = z
     id: z.string().regex(/^shop_[a-z0-9]+(?:_[a-z0-9]+)*$/),
     itemDefinitionId: z.string().regex(/^item_[a-z0-9]+(?:_[a-z0-9]+)*$/),
     currencyDefinitionId: z.string().regex(/^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    /** Optional shop-only label; inventory keeps the item's own display name. */
+    shopDisplayNameKey: z.string().regex(/^shop\.[a-z0-9_]+\.name$/).optional(),
     /**
      * The price the server charges for one unit, or nothing when this entry does not sell that way.
      *
@@ -60,7 +62,9 @@ export function createShopRegistry(input: unknown): ReadonlyMap<string, ShopEntr
     // catalogue that let a player buy produce directly would bypass the activity that made it, and
     // one that let a seed be sold back would price the loop against itself.
     const item = itemRegistry.get(definition.itemDefinitionId);
-    if (definition.buyPrice !== undefined && item?.category !== "SEED") {
+    const isAquacultureStockEntry =
+      definition.id === "shop_fish_tilapia" && definition.itemDefinitionId === "item_fish_tilapia";
+    if (definition.buyPrice !== undefined && item?.category !== "SEED" && !isAquacultureStockEntry) {
       throw new Error(`Only seeds can be bought: ${definition.itemDefinitionId}`);
     }
     if (
@@ -106,10 +110,13 @@ export const shopRegistry = createShopRegistry([
   { id: "shop_orange", itemDefinitionId: "item_orange", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
   { id: "shop_peach_sapling", itemDefinitionId: "item_peach_sapling", currencyDefinitionId: "currency_gold", buyPrice: 24, maxQuantityPerRequest: 1_000 },
   { id: "shop_peach", itemDefinitionId: "item_peach", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
-  // Fish reach the same two directions through the same settlement: a catch is sold exactly like a
-  // harvest, and the harbour will one day be its own market rather than this shelf. See
-  // `docs/design/FISHING.md`.
-  { id: "shop_fish_tilapia", itemDefinitionId: "item_fish_tilapia", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },
+  // Purchased Wildwood: 3 gold sapling -> 12 wood at the existing 1-gold wood price.
+  { id: "shop_wildwood_sapling", itemDefinitionId: "item_wildwood_sapling", currencyDefinitionId: "currency_gold", buyPrice: 3, maxQuantityPerRequest: 1_000 },
+  // Wild catches keep their existing compatibility row. Aquaculture buys the legacy tilapia item as
+  // fingerlings and settles a distinct adult item after growth, so a new cycle cannot return input.
+  { id: "shop_fish_tilapia", itemDefinitionId: "item_fish_tilapia", currencyDefinitionId: "currency_gold", shopDisplayNameKey: "shop.fish_tilapia_stock.name", buyPrice: 3, sellPrice: 2, maxQuantityPerRequest: 1_000 },
+  // Adult output is distinct from the 3-gold fingerling input; 5 - 3 = 2 gold before cage cost.
+  { id: "shop_fish_tilapia_adult", itemDefinitionId: "item_fish_tilapia_adult", currencyDefinitionId: "currency_gold", shopDisplayNameKey: "shop.fish_tilapia_adult.name", sellPrice: 5, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_carp", itemDefinitionId: "item_fish_carp", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_catfish", itemDefinitionId: "item_fish_catfish", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_sardine", itemDefinitionId: "item_fish_sardine", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },
@@ -119,6 +126,9 @@ export const shopRegistry = createShopRegistry([
   // Raw materials sell conservatively on purpose: they are the inputs crafting and building will want,
   // so selling is early cash rather than the obviously best use of them. See
   // `docs/design/MINING_BALANCE.md`.
+  // Proposal for the unified ore output: keep the former starter-stone value (1 gold) until the
+  // broader mining economy is deliberately rebalanced. Legacy sell rows remain unchanged.
+  ,{ id: "shop_ore", itemDefinitionId: "item_ore", currencyDefinitionId: "currency_gold", sellPrice: 1, maxQuantityPerRequest: 1_000 }
   ,{ id: "shop_stone", itemDefinitionId: "item_stone", currencyDefinitionId: "currency_gold", sellPrice: 1, maxQuantityPerRequest: 1_000 }
   ,{ id: "shop_copper_ore", itemDefinitionId: "item_copper_ore", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 }
   ,{ id: "shop_iron_ore", itemDefinitionId: "item_iron_ore", currencyDefinitionId: "currency_gold", sellPrice: 4, maxQuantityPerRequest: 1_000 }

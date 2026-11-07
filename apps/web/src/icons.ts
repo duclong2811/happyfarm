@@ -24,6 +24,7 @@ export type IconName =
   | "remove"
   | "land"
   | "build"
+  | "utility"
   | "lock"
   | "road"
   | "fence"
@@ -41,7 +42,9 @@ export type IconName =
   /** A sprout: a sapling, and the tree half of the planting picker. */
   | "sprout"
   /** A tick, for the chosen card in a picker. */
-  | "check";
+  | "check"
+  /** Search: used by the Build Shop's collapsed catalogue tools. */
+  | "search";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -64,6 +67,7 @@ const PATHS: Readonly<Record<IconName, readonly string[]>> = {
   land: ["M3 17l4-6 4 3 4-7 6 10z", "M3 20h18"],
   /** Build: a hammer over a level. The module's own glyph, not a picture of a farm. */
   build: ["M4 20h10", "M6 16l7-7", "M13 5l3-2 3 3-2 3z", "M11 8l3 3"],
+  utility: ["M12 3v3", "M12 18v3", "M3 12h3", "M18 12h3", "M5.6 5.6l2.1 2.1", "M16.3 16.3l2.1 2.1", "M18.4 5.6l-2.1 2.1", "M7.7 16.3l-2.1 2.1", "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"],
   lock: ["M6 11h12v9H6z", "M8.5 11V8a3.5 3.5 0 0 1 7 0v3"],
   /** Road: a strip receding to a vanishing point, which is what the shop is selling. */
   road: ["M8 20L10.5 4", "M16 20L13.5 4", "M12 6v2", "M12 11v2", "M12 16v2"],
@@ -100,7 +104,9 @@ const PATHS: Readonly<Record<IconName, readonly string[]>> = {
   /** Sprout: a stem with one leaf each way. */
   sprout: ["M12 20v-7", "M12 13.5c0-3 2.2-5.2 5.5-5.2 0 3-2.2 5.2-5.5 5.2", "M12 15.5c0-2.4-1.8-4.2-4.5-4.2 0 2.4 1.8 4.2 4.5 4.2"],
   /** Check: the marker on the chosen card, never the only signal (the card also has a border). */
-  check: ["M5 12.5l4.5 4.5L19 7.5"]
+  check: ["M5 12.5l4.5 4.5L19 7.5"],
+  /** Search: used only by the Build Shop's collapsed catalogue tools. */
+  search: ["M10.5 5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z", "M14.5 14.5 20 20"]
 };
 
 /** Builds one icon as an SVG element the caller can drop into a button. */

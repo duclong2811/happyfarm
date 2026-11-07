@@ -36,12 +36,16 @@ export interface WarehouseUpgradeView {
 
 export interface WarehouseStatusView {
   readonly tier: number;
+  /** The tier's display name key, straight from the catalogue the status was read against. */
+  readonly tierDisplayNameKey: string;
   readonly capacity: number;
   readonly used: number;
   readonly available: number;
   /** True for a grandfathered player holding more than the current capacity. */
   readonly overCapacity: boolean;
   readonly nextTier: number | null;
+  /** The capacity the next tier would hold, or null at the top of the ladder. */
+  readonly nextCapacity: number | null;
   readonly nextUpgrade: WarehouseUpgradeView | null;
 }
 
@@ -57,11 +61,15 @@ function statusView(warehouse: WarehouseState, tiers: readonly WarehouseTierDefi
   const upgrade = current?.upgrade ?? null;
   return {
     tier: warehouse.tier,
+    // The catalogue is the only place a tier's name lives; a tier the catalogue no longer ships
+    // falls back to its index so the panel can still say what it is holding.
+    tierDisplayNameKey: current?.displayNameKey ?? `warehouse.tier.${String(warehouse.tier)}.name`,
     capacity: warehouse.capacity,
     used: warehouse.used,
     available: warehouseAvailable(warehouse),
     overCapacity: warehouse.used > warehouse.capacity,
     nextTier: next?.tier ?? null,
+    nextCapacity: next?.capacity ?? null,
     nextUpgrade:
       upgrade === null
         ? null
@@ -217,6 +225,14 @@ export class UpgradeWarehouse {
         const raced = await this.idempotency.find(actor.playerId, UPGRADE_OPERATION, command.requestId);
         if (raced !== null) return this.replay(raced, fingerprint);
         if (!(error instanceof ApplicationError) || error.code !== "ECONOMY_CONFLICT") throw error;
+        // The step is chosen once, from the tier the caller read. If the island has moved on - another
+        // upgrade raised it - this request's decision is stale. Retrying the same step would either
+        // charge for a tier that is already paid for or, worse, be approved by the sibling's write;
+        // the honest answer is that the world changed, and the player can look again.
+        const latest = await this.warehouse.find(actor.playerId);
+        if (latest !== null && latest.tier !== current.tier) {
+          throw new ApplicationError("CONFLICT_STALE_STATE", "The warehouse changed while upgrading");
+        }
       }
     }
     throw new ApplicationError("ECONOMY_CONFLICT", "Warehouse upgrade changed concurrently");

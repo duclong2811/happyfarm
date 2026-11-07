@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ResourceNodeDTO, TreeStateDTO } from "@happy-farm/contracts";
@@ -20,12 +20,12 @@ import { inventoryCards, inventoryTabs } from "../../apps/web/src/items/catalogu
 
 function node(overrides: Partial<ResourceNodeDTO> = {}): ResourceNodeDTO {
   return {
-    nodeId: "node_wildwood_north_1",
+    nodeId: "node_wildwood_start_1",
     definitionId: "resource_wildwood",
     displayNameKey: "resource.wildwood.name",
     verb: "CHOP",
     zoneKind: "HOME_ISLAND",
-    position: { x: -1, y: -19 },
+    position: { x: -1, y: 13 },
     interactionRadiusTiles: 3.2,
     actionSeconds: 5,
     modelId: "resource_wildwood",
@@ -54,6 +54,14 @@ function orchardTree(): TreeStateDTO {
     growthStage: 3,
     growthProgress: 1,
     version: 2
+  };
+}
+
+function wildwoodTree(): TreeStateDTO {
+  return {
+    ...orchardTree(),
+    treeInstanceId: "treeinst_eeeeeeee-eeee-4eee-8eee-222222222222",
+    definitionId: "tree_wildwood"
   };
 }
 
@@ -95,12 +103,12 @@ function candidateFor(input: InteractionWorldInput, position: { x: number; y: nu
 describe("wild trees in the interaction system", () => {
   it("offers Chop on an available tree, and a stump model when it is felled", () => {
     const candidate = candidateFor(world({ resourceNodes: [node()] }), node().position);
-    expect(candidate).toMatchObject({ key: "resource:node_wildwood_north_1", action: "CHOP" });
+    expect(candidate).toMatchObject({ key: "resource:node_wildwood_start_1", kind: "RESOURCE_NODE", action: "CHOP" });
     if (candidate === null) throw new Error("fixture produced no candidate");
     expect(interactionPromptFor(candidate).actionKey).toBe("interaction.chop");
     expect(interactionActivation(candidate, candidate)).toMatchObject({
       kind: "GATHER",
-      nodeId: "node_wildwood_north_1",
+      nodeId: "node_wildwood_start_1",
       verb: "CHOP"
     });
 
@@ -119,10 +127,20 @@ describe("wild trees in the interaction system", () => {
     expect(interactionPromptFor(candidate).actionKey).toBe("interaction.harvest");
     expect(interactionActivation(candidate, candidate)).toMatchObject({ kind: "HARVEST_TREE" });
   });
+
+  it("offers Chop on a ready owned Wildwood tree and keeps it on the tree settlement", () => {
+    const candidate = candidateFor(world({ trees: [wildwoodTree()] }), { x: 3, y: 2 });
+    expect(candidate).toMatchObject({ kind: "TREE", action: "CHOP_TREE", targetId: wildwoodTree().treeInstanceId });
+    if (candidate === null) throw new Error("fixture produced no candidate");
+    expect(interactionPromptFor(candidate).actionKey).toBe("interaction.chop");
+    expect(interactionActivation(candidate, candidate)).toMatchObject({ kind: "HARVEST_TREE", treeInstanceId: wildwoodTree().treeInstanceId });
+  });
 });
 
 describe("the forestry model manifest", () => {
   const MODEL_DIRECTORY = fileURLToPath(new URL("../../apps/web/src/assets/models/resources/", import.meta.url));
+  const SCENE_SOURCE = readFileSync(fileURLToPath(new URL("../../apps/web/src/render/scene.ts", import.meta.url)), "utf8");
+  const MAIN_SOURCE = readFileSync(fileURLToPath(new URL("../../apps/web/src/main.ts", import.meta.url)), "utf8");
 
   it("ships a model for every CHOP definition and its stump", () => {
     const forestry = resourceDefinitions.filter((definition) => definition.verb === "CHOP");
@@ -136,6 +154,24 @@ describe("the forestry model manifest", () => {
       expect(existsSync(`${MODEL_DIRECTORY}${String(stump)}.glb`), String(stump)).toBe(true);
     }
   });
+
+  it("renders an owned Wildwood tree with the resource asset, not the static world tree asset", () => {
+    expect(SCENE_SOURCE).toContain('tree.definitionId === "tree_wildwood" ? "resource_wildwood" : "tree_broad_3"');
+  });
+
+  it("keeps persisted broadleaf and pine construction picking separate from asset management", () => {
+    expect(MAIN_SOURCE).toContain('construction.forestry?.status === "DEPLETED"');
+    expect(MAIN_SOURCE).toContain('construction.entryId.includes("pine") ? "resource_pine_stump" : "resource_wildwood_stump"');
+    expect(MAIN_SOURCE).toContain('const panel = make("section", "forestry-construction-panel forestry-tree-panel")');
+    expect(MAIN_SOURCE).toContain('t("forestry.chopButton"');
+    expect(MAIN_SOURCE).toContain('forestry-tree-countdown');
+    expect(MAIN_SOURCE).toContain('forestry-tree-chop');
+    expect(MAIN_SOURCE).toContain('t("forestry.status.regenerating"');
+    expect(MAIN_SOURCE).toContain('button.disabled = construction.state !== "ACTIVE" || !ready || !inRange');
+    expect(MAIN_SOURCE).toContain('forestryDefinition.stumpSizeWorld');
+    expect(MAIN_SOURCE).toContain('api().chopForestryConstruction');
+    expect(MAIN_SOURCE).toContain('candidate.constructionId === constructionId');
+  });
 });
 
 describe("wood in the inventory", () => {
@@ -148,7 +184,8 @@ describe("wood in the inventory", () => {
     });
     expect(cards).toHaveLength(1);
     expect(cards[0]?.category).toBe("MATERIALS");
-    expect(cards[0]?.visual.request.modelId).toContain("resource_wildwood");
+    expect(cards[0]?.visual.key).toBe("image:material_wood");
+    expect(cards[0]?.visual.request.imageUrl).toBeTruthy();
     expect(inventoryTabs(cards)).toEqual(["ALL", "MATERIALS"]);
   });
 });

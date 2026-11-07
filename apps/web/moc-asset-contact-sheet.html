@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HappyFarm · Contact sheet asset đảo Mộc</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Nunito, system-ui, sans-serif;
+        background: #eef1ec;
+        color: #26352a;
+      }
+      body { margin: 0; padding: 28px; }
+      header { max-width: 1180px; margin: 0 auto 22px; }
+      h1 { margin: 0 0 6px; color: #315d3b; }
+      h2 { margin: 28px auto 10px; max-width: 1180px; color: #315d3b; }
+      p { margin: 0 0 8px; color: #536557; }
+      code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.92em; }
+      .note { padding: 12px 14px; border-left: 4px solid #79a96c; background: #f8fbf6; border-radius: 8px; }
+      .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+      button { border: 1px solid #527f58; border-radius: 8px; background: #e1f0df; color: #264b2c; padding: 8px 12px; cursor: pointer; }
+      button:hover { background: #cfe8cc; }
+      .sheet { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+      article { min-width: 0; padding: 12px; border: 1px solid #c7d4c5; border-radius: 12px; background: #fbfdf9; box-shadow: 0 2px 8px rgba(38, 53, 42, 0.08); }
+      article.recommended { border-color: #6eaa69; box-shadow: 0 0 0 2px rgba(110, 170, 105, 0.18), 0 2px 8px rgba(38, 53, 42, 0.08); }
+      article.missing { border-color: #c98d77; background: #fff8f4; }
+      .thumb { display: grid; place-items: center; aspect-ratio: 1; overflow: hidden; border-radius: 9px; background: #f0f2ed; }
+      .thumb img { width: 100%; height: 100%; object-fit: contain; }
+      .thumb .placeholder { padding: 18px; text-align: center; color: #9a5944; font-weight: 800; }
+      h3 { margin: 10px 0 4px; font-size: 16px; overflow-wrap: anywhere; }
+      dl { margin: 0; display: grid; grid-template-columns: 82px 1fr; gap: 3px 8px; font-size: 12px; line-height: 1.35; }
+      dt { color: #6b7e6c; font-weight: 800; }
+      dd { margin: 0; overflow-wrap: anywhere; }
+      .status { margin-top: 9px; font-size: 12px; font-weight: 800; color: #356d3b; }
+      .status.error { color: #a34f3c; }
+      .legend { max-width: 1180px; margin: 18px auto 0; font-size: 13px; color: #5d705f; }
+      .comparison { max-width: 1180px; margin: 0 auto; padding: 14px; border: 1px solid #c7d4c5; border-radius: 12px; background: #fbfdf9; }
+      .comparison canvas { display: block; width: 100%; max-width: 900px; height: auto; background: #f0f2ed; border-radius: 8px; }
+      .error-list { max-width: 1180px; margin: 14px auto 0; color: #a34f3c; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>HappyFarm · bảng asset cho đảo Mộc</h1>
+      <p>Dev-only contact sheet. Ảnh được render từ GLB/procedural hiện có; không phải UI production.</p>
+      <p class="note">Scale reference dùng kích thước HOME đã ghi trong registry/builder. Card riêng lẻ dùng framing chung để duyệt silhouette; không dùng card riêng lẻ để so tỷ lệ.</p>
+      <div class="toolbar">
+        <button id="download-all" type="button">Tải PNG contact sheet nhóm</button>
+        <button id="download-manifest" type="button">Tải manifest JSON</button>
+      </div>
+    </header>
+    <main id="content"></main>
+    <p id="errors" class="error-list"></p>
+    <script type="module" src="/src/moc-asset-contact-sheet.ts"></script>
+  </body>
+</html>

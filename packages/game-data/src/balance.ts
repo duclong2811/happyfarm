@@ -11,7 +11,7 @@ import { shopRegistry } from "./shops";
 import {
   resourceDefinitionRegistry,
   resourceDropTableRegistry,
-  resourceNodes
+  activeResourceNodes
 } from "./resources";
 import { treeRegistry, type TreeDefinitionData } from "./trees";
 
@@ -50,13 +50,17 @@ export interface TreeEconomics {
   readonly requiredLevel: number;
   readonly saplingCost: number;
   readonly firstReadySeconds: number;
+  readonly regenerates: boolean;
   readonly firstReadyMinutes: number;
   readonly cycleSeconds: number;
   readonly cycleMinutes: number;
   readonly yieldPerCycle: number;
   readonly sellPrice: number;
   readonly revenuePerCycle: number;
+  /** Revenue after buying the one sapling required for a replacement cycle. */
+  readonly netProfitPerCycle: number;
   readonly goldPerMinute: number;
+  readonly netGoldPerMinute: number;
   readonly xpPerCycle: number;
   readonly xpPerMinute: number;
   /** Harvests needed for the cycle revenue to repay the sapling; the game-data test caps it at 2. */
@@ -106,19 +110,26 @@ export function treeEconomics(tree: TreeDefinitionData): TreeEconomics {
   const saplingCost = requiredBuyPrice(tree.saplingItemDefinitionId);
   const sellPrice = requiredSellPrice(tree.harvest.itemDefinitionId);
   const revenuePerCycle = tree.harvest.baseQuantity * sellPrice;
-  const cycleMinutes = tree.regrowSeconds / 60;
+  // A one-shot tree is compared over its only productive cycle. Its next cycle requires a new
+  // sapling, so netGoldPerMinute subtracts that replacement input separately.
+  const cycleSeconds = tree.regenerates === false ? tree.firstReadySeconds : tree.regrowSeconds;
+  const cycleMinutes = cycleSeconds / 60;
+  const netProfitPerCycle = revenuePerCycle - saplingCost;
   return {
     id: tree.id,
     requiredLevel: tree.requiredLevel ?? 1,
     saplingCost,
     firstReadySeconds: tree.firstReadySeconds,
+    regenerates: tree.regenerates !== false,
     firstReadyMinutes: tree.firstReadySeconds / 60,
-    cycleSeconds: tree.regrowSeconds,
+    cycleSeconds,
     cycleMinutes,
     yieldPerCycle: tree.harvest.baseQuantity,
     sellPrice,
     revenuePerCycle,
+    netProfitPerCycle,
     goldPerMinute: revenuePerCycle / cycleMinutes,
+    netGoldPerMinute: netProfitPerCycle / cycleMinutes,
     xpPerCycle: tree.harvest.xp,
     xpPerMinute: tree.harvest.xp / cycleMinutes,
     paybackCycles: saplingCost / revenuePerCycle
@@ -227,9 +238,10 @@ export function resourceEconomics(definitionId: string): ResourceEconomics {
   const unitSellPrice = requiredSellPrice(entry.itemDefinitionId);
   const quantityPerGather = entry.minQuantity;
   const goldPerGather = quantityPerGather * unitSellPrice;
-  const nodeCount = resourceNodes.filter((node) => node.definitionId === definition.id).length;
+  const nodeCount = activeResourceNodes.filter((node) => node.definitionId === definition.id).length;
   const windowSeconds = Math.max(nodeCount * definition.actionSeconds, definition.regenerationSeconds);
   const windowsPerMinute = 60 / windowSeconds;
+  const continuousLabor = definition.settlementMode === "CONTINUOUS_LABOR";
   return {
     id: definition.id,
     verb: definition.verb,
@@ -241,14 +253,18 @@ export function resourceEconomics(definitionId: string): ResourceEconomics {
     unitSellPrice,
     goldPerGather,
     nodeCount,
-    sustainedGoldPerMinute: nodeCount * goldPerGather * windowsPerMinute,
-    sustainedXpPerMinute: nodeCount * definition.xp * windowsPerMinute
+    sustainedGoldPerMinute: continuousLabor
+      ? (goldPerGather * 60) / definition.actionSeconds
+      : nodeCount * goldPerGather * windowsPerMinute,
+    sustainedXpPerMinute: continuousLabor
+      ? (definition.xp * 60) / definition.actionSeconds
+      : nodeCount * definition.xp * windowsPerMinute
   };
 }
 
 export const miningBalance = {
   resources: [...resourceDefinitionRegistry.values()]
-    .filter((definition) => definition.verb === "MINE")
+    .filter((definition) => definition.verb === "MINE" && activeResourceNodes.some((node) => node.definitionId === definition.id))
     .map((definition) => resourceEconomics(definition.id))
 } as const;
 

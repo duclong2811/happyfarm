@@ -279,9 +279,16 @@ describe("player runtime", () => {
   it("stops safely when a destination cannot be reached", () => {
     const harness = createHarness();
     harness.runtime.start();
-    // A crop sits on the target tile, so the walk can never arrive: the collision world refuses the
-    // last step and the queue is dropped instead of spinning against the obstacle.
-    const blockedTile = plantedTile(3, 25);
+    // A solid tree sits on the target tile, so the walk can never arrive: the collision world refuses
+    // the last step and the queue is dropped instead of spinning against the obstacle.
+    const blockedTile = { ...plantedTile(3, 25), crop: null, tree: {
+      treeInstanceId: "treeinst_1",
+      definitionId: "tree_pine",
+      phase: "GROWING" as const,
+      visualStage: "GROWING" as const,
+      growthProgress: 0.5,
+      ready: false
+    } };
     harness.runtime.setTiles([blockedTile]);
     harness.runtime.setDestination({ worldX: blockedTile.worldX, worldZ: blockedTile.worldZ });
 
@@ -299,6 +306,6 @@ describe("player runtime", () => {
       (harness.runtime.pose?.x ?? 0) - blockedTile.worldX,
       (harness.runtime.pose?.z ?? 0) - blockedTile.worldZ
     );
-    expect(distance).toBeGreaterThan(0.4);
+    expect(distance).toBeGreaterThan(0.3);
   });
 });

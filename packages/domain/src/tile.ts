@@ -24,10 +24,6 @@ export interface FarmTile extends TileCoordinate {
   readonly updatedAt: string;
 }
 
-export interface UnlockedLandPolicy {
-  isUnlocked(farmId: FarmId, coordinate: TileCoordinate): Promise<boolean>;
-}
-
 export function assertValidCoordinate(coordinate: TileCoordinate): void {
   if (
     !Number.isInteger(coordinate.x) ||
@@ -77,12 +73,13 @@ export function applyTileMutation(tile: FarmTile, expectedVersion: number, times
 export const INITIAL_LAND_SIZE = 12;
 
 /**
- * Starter land (PROJECT_SPEC MVP step 2, "Unlock starter land").
+ * The starter square: the farm's first prepared cells.
  *
- * A farm is created together with its initially unlocked land: every tile of a
- * `size` x `size` square anchored at the origin, as SOIL at version 1. Because an
- * existing tile row *is* unlocked land (`UnlockedLandPolicy`), only tiles created here
- * (or by later land expansion) can be planted.
+ * A farm is created with a `size` x `size` square of SOIL tile rows anchored at the origin. V14.5.2
+ * removed the idea that one of these rows *is* the right to use the ground: the whole natural Home
+ * Island is the player's to develop, and a `farm_tiles` row is now tile state (and legacy ownership
+ * bookkeeping), not a placement permission. These rows still record the farm's own starting patch and
+ * keep every existing save, crop foreign key and construction trigger working.
  */
 export function createInitialFarmTiles(
   farmId: FarmId,

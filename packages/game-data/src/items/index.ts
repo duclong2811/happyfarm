@@ -58,9 +58,14 @@ export const itemRegistry = createItemRegistry([
   { id: "item_orange", displayNameKey: "item.orange.name", category: "CROP", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_peach_sapling", displayNameKey: "item.peach_sapling.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_peach", displayNameKey: "item.peach.name", category: "CROP", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_wildwood_sapling", displayNameKey: "item.wildwood_sapling.name", category: "SEED", stackable: true, maxStack: MAX_ITEM_STACK },
   // A caught fish is produce of the water: it is stored and sold like any crop, and it is never
   // planted or fed to anything. The category exists so the market's sell rule can name it.
   { id: "item_fish_tilapia", displayNameKey: "item.fish_tilapia.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
+  // Aquaculture consumes the legacy tilapia item as fingerlings and produces a distinct adult item.
+  // Existing inventory is intentionally not rewritten: the server cannot infer whether an old stack
+  // came from a purchase, fishing, or the pre-split aquaculture harvest.
+  { id: "item_fish_tilapia_adult", displayNameKey: "item.fish_tilapia_adult.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_fish_carp", displayNameKey: "item.fish_carp.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_fish_catfish", displayNameKey: "item.fish_catfish.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_fish_sardine", displayNameKey: "item.fish_sardine.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
@@ -69,6 +74,9 @@ export const itemRegistry = createItemRegistry([
   { id: "item_fish_tuna", displayNameKey: "item.fish_tuna.name", category: "FISH", stackable: true, maxStack: MAX_ITEM_STACK },
   // Raw materials: what the island's deposits give up, and what crafting and building will later
   // consume. They are stackable like everything else and have no use yet beyond being sold.
+  // Quặng is a new authoritative output. item_stone and the other legacy materials remain intact so
+  // old inventory, warehouse upgrades, receipts and resource settlements are not rewritten.
+  { id: "item_ore", displayNameKey: "item.ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_stone", displayNameKey: "item.stone.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_copper_ore", displayNameKey: "item.copper_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_iron_ore", displayNameKey: "item.iron_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },

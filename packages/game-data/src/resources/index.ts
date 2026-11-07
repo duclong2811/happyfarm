@@ -56,6 +56,10 @@ export const ResourceDefinitionSchema = z
     actionSeconds: z.number().int().positive().max(600),
     /** How long the node stays depleted after a successful gather. */
     regenerationSeconds: z.number().int().positive().max(31_536_000),
+    /** Output units per hour for a Production Rate assignment backed by one available node. */
+    productionUnitsPerHour: z.number().int().positive().max(1_000_000),
+    /** How a new assignment consumes this definition. Legacy nodes keep their finite availability window. */
+    settlementMode: z.enum(["REGENERATING_NODE", "CONTINUOUS_LABOR"]).default("REGENERATING_NODE"),
     dropTableId: z.string().regex(/^resourcetable_[a-z0-9]+(?:_[a-z0-9]+)*$/),
     /** Experience granted when the gather settles. */
     xp: z.number().int().positive().max(1_000_000),
@@ -87,7 +91,9 @@ export const ResourceNodeSchema = z
     zoneKind: z.literal("HOME_ISLAND"),
     /** Fractional tile coordinates, the same currency the starter world and fishing spots use. */
     position: z.object({ x: z.number(), y: z.number() }).strict(),
-    interactionRadiusTiles: z.number().positive().max(12)
+    interactionRadiusTiles: z.number().positive().max(12),
+    /** False keeps a retired placement available for legacy settlement/replay without exposing it to new starts. */
+    active: z.boolean().optional()
   })
   .strict();
 
@@ -104,6 +110,7 @@ function registry<T extends { id: string }>(definitions: readonly T[], label: st
 
 export const resourceDropTableRegistry = registry(
   z.array(ResourceDropTableSchema).parse([
+    { id: "resourcetable_ore", displayNameKey: "resourcetable.ore.name", entries: [{ itemDefinitionId: "item_ore", minQuantity: 2, maxQuantity: 2, weight: 1 }] },
     { id: "resourcetable_stone", displayNameKey: "resourcetable.stone.name", entries: [{ itemDefinitionId: "item_stone", minQuantity: 2, maxQuantity: 2, weight: 1 }] },
     { id: "resourcetable_copper", displayNameKey: "resourcetable.copper.name", entries: [{ itemDefinitionId: "item_copper_ore", minQuantity: 2, maxQuantity: 2, weight: 1 }] },
     { id: "resourcetable_iron", displayNameKey: "resourcetable.iron.name", entries: [{ itemDefinitionId: "item_iron_ore", minQuantity: 2, maxQuantity: 2, weight: 1 }] },
@@ -119,55 +126,66 @@ export const resourceDropTableRegistry = registry(
 
 export const resourceDefinitionRegistry = registry(
   z.array(ResourceDefinitionSchema).parse([
+    // The active mining contract is intentionally one predictable material. The old definitions stay
+    // in the catalogue only so an already-recorded action can still settle with its original output.
+    // Unified mining is labor-driven: one actor earns 2 ore every 6 seconds while assigned. The
+    // node is an anchor and access check, not a stock counter or a cooldown source.
+    { id: "resource_ore", displayNameKey: "resource.ore.name", verb: "MINE", actionSeconds: 6, regenerationSeconds: 120, productionUnitsPerHour: 1_200, settlementMode: "CONTINUOUS_LABOR", dropTableId: "resourcetable_ore", xp: 3, modelId: "resource_stone" },
     // Stone is what a new player finds first: quick to break, quick to come back, and worth little
     // enough that selling it is a convenience rather than an income.
-    { id: "resource_stone", displayNameKey: "resource.stone.name", verb: "MINE", actionSeconds: 6, regenerationSeconds: 120, dropTableId: "resourcetable_stone", xp: 3, modelId: "resource_stone" },
-    { id: "resource_copper", displayNameKey: "resource.copper.name", verb: "MINE", actionSeconds: 8, regenerationSeconds: 300, dropTableId: "resourcetable_copper", xp: 6, modelId: "resource_copper", requiredLevel: 2 },
-    { id: "resource_coal", displayNameKey: "resource.coal.name", verb: "MINE", actionSeconds: 10, regenerationSeconds: 420, dropTableId: "resourcetable_coal", xp: 9, modelId: "resource_coal", requiredLevel: 4 },
-    { id: "resource_iron", displayNameKey: "resource.iron.name", verb: "MINE", actionSeconds: 13, regenerationSeconds: 600, dropTableId: "resourcetable_iron", xp: 14, modelId: "resource_iron", requiredLevel: 6 }
+    { id: "resource_stone", displayNameKey: "resource.stone.name", verb: "MINE", actionSeconds: 6, regenerationSeconds: 120, productionUnitsPerHour: 1, dropTableId: "resourcetable_stone", xp: 3, modelId: "resource_stone" },
+    { id: "resource_copper", displayNameKey: "resource.copper.name", verb: "MINE", actionSeconds: 8, regenerationSeconds: 300, productionUnitsPerHour: 1, dropTableId: "resourcetable_copper", xp: 6, modelId: "resource_copper", requiredLevel: 2 },
+    { id: "resource_coal", displayNameKey: "resource.coal.name", verb: "MINE", actionSeconds: 10, regenerationSeconds: 420, productionUnitsPerHour: 1, dropTableId: "resourcetable_coal", xp: 9, modelId: "resource_coal", requiredLevel: 4 },
+    { id: "resource_iron", displayNameKey: "resource.iron.name", verb: "MINE", actionSeconds: 13, regenerationSeconds: 600, productionUnitsPerHour: 1, dropTableId: "resourcetable_iron", xp: 14, modelId: "resource_iron", requiredLevel: 6 }
     // Forestry: the same lifecycle as mining with a different verb, longer waits and a stump instead
     // of a smaller rock. Wildwood is the early, quick, bulk material; pine is the intermediate one
     // with its own identity; hardwood is the slow, valuable one.
-    ,{ id: "resource_wildwood", displayNameKey: "resource.wildwood.name", verb: "CHOP", actionSeconds: 5, regenerationSeconds: 120, dropTableId: "resourcetable_wood", xp: 2, modelId: "resource_wildwood", depletedModelId: "resource_wildwood_stump" }
-    ,{ id: "resource_pine", displayNameKey: "resource.pine.name", verb: "CHOP", actionSeconds: 7, regenerationSeconds: 240, dropTableId: "resourcetable_resin", xp: 6, modelId: "resource_pine", depletedModelId: "resource_pine_stump", requiredLevel: 3 }
-    ,{ id: "resource_hardwood", displayNameKey: "resource.hardwood.name", verb: "CHOP", actionSeconds: 11, regenerationSeconds: 480, dropTableId: "resourcetable_hardwood", xp: 12, modelId: "resource_hardwood", depletedModelId: "resource_hardwood_stump", requiredLevel: 5 }
+    ,{ id: "resource_wildwood", displayNameKey: "resource.wildwood.name", verb: "CHOP", actionSeconds: 5, regenerationSeconds: 120, productionUnitsPerHour: 1, dropTableId: "resourcetable_wood", xp: 2, modelId: "resource_wildwood", depletedModelId: "resource_wildwood_stump" }
+    ,{ id: "resource_pine", displayNameKey: "resource.pine.name", verb: "CHOP", actionSeconds: 7, regenerationSeconds: 240, productionUnitsPerHour: 1, dropTableId: "resourcetable_resin", xp: 6, modelId: "resource_pine", depletedModelId: "resource_pine_stump", requiredLevel: 3 }
+    ,{ id: "resource_hardwood", displayNameKey: "resource.hardwood.name", verb: "CHOP", actionSeconds: 11, regenerationSeconds: 480, productionUnitsPerHour: 1, dropTableId: "resourcetable_hardwood", xp: 12, modelId: "resource_hardwood", depletedModelId: "resource_hardwood_stump", requiredLevel: 5 }
   ]),
   "resource"
 );
 
 /**
- * Home Island's deposits: nine nodes on the volcano's flank and foothill.
- *
- * Fixed positions, checked against the real terrain for walkable ground, spread around the mountain so
- * a player exploring it finds a few clusters rather than one quarry. They are far from the starter
- * parcel on purpose: mining is somewhere the player walks to.
+ * Home Island's resource placements. The active mining contract has one easy-to-find ore mine; the
+ * retired mining placements remain in this registry only as compatibility identities for old state.
+ * Forestry placements continue to be active.
  */
 export const resourceNodeRegistry = registry(
   z.array(ResourceNodeSchema).parse([
-    { id: "node_stone_ridge", definitionId: "resource_stone", zoneKind: "HOME_ISLAND", position: { x: 12, y: -12 }, interactionRadiusTiles: 3 },
-    { id: "node_stone_west", definitionId: "resource_stone", zoneKind: "HOME_ISLAND", position: { x: -3, y: -23 }, interactionRadiusTiles: 3 },
-    { id: "node_stone_south", definitionId: "resource_stone", zoneKind: "HOME_ISLAND", position: { x: 20, y: -30 }, interactionRadiusTiles: 3 },
-    { id: "node_copper_east", definitionId: "resource_copper", zoneKind: "HOME_ISLAND", position: { x: 24, y: -23 }, interactionRadiusTiles: 3 },
-    { id: "node_copper_north", definitionId: "resource_copper", zoneKind: "HOME_ISLAND", position: { x: 4, y: -16 }, interactionRadiusTiles: 3 },
-    { id: "node_coal_west", definitionId: "resource_coal", zoneKind: "HOME_ISLAND", position: { x: -2, y: -24 }, interactionRadiusTiles: 3 },
-    { id: "node_coal_deep", definitionId: "resource_coal", zoneKind: "HOME_ISLAND", position: { x: -3, y: -27 }, interactionRadiusTiles: 3 },
-    { id: "node_iron_west", definitionId: "resource_iron", zoneKind: "HOME_ISLAND", position: { x: -2, y: -28 }, interactionRadiusTiles: 3 },
-    { id: "node_iron_north", definitionId: "resource_iron", zoneKind: "HOME_ISLAND", position: { x: 12, y: -10 }, interactionRadiusTiles: 3 }
-    // Wild forestry trees, in the island's two woods. Positions are fixed, checked against the real
-    // terrain for walkable ground, and kept clear of the mining deposits so a player never finds two
-    // different kinds of node inside one interaction range.
-    ,{ id: "node_wildwood_north_1", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: -1, y: -19 }, interactionRadiusTiles: 3.2 }
-    ,{ id: "node_wildwood_north_2", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 3, y: -20 }, interactionRadiusTiles: 3.2 }
-    ,{ id: "node_wildwood_north_3", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 7, y: -24 }, interactionRadiusTiles: 3.2 }
-    ,{ id: "node_wildwood_north_4", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 10, y: -21 }, interactionRadiusTiles: 3.2 }
-    ,{ id: "node_wildwood_north_5", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 14, y: -23 }, interactionRadiusTiles: 3.2 }
-    ,{ id: "node_pine_north_1", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 16, y: -25 }, interactionRadiusTiles: 3.2 }
-    ,{ id: "node_pine_north_2", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 17, y: -20 }, interactionRadiusTiles: 3.2 }
-    ,{ id: "node_pine_north_3", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 20, y: -21 }, interactionRadiusTiles: 3.2 }
+    // Stable identity retained; the placement sits on the walkable volcano slope that the Work Area
+    // rules classify as MINING, rather than on a forestry foothill.
+    { id: "node_stone_ridge", definitionId: "resource_ore", zoneKind: "HOME_ISLAND", position: { x: 12, y: -12 }, interactionRadiusTiles: 3, active: true },
+    // Retired from new snapshots. Their definitions remain above for old active actions and replay.
+    { id: "node_stone_west", definitionId: "resource_stone", zoneKind: "HOME_ISLAND", position: { x: -3, y: -23 }, interactionRadiusTiles: 3, active: false },
+    { id: "node_stone_south", definitionId: "resource_stone", zoneKind: "HOME_ISLAND", position: { x: 20, y: -30 }, interactionRadiusTiles: 3, active: false },
+    { id: "node_copper_east", definitionId: "resource_copper", zoneKind: "HOME_ISLAND", position: { x: 24, y: -23 }, interactionRadiusTiles: 3, active: false },
+    { id: "node_copper_north", definitionId: "resource_copper", zoneKind: "HOME_ISLAND", position: { x: 4, y: -16 }, interactionRadiusTiles: 3, active: false },
+    { id: "node_coal_west", definitionId: "resource_coal", zoneKind: "HOME_ISLAND", position: { x: -2, y: -24 }, interactionRadiusTiles: 3, active: false },
+    { id: "node_coal_deep", definitionId: "resource_coal", zoneKind: "HOME_ISLAND", position: { x: -3, y: -27 }, interactionRadiusTiles: 3, active: false },
+    { id: "node_iron_west", definitionId: "resource_iron", zoneKind: "HOME_ISLAND", position: { x: -2, y: -28 }, interactionRadiusTiles: 3, active: false },
+    { id: "node_iron_north", definitionId: "resource_iron", zoneKind: "HOME_ISLAND", position: { x: 12, y: -10 }, interactionRadiusTiles: 3, active: false }
+    // Wild forestry trees, in the island's two woods plus one starter-adjacent discovery tree.
+    // Positions are fixed, checked against the real terrain for walkable ground, and kept clear of
+    // the mining deposits so a player never finds two different kinds of node inside one interaction
+    // range.
+    ,{ id: "node_wildwood_start_1", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: -1, y: 13 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_1", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 36, y: -18 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_2", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 40, y: -20 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_3", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 44, y: -24 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_4", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 48, y: -26 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_wildwood_north_5", definitionId: "resource_wildwood", zoneKind: "HOME_ISLAND", position: { x: 52, y: -22 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_pine_north_1", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 56, y: -24 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_pine_north_2", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 60, y: -20 }, interactionRadiusTiles: 3.2 }
+    ,{ id: "node_pine_north_3", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 58, y: -16 }, interactionRadiusTiles: 3.2 }
     ,{ id: "node_hardwood_east_1", definitionId: "resource_hardwood", zoneKind: "HOME_ISLAND", position: { x: 44, y: -16 }, interactionRadiusTiles: 3.4 }
     ,{ id: "node_hardwood_east_2", definitionId: "resource_hardwood", zoneKind: "HOME_ISLAND", position: { x: 48, y: -20 }, interactionRadiusTiles: 3.4 }
     ,{ id: "node_hardwood_east_3", definitionId: "resource_hardwood", zoneKind: "HOME_ISLAND", position: { x: 52, y: -16 }, interactionRadiusTiles: 3.4 }
-    ,{ id: "node_pine_east_4", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 56, y: -20 }, interactionRadiusTiles: 3.2 }
+    // Keep this node on the playable north woodland rather than on the starter broadleaf at
+    // (56,-20). The node id is stable - only its authored position moves, so any D1 availability
+    // row keyed by (zone, node id) remains the same resource instance.
+    ,{ id: "node_pine_east_4", definitionId: "resource_pine", zoneKind: "HOME_ISLAND", position: { x: 27, y: -20 }, interactionRadiusTiles: 3.2 }
   ]),
   "resource node"
 );
@@ -175,6 +193,7 @@ export const resourceNodeRegistry = registry(
 export const resourceDropTables = [...resourceDropTableRegistry.values()];
 export const resourceDefinitions = [...resourceDefinitionRegistry.values()];
 export const resourceNodes = [...resourceNodeRegistry.values()];
+export const activeResourceNodes = resourceNodes.filter((node) => node.active !== false);
 
 export function resourceDefinitionForNode(node: ResourceNodeData): ResourceDefinitionData {
   const definition = resourceDefinitionRegistry.get(node.definitionId);

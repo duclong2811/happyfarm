@@ -171,7 +171,9 @@ const DEFINITIONS: Readonly<Record<string, GameplayDefinition>> = {
   place_well: cosmetic("place.well.effect"),
   place_lantern: cosmetic("place.lantern.effect"),
   place_workbench: cosmetic("place.workbench.effect"),
-  place_fish_cage: cosmetic("place.fish_cage.effect"),
+  // Aquaculture has its own authoritative pond lifecycle; it is not a decoration and must not be
+  // presented as one in the construction inspector. The dedicated domain flow owns stock/harvest.
+  place_fish_cage: utility("place.fish_cage.effect"),
 
   // ---- Buildings: the first functional assets ----
   place_barn_t1: storage("place.barn_t1.effect", { WOOD: 250, FOOD: 150, STONE: 100 }),
@@ -205,6 +207,18 @@ const DEFINITIONS: Readonly<Record<string, GameplayDefinition>> = {
 function cosmetic(summaryKey: string): GameplayDefinition {
   return GameplayDefinitionSchema.parse({
     classification: "COSMETIC",
+    status: "ACTIVE",
+    production: null,
+    storage: null,
+    movement: null,
+    summaryKey,
+    workerTask: null
+  });
+}
+
+function utility(summaryKey: string): GameplayDefinition {
+  return GameplayDefinitionSchema.parse({
+    classification: "UTILITY",
     status: "ACTIVE",
     production: null,
     storage: null,

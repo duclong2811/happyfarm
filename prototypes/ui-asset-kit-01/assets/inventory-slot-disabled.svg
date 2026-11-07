@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="250" viewBox="0 0 240 250">
+  <defs>
+    <linearGradient id="slot" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#c8c3b7"/>
+      <stop offset="1" stop-color="#8f8b82"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="232" height="242" rx="29" fill="url(#slot)" stroke="#665f55" stroke-width="5"/>
+  <rect x="10" y="10" width="220" height="230" rx="24" fill="none" stroke="#ded6c8" stroke-opacity=".35" stroke-width="3"/>
+</svg>

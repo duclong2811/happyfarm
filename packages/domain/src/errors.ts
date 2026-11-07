@@ -13,6 +13,17 @@ export type DomainErrorCode =
   | "INVENTORY_LIMIT_EXCEEDED"
   | "WAREHOUSE_FULL"
   | "INVALID_WAREHOUSE"
+  | "INVALID_WORK_AREA"
+  | "WORK_AREA_TOO_MANY_CELLS"
+  | "INVALID_ACTOR"
+  | "INVALID_JOB"
+  | "JOB_REORDER_MISMATCH"
+  | "INVALID_CARGO"
+  | "CARGO_FULL"
+  /** An emergency-funding policy or plan is not well formed. */
+  | "INVALID_FUNDING"
+  /** A place an actor can be, or a walk between two of them, is not well formed. */
+  | "INVALID_ANCHOR"
   | "INVALID_ECONOMY_MUTATION"
   | "INVALID_PLOT"
   | "INVALID_ROTATION"

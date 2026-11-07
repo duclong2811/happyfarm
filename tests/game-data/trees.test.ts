@@ -29,7 +29,7 @@ describe("tree catalogue", () => {
       const sapling = itemRegistry.get(tree.saplingItemDefinitionId);
       const fruit = itemRegistry.get(tree.harvest.itemDefinitionId);
       expect(sapling?.category, tree.id).toBe("SEED");
-      expect(fruit?.category, tree.id).toBe("CROP");
+      expect(["CROP", "MATERIAL"], tree.id).toContain(fruit?.category);
       expect(tree.firstReadySeconds).toBeGreaterThan(0);
       expect(tree.regrowSeconds).toBeGreaterThan(0);
       expect(tree.growthStages).toBeGreaterThanOrEqual(2);
@@ -37,6 +37,7 @@ describe("tree catalogue", () => {
       expect(tree.harvest.xp).toBeGreaterThan(0);
       expect((tree.requiredLevel ?? 1)).toBeLessThanOrEqual(10_000);
     }
+    expect(treeRegistry.get("tree_wildwood")?.regenerates).toBe(false);
   });
 
   it("gives every tree its own sapling, so a planting is never ambiguous", () => {

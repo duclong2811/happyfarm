@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   ErrorCodeSchema,
   HarvestTreeRequestSchema,
+  HarvestTreeAreaRequestSchema,
+  HarvestTreeAreaGroupResponseSchema,
   HarvestTreeResponseSchema,
   PlantTreeRequestSchema,
   RemoveTreeRequestSchema,
@@ -46,9 +48,20 @@ describe("tree contracts", () => {
     expect(TreeDefinitionDTOSchema.safeParse(definition).success).toBe(true);
     expect(TreeStateDTOSchema.safeParse(state).success).toBe(true);
     expect(TreeStateDTOSchema.safeParse({ ...state, lastHarvestedAt: state.plantedAt, phase: "REGROWING" }).success).toBe(true);
+    expect(TreeStateDTOSchema.safeParse({ ...state, lastHarvestedAt: state.plantedAt, readyAt: null, secondsUntilReady: 0, phase: "DEPLETED" }).success).toBe(true);
     expect(HarvestTreeResponseSchema.safeParse({
       harvest: { treeInstanceId: TREE_INSTANCE_ID, itemDefinitionId: "item_apple", quantityAdded: 3 },
       progression: { xpAwarded: 10, leveledUp: false, progression: { level: 3, xp: 370, xpIntoLevel: 10, xpForNextLevel: 120, maxLevel: 50 } }
+    }).success).toBe(true);
+    expect(HarvestTreeAreaRequestSchema.safeParse({
+      requestId: "tree_area_001",
+      trees: [{ treeInstanceId: TREE_INSTANCE_ID, expectedTreeVersion: 1 }]
+    }).success).toBe(true);
+    expect(HarvestTreeAreaGroupResponseSchema.safeParse({
+      results: [{ treeInstanceId: TREE_INSTANCE_ID, status: "HARVESTED", itemDefinitionId: "item_apple", quantityAdded: 3, reason: null }],
+      harvestedCount: 1,
+      skippedCount: 0,
+      products: [{ itemDefinitionId: "item_apple", quantity: 3 }]
     }).success).toBe(true);
   });
 

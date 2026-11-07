@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { emptyProgression, type IdempotencyRecord } from "@happy-farm/application";
 import {
@@ -13,16 +11,11 @@ import {
 import { D1HarvestSettlementRepository, D1ProgressionRepository } from "../../workers/api/src/d1-repositories";
 import { gameDataProgressionDefinition } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
+import { schemaSql } from "../support/migrations";
 import { CROP_ONE_ID, CROP_TWO_ID, FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 
-const migration = [
-  "0001_phase_1_foundation.sql",
-  "0002_crop_simulation.sql",
-  "0003_inventory_and_harvest.sql",
-  "0005_player_progression.sql"
-]
-  .map((name) => readFileSync(fileURLToPath(new URL(`../../database/migrations/${name}`, import.meta.url)), "utf8"))
-  .join("\n");
+// The current schema: the harvest settlement names its destination, so it needs migration 0026.
+const migration = schemaSql();
 
 function row(db: NodeD1Database): unknown {
   return db.sqlite

@@ -2,12 +2,16 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  ApplicationError,
   HarvestTree,
+  HarvestTreeAreaGroup,
   InventoryService,
   PlantTree,
+  PlantTreeAreaGroup,
   PlantCrop,
   RemoveTree,
   type Clock,
+  type TreeHarvestSettlementRepository,
   type TreeIdGenerator
 } from "@happy-farm/application";
 import {
@@ -15,9 +19,9 @@ import {
   createFarmTile,
   createOwnedFarm,
   parseFarmId,
-  type TreeInstanceId,
-  type UnlockedLandPolicy
+  type TreeInstanceId
 } from "@happy-farm/domain";
+import type { TileTerrainLookup } from "@happy-farm/application";
 import {
   D1CropRepository,
   D1FarmMemberRepository,
@@ -27,6 +31,8 @@ import {
   D1InventoryRepository,
   D1ProgressionRepository,
   D1TreeHarvestSettlementRepository,
+  D1TreeHarvestBatchReceiptRepository,
+  D1PlantBatchReceiptRepository,
   D1TreeRepository
 } from "../../workers/api/src/d1-repositories";
 import {
@@ -82,11 +88,14 @@ class SequenceTreeIds implements TreeIdGenerator {
   }
 }
 
-class ConfiguredUnlockedLand implements UnlockedLandPolicy {
-  constructor(private readonly unlocked: boolean) {}
-  isUnlocked(): Promise<boolean> {
-    return Promise.resolve(this.unlocked);
-  }
+/** Natural dry land, unless a test asks for ground the island would refuse. */
+function configuredLand(usable = true): TileTerrainLookup {
+  return {
+    classify: () =>
+      usable
+        ? { terrain: "LAND", shallowWater: false, protectedGround: false }
+        : { terrain: "WATER", shallowWater: false, protectedGround: false }
+  };
 }
 
 function seedPlayer(db: NodeD1Database, id: string, subject: string): void {
@@ -169,7 +178,7 @@ describe("tree use cases", () => {
     db.close();
   });
 
-  function plantTree(unlocked = true, ids = new SequenceTreeIds()): PlantTree {
+  function plantTree(usableLand = true, ids = new SequenceTreeIds()): PlantTree {
     return new PlantTree({
       farms,
       members,
@@ -181,7 +190,7 @@ describe("tree use cases", () => {
       definitions: new GameDataTreeDefinitions(),
       progression: progressions,
       progressionDefinition: gameDataProgressionDefinition,
-      unlockedLand: new ConfiguredUnlockedLand(unlocked),
+      terrain: configuredLand(usableLand),
       inventoryService: new InventoryService(new GameDataItemDefinitions(), clock),
       ids,
       fingerprints: new Sha256Fingerprint(),
@@ -189,18 +198,42 @@ describe("tree use cases", () => {
     });
   }
 
-  function harvestTree(): HarvestTree {
+  function harvestTree(settlement: TreeHarvestSettlementRepository = new D1TreeHarvestSettlementRepository(db)): HarvestTree {
     return new HarvestTree(
       farms,
       members,
       trees,
       inventory,
       idempotency,
-      new D1TreeHarvestSettlementRepository(db),
+      settlement,
       new GameDataTreeDefinitions(),
       new InventoryService(new GameDataItemDefinitions(), clock),
       progressions,
       gameDataProgressionDefinition,
+      new Sha256Fingerprint(),
+      clock
+    );
+  }
+
+  function harvestTreeArea(): HarvestTreeAreaGroup {
+    return new HarvestTreeAreaGroup(
+      farms,
+      members,
+      trees,
+      new GameDataTreeDefinitions(),
+      harvestTree(),
+      new D1TreeHarvestBatchReceiptRepository(db),
+      new Sha256Fingerprint(),
+      clock
+    );
+  }
+
+  function plantTreeArea(tree: PlantTree): PlantTreeAreaGroup {
+    return new PlantTreeAreaGroup(
+      farms,
+      members,
+      tree,
+      new D1PlantBatchReceiptRepository(db, "PLANT_TREE_AREA_GROUP"),
       new Sha256Fingerprint(),
       clock
     );
@@ -221,6 +254,24 @@ describe("tree use cases", () => {
   const actor = { playerId: PLAYER_ONE_ID };
 
   describe("PlantTree", () => {
+    it("plants a bounded tree area and replays without spending saplings twice", async () => {
+      give(db, SAPLING, 2);
+      const batch = plantTreeArea(plantTree(true, new SequenceTreeIds([TREE_ONE_ID, TREE_TWO_ID])));
+      const command = {
+        requestId: "request_plant_tree_area_001",
+        treeDefinitionId: "tree_apple",
+        cells: [
+          { x: 0, y: 0, expectedTileVersion: 1 },
+          { x: 1, y: 0, expectedTileVersion: 1 }
+        ]
+      };
+      const result = await batch.execute(actor, FARM_ONE_ID, command);
+      expect(result).toMatchObject({ plantedCount: 2, skippedCount: 0 });
+      expect(itemQuantity(db, SAPLING)).toEqual({ quantity: 0 });
+      await expect(batch.execute(actor, FARM_ONE_ID, command)).resolves.toEqual(result);
+      expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM tree_instances WHERE farm_id = ?").get(FARM_ONE_ID)).toEqual({ count: 2 });
+    });
+
     it("spends exactly one sapling and plants a growing tree", async () => {
       give(db, SAPLING, 3);
 
@@ -299,22 +350,30 @@ describe("tree use cases", () => {
       expect(itemQuantity(db, SAPLING)).toEqual({ quantity: 3 });
     });
 
-    it("refuses a tile outside owned land, a non-soil tile, and a stale revision", async () => {
+    it("accepts fresh natural land, and refuses a non-soil tile, a stale revision and water", async () => {
       give(db, SAPLING, 3);
-      const outside = plantTree();
-      await expect(outside.execute(actor, FARM_ONE_ID, { ...plantCommand, x: 50 })).rejects.toMatchObject({
-        code: "RESOURCE_NOT_FOUND"
+      // A cell with no row yet is natural Home Island land (V14.5.2): the plant creates its row.
+      await plantTree().execute(actor, FARM_ONE_ID, {
+        ...plantCommand,
+        x: 50,
+        requestId: "request_tree_fresh",
+        expectedTileVersion: undefined
       });
+      expect(
+        db.sqlite.prepare("SELECT COUNT(*) AS count FROM farm_tiles WHERE farm_id = ? AND x = 50 AND y = 0").get(FARM_ONE_ID)
+      ).toEqual({ count: 1 });
       await expect(
         plantTree().execute(actor, FARM_ONE_ID, { ...plantCommand, x: 0, y: 1 })
       ).rejects.toMatchObject({ code: "TILE_NOT_PLANTABLE" });
       await expect(
         plantTree().execute(actor, FARM_ONE_ID, { ...plantCommand, expectedTileVersion: 9 })
       ).rejects.toMatchObject({ code: "CONFLICT_STALE_STATE" });
-      await expect(
-        plantTree(false).execute(actor, FARM_ONE_ID, plantCommand)
-      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
-      expect(itemQuantity(db, SAPLING)).toEqual({ quantity: 3 });
+      // Ground the island refuses (water) is still refused.
+      await expect(plantTree(false).execute(actor, FARM_ONE_ID, plantCommand)).rejects.toMatchObject({
+        code: "TILE_NOT_PLANTABLE"
+      });
+      // One sapling spent on the fresh plant; the refusals spent nothing.
+      expect(itemQuantity(db, SAPLING)).toEqual({ quantity: 2 });
     });
 
     it("refuses a non-owner, an unknown farm, and an unknown definition", async () => {
@@ -365,7 +424,7 @@ describe("tree use cases", () => {
             createdAt: NOW,
             updatedAt: NOW
           } as never,
-          1,
+          { kind: "EXISTING", version: 1 },
           {
             kind: "REMOVE",
             playerId: PLAYER_ONE_ID,
@@ -567,6 +626,101 @@ describe("tree use cases", () => {
       ).rejects.toMatchObject({ code: "INVENTORY_LIMIT_EXCEEDED" });
       expect(itemQuantity(db, APPLE)).toEqual({ quantity: 2_147_483_647 });
     });
+
+    it("settles a bounded area group, replays it, and reports stale trees without a second payout", async () => {
+      give(db, SAPLING, 5);
+      const ids = new SequenceTreeIds();
+      const first = await plantTree(true, ids).execute(actor, FARM_ONE_ID, plantCommand);
+      const second = await plantTree(true, ids).execute(actor, FARM_ONE_ID, {
+        ...plantCommand,
+        x: 1,
+        requestId: "request_plant_tree_002"
+      });
+      db.sqlite.prepare("UPDATE tree_instances SET planted_at = ? WHERE id IN (?, ?)").run(LONG_AGO, first.treeInstanceId, second.treeInstanceId);
+      const command = {
+        requestId: "request_tree_area_001",
+        trees: [
+          { treeInstanceId: first.treeInstanceId, expectedTreeVersion: 1 },
+          { treeInstanceId: second.treeInstanceId, expectedTreeVersion: 1 }
+        ]
+      };
+
+      const settled = await harvestTreeArea().execute(actor, FARM_ONE_ID, command);
+      expect(settled.harvestedCount).toBe(2);
+      expect(settled.skippedCount).toBe(0);
+      expect(settled.products).toEqual([{ itemDefinitionId: APPLE, quantity: APPLE_YIELD * 2 }]);
+      expect(itemQuantity(db, APPLE)).toEqual({ quantity: APPLE_YIELD * 2 });
+
+      const replay = await harvestTreeArea().execute(actor, FARM_ONE_ID, command);
+      expect(replay).toEqual(settled);
+      expect(itemQuantity(db, APPLE)).toEqual({ quantity: APPLE_YIELD * 2 });
+
+      const stale = await harvestTreeArea().execute(actor, FARM_ONE_ID, {
+        requestId: "request_tree_area_002",
+        trees: [{ treeInstanceId: first.treeInstanceId, expectedTreeVersion: 1 }]
+      });
+      expect(stale.results).toEqual([{
+        treeInstanceId: first.treeInstanceId,
+        status: "SKIPPED",
+        itemDefinitionId: null,
+        quantityAdded: 0,
+        reason: "STALE"
+      }]);
+      expect(itemQuantity(db, APPLE)).toEqual({ quantity: APPLE_YIELD * 2 });
+    });
+
+    it("reports a full inventory as a per-tree skip without changing the group settlement", async () => {
+      const treeInstanceId = await plantedTree(LONG_AGO);
+      setItem(db, APPLE, 2_147_483_647);
+
+      const result = await harvestTreeArea().execute(actor, FARM_ONE_ID, {
+        requestId: "request_tree_area_inventory_full_001",
+        trees: [{ treeInstanceId, expectedTreeVersion: 1 }]
+      });
+
+      expect(result).toEqual({
+        results: [{
+          treeInstanceId,
+          status: "SKIPPED",
+          itemDefinitionId: null,
+          quantityAdded: 0,
+          reason: "INVENTORY_FULL"
+        }],
+        harvestedCount: 0,
+        skippedCount: 1,
+        products: []
+      });
+      expect(itemQuantity(db, APPLE)).toEqual({ quantity: 2_147_483_647 });
+    });
+
+    it("reports a warehouse-full settlement as a per-tree skip", async () => {
+      const treeInstanceId = await plantedTree(LONG_AGO);
+      const warehouseFullSettlement: TreeHarvestSettlementRepository = {
+        settleTreeHarvestAtomically: () => Promise.reject(new ApplicationError("WAREHOUSE_FULL", "The warehouse does not have enough space"))
+      };
+      const result = await new HarvestTreeAreaGroup(
+        farms,
+        members,
+        trees,
+        new GameDataTreeDefinitions(),
+        harvestTree(warehouseFullSettlement),
+        new D1TreeHarvestBatchReceiptRepository(db),
+        new Sha256Fingerprint(),
+        clock
+      ).execute(actor, FARM_ONE_ID, {
+        requestId: "request_tree_area_warehouse_full_001",
+        trees: [{ treeInstanceId, expectedTreeVersion: 1 }]
+      });
+
+      expect(result.results[0]).toMatchObject({
+        treeInstanceId,
+        status: "SKIPPED",
+        reason: "WAREHOUSE_FULL",
+        quantityAdded: 0
+      });
+      expect(result.harvestedCount).toBe(0);
+      expect(result.skippedCount).toBe(1);
+    });
   });
 
   describe("RemoveTree", () => {
@@ -638,7 +792,7 @@ describe("tree use cases", () => {
         definitions: new GameDataCropDefinitions(),
         progression: progressions,
         progressionDefinition: gameDataProgressionDefinition,
-        unlockedLand: new ConfiguredUnlockedLand(true),
+        terrain: configuredLand(true),
         inventoryService: new InventoryService(new GameDataItemDefinitions(), clock),
         ids: { newCropInstanceId: () => "cropinst_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" as never },
         fingerprints: new Sha256Fingerprint(),

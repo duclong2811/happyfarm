@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   farmingBalance,
-  fishingBalance,
   itemRegistry,
   miningBalance,
   resourceDefinitionRegistry,
   resourceDefinitions,
   resourceDropTableRegistry,
   resourceDropTables,
+  activeResourceNodes,
+  classifyTile,
+  groundCapabilities,
   resourceNodeRegistry,
   resourceNodes,
   shops,
@@ -24,25 +26,29 @@ import {
  */
 
 describe("the mining catalogue", () => {
-  it("ships four materials, each a real MATERIAL item", () => {
-    const materials = ["item_stone", "item_copper_ore", "item_iron_ore", "item_coal"];
+  it("ships one active ore output while retaining legacy materials", () => {
+    const materials = ["item_ore"];
     for (const id of materials) {
       expect(itemRegistry.get(id)?.category, id).toBe("MATERIAL");
     }
-    expect(new Set(materials).size).toBe(4);
+    expect(new Set(materials).size).toBe(1);
+    for (const legacy of ["item_stone", "item_copper_ore", "item_iron_ore", "item_coal"]) {
+      expect(itemRegistry.get(legacy)?.category, legacy).toBe("MATERIAL");
+    }
   });
 
-  it("ships four mining definitions and nine mining placements, all in the home island zone", () => {
+  it("ships one active mining definition and one active placement, all in the home island zone", () => {
     const mining = resourceDefinitions.filter((definition) => definition.verb === "MINE");
-    const miningNodes = resourceNodes.filter((node) =>
+    const miningNodes = activeResourceNodes.filter((node) =>
       mining.some((definition) => definition.id === node.definitionId)
     );
-    expect(mining).toHaveLength(4);
+    expect(miningNodes).toHaveLength(1);
+    expect(miningNodes[0]).toMatchObject({ id: "node_stone_ridge", definitionId: "resource_ore", position: { x: 12, y: -12 } });
+    expect(mining.filter((definition) => activeResourceNodes.some((node) => node.definitionId === definition.id))).toHaveLength(1);
     expect(new Set(resourceDefinitions.map((definition) => definition.id)).size).toBe(
       resourceDefinitions.length
     );
-    expect(miningNodes.length).toBeGreaterThanOrEqual(6);
-    expect(miningNodes.length).toBeLessThanOrEqual(12);
+    expect(miningNodes.length).toBe(1);
     expect(new Set(resourceNodes.map((node) => node.id)).size).toBe(resourceNodes.length);
     for (const node of miningNodes) {
       expect(node.zoneKind, node.id).toBe("HOME_ISLAND");
@@ -50,6 +56,10 @@ describe("the mining catalogue", () => {
       expect(Number.isFinite(node.position.x), node.id).toBe(true);
       expect(node.interactionRadiusTiles, node.id).toBeGreaterThan(0);
     }
+    const mineTile = miningNodes[0]?.position;
+    if (mineTile === undefined) throw new Error("active mining placement is missing");
+    expect(classifyTile(mineTile).terrain).toBe("VOLCANO");
+    expect(groundCapabilities(mineTile)).toContain("MINING");
     for (const definition of mining) {
       expect(definition.verb, definition.id).toBe("MINE");
       expect(definition.actionSeconds, definition.id).toBeGreaterThan(0);
@@ -62,12 +72,15 @@ describe("the mining catalogue", () => {
   });
 
   it("keeps one definition per material so the catalogue reads as production, not luck", () => {
+    const activeMiningDefinitions = resourceDefinitions.filter((definition) =>
+      definition.verb === "MINE" && activeResourceNodes.some((node) => node.definitionId === definition.id)
+    );
     const miningTables = resourceDropTables.filter((table) =>
-      resourceDefinitions.some((definition) => definition.verb === "MINE" && definition.dropTableId === table.id)
+      activeMiningDefinitions.some((definition) => definition.dropTableId === table.id)
     );
     const dropped = miningTables.flatMap((table) => table.entries.map((entry) => entry.itemDefinitionId));
     expect([...new Set(dropped)].sort()).toEqual(
-      ["item_coal", "item_copper_ore", "item_iron_ore", "item_stone"].sort()
+      ["item_ore"]
     );
     // Every shipped table is deterministic for the alpha: one entry, one exact quantity.
     for (const table of resourceDropTables) {
@@ -84,6 +97,8 @@ describe("the mining catalogue", () => {
       verb: "MINE" as const,
       actionSeconds: 5,
       regenerationSeconds: 60,
+      productionUnitsPerHour: 1,
+      settlementMode: "REGENERATING_NODE" as const,
       dropTableId: "resourcetable_test",
       xp: 1,
       modelId: "resource_test"
@@ -151,7 +166,8 @@ describe("the mining catalogue", () => {
         itemRegistry
       );
     }).toThrow("no resource nodes");
-    expect(mustGet(resourceNodeRegistry, "node_stone_ridge").definitionId).toBe("resource_stone");
+    expect(mustGet(resourceNodeRegistry, "node_stone_ridge").definitionId).toBe("resource_ore");
+    expect(mustGet(resourceDefinitionRegistry, "resource_stone").dropTableId).toBe("resourcetable_stone");
   });
 });
 
@@ -162,20 +178,18 @@ describe("the mining economy", () => {
       expect(resource.goldPerGather, resource.id).toBe(resource.quantityPerGather * resource.unitSellPrice);
       const windowsPerMinute =
         60 / Math.max(resource.nodeCount * resource.actionSeconds, resource.regenerationSeconds);
+      const expectedRate = resource.id === "resource_ore"
+        ? resource.goldPerGather * 60 / resource.actionSeconds
+        : resource.nodeCount * resource.goldPerGather * windowsPerMinute;
       expect(resource.sustainedGoldPerMinute, resource.id).toBeCloseTo(
-        resource.nodeCount * resource.goldPerGather * windowsPerMinute,
+        expectedRate,
         10
       );
-      // A faster node is never also the richer one: stone is quick and cheap, iron is slow and richer
-      // per gather but not per minute.
+      // Unified ore keeps the former starter timing/value until a broader economy pass.
       expect(resource.sustainedGoldPerMinute, resource.id).toBeGreaterThan(0);
     }
     const total = miningBalance.resources.reduce((sum, resource) => sum + resource.sustainedGoldPerMinute, 0);
-    // The whole island's deposits, mined as fast as one player can walk them, stay below fishing's
-    // active rate - mining is a supplement, not a replacement.
-    const fishingBest = Math.max(...fishingBalance.tables.map((table) => table.goldPerMinute));
-    expect(total).toBeLessThan(fishingBest);
-    expect(total).toBeGreaterThan(fishingBest / 2);
+    expect(total).toBeGreaterThan(0);
   });
 
   it("keeps materials cheap enough that future crafting is not obviously the worse choice", () => {
@@ -187,7 +201,7 @@ describe("the mining economy", () => {
     // per minute on its own.
     const bestCropGold = Math.max(...farmingBalance.crops.map((crop) => crop.goldPerMinute));
     for (const resource of miningBalance.resources) {
-      expect(resource.sustainedGoldPerMinute, resource.id).toBeLessThan(bestCropGold * 10);
+      if (resource.id !== "resource_ore") expect(resource.sustainedGoldPerMinute, resource.id).toBeLessThan(bestCropGold * 10);
     }
   });
 

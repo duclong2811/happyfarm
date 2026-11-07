@@ -23,6 +23,8 @@ export interface CurrencyDefinition {
 export interface ShopEntry {
   readonly id: ShopEntryId;
   readonly itemDefinitionId: ItemDefinitionId;
+  /** Optional label for a shop purpose; inventory still uses the item definition's label. */
+  readonly shopDisplayNameKey?: string;
   readonly currencyDefinitionId: CurrencyDefinitionId;
   /**
    * What the server charges for one unit, or null when this entry does not trade that way.
