@@ -2937,8 +2937,17 @@ export function createHandler(dependencies: HandlerDependencies) {
         }
         const parsed = AutoStepRequestSchema.safeParse(await parseJson(request));
         if (!parsed.success) return failure("INVALID_INPUT", requestId);
-        const step = await advanceAuto.execute(actor, parseFarmId(decodedFarm), parsed.data);
-        const body: ApiSuccess<{ step: AutoStepDTO }> = { ok: true, data: { step: toAutoStepDTO(step) } };
+        const farmId = parseFarmId(decodedFarm);
+        const step = await advanceAuto.execute(actor, farmId, parsed.data);
+        // A settled step moved the hands: answer with the container in the same response rather than
+        // making every beat cost the client a second `/cargo` request.
+        const container = step.phase === "WORKED" && getActorCargo !== null
+          ? toCargoDTO(await getActorCargo.execute(actor, farmId))
+          : null;
+        const body: ApiSuccess<{ step: AutoStepDTO; container: CargoDTO | null }> = {
+          ok: true,
+          data: { step: toAutoStepDTO(step), container }
+        };
         return jsonResponse(body);
       }
 

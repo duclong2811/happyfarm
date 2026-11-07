@@ -3923,6 +3923,8 @@ async function runAutoStep(): Promise<void> {
   try {
     const result = await api().advanceAuto(farmId, { requestId: newRequestId("auto-step") });
     state.autoStep = result.step;
+    // A WORKED step carries the settled container; older servers omit it and the refresh re-reads it.
+    if (result.container !== undefined && result.container !== null) state.cargo = result.container;
     applyAutoStep(result.step);
     if (result.step.phase === "STOPPED") {
       autoControlDiagnostic("SERVER_STOPPED", {
@@ -3937,7 +3939,7 @@ async function runAutoStep(): Promise<void> {
       playerRuntime.clearDestination();
       await loadWorkers();
     } else {
-      await refreshAfterAutoStep(result.step);
+      await refreshAfterAutoStep(result.step, result.container !== undefined && result.container !== null);
       scheduleAutoStep(delayForAutoStep(result.step));
     }
   } catch (error: unknown) {
@@ -4022,7 +4024,7 @@ function playAutoGesture(step: AutoStepDTO): void {
  * purchase or an unload change the hands and the store. The panel's plan is re-read only while it is
  * open, so a running Auto with the sheet closed costs the farm read and nothing else.
  */
-async function refreshAfterAutoStep(step: AutoStepDTO): Promise<void> {
+async function refreshAfterAutoStep(step: AutoStepDTO, cargoIncluded = false): Promise<void> {
   const farmId = state.farmId;
   if (step.phase !== "WORKED" || farmId === null) return;
   const client = api();
@@ -4030,7 +4032,7 @@ async function refreshAfterAutoStep(step: AutoStepDTO): Promise<void> {
   if (step.step === "HARVEST") await refreshFarm(farmRefreshScopeFor("HARVEST_CROP"));
   // What every settled step can move, and only that: the hands always, the store whenever a transfer
   // happened, the wallet when gold was spent, and experience when a crop was harvested.
-  state.cargo = (await client.getActorCargo(farmId)).cargo;
+  if (!cargoIncluded) state.cargo = (await client.getActorCargo(farmId)).cargo;
   if (step.step === "LOAD_INPUT" || step.step === "PURCHASE_INPUT" || step.step === "UNLOAD") {
     state.inventory = (await client.getInventory()).items;
   }

@@ -898,11 +898,25 @@ describe("Auto execution (D2)", () => {
     expect((await step()).phase).toBe("WAITING");
     expect(cargoQuantity("item_ore")).toBe(2);
 
+    // The WORKED answer carries the settled container, so the client needs no `/cargo` re-read; a
+    // WAITING answer carries none.
+    stepSerial += 1;
+    clock.advanceSeconds(6);
+    const withContainer = await post(`/farms/${FARM_ONE_ID}/auto/step`, { requestId: `exec_step_${String(stepSerial).padStart(4, "0")}` });
+    const containerBody = await json<{ data: { step: { phase: string }; container: { used: number; items: { itemDefinitionId: string; quantity: number }[] } | null } }>(withContainer);
+    expect(containerBody.data.step.phase).toBe("WORKED");
+    const cargoRead = await json<{ data: { cargo: unknown } }>(await request("GET", `/farms/${FARM_ONE_ID}/cargo`));
+    expect(containerBody.data.container).toEqual(cargoRead.data.cargo);
+    expect(containerBody.data.container?.used).toBe(4);
+    stepSerial += 1;
+    const waiting = await post(`/farms/${FARM_ONE_ID}/auto/step`, { requestId: `exec_step_${String(stepSerial).padStart(4, "0")}` });
+    expect((await json<{ data: { container: unknown } }>(waiting)).data.container).toBeNull();
+
     // A late client catches up beat by beat at each beat's own instant, and no further.
     clock.advanceSeconds(24.5);
     for (let index = 0; index < 8; index += 1) await step();
-    expect(cargoQuantity("item_ore")).toBe(2 + 4 * 2);
-    expect(receipts("AUTO_MINE")).toBe(5);
+    expect(cargoQuantity("item_ore")).toBe(4 + 4 * 2);
+    expect(receipts("AUTO_MINE")).toBe(6);
   });
 
   it("does not renew after expiry and normalizes a legacy 24-hour lease", async () => {

@@ -1721,7 +1721,13 @@ export const AutoStepDTOSchema = z
   })
   .strict();
 
-export const AutoStepResponseSchema = z.object({ step: AutoStepDTOSchema }).strict();
+/**
+ * `container` is the full cargo after a WORKED step (the settlement already read it), so the client
+ * does not spend a second request re-reading `/cargo` on every beat. It is null for every other phase.
+ */
+export const AutoStepResponseSchema = z
+  .object({ step: AutoStepDTOSchema, container: z.lazy(() => CargoDTOSchema).nullable().optional() })
+  .strict();
 
 /**
  * One lazy reconciliation attempt.

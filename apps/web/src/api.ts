@@ -860,7 +860,10 @@ export class ApiClient {
    * asks again when the server said to - which is why a modified client cannot rush a walk or a
    * harvest, and why nothing here is a poll.
    */
-  advanceAuto(farmId: string, body: { readonly requestId: string }): Promise<{ readonly step: AutoStepDTO }> {
+  advanceAuto(
+    farmId: string,
+    body: { readonly requestId: string }
+  ): Promise<{ readonly step: AutoStepDTO; readonly container?: CargoDTO | null | undefined }> {
     return this.post(`/farms/${encodeURIComponent(farmId)}/auto/step`, body, AutoStepResponseSchema);
   }
 
