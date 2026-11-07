@@ -28,7 +28,7 @@ describe("offline return popup acceptance", () => {
     expect(source).toMatch(/Number\.isFinite\(previousActiveAt\)\s*&&\s*previousActiveAt\s*>\s*0/u);
     expect(source).toContain("awayMs >= 60_000");
     expect(source).toMatch(/catch\s*\{[\s\S]*?return false;/u);
-    expect(source).toContain("window.setInterval(refreshGrowthOnce, GROWTH_REFRESH_INTERVAL_MS)");
+    expect(source).toContain("if (Date.now() >= growthRefreshDueAt) refreshGrowthOnce();");
     const poll = /function refreshGrowthOnce[\s\S]*?\n\s*\}/u.exec(source)?.[0] ?? "";
     expect(poll).not.toContain("reconcileProductionOnce");
   });
