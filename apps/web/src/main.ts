@@ -3403,7 +3403,7 @@ function renderWorkersAuto(): void {
       })
     ]
       .filter((part) => part !== "")
-      .join(" Â· ");
+      .join(" · ");
     return;
   }
   progress.hidden = true;
@@ -5942,14 +5942,14 @@ async function chopSelectedForestryConstruction(
     refreshScene();
     renderForestryConstructionPanel();
     void refreshAccount();
-    setStatus(() => `Đã chặt ${String(result.quantityAdded)} gỗ.`);
+    setStatus(() => t("forestry.chopDone", { quantity: String(result.quantityAdded) }));
   } catch (error: unknown) {
-    const text = error instanceof ApiError && error.code === "FORESTRY_CONSTRUCTION_NOT_READY"
-      ? "Cây đang tái sinh, chưa thể chặt."
+    const key = error instanceof ApiError && error.code === "FORESTRY_CONSTRUCTION_NOT_READY"
+      ? "forestry.chopRegrowing"
       : error instanceof ApiError && error.code === "INVENTORY_LIMIT_EXCEEDED"
-        ? "Kho đồ không còn chỗ cho gỗ."
-        : "Không thể chặt cây lúc này.";
-    setStatus(() => text, true);
+        ? "forestry.chopStorageFull"
+        : "forestry.chopFailed";
+    setStatus(() => t(key), true);
   } finally {
     interactionPending = false;
     renderForestryConstructionPanel();
@@ -6863,9 +6863,9 @@ function renderSceneState(): void {
 }
 
 function neighborStatusText(npc: NeighborSnapshotDTO["npc"]): string {
-  if (npc.phase === "GROWING") return `Đang trồng · còn ${String(npc.secondsUntilNextMilestone)} giây`;
-  if (npc.phase === "STOCKED") return `Đã thu hoạch ${String(npc.stockQuantity)} sản phẩm · đang dựng nhà`;
-  return `Đã dựng công trình cấp ${String(npc.constructionLevel)}`;
+  if (npc.phase === "GROWING") return t("neighbor.status.growing", { seconds: String(npc.secondsUntilNextMilestone) });
+  if (npc.phase === "STOCKED") return t("neighbor.status.stocked", { quantity: String(npc.stockQuantity) });
+  return t("neighbor.status.built", { level: String(npc.constructionLevel) });
 }
 
 function renderNeighborPanel(): void {
@@ -6876,21 +6876,21 @@ function renderNeighborPanel(): void {
   }
   panel.hidden = false; panel.classList.toggle("is-visit", neighbor.visit.currentPlace === "NEIGHBOR_ISLAND"); panel.replaceChildren();
   const head = make("div", "neighbor-head");
-  head.appendChild(make("h2", undefined, neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "Đảo hàng xóm" : "Bến sang đảo"));
-  const close = make("button", "secondary", "×"); close.setAttribute("aria-label", "Đóng");
+  head.appendChild(make("h2", undefined, t(neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "neighbor.titleVisit" : "neighbor.titleDock")));
+  const close = make("button", "secondary", "×"); close.setAttribute("aria-label", t("neighbor.close"));
   close.addEventListener("click", () => { neighborSelectedTarget = null; renderNeighborPanel(); }); head.appendChild(close); panel.appendChild(head);
   const npc = neighbor.npc;
   if (neighbor.visit.currentPlace === "NEIGHBOR_ISLAND") {
     panel.appendChild(make("p", "neighbor-status", `Mina · ${neighborStatusText(npc)}`));
-    const talk = make("button", "secondary", "Nói chuyện"); talk.addEventListener("click", () => { void talkToNeighbor(); });
-    const home = make("button", undefined, "Về HOME_ISLAND"); home.addEventListener("click", () => { void travelToNeighbor("HOME_ISLAND"); });
+    const talk = make("button", "secondary", t("neighbor.talk")); talk.addEventListener("click", () => { void talkToNeighbor(); });
+    const home = make("button", undefined, t("neighbor.goHome")); home.addEventListener("click", () => { void travelToNeighbor("HOME_ISLAND"); });
     const actions = make("div", "neighbor-actions"); actions.appendChild(talk); actions.appendChild(home); panel.appendChild(actions);
   } else {
-    panel.appendChild(make("p", "neighbor-status", "Điểm cập đảo an toàn · không thay đổi farm của bạn"));
+    panel.appendChild(make("p", "neighbor-status", t("neighbor.dockNote")));
     const actions = make("div", "neighbor-actions");
     for (const island of neighbor.islands ?? [neighbor.island]) {
       const slot = "slot" in island && (island.slot === "KIM" || island.slot === "THUY" || island.slot === "MOC") ? island.slot : "MOC";
-      const label = slot === "KIM" ? "Sang dao Kim" : slot === "THUY" ? "Sang dao Thuy" : "Sang dao Moc";
+      const label = t(slot === "KIM" ? "neighbor.goKim" : slot === "THUY" ? "neighbor.goThuy" : "neighbor.goMoc");
       const islandButton = make("button", undefined, label); islandButton.addEventListener("click", () => { void travelToNeighbor("NEIGHBOR_ISLAND", island.islandId); }); actions.appendChild(islandButton);
     }
     panel.appendChild(actions);
