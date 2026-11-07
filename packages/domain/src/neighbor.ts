@@ -71,8 +71,11 @@ export function reconcileNeighborNpc(state: NeighborNpcState, now: string, maxCa
     phase = "BUILT"; constructionLevel = Math.max(1, constructionLevel);
     nextMilestoneAt = null; changed = true;
   }
-  const reconciledAt = new Date(nowMs).toISOString();
-  if (reconciledAt !== state.lastReconciledAt) changed = true;
+  // The anchor only needs to move when the catch-up cap actually cut progress short (the time beyond it
+  // is paused, so the next window starts from now). Otherwise an unchanged NPC is left untouched: a
+  // read of the neighbour snapshot must not cost a D1 write, and BUILT is terminal.
+  const capped = effectiveMs < nowMs && phase !== "BUILT";
+  if (!changed && !capped) return { ...state, changed: false };
   return { phase, plantedAt: state.plantedAt, readyAt: state.readyAt, stockQuantity, constructionLevel, nextMilestoneAt,
-    version: changed ? state.version + 1 : state.version, lastReconciledAt: reconciledAt, changed };
+    version: state.version + 1, lastReconciledAt: new Date(nowMs).toISOString(), changed: true };
 }

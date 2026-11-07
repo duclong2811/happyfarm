@@ -38,4 +38,21 @@ describe("neighbour NPC progression", () => {
     expect(next.constructionLevel).toBe(1);
     expect(next.nextMilestoneAt).toBeNull();
   });
+
+  it("does not ask for a write when a read finds nothing to change", () => {
+    const growing = {
+      phase: "GROWING" as const, plantedAt: START, readyAt: "2026-01-01T00:01:00.000Z", stockQuantity: 0,
+      constructionLevel: 0, nextMilestoneAt: null, version: 7, lastReconciledAt: START
+    };
+    const early = reconcileNeighborNpc(growing, "2026-01-01T00:00:30.000Z");
+    expect(early.changed).toBe(false);
+    expect(early.version).toBe(7);
+    expect(early.lastReconciledAt).toBe(START);
+
+    const built = reconcileNeighborNpc(growing, "2026-01-01T00:10:00.000Z");
+    expect(built.changed).toBe(true);
+    // BUILT is terminal: later reads, even long after the catch-up cap, never write again.
+    expect(reconcileNeighborNpc(built, "2026-01-01T00:20:00.000Z").changed).toBe(false);
+    expect(reconcileNeighborNpc(built, "2026-03-01T00:00:00.000Z").changed).toBe(false);
+  });
 });
