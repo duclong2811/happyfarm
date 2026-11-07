@@ -11,18 +11,27 @@
  */
 
 html.ui-b {
-  --b-bg: #f6f7f4;
-  --b-surface: #ffffff;
-  --b-surface-2: #f3f5f1;
-  --b-surface-3: #e9ede6;
-  --b-line: #e3e8e0;
-  --b-line-strong: #cfd8cb;
-  --b-ink: #1d2b22;
-  --b-ink-2: #46544a;
-  --b-muted: #758178;
-  --b-primary: #22a05a;
-  --b-primary-hover: #1b8a4c;
-  --b-primary-soft: #e3f5ea;
+  --b-bg: #fbf6ec;
+  --b-surface: #fffcf6;
+  --b-surface-2: #f7f0e3;
+  --b-surface-3: #ece2cf;
+  --b-line: #eadfca;
+  --b-line-strong: #dccdb1;
+  --b-ink: #2b2118;
+  --b-ink-2: #5a4a3a;
+  --b-muted: #8a7a66;
+  --b-primary: #34b46a;
+  --b-primary-hover: #2aa35d;
+  --b-primary-edge: #1f7f46;
+  --b-primary-soft: #e4f6ea;
+  --b-edge: #e2d4ba;
+  /* Module colours: each rail tile owns one, so a player finds a sheet by colour as well as icon. */
+  --b-mod-area: #34b46a;
+  --b-mod-inventory: #e58a3a;
+  --b-mod-market: #f0b429;
+  --b-mod-build: #4f8fe0;
+  --b-mod-areas: #22a6a0;
+  --b-mod-auto: #9a6ad6;
   --b-primary-ink: #ffffff;
   --b-gold: #f2b230;
   --b-gold-soft: #fff4d6;
@@ -38,10 +47,14 @@ html.ui-b {
   --b-shadow-lg: 0 4px 12px rgba(20, 35, 25, .10), 0 18px 48px rgba(20, 35, 25, .18);
   --b-font: "Nunito Variable", "Nunito", "Noto Sans", system-ui, sans-serif;
   --b-font-display: "Baloo 2 Variable", "Nunito Variable", system-ui, sans-serif;
+  --b-depth: 0 3px 0 var(--b-edge);
+  --b-depth-float: 0 3px 0 rgba(43, 33, 24, .18), 0 8px 18px rgba(43, 33, 24, .18);
   --b-focus: 0 0 0 3px rgba(34, 160, 90, .35);
 }
 
 /* ---------------------------------------------------------------- reset of the art-frame layers */
+/* The renderers hide and show controls with the `hidden` attribute; no display rule here may undo it. */
+html.ui-b [hidden] { display: none !important; }
 html.ui-b body *,
 html.ui-b body *::before,
 html.ui-b body *::after {
@@ -675,3 +688,256 @@ html.ui-b #build-panel .shop-search-input {
   html.ui-b .item-grid { grid-template-columns: repeat(auto-fill, minmax(6.4rem, 1fr)); gap: .55rem; }
   html.ui-b .module-panel { border-radius: var(--b-radius-lg) var(--b-radius-lg) 0 0; }
 }
+
+/* ================================================================================================
+ * Game finish. Flat white read as a web dashboard over the bright 3D island, so B keeps its layout
+ * and adds the casual-game cues players expect: warm cream surfaces, a solid lower "edge" on every
+ * pressable thing, coloured module tiles, rounded display type for numbers and titles.
+ * ============================================================================================== */
+
+/* Primary action: solid green with a darker lower edge; pressing sinks it onto that edge. */
+html.ui-b body button.primary,
+html.ui-b body .object-action.primary,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.primary,
+html.ui-b #build-panel .shop-inspector-action button.shop-place,
+html.ui-b #build-panel .shop-inspector-action button.shop-place:not(:disabled) {
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: var(--b-primary);
+  box-shadow: 0 4px 0 var(--b-primary-edge), 0 6px 14px rgba(31, 127, 70, .25);
+  font-family: var(--b-font-display);
+  font-weight: 800;
+  font-size: .98rem;
+  letter-spacing: .01em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .12);
+  transform: translateY(0);
+  transition: transform .06s ease, box-shadow .06s ease, background-color .12s ease;
+}
+html.ui-b body button.primary:active:not(:disabled),
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.primary:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--b-primary-edge);
+}
+/* Secondary: cream with a tan edge. */
+html.ui-b body button.secondary,
+html.ui-b body button.compact:not(.primary):not(.danger),
+html.ui-b body .object-action:not(.primary):not(.danger),
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button:where(:not(.primary, .danger, .panel-close, .item-card, .item-tab, .market-tab, .shop-card, .shop-rail-item, .shop-place)),
+html.ui-b .neighbor-panel button:not(.secondary) {
+  border: 2px solid var(--b-line-strong);
+  border-radius: 14px;
+  color: var(--b-ink);
+  background: var(--b-surface);
+  box-shadow: 0 3px 0 var(--b-edge);
+  font-family: var(--b-font-display);
+  font-weight: 700;
+}
+html.ui-b body button.danger,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.danger {
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: var(--b-danger);
+  box-shadow: 0 4px 0 #a8341f;
+  font-family: var(--b-font-display);
+}
+/* Disabled stays legible: a muted fill with readable text, never white-on-white. */
+html.ui-b body button:disabled,
+html.ui-b body .object-action:disabled,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button:disabled {
+  opacity: 1;
+  color: #8e826f;
+  background: #efe7d8;
+  border-color: #e3d8c3;
+  box-shadow: none;
+  text-shadow: none;
+  cursor: not-allowed;
+}
+
+/* HUD chips: cream with an edge, solid coloured icon discs, rounded numbers. */
+html.ui-b .top-hud .brand,
+html.ui-b .top-hud .hud-stat,
+html.ui-b .top-hud .camera-mode,
+html.ui-b .top-hud .ghost-button {
+  border: 2px solid #fff;
+  color: var(--b-ink);
+  background: var(--b-surface);
+  box-shadow: var(--b-depth-float);
+  backdrop-filter: none;
+}
+html.ui-b .top-hud .brand { color: #fff; background: var(--b-primary); border-color: rgba(255, 255, 255, .85); }
+html.ui-b .top-hud .brand h1 { color: #fff; text-shadow: 0 1px 0 rgba(0, 0, 0, .15); }
+html.ui-b .top-hud .brand-mark { color: var(--b-primary-edge); background: #fff; }
+html.ui-b .top-hud #wallet,
+html.ui-b .top-hud .hud-stat .big { font-family: var(--b-font-display); font-size: 1.08rem; font-weight: 800; color: var(--b-ink); }
+html.ui-b .top-hud .hud-stat-gold .hud-stat-icon { color: #fff; background-color: #f0a91c; box-shadow: inset 0 -2px 0 #c7820a; }
+html.ui-b .top-hud .hud-stat-level .hud-stat-icon { color: #fff; background-color: #4f8fe0; box-shadow: inset 0 -2px 0 #2f6cb8; }
+html.ui-b .top-hud .xp-fill { background: #4f8fe0; }
+html.ui-b .top-hud .camera-mode-button { font-family: var(--b-font-display); font-weight: 700; font-size: .9rem; }
+html.ui-b .top-hud .camera-mode-button.is-active { box-shadow: 0 2px 0 var(--b-primary-edge); }
+
+/* Rail: one coloured tile per module, white icon, lower edge; the open module sinks in. */
+html.ui-b .module-rail .module-launcher {
+  border: 2px solid rgba(255, 255, 255, .9);
+  border-radius: 16px;
+  color: #fff;
+  background: var(--tile, var(--b-primary));
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .22), 0 8px 16px rgba(43, 33, 24, .2);
+}
+html.ui-b .module-rail .module-launcher:hover:not(:disabled) { color: #fff; background: var(--tile, var(--b-primary)); filter: brightness(1.06); }
+html.ui-b .module-rail .module-launcher.is-active,
+html.ui-b .module-rail .module-launcher[aria-expanded="true"],
+html.ui-b .module-rail .module-launcher[aria-pressed="true"] {
+  color: #fff;
+  background: var(--tile, var(--b-primary));
+  border-color: #fff;
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .22), 0 0 0 3px rgba(255, 255, 255, .55);
+}
+html.ui-b #harvest-area-global { --tile: var(--b-mod-area); }
+html.ui-b #inventory-launcher { --tile: var(--b-mod-inventory); }
+html.ui-b #market-launcher { --tile: var(--b-mod-market); }
+html.ui-b #build-launcher { --tile: var(--b-mod-build); }
+html.ui-b #work-areas-launcher { --tile: var(--b-mod-areas); }
+html.ui-b #workers-launcher { --tile: var(--b-mod-auto); }
+html.ui-b .module-rail .module-launcher > span[data-icon] svg { stroke-width: 2.2; }
+
+/* Panels: warm cream sheet with a white rim; titles in the rounded display face. */
+html.ui-b #inventory-panel,
+html.ui-b #market-panel,
+html.ui-b #workers-panel,
+html.ui-b #work-areas-panel,
+html.ui-b #build-panel,
+html.ui-b .module-panel,
+html.ui-b .neighbor-panel,
+html.ui-b #resource-panel,
+html.ui-b .selection-panels > *:not([hidden]),
+html.ui-b #area-harvest-panel,
+html.ui-b .action-dock {
+  border: 3px solid #fff;
+  background: var(--b-surface);
+  box-shadow: 0 4px 0 rgba(43, 33, 24, .14), 0 18px 40px rgba(43, 33, 24, .22);
+}
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-header,
+html.ui-b #build-panel .build-header { background: var(--b-surface); border-bottom: 2px solid var(--b-line); }
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-header h2,
+html.ui-b .neighbor-panel h2,
+html.ui-b .resource-panel-title { font-size: 1.32rem; color: var(--b-ink); }
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-body,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .ui-panel-body { background: var(--b-surface); }
+
+/* Cards and inset blocks: cream on cream, separated by a tan edge instead of a hairline. */
+html.ui-b .item-grid .item-card,
+html.ui-b #build-panel .shop-card,
+html.ui-b #build-panel .shop-inspector,
+html.ui-b #build-panel .shop-rail-item,
+html.ui-b #workers-panel .auto-actor,
+html.ui-b #workers-panel .auto-card,
+html.ui-b #workers-panel .workers-cargo,
+html.ui-b #work-areas-panel .work-area-row {
+  border: 2px solid var(--b-line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--b-depth);
+}
+html.ui-b .item-grid .item-card:hover:not(:disabled) { border-color: var(--b-line-strong); box-shadow: 0 3px 0 var(--b-line-strong); }
+html.ui-b .item-grid .item-card[aria-pressed="true"],
+html.ui-b .item-grid .item-card.is-selected,
+html.ui-b #build-panel .shop-card.is-selected { border-color: var(--b-primary); box-shadow: 0 3px 0 var(--b-primary-edge); }
+html.ui-b .item-grid .item-card-thumb,
+html.ui-b #build-panel .shop-card-thumb,
+html.ui-b #build-panel .shop-inspector-picture { background: #f6efe1; }
+html.ui-b .item-grid .item-card-name { font-family: var(--b-font-display); font-size: .95rem; font-weight: 700; }
+html.ui-b .item-grid .item-card-qty { font-family: var(--b-font-display); color: #fff; background: rgba(43, 33, 24, .78); }
+html.ui-b #market-panel .item-grid .item-card-note { color: #6b4a00; background: #ffe7a6; font-weight: 800; }
+html.ui-b #build-panel .shop-rail-item.is-active,
+html.ui-b #build-panel .shop-rail-item[aria-selected="true"] { color: #fff; background: var(--b-mod-build); border-color: var(--b-mod-build); box-shadow: 0 3px 0 #2f6cb8; }
+html.ui-b .warehouse-strip,
+html.ui-b #market-panel .market-trade { border: 2px solid var(--b-line); background: #fff; box-shadow: var(--b-depth); }
+html.ui-b #workers-panel .auto-control { border: 2px solid #c9ecd5; background: var(--b-primary-soft); box-shadow: 0 3px 0 #c9ecd5; }
+
+/* Segmented tabs: a recessed tray, the active tab a raised white key. */
+html.ui-b .item-tabs,
+html.ui-b .market-tabs { background: var(--b-surface-3); box-shadow: inset 0 2px 0 rgba(43, 33, 24, .08); }
+html.ui-b .item-tabs .item-tab,
+html.ui-b .market-tabs .market-tab { font-family: var(--b-font-display); font-size: .92rem; }
+html.ui-b .item-tabs .item-tab.is-active,
+html.ui-b .market-tabs .market-tab.is-active { color: var(--b-ink); background: #fff; box-shadow: 0 2px 0 var(--b-edge); }
+
+/* Capacity and progress: green on a recessed track. */
+html.ui-b .ui-capacity-bar,
+html.ui-b .warehouse-bar,
+html.ui-b .auto-meter { height: 10px; background: var(--b-surface-3); box-shadow: inset 0 1px 2px rgba(43, 33, 24, .15); }
+
+/* Close buttons: a round cream key. */
+html.ui-b .panel-close,
+html.ui-b :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .panel-close,
+html.ui-b .resource-panel-close { color: var(--b-ink-2); background: var(--b-surface-2); box-shadow: 0 2px 0 var(--b-edge); }
+
+/* ---------------------------------------------------------------- action dock (selection actions) */
+html.ui-b #action-dock .action-copy strong { color: var(--b-ink); font-family: var(--b-font-display); font-size: 1.05rem; }
+html.ui-b #action-dock .action-copy span { color: var(--b-muted); }
+html.ui-b #action-dock button:not(.item-card):not(.dock-expand) {
+  min-height: 2.6rem;
+  padding: .5rem 1.05rem;
+  border: 2px solid var(--b-line-strong);
+  border-radius: 14px;
+  color: var(--b-ink);
+  background: var(--b-surface);
+  box-shadow: 0 3px 0 var(--b-edge);
+  font-family: var(--b-font-display);
+  font-weight: 700;
+  white-space: nowrap;
+  filter: none;
+}
+/* "Go" is how the character walks in the estate view: it is the dock's main action, so it is green. */
+html.ui-b #action-dock button.go,
+html.ui-b #action-dock button.primary,
+html.ui-b #action-dock button.harvest {
+  border: 0;
+  color: #fff;
+  background: var(--b-primary);
+  box-shadow: 0 4px 0 var(--b-primary-edge);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .12);
+}
+html.ui-b #action-dock button.uproot { color: #fff; border: 0; background: var(--b-danger); box-shadow: 0 4px 0 #a8341f; }
+html.ui-b #action-dock button:not(.item-card):disabled {
+  color: #8e826f;
+  background: #efe7d8;
+  border: 2px solid #e3d8c3;
+  box-shadow: none;
+  text-shadow: none;
+}
+html.ui-b #action-dock button:not(.item-card):active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--b-edge); }
+html.ui-b #action-dock .item-picker .item-card {
+  min-height: 5.6rem;
+  padding: .3rem;
+  border: 2px solid var(--b-line);
+  border-radius: 14px;
+  color: var(--b-ink);
+  background: #fff;
+  box-shadow: var(--b-depth);
+}
+html.ui-b #action-dock .item-picker .item-card.is-selected { border-color: var(--b-primary); box-shadow: 0 3px 0 var(--b-primary-edge); }
+html.ui-b #action-dock .item-picker .item-card-thumb { border: 0; border-radius: 10px; background: #f6efe1; }
+html.ui-b #action-dock .item-picker .item-card-name { color: var(--b-ink); font-family: var(--b-font-display); font-weight: 700; }
+html.ui-b #action-dock .item-picker .item-card-qty { color: #fff; background: rgba(43, 33, 24, .78); border: 0; }
+html.ui-b #action-dock button:not(.item-card):not(.dock-expand):not([hidden]) {
+  width: auto;
+  max-width: none;
+  height: auto;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: .4rem;
+  line-height: 1.15;
+}
+html.ui-b #action-dock button [data-icon] { flex: 0 0 auto; }
+/* Category tabs stay one line; a long list scrolls sideways inside its tray instead of wrapping. */
+html.ui-b .item-tabs,
+html.ui-b .market-tabs { flex-wrap: nowrap; }
+html.ui-b .item-tabs .item-tab { flex: 0 0 auto; }
+/* The area tool is a wide label: give it the whole row under the dock's columns, sized to its text. */
+html.ui-b #action-dock #harvest-area:not([hidden]) { grid-column: 1 / -1; justify-self: start; }
