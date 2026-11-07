@@ -863,6 +863,48 @@ describe("Auto execution (D2)", () => {
     expect(Date.parse(autoState()?.simulation_at ?? "")).toBeGreaterThanOrEqual(Date.parse(stopAt));
   });
 
+  it("pays one Mining beat per six seconds at the mine, never one per request", async () => {
+    const area = await createArea("MINING", "Cadence Mine", [{ x: 12, y: -12 }]);
+    await createJob(area, "MINING", "resource_ore");
+    await startAuto();
+    const walk = await step();
+    expect(walk.phase).toBe("TRAVELLING");
+    clock.advanceSeconds(walk.retryAfterMs / 1000 + 0.05);
+
+    // Arriving is not a beat: the first ore is due one full interval after the actor reaches the face.
+    const arrived = await step();
+    expect(arrived.phase).toBe("WAITING");
+    expect(arrived.step).toBe("MINE");
+    expect(arrived.waitReason).toBe("WAITING_FOR_RESOURCE");
+    expect(arrived.retryAfterMs).toBeGreaterThan(5_000);
+    expect(arrived.retryAfterMs).toBeLessThanOrEqual(6_000);
+
+    // Asking again and again without time passing mints nothing.
+    for (let index = 0; index < 5; index += 1) {
+      const spam = await step();
+      expect(spam.phase).toBe("WAITING");
+    }
+    expect(receipts("AUTO_MINE")).toBe(0);
+    expect(cargoQuantity("item_ore")).toBe(0);
+
+    clock.advanceSeconds(6);
+    const beat = await step();
+    expect(beat.phase).toBe("WORKED");
+    expect(beat.step).toBe("MINE");
+    expect(beat.quantity).toBe(2);
+    // The worked answer schedules the next beat, so the client needs no WAITING round trip.
+    expect(beat.retryAfterMs).toBeGreaterThan(0);
+    expect(beat.retryAfterMs).toBeLessThanOrEqual(6_000);
+    expect((await step()).phase).toBe("WAITING");
+    expect(cargoQuantity("item_ore")).toBe(2);
+
+    // A late client catches up beat by beat at each beat's own instant, and no further.
+    clock.advanceSeconds(24.5);
+    for (let index = 0; index < 8; index += 1) await step();
+    expect(cargoQuantity("item_ore")).toBe(2 + 4 * 2);
+    expect(receipts("AUTO_MINE")).toBe(5);
+  });
+
   it("does not renew after expiry and normalizes a legacy 24-hour lease", async () => {
     const area = await createArea("MINING", "Legacy Lease Mine", [{ x: 12, y: -12 }]);
     await createJob(area, "MINING", "resource_ore");

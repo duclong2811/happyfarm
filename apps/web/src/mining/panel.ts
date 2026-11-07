@@ -110,7 +110,8 @@ export function miningPanelState(input: MiningPanelInput): MiningPanelState {
       action: "STOP"
     };
   }
-  if (step?.jobId === assignment.jobId && step.phase === "WORKED" && step.step === "MINE") {
+  // Between beats the server answers WAITING/MINE: the character is still at the face, digging.
+  if (step?.jobId === assignment.jobId && (step.phase === "WORKED" || step.phase === "WAITING") && step.step === "MINE") {
     return { ...base, status: "MINING", action: "STOP" };
   }
   return { ...base, status: "WAITING", action: "STOP" };

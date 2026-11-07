@@ -3960,7 +3960,9 @@ function delayForAutoStep(step: AutoStepDTO): number {
   if (step.phase === "STOPPED") return 0;
   if (step.phase === "RETRY") return AUTO_RETRY_MS;
   if (step.phase === "TRAVELLING") return Math.max(250, step.retryAfterMs);
-  if (step.phase === "WORKED") return AUTO_GESTURE_MS;
+  // Continuous labour (Mining) tells the client when its next beat is due; other work only needs
+  // the gesture to finish before the next ask.
+  if (step.phase === "WORKED") return Math.max(AUTO_GESTURE_MS, step.retryAfterMs);
   return step.retryAfterMs;
 }
 

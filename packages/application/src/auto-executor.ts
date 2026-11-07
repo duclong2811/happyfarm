@@ -597,18 +597,41 @@ export class AdvanceAuto {
         }
         const travel = await this.travelTo(main, current, cellAnchor(target.x, target.y), now);
         if (travel !== null) return this.travelView(main, travel.state, travel.cargo, travel.startedAt);
+        // Continuous labour pays one beat per `actionSeconds` of time spent at the mine, never one beat
+        // per request. The beat lands at its own due instant (the watermark - which an arrival advances
+        // - plus one beat), so request jitter neither loses nor gains ore, and an offline pass walks the
+        // same cadence through WAITING wake-ups.
+        const beatMs = target.actionSeconds * 1000;
+        const watermarkMs = current.simulationAt === null || current.simulationAt === undefined ? Number.NaN : Date.parse(current.simulationAt);
+        const nowMs = Date.parse(now);
+        const dueMs = Number.isFinite(watermarkMs) ? watermarkMs + beatMs : nowMs + beatMs;
+        if (dueMs > nowMs) {
+          return this.view(main, "WAITING", {
+            step: "MINE",
+            waitReason: "WAITING_FOR_RESOURCE",
+            state: current,
+            cargo: await this.cargoView(main),
+            job,
+            assignment: winning,
+            cell: { x: target.x, y: target.y },
+            retryAfterMs: this.leaseAwareWake(Math.max(1, dueMs - nowMs), current, now)
+          });
+        }
         const result = await this.dependencies.actions.mine.executeAuto(actor, farmId, {
           nodeId: target.nodeId,
           assignmentId: job.id,
           actorId: main.id,
-          eventTime: now,
+          eventTime: new Date(dueMs).toISOString(),
           expectedAutoVersion: current.version,
           expectedSimulationAt: current.simulationAt ?? null
         });
         return this.worked(main, current, "MINE", job, winning, {
           itemDefinitionId: result.itemDefinitionId,
           quantity: result.quantity,
-          cell: { x: target.x, y: target.y }
+          cell: { x: target.x, y: target.y },
+          // The next beat is due one interval after this one; saying so spares the client a WAITING
+          // round trip between beats. A late beat (catch-up) is due sooner, so never ask for more.
+          retryAfterMs: this.leaseAwareWake(Math.max(1, Math.min(beatMs, dueMs + beatMs - nowMs)), current, now)
         });
       }
       default:
@@ -657,14 +680,17 @@ export class AdvanceAuto {
     };
   }
 
-  private async resourceTarget(job: ActorJob): Promise<{ readonly nodeId: string; readonly x: number; readonly y: number } | null> {
+  private async resourceTarget(job: ActorJob): Promise<{ readonly nodeId: string; readonly x: number; readonly y: number; readonly actionSeconds: number } | null> {
     if (job.kind !== "MINING") return null;
     const cells = new Set((await this.dependencies.workAreas.listCells(job.workAreaId)).map(workAreaCellKey));
     const node = this.dependencies.targets.resources.listNodes().find((candidate) => {
       if (candidate.definitionId !== job.targetDefinitionId) return false;
       return cells.has(workAreaCellKey({ x: Math.round(candidate.position.x), y: Math.round(candidate.position.y) }));
     });
-    return node === undefined ? null : { nodeId: node.id, x: Math.round(node.position.x), y: Math.round(node.position.y) };
+    if (node === undefined) return null;
+    const definition = this.dependencies.targets.resources.findDefinition(node.definitionId);
+    if (definition === null || !Number.isFinite(definition.actionSeconds) || definition.actionSeconds <= 0) return null;
+    return { nodeId: node.id, x: Math.round(node.position.x), y: Math.round(node.position.y), actionSeconds: definition.actionSeconds };
   }
 
   /** The panel's progress line, adjusted for the action that just landed. */
@@ -765,7 +791,10 @@ export class AdvanceAuto {
 
   /** Record that a walk finished: the actor is now standing where they were heading. */
   private async arrive(actorId: Actor["id"], state: AutoTravelState, now: string): Promise<AutoTravelState> {
-    const next: AutoTravelState = { anchor: state.travelTo, travelTo: null, arrivesAt: null, simulationAt: state.simulationAt ?? null, leaseUntil: state.leaseUntil ?? null, leaseIssuedAt: state.leaseIssuedAt ?? null, version: state.version + 1 };
+    // The timeline is settled up to the arrival instant: the walk itself produced nothing. Advancing
+    // the watermark (never moving it back) is what lets continuous labour start counting its first
+    // beat from the moment the actor actually reached the work point.
+    const next: AutoTravelState = { anchor: state.travelTo, travelTo: null, arrivesAt: null, simulationAt: laterInstant(state.simulationAt ?? null, state.arrivesAt), leaseUntil: state.leaseUntil ?? null, leaseIssuedAt: state.leaseIssuedAt ?? null, version: state.version + 1 };
     const saved = await this.dependencies.travel.saveAtomically(actorId, state.version, next, now);
     if (!saved) throw new ApplicationError("CONFLICT_STALE_STATE", "The actor moved while walking");
     return next;
@@ -880,6 +909,7 @@ export class AdvanceAuto {
       readonly quantity?: number;
       readonly cell?: TileCoordinate;
       readonly progress?: { readonly planted: number; readonly empty: number; readonly mature: number } | null;
+      readonly retryAfterMs?: number;
     }
   ): Promise<AutoStepView> {
     // Read after the settlement, so the panel's cargo meter reflects what just moved.
@@ -893,7 +923,8 @@ export class AdvanceAuto {
       ...(extra.itemDefinitionId === undefined ? {} : { itemDefinitionId: extra.itemDefinitionId }),
       ...(extra.quantity === undefined ? {} : { quantity: extra.quantity }),
       ...(extra.cell === undefined ? {} : { cell: extra.cell }),
-      progress: extra.progress ?? null
+      progress: extra.progress ?? null,
+      ...(extra.retryAfterMs === undefined ? {} : { retryAfterMs: extra.retryAfterMs })
     });
   }
 
@@ -914,4 +945,13 @@ export class AdvanceAuto {
       retryAfterMs: this.leaseAwareWake(Math.min(MAX_WAKE_MS, Math.max(MIN_WAKE_MS, remaining)), state, now)
     });
   }
+}
+
+/** The later of two ISO instants; null only when neither is a valid time. */
+function laterInstant(a: string | null, b: string | null): string | null {
+  const aMs = a === null ? Number.NaN : Date.parse(a);
+  const bMs = b === null ? Number.NaN : Date.parse(b);
+  if (!Number.isFinite(aMs)) return Number.isFinite(bMs) ? b : a;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
 }
