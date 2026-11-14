@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="ui-b">
+<html lang="en" class="ui-b ui-warm">
   <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" /><title>Happy Farm</title></head>
   <body>
     <main class="game-shell"><section class="world" aria-label="Farm world">
@@ -16,6 +16,7 @@
             one until the player asks for them, which is what keeps gold, level and the camera switch
             the only permanent occupants of prime space.
           -->
+          <button id="hud-warehouse" class="hud-stat hud-stat-warehouse" type="button" aria-controls="inventory-panel" hidden><span class="hud-stat-icon" aria-hidden="true"></span><span class="hud-warehouse-copy"><strong id="hud-warehouse-text"></strong><span class="hud-warehouse-bar"><span id="hud-warehouse-fill"></span></span></span></button>
           <button id="hud-menu-toggle" class="ghost-button hud-menu-toggle" type="button" aria-expanded="false" aria-controls="hud-menu"><span data-icon="more" data-icon-size="18"></span></button>
           <div id="hud-menu" class="hud-menu">
             <button id="language" class="ghost-button" type="button" title="Language"><span data-icon="language" data-icon-size="18"></span></button>
@@ -72,6 +73,7 @@
         <button id="build-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="build-panel" title="Build"><span data-icon="build" data-icon-size="22"></span></button>
         <button id="work-areas-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="work-areas-panel" title="Work Areas"><span data-icon="farm" data-icon-size="22"></span></button>
         <button id="workers-launcher" class="module-launcher" type="button" aria-expanded="false" aria-controls="workers-panel" title="Workers"><span data-icon="walk" data-icon-size="22"></span></button>
+        <button id="islands-launcher" class="module-launcher" type="button" aria-controls="neighbor-panel"><span data-icon="land" data-icon-size="22"></span></button>
       </nav>
 
       <!--

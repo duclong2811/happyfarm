@@ -311,6 +311,8 @@ import "./build-shop/shop.css";
 import "./ui/warm-harvest.css";
 // Modern B is the active presentation system; it is opt-in via <html class="ui-b"> and loaded last.
 import "./ui/modern-b.css";
+// Warm v2 is the approved look on top of Modern B's structure (design canvas "Happy Farm – Giao diện mới").
+import "./ui/warm-v2.css";
 
 bootPerfMark("app_started");
 
@@ -2294,6 +2296,14 @@ function renderWarehouse(): void {
   );
   node.classList.toggle("is-full", warehouse.available === 0);
   node.classList.toggle("is-over", warehouse.overCapacity);
+  // The same budget, always in sight: the HUD pill a player checks before a big harvest.
+  const pill = element<HTMLButtonElement>("hud-warehouse");
+  pill.hidden = false;
+  element<HTMLElement>("hud-warehouse-text").textContent = `${format(warehouse.used)} / ${format(warehouse.capacity)}`;
+  element<HTMLElement>("hud-warehouse-fill").style.width = `${String(Math.round(ratio * 100))}%`;
+  pill.classList.toggle("is-full", warehouse.available === 0 || warehouse.overCapacity);
+  pill.setAttribute("aria-label", t("hud.warehouse", { used: format(warehouse.used), capacity: format(warehouse.capacity) }));
+  pill.title = pill.getAttribute("aria-label") ?? "";
 
   const note = element<HTMLElement>("warehouse-note");
   const noteText = warehouse.overCapacity
@@ -6321,8 +6331,23 @@ function roadPreviewYaw(): number {
   return quarter - Math.PI / 2;
 }
 
+/** Short labels shown under the illustrated corner buttons; the full name stays the accessible name. */
+const RAIL_SHORT_LABELS: readonly (readonly [string, MessageKey])[] = [
+  ["harvest-area-global", "rail.area"],
+  ["inventory-launcher", "rail.inventory"],
+  ["market-launcher", "rail.market"],
+  ["build-launcher", "rail.build"],
+  ["work-areas-launcher", "rail.workAreas"],
+  ["workers-launcher", "rail.workers"],
+  ["islands-launcher", "rail.islands"]
+];
+
 /** Every string the layout itself owns, so a language change reaches the panel headings too. */
 function renderChrome(): void {
+  for (const [id, key] of RAIL_SHORT_LABELS) element<HTMLElement>(id).dataset.short = t(key);
+  const islands = element<HTMLButtonElement>("islands-launcher");
+  islands.setAttribute("aria-label", t("rail.islands"));
+  islands.title = t("rail.islands");
   element<HTMLElement>("gold-label").textContent = t("hud.gold");
   element<HTMLElement>("inventory-title").textContent = t("panel.inventory");
   element<HTMLElement>("build-title").replaceChildren(
@@ -9386,6 +9411,18 @@ function wire(): void {
       launcher.focus();
     });
   }
+  element<HTMLButtonElement>("hud-warehouse").addEventListener("click", () => {
+    setActivePanel(togglePanel(panels, "inventory"));
+  });
+  // The ferry is reachable from the HUD as well as by tapping the dock in the world.
+  element<HTMLButtonElement>("islands-launcher").addEventListener("click", () => {
+    const neighbor = state.neighbor;
+    if (neighbor === null) return;
+    neighborSelectedTarget = neighborSelectedTarget !== null
+      ? null
+      : neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "NPC" : "DOCK";
+    renderNeighborPanel();
+  });
   element<HTMLButtonElement>("work-area-create").addEventListener("click", () => {
     setWorkAreaEditor("CREATE");
   });

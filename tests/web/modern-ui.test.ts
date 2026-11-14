@@ -7,10 +7,11 @@ const read = (file: string): string => readFileSync(resolve(process.cwd(), file)
 
 describe("Modern B presentation", () => {
   it("is the active system: opted in on <html> and loaded after every older stylesheet", () => {
-    expect(read("apps/web/index.html")).toMatch(new RegExp(`<html[^>]*class="${MODERN_UI_CLASS}"`, "u"));
+    expect(read("apps/web/index.html")).toMatch(new RegExp(`<html[^>]*class="${MODERN_UI_CLASS} ui-warm"`, "u"));
     const main = read("apps/web/src/main.ts");
     const imports = [...main.matchAll(/^import "(\.\/[^"]+\.css)";$/gmu)].map((match) => match[1]);
-    expect(imports.at(-1)).toBe("./ui/modern-b.css");
+    // Modern B is the structure; Warm v2 (the approved design) is the look, so it loads last.
+    expect(imports.slice(-2)).toEqual(["./ui/modern-b.css", "./ui/warm-v2.css"]);
   });
 
   it("does not attach the legacy art-frame skins on top of it", () => {
@@ -31,5 +32,14 @@ describe("Modern B presentation", () => {
     const main = read("apps/web/src/main.ts");
     expect(main).toContain('neighborSelectedTarget = state.neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "NPC" : null;');
     expect(main).not.toMatch(/getNeighbor\(\)\)\.neighbor;\n\s*neighborSelectedTarget = "DOCK";/u);
+  });
+
+  it("gives every corner button illustrated art, including the market stall that was a blank frame", () => {
+    const css = read("apps/web/src/ui/warm-v2.css");
+    for (const id of ["inventory", "market", "build", "workers", "islands", "work-areas"]) {
+      expect(css).toMatch(new RegExp(`#${id}-launcher \\{ --icon: url\\(`, "u"));
+    }
+    expect(css).toContain('#market-launcher { --icon: url("../assets/ui/warm/market_stall.svg")');
+    expect(css).not.toContain("nav-market-map.png");
   });
 });

@@ -1,0 +1,482 @@
+/*
+ * Warm v2 — the approved presentation (design canvas "Happy Farm – Giao diện mới").
+ *
+ * Wood-framed illustrated buttons, orange ribbon headers, cream paper sheets and cocoa plaques with a
+ * gold rim. It sits on top of modern-b.css (which already neutralises the older art-frame layers and
+ * owns the panel structure) and only decides look and placement, never behaviour. Opt-in:
+ * `<html class="ui-b ui-warm">`.
+ */
+
+html.ui-b.ui-warm {
+  --w-cream: #fff7eb;
+  --w-paper: #fffaf0;
+  --w-ink: #3a2a1c;
+  --w-ink-2: #5c4835;
+  --w-muted: #7a6550;
+  --w-wood: #8a4b23;
+  --w-wood-deep: #5c3216;
+  --w-cocoa: #3e2b26;
+  --w-cocoa-hi: #5b3b29;
+  --w-gold: #f3c46b;
+  --w-orange: #f28c45;
+  --w-orange-hi: #ffae62;
+  --w-orange-lo: #f07c36;
+  --w-orange-edge: #a74425;
+  --w-slot-line: #ecc88a;
+  --w-slot-edge: #d3a464;
+  --w-row: #fbe8c8;
+  --w-green: #4caf50;
+  --w-red: #d9472f;
+  --w-outline: 0 2px 0 #5c2a10, 2px 0 0 #5c2a10, -2px 0 0 #5c2a10, 0 -2px 0 #5c2a10, 1.5px 1.5px 0 #5c2a10, -1.5px 1.5px 0 #5c2a10, 1.5px -1.5px 0 #5c2a10, -1.5px -1.5px 0 #5c2a10;
+  --w-frame: url("../assets/ui/inventory-premium/nav-button-normal.png");
+  --w-frame-on: url("../assets/ui/inventory-premium/nav-button-active.png");
+  --w-close: url("../assets/ui/inventory-premium/close-button.png");
+  --w-display: "Baloo 2 Variable", "Nunito Variable", system-ui, sans-serif;
+  --rail-size: 0px;
+}
+
+/* ================================================================ buttons */
+html.ui-b.ui-warm body button.primary,
+html.ui-b.ui-warm body .object-action.primary,
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.primary,
+html.ui-b.ui-warm #build-panel .shop-inspector-action button.shop-place,
+html.ui-b.ui-warm #action-dock button.go,
+html.ui-b.ui-warm #action-dock button.primary,
+html.ui-b.ui-warm #action-dock button.harvest {
+  border: 0;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: 0 5px 0 var(--w-orange-edge), 0 9px 16px rgba(167, 68, 37, .3), inset 0 3px 0 rgba(255, 255, 255, .45);
+  font-family: var(--w-display);
+  font-weight: 800;
+  text-shadow: 0 2px 0 rgba(120, 40, 10, .5);
+}
+html.ui-b.ui-warm body button.primary:active:not(:disabled),
+html.ui-b.ui-warm #action-dock button:not(.item-card):active:not(:disabled) { transform: translateY(4px); box-shadow: 0 1px 0 var(--w-orange-edge); }
+html.ui-b.ui-warm body button.secondary,
+html.ui-b.ui-warm body button.compact:not(.primary):not(.danger),
+html.ui-b.ui-warm body .object-action:not(.primary):not(.danger),
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button:where(:not(.primary, .danger, .panel-close, .item-card, .item-tab, .market-tab, .shop-card, .shop-rail-item, .shop-place)),
+html.ui-b.ui-warm #action-dock button:not(.item-card):not(.dock-expand):not(.go):not(.primary):not(.harvest):not(.uproot),
+html.ui-b.ui-warm .neighbor-panel button:not(.secondary) {
+  border: 2px solid #d9a865;
+  border-radius: 14px;
+  color: #5a3416;
+  background: linear-gradient(#fffaf0, #f6e2bd);
+  box-shadow: 0 4px 0 #b9824a, inset 0 2px 0 #fff;
+  font-family: var(--w-display);
+  font-weight: 700;
+  text-shadow: none;
+}
+html.ui-b.ui-warm body button.danger,
+html.ui-b.ui-warm #action-dock button.uproot,
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button.danger {
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(#f0694f, var(--w-red));
+  box-shadow: 0 4px 0 #9a2d1c, inset 0 3px 0 rgba(255, 255, 255, .3);
+  font-family: var(--w-display);
+  text-shadow: 0 2px 0 rgba(90, 20, 10, .45);
+}
+html.ui-b.ui-warm body button:disabled,
+html.ui-b.ui-warm body .object-action:disabled,
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) button:disabled,
+html.ui-b.ui-warm #action-dock button:not(.item-card):disabled {
+  color: #806e57;
+  background: #ece2cf;
+  border: 2px solid #ddcfb6;
+  box-shadow: 0 3px 0 #d6c6a8;
+  text-shadow: none;
+}
+
+/* ================================================================ top HUD: cocoa plaques, gold rim */
+html.ui-b.ui-warm .top-hud .brand,
+html.ui-b.ui-warm .top-hud .hud-stat,
+html.ui-b.ui-warm .top-hud .camera-mode {
+  min-height: 3rem;
+  border: 3px solid var(--w-gold);
+  border-radius: 999px;
+  color: #fff3d6;
+  background: linear-gradient(var(--w-cocoa-hi), var(--w-cocoa));
+  box-shadow: 0 4px 0 #24160f, 0 8px 16px rgba(20, 12, 5, .3);
+}
+html.ui-b.ui-warm .top-hud .brand { padding: .25rem 1rem .25rem .35rem; }
+html.ui-b.ui-warm .top-hud .brand h1 { color: #fff3d6; font-family: var(--w-display); text-shadow: none; }
+html.ui-b.ui-warm .top-hud .brand-mark { width: 2.4rem; height: 2.4rem; color: #fff; background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); box-shadow: inset 0 -3px 0 var(--w-orange-edge); }
+html.ui-b.ui-warm .top-hud .hud-stat { position: relative; padding: .2rem 1rem .2rem 3.3rem; }
+html.ui-b.ui-warm .top-hud .hud-stat-icon {
+  position: absolute;
+  left: -.85rem;
+  top: 50%;
+  width: 3.6rem;
+  height: 3.6rem;
+  margin-top: -1.8rem;
+  border-radius: 0;
+  box-shadow: none;
+  background: center / contain no-repeat !important;
+  filter: drop-shadow(0 3px 1px rgba(0, 0, 0, .3));
+}
+html.ui-b.ui-warm .top-hud .hud-stat-icon svg { display: none !important; }
+html.ui-b.ui-warm .top-hud .hud-stat-gold .hud-stat-icon { background-image: url("../assets/ui/target-handoff/hud-gold-coin.png") !important; }
+html.ui-b.ui-warm .top-hud .hud-stat-level .hud-stat-icon { background-image: url("../assets/ui/target-handoff/hud-level-star.png") !important; }
+html.ui-b.ui-warm .top-hud .hud-stat-warehouse .hud-stat-icon { background-image: url("../assets/ui/warm/crate.svg") !important; }
+html.ui-b.ui-warm .top-hud #wallet,
+html.ui-b.ui-warm .top-hud .hud-stat .big,
+html.ui-b.ui-warm .top-hud #hud-warehouse-text { color: #fff3d6; font-family: var(--w-display); font-size: 1.12rem; font-weight: 800; white-space: nowrap; }
+html.ui-b.ui-warm .top-hud .hud-stat .muted { color: #e7cfa7; }
+html.ui-b.ui-warm .top-hud .xp-bar,
+html.ui-b.ui-warm .top-hud .hud-warehouse-bar { display: block; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .2); overflow: hidden; }
+html.ui-b.ui-warm .top-hud .xp-fill { background: linear-gradient(#ffd56b, #f2b233); }
+html.ui-b.ui-warm .top-hud .hud-stat-warehouse { cursor: pointer; font: inherit; }
+html.ui-b.ui-warm .top-hud .hud-warehouse-copy { display: flex; flex-direction: column; gap: .25rem; min-width: 6.5rem; }
+html.ui-b.ui-warm .top-hud #hud-warehouse-fill { display: block; height: 100%; border-radius: 99px; background: linear-gradient(#9be27a, #4caf50); }
+html.ui-b.ui-warm .top-hud .hud-stat-warehouse.is-full #hud-warehouse-fill { background: linear-gradient(#ff8a6e, var(--w-red)); }
+html.ui-b.ui-warm .top-hud .camera-mode { padding: .2rem; }
+html.ui-b.ui-warm .top-hud .camera-mode-button { color: #fff3d6; font-family: var(--w-display); font-weight: 700; }
+html.ui-b.ui-warm .top-hud .camera-mode-button.is-active { color: #fff; background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); box-shadow: 0 2px 0 var(--w-orange-edge); text-shadow: 0 1px 0 rgba(120, 40, 10, .5); }
+
+/* Language and refresh live behind one gear, at every width. */
+html.ui-b.ui-warm .top-hud .hud-menu-toggle,
+html.ui-b.ui-warm .top-hud .camera-recenter {
+  display: inline-grid;
+  place-items: center;
+  width: 3.4rem;
+  height: 3.4rem;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--w-frame) center / 100% 100% no-repeat;
+  box-shadow: none;
+  filter: drop-shadow(0 4px 4px rgba(30, 15, 5, .35));
+}
+html.ui-b.ui-warm .top-hud .camera-recenter[hidden] { display: none !important; }
+html.ui-b.ui-warm .top-hud .hud-menu-toggle > span,
+html.ui-b.ui-warm .top-hud .camera-recenter > span { width: 2rem; height: 2rem; background: center / contain no-repeat; }
+html.ui-b.ui-warm .top-hud .hud-menu-toggle > span { background-image: url("../assets/ui/warm/gear.svg"); }
+html.ui-b.ui-warm .top-hud .camera-recenter > span { background-image: url("../assets/ui/warm/compass.svg"); }
+html.ui-b.ui-warm .top-hud .hud-menu-toggle svg,
+html.ui-b.ui-warm .top-hud .camera-recenter svg { display: none !important; }
+html.ui-b.ui-warm .top-hud .hud-status { position: relative; }
+html.ui-b.ui-warm .top-hud .hud-menu {
+  position: absolute;
+  top: calc(100% + .6rem);
+  right: 0;
+  z-index: 9;
+  display: none;
+  flex-direction: column;
+  gap: .3rem;
+  padding: .45rem;
+  border: 4px solid var(--w-wood);
+  border-radius: 18px;
+  background: var(--w-cream);
+  box-shadow: 0 5px 0 var(--w-wood-deep), 0 16px 32px rgba(20, 12, 5, .32);
+}
+html.ui-b.ui-warm .top-hud .hud-menu.is-open { display: flex; }
+html.ui-b.ui-warm .top-hud .hud-menu .ghost-button {
+  width: auto;
+  min-width: 11rem;
+  min-height: 2.8rem;
+  padding: .4rem .8rem;
+  display: flex;
+  justify-content: flex-start;
+  gap: .6rem;
+  border: 0;
+  border-radius: 12px;
+  color: var(--w-ink);
+  background: transparent;
+  box-shadow: none;
+  font-family: var(--w-display);
+  font-weight: 700;
+}
+html.ui-b.ui-warm .top-hud .hud-menu .ghost-button:hover { background: var(--w-row); }
+html.ui-b.ui-warm .top-hud .hud-menu .ghost-button::after { content: attr(title); }
+
+/* ================================================================ corner buttons (the module rail) */
+/* The rail element spans the screen without catching clicks; each launcher is placed in a corner. */
+html.ui-b.ui-warm .module-rail {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: block;
+  padding: 0;
+  pointer-events: none;
+}
+html.ui-b.ui-warm .module-rail .module-launcher {
+  position: absolute;
+  pointer-events: auto;
+  width: 5.6rem;
+  height: 5.6rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: var(--w-frame) center / 100% 100% no-repeat;
+  box-shadow: none;
+  filter: drop-shadow(0 6px 5px rgba(30, 15, 5, .4));
+  transform: none;
+}
+html.ui-b.ui-warm .module-rail .module-launcher:hover:not(:disabled) { background: var(--w-frame) center / 100% 100% no-repeat; transform: translateY(-2px); filter: drop-shadow(0 8px 6px rgba(30, 15, 5, .45)) brightness(1.04); }
+html.ui-b.ui-warm .module-rail .module-launcher:active:not(:disabled) { transform: translateY(3px); }
+html.ui-b.ui-warm .module-rail .module-launcher.is-active,
+html.ui-b.ui-warm .module-rail .module-launcher[aria-expanded="true"],
+html.ui-b.ui-warm .module-rail .module-launcher[aria-pressed="true"] {
+  background: var(--w-frame-on) center / 100% 100% no-repeat;
+  border: 0;
+  transform: none;
+  box-shadow: none;
+}
+html.ui-b.ui-warm .module-rail .module-launcher > span[data-icon] {
+  width: 3.7rem;
+  height: 3.7rem;
+  background: var(--icon) center / contain no-repeat !important;
+}
+html.ui-b.ui-warm .module-rail .module-launcher > span[data-icon] svg { display: none !important; }
+html.ui-b.ui-warm .module-rail .module-launcher::after {
+  content: attr(data-short);
+  position: absolute;
+  top: auto;
+  right: auto;
+  left: 50%;
+  bottom: -.55rem;
+  width: auto;
+  height: auto;
+  transform: translateX(-50%);
+  padding: .18rem .7rem;
+  border: 2px solid var(--w-gold);
+  border-radius: 99px;
+  color: #fff3d6;
+  background: var(--w-cocoa);
+  font: 800 .82rem/1.1 var(--w-display);
+  white-space: nowrap;
+  opacity: 1;
+  pointer-events: none;
+  box-shadow: none;
+}
+html.ui-b.ui-warm #inventory-launcher { --icon: url("../assets/ui/target-handoff/nav-inventory-bag.png"); right: 1rem; bottom: 1.3rem; }
+html.ui-b.ui-warm #market-launcher { --icon: url("../assets/ui/warm/market_stall.svg"); right: 7.2rem; bottom: 1.3rem; }
+html.ui-b.ui-warm #build-launcher { --icon: url("../assets/ui/target-handoff/nav-build-hammer.png"); right: 13.4rem; bottom: 1.3rem; }
+html.ui-b.ui-warm #workers-launcher { --icon: url("../assets/ui/target-handoff/nav-workers.png"); left: 1rem; bottom: 1.3rem; }
+html.ui-b.ui-warm #islands-launcher { --icon: url("../assets/ui/warm/boat.svg"); left: 7.2rem; bottom: 1.3rem; }
+/* Secondary tools: smaller frames stacked above the left cluster. */
+html.ui-b.ui-warm #work-areas-launcher,
+html.ui-b.ui-warm #harvest-area-global { width: 4.4rem; height: 4.4rem; }
+html.ui-b.ui-warm #work-areas-launcher > span[data-icon],
+html.ui-b.ui-warm #harvest-area-global > span[data-icon] { width: 2.9rem; height: 2.9rem; }
+html.ui-b.ui-warm #work-areas-launcher { --icon: url("../assets/ui/target-handoff/nav-work-area.png"); left: 1.6rem; bottom: 8.6rem; }
+html.ui-b.ui-warm #harvest-area-global { --icon: url("../assets/ui/warm/basket.svg"); left: 1.6rem; bottom: 14.6rem; }
+html.ui-b.ui-warm #work-areas-launcher::after,
+html.ui-b.ui-warm #harvest-area-global::after { font-size: .72rem; }
+
+/* ================================================================ sheets: cream paper, wood rim, orange ribbon */
+html.ui-b.ui-warm .module-panel {
+  top: calc(var(--hud-height) + 1.2rem);
+  left: 1rem;
+  max-height: calc(100% - var(--hud-height) - 10.5rem);
+}
+html.ui-b.ui-warm .module-panel-right { left: auto; right: 1rem; }
+html.ui-b.ui-warm #inventory-panel,
+html.ui-b.ui-warm #market-panel,
+html.ui-b.ui-warm #workers-panel,
+html.ui-b.ui-warm #work-areas-panel,
+html.ui-b.ui-warm #build-panel,
+html.ui-b.ui-warm .module-panel {
+  border: 5px solid var(--w-wood);
+  border-radius: 26px;
+  color: var(--w-ink);
+  background: var(--w-cream);
+  box-shadow: 0 7px 0 var(--w-wood-deep), 0 26px 56px rgba(10, 5, 0, .42);
+}
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-header,
+html.ui-b.ui-warm #build-panel .build-header {
+  min-height: 3.9rem;
+  border: 0;
+  border-radius: 20px 20px 0 0;
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: inset 0 -5px 0 #c8642a;
+}
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-header h2,
+html.ui-b.ui-warm #build-panel .build-header h2 {
+  color: #fff;
+  font-size: 1.45rem;
+  text-shadow: var(--w-outline);
+}
+html.ui-b.ui-warm #build-panel .build-header .build-gold { color: #fff3d6; text-shadow: 0 1px 0 rgba(92, 42, 16, .7); }
+html.ui-b.ui-warm .panel-close,
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .panel-close,
+html.ui-b.ui-warm .resource-panel-close {
+  width: 2.9rem;
+  height: 2.9rem;
+  border: 0;
+  color: transparent;
+  background: var(--w-close) center / 100% 100% no-repeat !important;
+  box-shadow: none;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .3));
+}
+html.ui-b.ui-warm .panel-close svg,
+html.ui-b.ui-warm .resource-panel-close svg { display: none !important; }
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-body,
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .ui-panel-body { background: var(--w-cream); }
+
+/* tabs */
+html.ui-b.ui-warm .item-tabs,
+html.ui-b.ui-warm .market-tabs { background: #f3d9ae; box-shadow: inset 0 2px 0 rgba(92, 50, 22, .1); }
+html.ui-b.ui-warm .item-tabs .item-tab,
+html.ui-b.ui-warm .market-tabs .market-tab { color: #6b4a2a; }
+html.ui-b.ui-warm .item-tabs .item-tab.is-active,
+html.ui-b.ui-warm .market-tabs .market-tab.is-active {
+  color: #fff;
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: 0 3px 0 var(--w-orange-edge);
+  text-shadow: 0 1px 0 rgba(120, 40, 10, .45);
+}
+
+/* cards and inset blocks */
+html.ui-b.ui-warm .item-grid .item-card,
+html.ui-b.ui-warm #action-dock .item-picker .item-card,
+html.ui-b.ui-warm #build-panel .shop-card,
+html.ui-b.ui-warm #build-panel .shop-inspector,
+html.ui-b.ui-warm #build-panel .shop-rail-item,
+html.ui-b.ui-warm #workers-panel .auto-actor,
+html.ui-b.ui-warm #workers-panel .auto-card,
+html.ui-b.ui-warm #workers-panel .workers-cargo,
+html.ui-b.ui-warm #work-areas-panel .work-area-row,
+html.ui-b.ui-warm .warehouse-strip,
+html.ui-b.ui-warm #market-panel .market-trade {
+  border: 3px solid var(--w-slot-line);
+  background: var(--w-paper);
+  box-shadow: 0 4px 0 var(--w-slot-edge);
+}
+html.ui-b.ui-warm .item-grid .item-card[aria-pressed="true"],
+html.ui-b.ui-warm .item-grid .item-card.is-selected,
+html.ui-b.ui-warm #action-dock .item-picker .item-card.is-selected,
+html.ui-b.ui-warm #build-panel .shop-card.is-selected { border-color: var(--w-orange-lo); background: #fff0dc; box-shadow: 0 4px 0 var(--w-orange-edge); }
+html.ui-b.ui-warm .item-grid .item-card-thumb,
+html.ui-b.ui-warm #action-dock .item-picker .item-card-thumb,
+html.ui-b.ui-warm #build-panel .shop-card-thumb,
+html.ui-b.ui-warm #build-panel .shop-inspector-picture { background: #f6ead2; }
+html.ui-b.ui-warm .item-grid .item-card-qty,
+html.ui-b.ui-warm #action-dock .item-picker .item-card-qty { color: #fff3d6; background: var(--w-cocoa); }
+html.ui-b.ui-warm #market-panel .item-grid .item-card-note { color: #6b4a00; background: #ffe2a0; }
+html.ui-b.ui-warm #build-panel .shop-rail-item.is-active,
+html.ui-b.ui-warm #build-panel .shop-rail-item[aria-selected="true"] {
+  color: #fff;
+  border-color: var(--w-orange-lo);
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: 0 3px 0 var(--w-orange-edge);
+}
+html.ui-b.ui-warm #workers-panel .auto-control { border: 3px solid #f0c48a; background: #ffeacd; box-shadow: 0 4px 0 #dca76a; }
+html.ui-b.ui-warm #workers-panel .auto-status { color: #a1460f; }
+html.ui-b.ui-warm .ui-capacity-bar-fill,
+html.ui-b.ui-warm .warehouse-bar > span,
+html.ui-b.ui-warm .auto-meter-fill { background: linear-gradient(#ffc56b, var(--w-orange)); }
+
+/* ================================================================ floating surfaces */
+html.ui-b.ui-warm .neighbor-panel,
+html.ui-b.ui-warm #resource-panel,
+html.ui-b.ui-warm .selection-panels > *:not([hidden]),
+html.ui-b.ui-warm #area-harvest-panel,
+html.ui-b.ui-warm .action-dock {
+  border: 4px solid var(--w-wood);
+  border-radius: 22px;
+  background: var(--w-cream);
+  box-shadow: 0 6px 0 var(--w-wood-deep), 0 22px 44px rgba(20, 12, 5, .36);
+}
+html.ui-b.ui-warm .neighbor-panel h2,
+html.ui-b.ui-warm .resource-panel-title,
+html.ui-b.ui-warm #action-dock .action-copy strong { color: #a1460f; font-family: var(--w-display); }
+html.ui-b.ui-warm .neighbor-panel button:not(.secondary):hover { border-color: var(--w-orange-lo); color: #a1460f; }
+
+/* The dock sits between the two corner clusters. */
+html.ui-b.ui-warm .action-dock { width: min(52rem, calc(100% - 42rem)); }
+@media (max-width: 1180px) {
+  html.ui-b.ui-warm .action-dock,
+  html.ui-b.ui-warm #area-harvest-panel { bottom: 8.4rem; width: min(52rem, calc(100% - 2rem)); }
+}
+
+/* Status line: a cocoa toast under the HUD instead of a caption over the field. */
+html.ui-b.ui-warm .status-wrap { top: calc(var(--hud-height) + 1.4rem); bottom: auto; }
+html.ui-b.ui-warm .status {
+  padding: .5rem 1.1rem;
+  border: 3px solid var(--w-gold);
+  border-radius: 999px;
+  color: #fff3d6;
+  background: var(--w-cocoa);
+  box-shadow: 0 4px 0 #24160f, 0 10px 20px rgba(0, 0, 0, .3);
+  font: 800 .95rem/1.2 var(--w-display);
+}
+html.ui-b.ui-warm .status:empty { display: none; }
+
+/* ================================================================ phone */
+@media (max-width: 640px) {
+  html.ui-b.ui-warm .module-rail {
+    inset: auto 0 0 0;
+    height: 6.6rem;
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-start;
+    width: auto;
+    max-width: none;
+    padding: .4rem .2rem 0;
+    gap: 0;
+    transform: none;
+    border-radius: 0;
+    background: linear-gradient(transparent, rgba(40, 20, 5, .45));
+  }
+  html.ui-b.ui-warm .module-rail .module-launcher,
+  html.ui-b.ui-warm #work-areas-launcher,
+  html.ui-b.ui-warm #harvest-area-global {
+    position: relative;
+    inset: auto;
+    width: 3.4rem;
+    height: 3.4rem;
+  }
+  /* The corner offsets above are id rules; a phone lays every launcher out in the one bottom row. */
+  html.ui-b.ui-warm :is(#inventory-launcher, #market-launcher, #build-launcher, #workers-launcher, #islands-launcher, #work-areas-launcher, #harvest-area-global) {
+    top: auto;
+    right: auto;
+    bottom: auto;
+    left: auto;
+  }
+  html.ui-b.ui-warm #workers-launcher { order: 1; }
+  html.ui-b.ui-warm #islands-launcher { order: 2; }
+  html.ui-b.ui-warm #work-areas-launcher { order: 3; }
+  html.ui-b.ui-warm #harvest-area-global { order: 4; }
+  html.ui-b.ui-warm #build-launcher { order: 5; }
+  html.ui-b.ui-warm #market-launcher { order: 6; }
+  html.ui-b.ui-warm #inventory-launcher { order: 7; }
+  html.ui-b.ui-warm .module-rail .module-launcher > span[data-icon] { width: 2.2rem; height: 2.2rem; }
+  html.ui-b.ui-warm .module-rail .module-launcher::after { bottom: -.95rem; padding: .05rem .3rem; font-size: .56rem; border-width: 1.5px; }
+  html.ui-b.ui-warm .top-hud .hud-stat { padding-left: 2.7rem; }
+  html.ui-b.ui-warm .top-hud .hud-stat-icon { width: 2.9rem; height: 2.9rem; margin-top: -1.45rem; left: -.6rem; }
+  html.ui-b.ui-warm .top-hud .hud-warehouse-copy { min-width: 4.6rem; }
+  html.ui-b.ui-warm .top-hud #wallet,
+  html.ui-b.ui-warm .top-hud #hud-warehouse-text { font-size: .9rem; }
+  html.ui-b.ui-warm .module-panel { top: auto; left: .5rem; right: .5rem; bottom: 6.8rem; width: auto; max-height: calc(100% - 13rem); }
+  html.ui-b.ui-warm .action-dock,
+  html.ui-b.ui-warm #area-harvest-panel,
+  html.ui-b.ui-warm .neighbor-panel { bottom: 7rem; width: calc(100% - 1rem); }
+  html.ui-b.ui-warm .neighbor-panel { left: .5rem; right: .5rem; transform: none; }
+  /* Two rows at most: money, level, storage and the gear first; the camera switch under them. */
+  html.ui-b.ui-warm .top-hud .hud-status { gap: .3rem .45rem; }
+  html.ui-b.ui-warm .top-hud .hud-stat { min-height: 2.5rem; padding: .1rem .6rem .1rem 2.3rem; }
+  html.ui-b.ui-warm .top-hud .hud-stat-icon { width: 2.5rem; height: 2.5rem; margin-top: -1.25rem; left: -.5rem; }
+  html.ui-b.ui-warm .top-hud .hud-stat-level .xp-bar,
+  html.ui-b.ui-warm .top-hud .hud-stat-level .muted,
+  html.ui-b.ui-warm .top-hud .hud-warehouse-bar { display: none; }
+  html.ui-b.ui-warm .top-hud .hud-warehouse-copy { min-width: 0; }
+  html.ui-b.ui-warm .top-hud #wallet,
+  html.ui-b.ui-warm .top-hud .hud-stat .big,
+  html.ui-b.ui-warm .top-hud #hud-warehouse-text { font-size: .82rem; }
+  html.ui-b.ui-warm .top-hud .hud-menu-toggle,
+  html.ui-b.ui-warm .top-hud .camera-recenter { width: 2.6rem; height: 2.6rem; }
+  html.ui-b.ui-warm .top-hud .hud-menu-toggle > span,
+  html.ui-b.ui-warm .top-hud .camera-recenter > span { width: 1.5rem; height: 1.5rem; }
+  html.ui-b.ui-warm .top-hud .camera-mode { min-height: 2.4rem; }
+  html.ui-b.ui-warm .top-hud .camera-mode-button { font-size: .72rem; padding: .2rem .55rem; }
+}
