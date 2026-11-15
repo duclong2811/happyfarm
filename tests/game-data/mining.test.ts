@@ -215,3 +215,12 @@ describe("the mining economy", () => {
     }
   });
 });
+
+describe("one mining resource", () => {
+  it("upgrades the warehouse with ore, never with the retired stone", async () => {
+    const { warehouseTiers } = await import("../../packages/game-data/src/warehouse/index");
+    const materials = warehouseTiers.flatMap((tier) => Object.keys(tier.upgrade?.materials ?? {}));
+    expect(materials).toContain("item_ore");
+    expect(materials).not.toContain("item_stone");
+  });
+});

@@ -75,19 +75,19 @@ export const warehouseTierRegistry = createWarehouseTierRegistry([
     tier: 0,
     displayNameKey: "warehouse.tier.starter.name",
     capacity: 1_000,
-    upgrade: { currencyDefinitionId: "currency_gold", gold: 500, materials: { item_wood: 50, item_stone: 50 } }
+    upgrade: { currencyDefinitionId: "currency_gold", gold: 500, materials: { item_wood: 50, item_ore: 50 } }
   },
   {
     tier: 1,
     displayNameKey: "warehouse.tier.early.name",
     capacity: 2_500,
-    upgrade: { currencyDefinitionId: "currency_gold", gold: 2_000, materials: { item_wood: 150, item_stone: 150 } }
+    upgrade: { currencyDefinitionId: "currency_gold", gold: 2_000, materials: { item_wood: 150, item_ore: 150 } }
   },
   {
     tier: 2,
     displayNameKey: "warehouse.tier.developing.name",
     capacity: 6_000,
-    upgrade: { currencyDefinitionId: "currency_gold", gold: 8_000, materials: { item_wood: 400, item_stone: 400 } }
+    upgrade: { currencyDefinitionId: "currency_gold", gold: 8_000, materials: { item_wood: 400, item_ore: 400 } }
   },
   {
     tier: 3,

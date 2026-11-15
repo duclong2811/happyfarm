@@ -98,7 +98,7 @@ describe("island warehouse", () => {
 
   it("reports the starter tier, used and available capacity", async () => {
     stock("item_wood", 600);
-    stock("item_stone", 400);
+    stock("item_ore", 400);
     const view = await status.execute({ playerId: PLAYER_ONE_ID });
     expect(view).toMatchObject({ tier: 0, capacity: 1000, used: 1000, available: 0, overCapacity: false });
     expect(view.nextTier).toBe(1);
@@ -107,7 +107,7 @@ describe("island warehouse", () => {
 
   it("upgrades atomically: gold debited, materials consumed, tier and capacity raised", async () => {
     stock("item_wood", 500);
-    stock("item_stone", 500);
+    stock("item_ore", 500);
     const view = await upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_0001" });
     expect(view).toMatchObject({ tier: 1, capacity: 2500, used: 900 });
     const wallet = await wallets.find(PLAYER_ONE_ID, parseCurrencyDefinitionId("currency_gold"));
@@ -121,7 +121,7 @@ describe("island warehouse", () => {
 
   it("is idempotent: a replayed upgrade does not charge twice", async () => {
     stock("item_wood", 500);
-    stock("item_stone", 500);
+    stock("item_ore", 500);
     const first = await upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_replay" });
     const second = await upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_replay" });
     expect(second).toEqual(first);
@@ -132,7 +132,7 @@ describe("island warehouse", () => {
 
   it("charges exactly once for two racing submissions of the same upgrade", async () => {
     stock("item_wood", 500);
-    stock("item_stone", 500);
+    stock("item_ore", 500);
     // The double-submit case: the same request id, twice, at once. The receipt makes it one purchase.
     const [first, second] = await Promise.all([
       upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_race_same" }),
@@ -156,7 +156,7 @@ describe("island warehouse", () => {
     // must match the money spent. (Before the transaction marker this double-charged: the loser's
     // receipt was satisfied by the winner's tier/version.)
     stock("item_wood", 500);
-    stock("item_stone", 500);
+    stock("item_ore", 500);
     const attempts = await Promise.allSettled([
       upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_race_a" }),
       upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_race_b" })
@@ -178,7 +178,7 @@ describe("island warehouse", () => {
 
   it("refuses an upgrade the island lacks materials for", async () => {
     stock("item_wood", 10); // fewer than the 50 the first upgrade needs
-    stock("item_stone", 50);
+    stock("item_ore", 50);
     await expect(upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_broke" })).rejects.toMatchObject({
       code: "INSUFFICIENT_ITEMS"
     });
@@ -186,7 +186,7 @@ describe("island warehouse", () => {
 
   it("refuses an upgrade the island cannot pay for", async () => {
     stock("item_wood", 50);
-    stock("item_stone", 50);
+    stock("item_ore", 50);
     db.sqlite.prepare("UPDATE wallets SET balance = 1 WHERE player_id = ?").run(PLAYER_ONE_ID);
     await expect(upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_poor" })).rejects.toMatchObject({
       code: "INSUFFICIENT_FUNDS"
@@ -195,7 +195,7 @@ describe("island warehouse", () => {
 
   it("refuses an upgrade past the highest tier", async () => {
     stock("item_wood", 500);
-    stock("item_stone", 500);
+    stock("item_ore", 500);
     db.sqlite.prepare("UPDATE home_island_warehouses SET tier = 3, capacity = 15000 WHERE owner_player_id = ?").run(PLAYER_ONE_ID);
     await expect(upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_max" })).rejects.toMatchObject({
       code: "WAREHOUSE_MAX_TIER"
@@ -204,7 +204,7 @@ describe("island warehouse", () => {
 
   it("refuses a shop purchase that would overflow, with no gold debited and no item granted", async () => {
     stock("item_wood", 600);
-    stock("item_stone", 400);
+    stock("item_ore", 400);
     const wallet = await wallets.find(PLAYER_ONE_ID, parseCurrencyDefinitionId("currency_gold"));
     expect(wallet).not.toBeNull();
     if (wallet === null) throw new Error("expected a wallet");

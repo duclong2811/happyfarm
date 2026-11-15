@@ -330,7 +330,7 @@ describe("warehouse capacity across the reward paths", () => {
 
   it.each([1000, 1100])("upgrades at usage %i, consuming only the required materials, then accepts grants", async (initial) => {
     setCapacity(2500);
-    growItem("item_stone", 50);
+    growItem("item_ore", 50);
     growItem("item_wood", initial - used());
     setCapacity(1000);
     const woodBefore = held("item_wood");
@@ -339,7 +339,7 @@ describe("warehouse capacity across the reward paths", () => {
     expect(capacity()).toBe(2500);
     expect(used()).toBe(initial - 100);
     expect(held("item_wood")).toBe(woodBefore - 50);
-    expect(held("item_stone")).toBe(0);
+    expect(held("item_ore")).toBe(0);
     expect(balance()).toBe(goldBefore - 500);
     const after = snapshot();
     expect((await post("/warehouse/upgrade", { requestId: "wh_full_upgrade" })).status).toBe(200);
