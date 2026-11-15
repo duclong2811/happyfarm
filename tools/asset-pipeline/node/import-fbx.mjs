@@ -92,9 +92,57 @@ const CLUMP_LAYOUTS = {
   5: [[0, 0, 0], [-0.25, -0.23, 1.3], [0.26, -0.21, 2.6], [-0.23, 0.25, 3.9], [0.24, 0.24, 5.2]]
 };
 
-const SETS = { "farm-buildings": CURATED, crops: CROPS };
-/** Sets drawn many times over (a field of crops): merged to one vertex-coloured mesh per model. */
-const MERGED_SETS = new Set(["crops"]);
+/**
+ * Resource nodes (Quaternius Ultimate Fantasy RTS). The pack has one kind of ore - gold veins in
+ * stone - so the other ores are the same rocks with the vein material recoloured (`tint`, linear RGB
+ * by material name): a player has to tell copper from coal at a glance.
+ */
+const RESOURCES = [
+  { id: "resources/resource_stone", source: "Resource_Gold_1" },
+  { id: "resources/resource_copper", source: "Resource_Gold_2", tint: { Gold: [0.5, 0.17, 0.06] } },
+  // Iron and coal recolour the rock as well as the vein: a few dark nuggets on grey stone do not read
+  // as a different ore from across the field.
+  { id: "resources/resource_iron", source: "Resource_Gold_3", tint: { Gold: [0.3, 0.07, 0.04], Stone: [0.26, 0.17, 0.13] } },
+  { id: "resources/resource_coal", source: "Resource_Gold_1", tint: { Gold: [0.012, 0.012, 0.014], Stone: [0.07, 0.07, 0.075] }, turn: 2.2 },
+  { id: "resources/resource_pine", source: "Resource_PineTree" },
+  { id: "resources/resource_hardwood", source: "Resource_Tree1" },
+  { id: "resources/resource_wildwood", source: "Resource_Tree2" },
+  { id: "resources/resource_pine_stump", source: "Resource_PineTree_Group_Cut" },
+  { id: "resources/resource_hardwood_stump", source: "Resource_Tree_Group_Cut" },
+  { id: "resources/resource_wildwood_stump", source: "Resource_Tree_Group_Cut", turn: 1.9 }
+];
+
+/** The catch (Quaternius Cute Fish): the closest of the pack's fish to each one the game names. */
+const FISH = [
+  { id: "fishing/fish_carp", source: "Koi" },
+  { id: "fishing/fish_catfish", source: "ArmoredCatfish" },
+  { id: "fishing/fish_snapper", source: "RedSnapper" },
+  { id: "fishing/fish_tuna", source: "Tuna" },
+  { id: "fishing/fish_sardine", source: "Tetra" },
+  { id: "fishing/fish_mackerel", source: "BlueTang" },
+  // A silver, deep-bodied fish: the tilapia's shape, rather than a second red one beside the snapper.
+  { id: "fishing/fish_tilapia", source: "Sunfish" }
+];
+
+/**
+ * Fruit trees (Quaternius Nature Crops Pack): four growth stages and the picked tree, every look of a
+ * tree at its grown stage's scale. The pack has no peach, so the peach is the apple with its fruit
+ * recoloured.
+ */
+const ORCHARD_SOURCES = [
+  { id: "tree_apple", source: "Apple" },
+  { id: "tree_orange", source: "Orange" },
+  { id: "tree_peach", source: "Apple", tint: { DarkRed: [0.95, 0.36, 0.16] } }
+];
+const ORCHARD = ORCHARD_SOURCES.flatMap((tree) =>
+  [...Array.from({ length: 4 }, (_, index) => [`s${String(index + 1)}`, `${tree.source}_${String(index + 1)}`]), ["harvested", `${tree.source}_Harvested`]].map(
+    ([look, source]) => ({ id: `trees/${tree.id}.${look}`, source, scaleFrom: `${tree.source}_4`, ...(tree.tint === undefined ? {} : { tint: tree.tint }) })
+  )
+);
+
+const SETS = { "farm-buildings": CURATED, crops: CROPS, resources: RESOURCES, fish: FISH, orchard: ORCHARD };
+/** Sets of flat-coloured models: merged to one vertex-coloured mesh per model (one draw call each). */
+const MERGED_SETS = new Set(["crops", "resources", "fish", "orchard"]);
 
 /**
  * One mesh, one material: every part's flat colour becomes a vertex colour and the parts are merged.
@@ -102,7 +150,7 @@ const MERGED_SETS = new Set(["crops"]);
  * A crop is drawn on every planted tile, so a model of five coloured parts is five draw calls a tile;
  * merged it is one, and it looks the same because the pack's materials are flat colours, not textures.
  */
-function mergeToVertexColors(root, clump = 1) {
+function mergeToVertexColors(root, clump = 1, tint = {}, turn = 0) {
   const parts = [];
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
@@ -121,8 +169,11 @@ function mergeToVertexColors(root, clump = 1) {
       // The pack writes its colours as *linear* values, and FBXLoader reads them as sRGB and converts
       // them again, which darkens every crop (a lettuce came out near black). Reading the colour back as
       // sRGB recovers the numbers the file holds, which are the linear colour a vertex colour wants.
+      const material = materials[group.materialIndex ?? 0] ?? materials[0];
       const linear = { r: 0, g: 0, b: 0 };
-      (materials[group.materialIndex ?? 0] ?? materials[0]).color.getRGB(linear, SRGBColorSpace);
+      material.color.getRGB(linear, SRGBColorSpace);
+      const override = tint[material.name];
+      if (override !== undefined) [linear.r, linear.g, linear.b] = override;
       for (let index = group.start; index < Math.min(count, group.start + group.count); index += 1) {
         colors.set([linear.r, linear.g, linear.b], index * 3);
       }
@@ -136,7 +187,7 @@ function mergeToVertexColors(root, clump = 1) {
   const layout = CLUMP_LAYOUTS[clump];
   if (layout === undefined) throw new Error(`no clump layout for ${String(clump)} plants`);
   const copies = layout.map(([x, z, yaw]) =>
-    single.clone().applyMatrix4(new Matrix4().makeRotationY(yaw).premultiply(new Matrix4().makeTranslation(x, 0, z)))
+    single.clone().applyMatrix4(new Matrix4().makeRotationY(yaw + turn).premultiply(new Matrix4().makeTranslation(x, 0, z)))
   );
   const joined = copies.length === 1 ? single : mergeGeometries(copies, false);
   if (joined === null) throw new Error("could not merge the clump");
@@ -160,12 +211,12 @@ function normalize(root, fixedScale) {
   // would not match the flat stylized shading of the rest of the world. Each one is replaced by the
   // standard material that keeps its colour and its texture.
   const toStandard = (material) =>
-    new MeshStandardMaterial({
+    Object.assign(new MeshStandardMaterial({
       color: material.color ?? 0xffffff,
       ...(material.map === null || material.map === undefined ? {} : { map: material.map }),
       roughness: 0.85,
       metalness: 0.02
-    });
+    }), { name: material.name });
   root.traverse((child) => {
     if (!(child instanceof Mesh)) return;
     // A mesh may carry one material per geometry group (a plant's leaves, fruit and stem in one mesh);
@@ -255,7 +306,7 @@ async function main() {
   for (const entry of entries) {
     const root = await parse(entry.source);
     const stats = normalize(root, entry.scaleFrom === undefined ? undefined : await scaleOf(entry.scaleFrom));
-    const glb = await exportGlb(MERGED_SETS.has(setName) ? mergeToVertexColors(stats.root, entry.clump) : stats.root);
+    const glb = await exportGlb(MERGED_SETS.has(setName) ? mergeToVertexColors(stats.root, entry.clump, entry.tint, entry.turn) : stats.root);
     const target = join(out, `${entry.id}.glb`);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, glb);

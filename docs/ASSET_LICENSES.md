@@ -19,7 +19,9 @@ alternative is not "assume CC0"; it is to stop and ask.
 | Lowpoly Farm Buildings | Quaternius | https://quaternius.com/packs/farmbuildings.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | FBX → GLB | buildings: barn (three tiers), open barn, silo, silo house, tower windmill, well, coop | Yes - see "Normalization" |
 | Fantasy Props MegaKit (Standard) | Quaternius | https://quaternius.com/packs/fantasypropsmegakit.html | CC0 1.0 (stated in the pack's own `License_Standard.txt`, published inside the download, and on the pack page) | 2026-10-01 | glTF → GLB | props: barrels, crates, sacks, bucket, bench, market stall and cart, rope, lantern, planter, axe, chopping block, workbench, chest, cage, whetstone | Yes - see "Normalization" |
 | Mini Characters | Kenney | https://kenney.nl/assets/mini-characters | CC0 1.0 (stated on the pack page - "Download this package (25 assets) for free, CC0 licensed!" - and in the pack's own `License.txt`) | 2026-10-02 | GLB with the palette embedded | the player character (`character-male-a`); see `docs/assets/PLAYER_CHARACTER_ASSET.md` | Yes - palette embedded, geometry untouched |
-| Nature Crops Pack ("Ultimate Crops") | Quaternius | https://quaternius.com/packs/ultimatecrops.html (files from the pack page's own Google Drive link) | CC0 1.0 (the pack's `License.txt`: "License: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication") | 2026-11-15 | FBX → GLB, merged to one vertex-coloured mesh | growth stages 1-4 of carrot, corn, wheat, tomato, pumpkin, lettuce (drawn as cabbage) and berry bush (drawn as strawberry): `apps/web/src/assets/models/crops/*.glb` | Yes - see below |
+| Nature Crops Pack ("Ultimate Crops") | Quaternius | https://quaternius.com/packs/ultimatecrops.html (files from the pack page's own Google Drive link) | CC0 1.0 (the pack's `License.txt`: "License: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication") | 2026-11-15 | FBX → GLB, merged to one vertex-coloured mesh | growth stages 1-4 of carrot, corn, wheat, tomato, pumpkin, lettuce (drawn as cabbage) and berry bush (drawn as strawberry): `apps/web/src/assets/models/crops/*.glb`; apple and orange trees (stages 1-4 and picked, plus a recoloured peach): `apps/web/src/assets/models/trees/*.glb` | Yes - see below |
+| Ultimate Fantasy RTS | Quaternius | https://quaternius.com/packs/ultimatefantasyrts.html (files from the pack page's own Google Drive link) | CC0 1.0 (the pack's `License.txt`: "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication"; its header names another Quaternius pack, a copy-paste in the download, and the pack page states CC0) | 2026-11-15 | FBX → GLB, merged to one vertex-coloured mesh | the resource nodes (`apps/web/src/assets/models/resources/*.glb`): ore rocks (gold veins; copper, iron and coal recoloured), pine and broadleaf trees, felled-log stumps | Yes - see below |
+| Cute Fish | Quaternius | https://quaternius.com/packs/cutefish.html (files from the pack page's own Google Drive link) | CC0 1.0 (the pack's `License.txt`) | 2026-11-15 | FBX → GLB, merged to one vertex-coloured mesh | the seven fish (`apps/web/src/assets/models/fishing/*.glb`): Koi, Armored Catfish, Red Snapper, Tuna, Tetra, Blue Tang, Sunfish | Yes - see below |
 | Mini Characters 2.0 | Kenney | https://kenney.nl/assets/mini-characters | CC0 1.0 (the pack's own `License.txt`: "License: (Creative Commons Zero, CC0) ... You can use this content for personal, educational, and commercial purposes.") | 2026-11-15 | GLB with the palette embedded | the selectable character roster: `character-female-a..f`, `character-male-b..g`, `character-worker`, `-knight`, `-robot`, `-alien` (16 files, `apps/web/src/assets/models/player/kenney-*.glb`) and their pre-rendered portraits (`apps/web/src/assets/ui/characters/*.webp`) | Yes - palette embedded, geometry untouched |
 | ~~Kenney Nature Kit~~ | Kenney | https://kenney.nl/assets/nature-kit | CC0 1.0 | shipped 2026-09-2x, **removed in V5** | - | - | - |
 
@@ -59,6 +61,16 @@ flat-shaded as authored, and the pack's linear colour values are read as linear 
 darkens them twice). Wheat, carrot and corn are clumped (5, 3 and 2 plants a tile) inside that one
 mesh. Potato has no grower in the pack and keeps its generated model. The import record is
 `tools/asset-pipeline/node/import-fbx-crops-report.json`.
+
+**Resources, fish and fruit trees (2026-11-15)** replaced the generated placeholders that stood in
+for them. They were converted by `import-fbx.mjs --set resources|fish|orchard` with the same rules as
+the crops (one vertex-coloured mesh, linear colours, flat shading). The ore deposits are Ultimate
+Fantasy RTS's gold-veined rocks; copper, iron and coal recolour the vein (and, for iron and coal, the
+rock) by material name, because the pack has only gold. The fruit trees are the Nature Crops Pack's
+apple and orange (four stages and the picked tree, `apps/web/src/assets/models/trees/`); the peach is
+the apple with its fruit recoloured. The fish and resource specs were removed from the generator
+(`tools/asset-pipeline/node/specs.mjs`) so `npm run assets:generate` can no longer overwrite them.
+Import records: `tools/asset-pipeline/node/import-fbx-{resources,fish,orchard}-report.json`.
 
 **The character roster (2026-11-15)** came from the 2.0 release of the same pack, supplied by the
 project owner as `kenney_mini-characters.zip` (kenney.nl refuses automated downloads from the build

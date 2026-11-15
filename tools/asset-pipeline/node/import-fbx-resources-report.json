@@ -1,0 +1,72 @@
+[
+  {
+    "id": "resources/resource_stone",
+    "source": "Resource_Gold_1.fbx",
+    "triangles": 988,
+    "bytes": 21428,
+    "metres": 76.09
+  },
+  {
+    "id": "resources/resource_copper",
+    "source": "Resource_Gold_2.fbx",
+    "triangles": 1016,
+    "bytes": 21676,
+    "metres": 71.513
+  },
+  {
+    "id": "resources/resource_iron",
+    "source": "Resource_Gold_3.fbx",
+    "triangles": 878,
+    "bytes": 18248,
+    "metres": 59.073
+  },
+  {
+    "id": "resources/resource_coal",
+    "source": "Resource_Gold_1.fbx",
+    "triangles": 988,
+    "bytes": 21432,
+    "metres": 76.09
+  },
+  {
+    "id": "resources/resource_pine",
+    "source": "Resource_PineTree.fbx",
+    "triangles": 345,
+    "bytes": 10408,
+    "metres": 63.746
+  },
+  {
+    "id": "resources/resource_hardwood",
+    "source": "Resource_Tree1.fbx",
+    "triangles": 552,
+    "bytes": 11528,
+    "metres": 92.589
+  },
+  {
+    "id": "resources/resource_wildwood",
+    "source": "Resource_Tree2.fbx",
+    "triangles": 384,
+    "bytes": 8312,
+    "metres": 87.994
+  },
+  {
+    "id": "resources/resource_pine_stump",
+    "source": "Resource_PineTree_Group_Cut.fbx",
+    "triangles": 968,
+    "bytes": 27072,
+    "metres": 148.507
+  },
+  {
+    "id": "resources/resource_hardwood_stump",
+    "source": "Resource_Tree_Group_Cut.fbx",
+    "triangles": 736,
+    "bytes": 17756,
+    "metres": 183.534
+  },
+  {
+    "id": "resources/resource_wildwood_stump",
+    "source": "Resource_Tree_Group_Cut.fbx",
+    "triangles": 736,
+    "bytes": 17756,
+    "metres": 183.534
+  }
+]

@@ -1,0 +1,107 @@
+[
+  {
+    "id": "trees/tree_apple.s1",
+    "source": "Apple_1.fbx",
+    "triangles": 80,
+    "bytes": 2664,
+    "metres": 24.738
+  },
+  {
+    "id": "trees/tree_apple.s2",
+    "source": "Apple_2.fbx",
+    "triangles": 252,
+    "bytes": 5832,
+    "metres": 93.893
+  },
+  {
+    "id": "trees/tree_apple.s3",
+    "source": "Apple_3.fbx",
+    "triangles": 446,
+    "bytes": 9468,
+    "metres": 208.655
+  },
+  {
+    "id": "trees/tree_apple.s4",
+    "source": "Apple_4.fbx",
+    "triangles": 1584,
+    "bytes": 30640,
+    "metres": 276.273
+  },
+  {
+    "id": "trees/tree_apple.harvested",
+    "source": "Apple_Harvested.fbx",
+    "triangles": 984,
+    "bytes": 19276,
+    "metres": 276.273
+  },
+  {
+    "id": "trees/tree_orange.s1",
+    "source": "Orange_1.fbx",
+    "triangles": 80,
+    "bytes": 2664,
+    "metres": 24.738
+  },
+  {
+    "id": "trees/tree_orange.s2",
+    "source": "Orange_2.fbx",
+    "triangles": 252,
+    "bytes": 5836,
+    "metres": 93.893
+  },
+  {
+    "id": "trees/tree_orange.s3",
+    "source": "Orange_3.fbx",
+    "triangles": 336,
+    "bytes": 7416,
+    "metres": 212.427
+  },
+  {
+    "id": "trees/tree_orange.s4",
+    "source": "Orange_4.fbx",
+    "triangles": 1244,
+    "bytes": 24372,
+    "metres": 276.273
+  },
+  {
+    "id": "trees/tree_orange.harvested",
+    "source": "Orange_Harvested.fbx",
+    "triangles": 744,
+    "bytes": 14904,
+    "metres": 276.273
+  },
+  {
+    "id": "trees/tree_peach.s1",
+    "source": "Apple_1.fbx",
+    "triangles": 80,
+    "bytes": 2664,
+    "metres": 24.738
+  },
+  {
+    "id": "trees/tree_peach.s2",
+    "source": "Apple_2.fbx",
+    "triangles": 252,
+    "bytes": 5832,
+    "metres": 93.893
+  },
+  {
+    "id": "trees/tree_peach.s3",
+    "source": "Apple_3.fbx",
+    "triangles": 446,
+    "bytes": 9468,
+    "metres": 208.655
+  },
+  {
+    "id": "trees/tree_peach.s4",
+    "source": "Apple_4.fbx",
+    "triangles": 1584,
+    "bytes": 30636,
+    "metres": 276.273
+  },
+  {
+    "id": "trees/tree_peach.harvested",
+    "source": "Apple_Harvested.fbx",
+    "triangles": 984,
+    "bytes": 19276,
+    "metres": 276.273
+  }
+]

@@ -120,7 +120,7 @@ import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
 import { isTypingTarget } from "../player/input";
 import { createPlayerCharacterView, PLAYER_CHARACTER_ASSET, ROSTER_CHARACTER_SCALE } from "./player-character";
-import { cropStageFor, cropStageModelId } from "./model-urls";
+import { cropStageFor, cropStageModelId, treeStageModelId } from "./model-urls";
 import { CHARACTER_MODEL_URL_BY_ID } from "./character-model-urls";
 import { HARVEST_GESTURE_DURATION_MS, harvestGestureBend } from "../interaction/feedback";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
@@ -833,6 +833,25 @@ function treePlant(
       plant.add(fruit);
     }
   }
+  plant.traverse((child) => {
+    child.castShadow = true;
+  });
+  return plant;
+}
+
+/** How tall a grown fruit tree stands, in metres: its staged model is one unit tall when grown. */
+const ORCHARD_TREE_HEIGHT = 2.6;
+
+/**
+ * A fruit tree drawn from its staged model. The stage *is* the size and the fruit, so there is no
+ * growth scaling and no added fruit - unlike the broadleaf fallback in `treePlant`.
+ */
+function stagedTreePlant(tile: SceneTile, model: Object3D, tree: SceneTree): Group {
+  const plant = new Group();
+  plant.position.set(tile.worldX, GROUND_SURFACE_Y, tile.worldZ);
+  plant.rotation.y = (tree.rotation ?? 0) * (Math.PI / 2);
+  plant.scale.setScalar(ORCHARD_TREE_HEIGHT);
+  plant.add(model.clone(true));
   plant.traverse((child) => {
     child.castShadow = true;
   });
@@ -2422,10 +2441,17 @@ let interactionGeometry: BufferGeometry | null = null;
         // rest, and the per-instance cost is a clone of a scene the world already loaded.
         // Wildwood is a player-owned forestry tree, so use the existing Wildwood asset. Static
         // environment tree_broad remains a world object and never enters this tree-instance path.
-        const treeModelId = tree.phase === "DEPLETED" && tree.definitionId === "tree_wildwood"
+        // A fruit tree with staged models shows its own stage (grown and in fruit when ready, picked
+        // while it regrows); anything else keeps the curated broadleaf, or the Wildwood asset.
+        const stagedTreeId = treeStageModelId(tree.definitionId, tree.visualStage, tree.growthProgress);
+        const treeModelId = stagedTreeId ?? (tree.phase === "DEPLETED" && tree.definitionId === "tree_wildwood"
           ? "resource_wildwood_stump"
-          : tree.definitionId === "tree_wildwood" ? "resource_wildwood" : "tree_broad_3";
-        const treePlantNode = treePlant(tile, assets, sceneryModel(treeModelId), tree);
+          : tree.definitionId === "tree_wildwood" ? "resource_wildwood" : "tree_broad_3");
+        const stagedModel = stagedTreeId === null ? undefined : sceneryModel(stagedTreeId);
+        const treePlantNode =
+          stagedTreeId !== null && stagedModel !== undefined
+            ? stagedTreePlant(tile, stagedModel, tree)
+            : treePlant(tile, assets, sceneryModel(stagedTreeId === null ? treeModelId : "tree_broad_3"), tree);
         treeGroup.add(treePlantNode);
         pickTargets.set(treePlantNode, coordinate);
         // A production tree whose cycle is ready says so the same way a mature crop does: the same ring

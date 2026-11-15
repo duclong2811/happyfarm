@@ -51,6 +51,21 @@ import CropStrawberryStage1Url from "../assets/models/crops/crop_strawberry.s1.g
 import CropStrawberryStage2Url from "../assets/models/crops/crop_strawberry.s2.glb?url";
 import CropStrawberryStage3Url from "../assets/models/crops/crop_strawberry.s3.glb?url";
 import CropStrawberryStage4Url from "../assets/models/crops/crop_strawberry.s4.glb?url";
+import TreeAppleS1Url from "../assets/models/trees/tree_apple.s1.glb?url";
+import TreeAppleS2Url from "../assets/models/trees/tree_apple.s2.glb?url";
+import TreeAppleS3Url from "../assets/models/trees/tree_apple.s3.glb?url";
+import TreeAppleS4Url from "../assets/models/trees/tree_apple.s4.glb?url";
+import TreeAppleHarvestedUrl from "../assets/models/trees/tree_apple.harvested.glb?url";
+import TreeOrangeS1Url from "../assets/models/trees/tree_orange.s1.glb?url";
+import TreeOrangeS2Url from "../assets/models/trees/tree_orange.s2.glb?url";
+import TreeOrangeS3Url from "../assets/models/trees/tree_orange.s3.glb?url";
+import TreeOrangeS4Url from "../assets/models/trees/tree_orange.s4.glb?url";
+import TreeOrangeHarvestedUrl from "../assets/models/trees/tree_orange.harvested.glb?url";
+import TreePeachS1Url from "../assets/models/trees/tree_peach.s1.glb?url";
+import TreePeachS2Url from "../assets/models/trees/tree_peach.s2.glb?url";
+import TreePeachS3Url from "../assets/models/trees/tree_peach.s3.glb?url";
+import TreePeachS4Url from "../assets/models/trees/tree_peach.s4.glb?url";
+import TreePeachHarvestedUrl from "../assets/models/trees/tree_peach.harvested.glb?url";
 import type { CropModelId } from "./assets";
 
 /**
@@ -172,4 +187,42 @@ export function cropStageFor(mature: boolean, heightFraction: number): number {
   if (mature) return CROP_STAGE_COUNT;
   const progress = Number.isFinite(heightFraction) ? Math.min(1, Math.max(0, heightFraction)) : 0;
   return Math.min(CROP_STAGE_COUNT - 1, 1 + Math.floor(progress * (CROP_STAGE_COUNT - 1)));
+}
+
+/**
+ * Fruit-tree looks (Quaternius Nature Crops Pack, CC0): four growth stages and the picked tree, all at
+ * the grown tree's scale. A tree with no entry here keeps the curated broadleaf.
+ */
+export const TREE_STAGE_MODEL_URLS: Readonly<Record<string, string>> = {
+  "tree_apple.s1": TreeAppleS1Url,
+  "tree_apple.s2": TreeAppleS2Url,
+  "tree_apple.s3": TreeAppleS3Url,
+  "tree_apple.s4": TreeAppleS4Url,
+  "tree_apple.harvested": TreeAppleHarvestedUrl,
+  "tree_orange.s1": TreeOrangeS1Url,
+  "tree_orange.s2": TreeOrangeS2Url,
+  "tree_orange.s3": TreeOrangeS3Url,
+  "tree_orange.s4": TreeOrangeS4Url,
+  "tree_orange.harvested": TreeOrangeHarvestedUrl,
+  "tree_peach.s1": TreePeachS1Url,
+  "tree_peach.s2": TreePeachS2Url,
+  "tree_peach.s3": TreePeachS3Url,
+  "tree_peach.s4": TreePeachS4Url,
+  "tree_peach.harvested": TreePeachHarvestedUrl
+};
+
+/** The visual stages a production tree passes through, as the view model names them. */
+export type TreeLook = "SAPLING" | "GROWING" | "READY" | "REGROWING" | "DEPLETED";
+
+/**
+ * The model a fruit tree shows: a sapling is the first stage, a growing tree the second or third by
+ * progress, a ripe one the grown tree in fruit, and a picked or regrowing one the picked tree. Null
+ * for a tree with no staged models.
+ */
+export function treeStageModelId(definitionId: string, look: TreeLook, growthProgress: number): string | null {
+  const progress = Number.isFinite(growthProgress) ? Math.min(1, Math.max(0, growthProgress)) : 0;
+  const suffix =
+    look === "SAPLING" ? "s1" : look === "GROWING" ? (progress < 0.5 ? "s2" : "s3") : look === "READY" ? "s4" : "harvested";
+  const id = `${definitionId}.${suffix}`;
+  return TREE_STAGE_MODEL_URLS[id] === undefined ? null : id;
 }

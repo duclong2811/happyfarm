@@ -1,0 +1,51 @@
+[
+  {
+    "id": "fishing/fish_carp",
+    "source": "Koi.fbx",
+    "triangles": 1494,
+    "bytes": 32812,
+    "metres": 567.479
+  },
+  {
+    "id": "fishing/fish_catfish",
+    "source": "ArmoredCatfish.fbx",
+    "triangles": 1466,
+    "bytes": 32920,
+    "metres": 586.647
+  },
+  {
+    "id": "fishing/fish_snapper",
+    "source": "RedSnapper.fbx",
+    "triangles": 1416,
+    "bytes": 30164,
+    "metres": 528.065
+  },
+  {
+    "id": "fishing/fish_tuna",
+    "source": "Tuna.fbx",
+    "triangles": 1446,
+    "bytes": 31204,
+    "metres": 563.212
+  },
+  {
+    "id": "fishing/fish_sardine",
+    "source": "Tetra.fbx",
+    "triangles": 1386,
+    "bytes": 29384,
+    "metres": 527.388
+  },
+  {
+    "id": "fishing/fish_mackerel",
+    "source": "BlueTang.fbx",
+    "triangles": 1342,
+    "bytes": 28736,
+    "metres": 479.951
+  },
+  {
+    "id": "fishing/fish_tilapia",
+    "source": "Sunfish.fbx",
+    "triangles": 1430,
+    "bytes": 29784,
+    "metres": 580.814
+  }
+]
