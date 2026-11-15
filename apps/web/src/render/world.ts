@@ -267,7 +267,7 @@ export interface BuildWorldInput {
   readonly plots: readonly PlotDTO[];
 }
 
-const EMPTY_WORLD: FarmWorld = {
+export const EMPTY_WORLD: FarmWorld = {
   inner: null,
   outer: null,
   lockedPlots: [],

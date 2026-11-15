@@ -7,9 +7,9 @@ import {
   Matrix4,
   Mesh,
   Quaternion,
+  MeshStandardMaterial,
   Vector3,
   type Material,
-  type MeshStandardMaterial,
   type Object3D
 } from "three";
 import type { FarmLayout } from "./layout";
@@ -35,8 +35,11 @@ import {
   terrainHeightAt,
   volcanoHeightAt,
   volcanoRadiusFraction,
+  sampleIslandField,
+  type IslandField,
   type TerrainShape
 } from "./terrain-height";
+import { SEA_SURFACE_Y as SEA_LEVEL_Y } from "./world-cell-overlay";
 import { ROAD_LIFT_WORLD } from "./roads";
 import { ROAD_SHOULDER_WORLD } from "./world-config";
 import { buildScenery } from "./scenery";
@@ -920,6 +923,111 @@ function addHarbour(group: Group, assets: SharedAssets, harbour: FarmWorld["harb
   }
 }
 
+/** Ground vertices per cell side on a chosen island, and how deep its sea floor goes. */
+const GROUND_SAMPLES_PER_CELL = 2;
+const DEEP_FLOOR_DEPTH = 2.4;
+const SHALLOW_WATER = new Color(0x5ec4e3);
+const DEEP_WATER = new Color(0x2b7fbf);
+let islandWaterMaterial: MeshStandardMaterial | null = null;
+
+/**
+ * A chosen island's ground and water, from its sampled field.
+ *
+ * One grid mesh through the cell centres carries the land (level where it can be worked, raised only
+ * on rock) and the sea floor; a second grid at sea level carries the water, turquoise over the
+ * shallows and blue over open sea, the same colour the ocean around it is drawn in. Two draw calls
+ * for the whole island, and both are a function of the stored ground alone.
+ */
+function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, field: IslandField): Mesh {
+  const terrain = world.terrain;
+  const { size, pitch } = field;
+  const ocean = new Mesh(assets.circle, assets.waterDeep);
+  ocean.rotation.x = -Math.PI / 2;
+  ocean.scale.set(world.islandHalfWidthWorld * 3.6, world.islandHalfDepthWorld * 3.6, 1);
+  ocean.position.set(terrain.centerWorldX, SEA_LEVEL_Y - 0.02, terrain.centerWorldZ);
+  group.add(ocean);
+
+  // The ground is sampled at twice the cell density from the softened field, so the waterline - where
+  // the surface crosses sea level - is a smooth curve rather than the cells' staircase.
+  const steps = (size - 1) * GROUND_SAMPLES_PER_CELL + 1;
+  const step = pitch / GROUND_SAMPLES_PER_CELL;
+  const groundPositions = new Float32Array(steps * steps * 3);
+  const groundColors = new Float32Array(steps * steps * 3);
+  const colorAt = (fx: number, fz: number, channel: number): number => {
+    const colors = field.colors;
+    if (colors === undefined) return channel === 1 ? 0.74 : 0.4;
+    const x0 = Math.min(size - 2, Math.floor(fx));
+    const z0 = Math.min(size - 2, Math.floor(fz));
+    const tx = fx - x0;
+    const tz = fz - z0;
+    const at = (x: number, z: number): number => colors[(z * size + x) * 3 + channel] ?? 0;
+    const top = at(x0, z0) + (at(x0 + 1, z0) - at(x0, z0)) * tx;
+    const bottom = at(x0, z0 + 1) + (at(x0 + 1, z0 + 1) - at(x0, z0 + 1)) * tx;
+    return top + (bottom - top) * tz;
+  };
+  for (let z = 0; z < steps; z += 1) {
+    for (let x = 0; x < steps; x += 1) {
+      const index = z * steps + x;
+      const worldX = field.originWorldX + x * step;
+      const worldZ = field.originWorldZ + z * step;
+      const shore = sampleIslandField(field.shore, field, worldX, worldZ);
+      // Under water the floor keeps falling with distance from the coast, so the shallows read light
+      // and the open sea dark through the water surface.
+      const y =
+        shore < 1
+          ? ISLAND_TOP_Y + terrainHeightAt(worldX, worldZ, terrain)
+          : SEA_LEVEL_Y - Math.min(DEEP_FLOOR_DEPTH, (shore - 1) * field.cellsPerShoreUnit * 0.9);
+      groundPositions.set([worldX, y, worldZ], index * 3);
+      const fx = x / GROUND_SAMPLES_PER_CELL;
+      const fz = z / GROUND_SAMPLES_PER_CELL;
+      groundColors.set([colorAt(fx, fz, 0), colorAt(fx, fz, 1), colorAt(fx, fz, 2)], index * 3);
+    }
+  }
+  const ground = new Mesh(gridGeometry(steps, groundPositions, groundColors), assets.terrainGrass);
+  ground.receiveShadow = true;
+  // Named so the picking pass can find the one mesh a click on open ground lands on.
+  ground.name = "island-ground";
+  group.add(ground);
+
+  const waterPositions = new Float32Array(size * size * 3);
+  const waterColors = new Float32Array(size * size * 3);
+  for (let z = 0; z < size; z += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = z * size + x;
+      waterPositions.set([field.originWorldX + x * pitch, SEA_LEVEL_Y, field.originWorldZ + z * pitch], index * 3);
+      const tint = (field.water?.[index] ?? 0) === 2 ? DEEP_WATER : SHALLOW_WATER;
+      waterColors.set([tint.r, tint.g, tint.b], index * 3);
+    }
+  }
+  islandWaterMaterial ??= new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.84, roughness: 0.35 });
+  const surface = new Mesh(gridGeometry(size, waterPositions, waterColors), islandWaterMaterial);
+  surface.name = "island-water";
+  surface.renderOrder = 1;
+  group.add(surface);
+  return ground;
+}
+
+/** A square grid of `side` x `side` vertices, wound so its normals point up. */
+function gridGeometry(side: number, positions: Float32Array, colors: Float32Array): BufferGeometry {
+  const indices: number[] = [];
+  for (let z = 0; z < side - 1; z += 1) {
+    for (let x = 0; x < side - 1; x += 1) {
+      const a = z * side + x;
+      const b = a + side;
+      const c = a + 1;
+      const d = b + 1;
+      // (x, z), (x, z+1), (x+1, z), then (x+1, z), (x, z+1), (x+1, z+1): both face up.
+      indices.push(a, b, c, c, b, d);
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new BufferAttribute(colors, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 export function buildTerrain(
   group: Group,
   assets: SharedAssets,
@@ -930,6 +1038,8 @@ export function buildTerrain(
   // sampling its height function would divide by zero and write NaN vertices into the first ground
   // mesh. There is no ground to draw until the server supplies at least one land/preview row.
   if (world.outer === null) return null;
+  // A chosen Home Island has none of the composed island's roads, square, pond or harbour.
+  if (world.terrain.field !== undefined) return addChosenIsland(group, assets, world, world.terrain.field);
   const ground = addIsland(group, assets, world);
   addMeadows(group, assets, world);
   addPlaza(group, assets, world.plaza);

@@ -1,7 +1,8 @@
 import type { ConstructionDTO, CropStateDTO, FarmTileDTO, PlotDTO, TreeStateDTO } from "@happy-farm/contracts";
 import { layoutFarmTiles, type FarmLayout, type TilePlacement } from "./layout";
 import { buildFarmWorld, landFrame, type FarmWorld } from "./world";
-import { buildWorldCellMap } from "./world-cell-map";
+import { buildWorldCellMap, type WorldCellMapInput } from "./world-cell-map";
+import { buildIslandCellMap, buildIslandFarmWorld, type IslandGroundView } from "./island-world";
 import type { WorldCellMap } from "./world-cell";
 
 /**
@@ -97,6 +98,11 @@ export interface FarmViewState {
   readonly constructions?: readonly ConstructionDTO[];
   readonly resourceNodes?: readonly { readonly position: { readonly x: number; readonly y: number } }[];
   readonly selected: { readonly x: number; readonly y: number } | null;
+  /**
+   * The farm's chosen Home Island, as stored on the server, or null/absent for the composed island.
+   * When present it replaces the composed island's terrain, scenery and cell map entirely.
+   */
+  readonly island?: IslandGroundView | null;
 }
 
 function coordinateKey(x: number, y: number): string {
@@ -144,7 +150,8 @@ function constructionBoundsOf(construction: ConstructionDTO): {
  */
 export function farmPresentationSignature(state: FarmViewState): string {
   const parts: string[] = [
-    state.selected === null ? "-" : `s${String(state.selected.x)},${String(state.selected.y)}`
+    state.selected === null ? "-" : `s${String(state.selected.x)},${String(state.selected.y)}`,
+    state.island == null ? "i-" : `i${state.island.element}:${state.island.outline}:${String(state.island.seed)}:${String(state.island.revision)}`
   ];
   for (const plot of state.plots) {
     parts.push(`p${String(plot.plotIndex)}:${plot.unlocked ? "1" : "0"}:${String(plot.price)}:${String(plot.requiredLevel)}`);
@@ -230,7 +237,8 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
   const uniqueTiles = [...tilesByCoordinate.values()].map((tile) => ({ x: tile.x, y: tile.y }));
   const frame = landFrame(uniqueTiles, state.plots);
   const layout = layoutFarmTiles(uniqueTiles, frame === null ? {} : { frame });
-  const world = buildFarmWorld({ layout, tiles: uniqueTiles, plots: state.plots });
+  const island = state.island ?? null;
+  const world = island === null ? buildFarmWorld({ layout, tiles: uniqueTiles, plots: state.plots }) : islandWorldFor(layout, island);
 
   const tiles: SceneTile[] = [];
   for (const placement of layout.placements) {
@@ -270,7 +278,7 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
 
   // The cell map is built last, from the world and the rows: terrain and land use come from the
   // config, occupancy comes from what is actually growing.
-  const cells = buildWorldCellMap({
+  const cellInput: WorldCellMapInput = {
     layout,
     tiles: uniqueTiles,
     // Stored objects occupy no ground, so they are not occupancy: the map is built from what stands
@@ -284,7 +292,29 @@ export function buildFarmSceneInput(state: FarmViewState): FarmSceneInput {
     resourceNodes: (state.resourceNodes ?? []).map((node) => node.position),
     scenery: world.scenery,
     roads: world.roads
-  }, world.terrain);
+  };
+  const cells = island === null ? buildWorldCellMap(cellInput, world.terrain) : buildIslandCellMap(cellInput, island, world.terrain);
 
   return { layout, world, tiles, cells };
+}
+
+/**
+ * The chosen island's world, built once per stored ground and pitch.
+ *
+ * The field and the scatter depend on nothing a refresh changes, so a poll that rebuilds the scene
+ * input reuses them instead of re-running a distance transform over ten thousand cells.
+ */
+const islandWorlds = new WeakMap<IslandGroundView, Map<number, FarmWorld>>();
+function islandWorldFor(layout: FarmLayout, island: IslandGroundView): FarmWorld {
+  let byPitch = islandWorlds.get(island);
+  if (byPitch === undefined) {
+    byPitch = new Map();
+    islandWorlds.set(island, byPitch);
+  }
+  let world = byPitch.get(layout.pitch);
+  if (world === undefined) {
+    world = buildIslandFarmWorld(layout, island);
+    byPitch.set(layout.pitch, world);
+  }
+  return world;
 }

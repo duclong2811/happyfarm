@@ -38,6 +38,70 @@ export interface IslandShape {
   readonly exponent: number;
   /** The lobes that turn the base shape into a coastline. */
   readonly lobes: readonly IslandLobe[];
+  /**
+   * A chosen Home Island's sampled coast and elevation.
+   *
+   * When present it *is* the island: `islandRadiusAt` and `terrainHeightAt` read it instead of the
+   * superellipse, so the mesh, collision, the cell map and every prop stand on the stored ground
+   * without a second code path in any of them. Absent for the hand-composed island.
+   */
+  readonly field?: IslandField;
+}
+
+/**
+ * An island sampled on its own cell grid: the shore distance and the ground height at each cell's
+ * centre, interpolated bilinearly in between. Shore units mean what they mean on the composed island
+ * - below 1 inland, exactly 1 on the waterline, above 1 at sea.
+ */
+export interface IslandField {
+  /** World position of cell (0, 0)'s centre. */
+  readonly originWorldX: number;
+  readonly originWorldZ: number;
+  readonly pitch: number;
+  readonly size: number;
+  readonly shore: Float32Array;
+  readonly height: Float32Array;
+  /** Cells per shore unit, so a distance in shore units can be read as cells. */
+  readonly cellsPerShoreUnit: number;
+  /** How far the ground falls from the working level to the waterline, over the last cell of beach. */
+  readonly waterlineDrop: number;
+  /** Ground colour per cell (r, g, b in 0..1), for the mesh. Presentation only. */
+  readonly colors?: Float32Array;
+  /** Per cell: 0 land, 1 shallow water, 2 open sea. Presentation only. */
+  readonly water?: Uint8Array;
+}
+
+/** Cells of beach over which a chosen island's ground falls to the waterline. */
+export const ISLAND_BEACH_FALL_CELLS = 1;
+
+/**
+ * Ground height on a chosen island, relative to the working level.
+ *
+ * Level wherever it can be worked; rock rises; and the last cell of beach falls to meet the water at
+ * exactly the waterline the shore distance names, so what is drawn, walked and collided agree.
+ */
+function fieldHeightAt(field: IslandField, worldX: number, worldZ: number): number {
+  const shore = sampleIslandField(field.shore, field, worldX, worldZ);
+  if (shore >= 1) return -field.waterlineDrop;
+  const inlandCells = (1 - shore) * field.cellsPerShoreUnit;
+  const fall = inlandCells >= ISLAND_BEACH_FALL_CELLS ? 0 : -field.waterlineDrop * (1 - inlandCells / ISLAND_BEACH_FALL_CELLS);
+  const rise = sampleIslandField(field.height, field, worldX, worldZ);
+  const height = fall + (rise <= FLAT_EPSILON_WORLD ? 0 : rise);
+  return Math.abs(height) <= FLAT_EPSILON_WORLD ? 0 : height;
+}
+
+/** Bilinear sample of a per-cell field, clamped to the grid's edge (open sea on every island). */
+export function sampleIslandField(values: Float32Array, field: IslandField, worldX: number, worldZ: number): number {
+  const fx = Math.min(field.size - 1, Math.max(0, (worldX - field.originWorldX) / field.pitch));
+  const fz = Math.min(field.size - 1, Math.max(0, (worldZ - field.originWorldZ) / field.pitch));
+  const x0 = Math.min(field.size - 2, Math.floor(fx));
+  const z0 = Math.min(field.size - 2, Math.floor(fz));
+  const tx = fx - x0;
+  const tz = fz - z0;
+  const at = (x: number, z: number): number => values[z * field.size + x] ?? 0;
+  const top = at(x0, z0) + (at(x0 + 1, z0) - at(x0, z0)) * tx;
+  const bottom = at(x0, z0 + 1) + (at(x0 + 1, z0 + 1) - at(x0, z0 + 1)) * tx;
+  return top + (bottom - top) * tz;
 }
 
 /**
@@ -230,6 +294,7 @@ function superellipseRadius(normalisedX: number, normalisedZ: number, exponent: 
  * shore, and the beach - they cannot drift apart.
  */
 export function islandRadiusAt(worldX: number, worldZ: number, island: IslandShape): number {
+  if (island.field !== undefined) return sampleIslandField(island.field.shore, island.field, worldX, worldZ);
   const nx = (worldX - island.centerWorldX) / island.halfWidthWorld;
   const nz = (worldZ - island.centerWorldZ) / island.halfDepthWorld;
   if (nx === 0 && nz === 0) return 0;
@@ -304,6 +369,7 @@ export function uplandOffset(worldX: number, worldZ: number, shape: TerrainShape
  *   * a shore fade, so the land meets the water at zero height and the beach is level.
  */
 export function terrainHeightAt(worldX: number, worldZ: number, shape: TerrainShape): number {
+  if (shape.field !== undefined) return fieldHeightAt(shape.field, worldX, worldZ);
   const radius = islandRadiusAt(worldX, worldZ, shape);
   // Fade to nothing before the waterline: the last of the island is beach, not hillside.
   const shoreFade = 1 - Math.min(1, Math.max(0, (radius - 0.72) / 0.26));

@@ -130,6 +130,30 @@ export interface TerrainFollow {
   readonly maxStepWorld: number;
   /** Optional signed shore depth for a non-home scene; omitted means the canonical home island. */
   readonly depthAt?: (worldX: number, worldZ: number) => number;
+  /**
+   * The island's own fixed obstacles, when they are not the composed island's.
+   *
+   * A chosen Home Island has no pond, barn yard or landmarks at the composed island's coordinates,
+   * so it hands in its own list (empty today) instead of walking into invisible walls.
+   */
+  readonly staticObstacles?: readonly WorldObstacle[];
+}
+
+/**
+ * Signed shore depth for any island shape, the composed one or a chosen one: the same
+ * outline-normal approximation `islandDepth` uses, against the shape handed in.
+ */
+export function shoreDepthFor(shape: Parameters<typeof islandRadiusAt>[2]): (x: number, z: number) => number {
+  return (x, z) => {
+    const radius = islandRadiusAt(x, z, shape);
+    const step = 0.05;
+    const gradient = Math.hypot(
+      (islandRadiusAt(x + step, z, shape) - islandRadiusAt(x - step, z, shape)) / (2 * step),
+      (islandRadiusAt(x, z + step, shape) - islandRadiusAt(x, z - step, shape)) / (2 * step)
+    );
+    if (gradient === 0) return radius > 1 ? PLAYER_RADIUS + 1 : PLAYER_RADIUS - Math.min(shape.halfWidthWorld, shape.halfDepthWorld);
+    return (radius - 1) / gradient + PLAYER_RADIUS;
+  };
 }
 
 /**
@@ -206,7 +230,7 @@ export function createPlayerCollisionWorld(
   return {
     depth(x: number, z: number): number {
       let depth = terrain?.depthAt?.(x, z) ?? islandDepth(x, z);
-      for (const obstacle of [...STATIC_OBSTACLES, ...extraObstacles]) {
+      for (const obstacle of [...(terrain?.staticObstacles ?? STATIC_OBSTACLES), ...extraObstacles]) {
         depth = Math.max(depth, circleDepth(x, z, obstacle.centerWorldX, obstacle.centerWorldZ, obstacle.radiusWorld));
       }
       for (const circle of farm.circles) {

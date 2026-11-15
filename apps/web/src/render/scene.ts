@@ -1848,7 +1848,8 @@ let interactionGeometry: BufferGeometry | null = null;
   function rebuildCameraBlockers(): void {
     const pitch = state.layout.pitch;
     cameraBlockers = [
-      ...STATIC_OBSTACLES,
+      // A chosen island has none of the composed island's fixed buildings to hide behind.
+      ...(state.world.terrain.field === undefined ? STATIC_OBSTACLES : []),
       ...constructions
         .filter((item) => item.widthCells >= 2 || item.depthCells >= 2)
         .map((item) => ({

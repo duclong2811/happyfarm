@@ -33,7 +33,9 @@ import type {
   ,OrchardVisualAssignmentSnapshot
   ,AquaculturePondDTO
   ,NeighborSnapshotDTO
+  ,FarmIslandSummaryDTO
 } from "@happy-farm/contracts";
+import { FarmIslandDTOSchema } from "@happy-farm/contracts";
 import { ApiClient, ApiError, type CreateFarmResult } from "./api";
 import { showIslandPicker } from "./island-picker";
 import {
@@ -222,7 +224,8 @@ import {
 } from "./build-shop/shop-view";
 import { movementDestination, movementDestinationForTarget } from "./render/world-cell-selection";
 import { cellActionKey, cellLandKey, getAvailableCellActions } from "./render/world-cell-actions";
-import { createPlayerCollisionWorld } from "./player/collision";
+import { createPlayerCollisionWorld, shoreDepthFor } from "./player/collision";
+import { islandSpawnWorld, type IslandGroundView } from "./render/island-world";
 import { resourceNodeCollisionObstacles } from "./render/resource-cluster";
 import { neighborTerrainCollisionDepth } from "./player/neighbor-collision";
 import type { CollisionWorld } from "./player/controller";
@@ -339,6 +342,8 @@ interface AppState {
   language: Language;
   farmId: string | null;
   farmName: string;
+  /** The farm's chosen Home Island, as stored on the server, or null for the composed island. */
+  island: IslandGroundView | null;
   /**
    * The authenticated player, as the session endpoint reported them, or null before a session.
    *
@@ -505,6 +510,7 @@ const state: AppState = {
   language: initialLanguage(),
   farmId: null,
   farmName: "",
+  island: null,
   playerId: null,
   tiles: [],
   crops: [],
@@ -6960,7 +6966,7 @@ function applyNeighborPresentation(teleport: boolean): void {
     });
     scene.setNeighborIslandPreviews(previews);
     if (teleport) {
-      playerRuntime.teleport(SPAWN_WORLD);
+      playerRuntime.teleport(homeSpawnWorld());
       // The persisted Mộc center remains its server coordinate. This is camera framing only: from
       // HOME, place the orbit between HOME and Mộc so the real template-derived preview reads as a
       // distant island across open water instead of silently sitting outside the viewport.
@@ -7763,8 +7769,47 @@ function sceneInput(): FarmSceneInput {
     plots: state.plots,
     constructions: state.constructions,
     resourceNodes: state.resourceNodes,
-    selected: state.selected
+    selected: state.selected,
+    island: state.island
   });
+}
+
+/** Where the character appears at home: the chosen island's camp, or the composed island's spawn. */
+function homeSpawnWorld(): { readonly worldX: number; readonly worldZ: number } {
+  return state.island === null ? SPAWN_WORLD : islandSpawnWorld(state.island, worldFrame());
+}
+
+const ISLAND_CACHE_PREFIX = "happyfarm.island.";
+
+/**
+ * The farm's stored island ground, read once per revision.
+ *
+ * The ground never changes for a revision, so it is kept in this browser and a later visit costs no
+ * request at all. A cached copy is re-validated against the contract before use, so a corrupted or
+ * stale entry is simply fetched again.
+ */
+async function loadIslandGround(farmId: string, summary: FarmIslandSummaryDTO | null | undefined): Promise<void> {
+  if (summary == null) {
+    state.island = null;
+    return;
+  }
+  const key = `${ISLAND_CACHE_PREFIX}${farmId}`;
+  try {
+    const cached = FarmIslandDTOSchema.safeParse(JSON.parse(localStorage.getItem(key) ?? "null"));
+    if (cached.success && cached.data.revision === summary.revision && cached.data.seed === summary.seed) {
+      state.island = cached.data;
+      return;
+    }
+  } catch {
+    // An unreadable cache entry is the same as no entry.
+  }
+  const { island } = await api().getFarmIsland(farmId);
+  state.island = island;
+  try {
+    localStorage.setItem(key, JSON.stringify(island));
+  } catch {
+    // Storage full or blocked: the island is still drawn, it is just fetched again next visit.
+  }
 }
 
 /** Pushes authoritative farm state into the renderer. The renderer invents no land and no crops. */
@@ -7823,7 +7868,9 @@ function refreshScene(): void {
     heightAt: (worldX: number, worldZ: number) =>
       GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, input.world.terrain),
     maxSlope: PLAYER_MAX_SLOPE,
-    maxStepWorld: PLAYER_MAX_STEP_WORLD
+    maxStepWorld: PLAYER_MAX_STEP_WORLD,
+    // A chosen island brings its own coast and none of the composed island's fixed obstacles.
+    ...(input.world.terrain.field === undefined ? {} : { depthAt: shoreDepthFor(input.world.terrain), staticObstacles: [] })
   };
   playerRuntime.setTerrain(terrain);
   // The selection asks the same world whether a cell can be walked to, so a destination can never be
@@ -8378,6 +8425,7 @@ async function loadFarm(farmId: string): Promise<FarmBootContext> {
   accountRefreshGeneration += 1;
   state.farmId = result.farm.id;
   state.farmName = result.farm.name;
+  await loadIslandGround(result.farm.id, result.island);
   state.neighbor = (await client.getNeighbor()).neighbor;
   // On the home island the ferry panel opens only when the player taps the dock, never on boot.
   neighborSelectedTarget = state.neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "NPC" : null;
@@ -8407,6 +8455,7 @@ async function loadFarm(farmId: string): Promise<FarmBootContext> {
   // while the renderer initializes.
   await Promise.all([refreshFishing(), refreshResources(), refreshFarm()]);
   playerRuntime.respawn();
+  if (state.island !== null) playerRuntime.teleport(homeSpawnWorld());
   const returnAt = Date.now();
   const previousActiveAt = Number(localStorage.getItem("happyfarm.lastVisibleAt"));
   localStorage.setItem("happyfarm.lastVisibleAt", String(returnAt));
@@ -8512,6 +8561,7 @@ async function createFarm(): Promise<FarmBootContext> {
   accountRefreshGeneration += 1;
   state.farmId = created.farm.id;
   state.farmName = created.farm.name;
+  await loadIslandGround(created.farm.id, created.island);
   state.neighbor = (await client.getNeighbor()).neighbor;
   neighborSelectedTarget = null;
   accountReady = false;
@@ -8522,6 +8572,7 @@ async function createFarm(): Promise<FarmBootContext> {
   localStorage.setItem("happyfarm.lastVisibleAt", String(Date.now()));
   await Promise.all([refreshFishing(), refreshResources(), refreshFarm()]);
   playerRuntime.respawn();
+  if (state.island !== null) playerRuntime.teleport(homeSpawnWorld());
   setStatus(message("status.createdDetail", { name: created.farm.name, tiles: state.tiles.length }));
   return { previousActiveAt: 0, returnAt: Date.now(), reconcile: false };
 }
