@@ -21,6 +21,7 @@ import {
   GameDataPlotDefinitions,
   GameDataShopEntries,
   GameDataWarehouseTiers,
+  gameDataMineCatalogue,
   GameDataTreeDefinitions,
   GameDataConstructionDefinitions,
   GameDataForestryConstructionDefinitions,
@@ -131,6 +132,7 @@ export function createDevWorker(env: DevEnv) {
       random: new CryptoResourceRandom()
     },
     warehouse: { tiers: new GameDataWarehouseTiers() },
+    mines: { catalogue: gameDataMineCatalogue },
     workAreas: { ground: gameDataWorkAreaGround, ids },
     workers: { ids },
     cargoCapacities: gameDataCargoCapacities,

@@ -906,6 +906,11 @@ it.
 
 ### Resource nodes, mining and forestry (V15.2 / V15.3)
 
+Island mines (Phase B) supersede the hold-to-mine ore node and Auto mining: read
+`docs/design/ISLAND_MINES.md` before changing mine levels, slots, accumulation, the dig or the upgrade
+(`packages/game-data/src/mines`, `packages/domain/src/mine.ts`, `packages/application/src/mines.ts`,
+`D1MineRepository`, migration `0044_farm_mines.sql`).
+
 Read `docs/design/RESOURCE_NODES.md` (the generic definition/placement/state lifecycle, persistence and
 forestry reuse), `docs/design/MINING.md` (gameplay, authority, position limitation) and
 `docs/design/MINING_BALANCE.md` (the computed rates), plus `docs/design/FORESTRY.md` (the three kinds of

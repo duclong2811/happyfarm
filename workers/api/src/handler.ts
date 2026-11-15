@@ -107,6 +107,10 @@
   ,type ResourceNodeView
   ,GetWarehouseStatus
   ,UpgradeWarehouse
+  ,ListFarmMines
+  ,CollectMine
+  ,UpgradeMine
+  ,type MineCatalogue
   ,type WarehouseTierRepository
   ,type WarehouseStatusView
   ,type WorkAreaGroundLookup
@@ -235,6 +239,13 @@ import {
   ,type GetSessionResponse
   ,type WarehouseStatusDTO
   ,UpgradeWarehouseRequestSchema
+  ,GetFarmMinesResponseSchema
+  ,MineCommandRequestSchema
+  ,CollectMineResponseSchema
+  ,UpgradeMineResponseSchema
+  ,type GetFarmMinesResponse
+  ,type CollectMineResponse
+  ,type UpgradeMineResponse
   ,WorkAreaIdSchema
   ,CreateWorkAreaRequestSchema
   ,RenameWorkAreaRequestSchema
@@ -335,6 +346,7 @@ import {
   D1PlayerRepository,
   D1ProgressionRepository,
   D1WarehouseRepository,
+  D1MineRepository,
   D1ProductionAssignmentRepository,
   D1ProductionSourceRepository
   ,D1OrchardProductionBindingRepository
@@ -422,6 +434,13 @@ export interface HandlerDependencies {
    */
   readonly warehouse?: {
     readonly tiers: WarehouseTierRepository;
+  };
+  /**
+   * Island mines: the level ladder, the slot ladders and where slots stand. Optional like the
+   * warehouse it fills (and needs): a host without both answers `RESOURCE_NOT_FOUND` on the mine routes.
+   */
+  readonly mines?: {
+    readonly catalogue: MineCatalogue;
   };
   /**
    * Work areas: the ground-capability lookup and the id source.
@@ -907,6 +926,8 @@ function errorStatus(code: ErrorCode): number {
     case "FARM_PERMISSION_DENIED":
     case "CROP_LEVEL_REQUIRED":
     case "WAREHOUSE_LEVEL_REQUIRED":
+    case "MINE_SLOT_LOCKED":
+    case "MINE_LEVEL_REQUIRED":
     case "ISLAND_CHOICE_UNAVAILABLE":
     case "CHARACTER_NOT_AVAILABLE":
     case "PLOT_LEVEL_REQUIRED":
@@ -927,6 +948,7 @@ function errorStatus(code: ErrorCode): number {
     case "RESOURCE_LEVEL_REQUIRED":
       return 403;
     case "RESOURCE_NOT_FOUND":
+    case "MINE_NOT_FOUND":
     case "CROP_DEFINITION_NOT_FOUND":
     case "CROP_NOT_FOUND":
     case "ITEM_DEFINITION_NOT_FOUND":
@@ -956,6 +978,9 @@ function errorStatus(code: ErrorCode): number {
     case "INVENTORY_LIMIT_EXCEEDED":
     case "WAREHOUSE_FULL":
     case "WAREHOUSE_MAX_TIER":
+    case "MINE_EMPTY":
+    case "MINE_MAX_LEVEL":
+    case "MINE_CONFLICT":
     case "INSUFFICIENT_ITEMS":
     case "INSUFFICIENT_FUNDS":
     case "WALLET_LIMIT_EXCEEDED":
@@ -1309,6 +1334,32 @@ export function createHandler(host: HandlerDependencies) {
           dependencies.clock,
           async (playerId) => storedLevel(dependencies.progressionDefinition, await progressions.find(playerId))
         );
+  // Island mines: a read, a dig into the warehouse and a ledgered upgrade. They need the warehouse.
+  const mineDependencies =
+    dependencies.mines === undefined || dependencies.warehouse === undefined
+      ? null
+      : {
+          farms,
+          members,
+          islands: farmIslands,
+          mines: new D1MineRepository(dependencies.db),
+          catalogue: dependencies.mines.catalogue,
+          progression: progressions,
+          progressionDefinition: dependencies.progressionDefinition,
+          inventory,
+          inventoryService,
+          warehouse: warehouseRepository,
+          warehouseTiers: dependencies.warehouse.tiers,
+          wallets,
+          currencies: dependencies.currencyDefinitions,
+          economyService: new EconomyService(dependencies.ids, dependencies.clock),
+          idempotency: new D1IdempotencyRepository(dependencies.db),
+          fingerprints: dependencies.fingerprints,
+          clock: dependencies.clock
+        };
+  const listFarmMines = mineDependencies === null ? null : new ListFarmMines(mineDependencies);
+  const collectMine = mineDependencies === null ? null : new CollectMine(mineDependencies);
+  const upgradeMine = mineDependencies === null ? null : new UpgradeMine(mineDependencies);
   // Work areas: a pure addition with no economic effect - no gold, no inventory, no land, no tiles.
   // Optional wiring, like fishing and the warehouse, so a host that has not configured it answers
   // RESOURCE_NOT_FOUND on these routes rather than refusing to build.
@@ -3257,6 +3308,37 @@ export function createHandler(host: HandlerDependencies) {
         }
         const farmTiles = await listFarmTiles.execute(actor, parseFarmId(decodedId));
         const body: ApiSuccess<{ tiles: FarmTileDTO[] }> = { ok: true, data: { tiles: [...farmTiles] } };
+        return jsonResponse(body);
+      }
+
+      const minesRoute = /^\/farms\/([^/]+)\/mines$/.exec(url.pathname);
+      if (request.method === "GET" && minesRoute?.[1] !== undefined) {
+        if (listFarmMines === null) return failure("RESOURCE_NOT_FOUND", requestId);
+        const decodedId = decodePathSegment(minesRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const view = await listFarmMines.execute(actor, parseFarmId(decodedId));
+        const body: ApiSuccess<GetFarmMinesResponse> = { ok: true, data: GetFarmMinesResponseSchema.parse(view) };
+        return jsonResponse(body);
+      }
+      const mineActionRoute = /^\/farms\/([^/]+)\/mines\/([0-9]{1,2})\/(collect|upgrade)$/.exec(url.pathname);
+      if (request.method === "POST" && mineActionRoute?.[1] !== undefined && mineActionRoute[2] !== undefined) {
+        if (collectMine === null || upgradeMine === null) return failure("RESOURCE_NOT_FOUND", requestId);
+        const decodedId = decodePathSegment(mineActionRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const parsed = MineCommandRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const slot = Number(mineActionRoute[2]);
+        if (mineActionRoute[3] === "collect") {
+          const dig = await collectMine.execute(actor, parseFarmId(decodedId), slot, parsed.data);
+          const body: ApiSuccess<CollectMineResponse> = { ok: true, data: CollectMineResponseSchema.parse(dig) };
+          return jsonResponse(body);
+        }
+        const upgrade = await upgradeMine.execute(actor, parseFarmId(decodedId), slot, parsed.data);
+        const body: ApiSuccess<UpgradeMineResponse> = { ok: true, data: UpgradeMineResponseSchema.parse(upgrade) };
         return jsonResponse(body);
       }
 

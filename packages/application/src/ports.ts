@@ -34,6 +34,7 @@ import type {
   InventoryRemoval,
   ItemDefinition,
   ItemDefinitionId,
+  MineId,
   Player,
   PlayerId,
   PlayerProgression,
@@ -1416,4 +1417,86 @@ export interface CargoRepository {
    * cannot be satisfied - in which case the warehouse is untouched and no receipt is written.
    */
   loadAllAtomically(load: CargoLoad, idempotency: IdempotencyRecord): Promise<boolean>;
+}
+
+/**
+ * Island mines: one row per (farm, slot), and the two guarded writes that change one.
+ *
+ * Mines do not tick. A row stores what was banked and when its clock restarted; what it holds is
+ * computed from server time on read (`packages/domain/src/mine.ts`).
+ */
+export interface FarmMineRecord {
+  readonly id: MineId;
+  readonly farmId: FarmId;
+  readonly slot: number;
+  readonly level: number;
+  readonly bankedMilli: number;
+  readonly accruedSince: string;
+  /** Every whole ore ever dug from this mine: what makes the experience a dig pays lossless. */
+  readonly oreDugTotal: number;
+  readonly version: number;
+}
+
+/** The fields a write replaces on a mine row, at the version it expected. */
+export interface FarmMineChange {
+  readonly level: number;
+  readonly bankedMilli: number;
+  readonly accruedSince: string;
+  readonly oreDugTotal: number;
+  /** The marker the receipt requires back: the dig's own, or the upgrade's ledger id. */
+  readonly marker: string;
+}
+
+export interface MineDig {
+  readonly playerId: PlayerId;
+  readonly mine: FarmMineRecord;
+  readonly change: FarmMineChange;
+  readonly addition: InventoryAddition;
+  /** Null when the dig crossed no experience boundary (fewer ore than one point's worth). */
+  readonly award: XpAward | null;
+  readonly timestamp: string;
+}
+
+export interface MineUpgrade {
+  readonly playerId: PlayerId;
+  readonly mine: FarmMineRecord;
+  readonly change: FarmMineChange;
+  readonly economy: EconomyMutation;
+  readonly removals: readonly InventoryRemoval[];
+  readonly expectedInventory: readonly InventoryItem[];
+  readonly timestamp: string;
+}
+
+export interface MineRepository {
+  listByFarm(farmId: FarmId): Promise<readonly FarmMineRecord[]>;
+  /** Creates the level-1 row of every listed slot that has none; never touches an existing row. */
+  ensureSlots(farmId: FarmId, slots: readonly { readonly id: MineId; readonly slot: number }[], now: string): Promise<void>;
+  /** Ore into the warehouse, the mine's new balance, experience and the receipt: all or nothing. */
+  digAtomically(dig: MineDig, idempotency: IdempotencyRecord): Promise<void>;
+  /** Gold through the ledger, materials out, the mine one level up and the receipt: all or nothing. */
+  upgradeAtomically(upgrade: MineUpgrade, idempotency: IdempotencyRecord): Promise<void>;
+}
+
+export interface MineLevelDefinition {
+  readonly level: number;
+  readonly orePerHour: number;
+  readonly requiredPlayerLevel: number;
+  /** What reaching this level costs; null for the level every mine starts at. */
+  readonly upgradeCost: {
+    readonly currencyDefinitionId: string;
+    readonly gold: number;
+    readonly materials: Readonly<Record<string, number>>;
+  } | null;
+}
+
+/** The mine rules' numbers and where slots stand, from game data. */
+export interface MineCatalogue {
+  levels(): readonly MineLevelDefinition[];
+  readonly accumulationHours: number;
+  readonly orePerXp: number;
+  readonly oreItemDefinitionId: string;
+  /** The player levels that open each slot, for the farm's island element (null: the composed island). */
+  slotLevels(element: string | null): readonly number[];
+  /** Where each slot stands on this farm, in slot order; may be shorter than asked if the island has no room. */
+  slotTiles(island: FarmIsland | null, count: number): readonly { readonly x: number; readonly y: number }[];
 }

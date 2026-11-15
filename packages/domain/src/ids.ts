@@ -15,6 +15,7 @@ declare const constructionIdBrand: unique symbol;
 declare const fishingActionIdBrand: unique symbol;
 declare const resourceActionIdBrand: unique symbol;
 declare const warehouseIdBrand: unique symbol;
+declare const mineIdBrand: unique symbol;
 declare const workAreaIdBrand: unique symbol;
 declare const actorIdBrand: unique symbol;
 declare const jobIdBrand: unique symbol;
@@ -34,6 +35,7 @@ export type ConstructionId = string & { readonly [constructionIdBrand]: true };
 export type FishingActionId = string & { readonly [fishingActionIdBrand]: true };
 export type ResourceActionId = string & { readonly [resourceActionIdBrand]: true };
 export type WarehouseId = string & { readonly [warehouseIdBrand]: true };
+export type MineId = string & { readonly [mineIdBrand]: true };
 export type WorkAreaId = string & { readonly [workAreaIdBrand]: true };
 export type ActorId = string & { readonly [actorIdBrand]: true };
 export type JobId = string & { readonly [jobIdBrand]: true };
@@ -53,6 +55,7 @@ const ECONOMY_TRANSACTION_ID_PATTERN = new RegExp(`^econ_${UUID_PATTERN}$`, "i")
 const FISHING_ACTION_ID_PATTERN = new RegExp(`^fishact_${UUID_PATTERN}$`, "i");
 const RESOURCE_ACTION_ID_PATTERN = new RegExp(`^resact_${UUID_PATTERN}$`, "i");
 const WAREHOUSE_ID_PATTERN = new RegExp(`^warehouse_${UUID_PATTERN}$`, "i");
+const MINE_ID_PATTERN = new RegExp(`^mine_${UUID_PATTERN}_(?:[0-9]|1[0-5])$`, "i");
 const WORK_AREA_ID_PATTERN = new RegExp(`^workarea_${UUID_PATTERN}$`, "i");
 const ACTOR_ID_PATTERN = new RegExp(`^actor_${UUID_PATTERN}$`, "i");
 const JOB_ID_PATTERN = new RegExp(`^job_${UUID_PATTERN}$`, "i");
@@ -233,6 +236,23 @@ export function parseWarehouseId(value: string): WarehouseId {
 
 export function warehouseIdFromUuid(uuid: string): WarehouseId {
   return parseWarehouseId(`warehouse_${uuid}`);
+}
+
+/**
+ * The stable id of one mine on a farm: the farm and the slot it sits in.
+ *
+ * Derived, not generated, so a slot has exactly one mine for its whole life and a replayed upgrade
+ * cites the same ledger reference. Slots are small integers (0-15) the game data ladders open.
+ */
+export function parseMineId(value: string): MineId {
+  if (!MINE_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid mine ID");
+  }
+  return value as MineId;
+}
+
+export function mineIdFor(farmId: FarmId, slot: number): MineId {
+  return parseMineId(`mine_${farmId.slice("farm_".length)}_${String(slot)}`);
 }
 
 /**

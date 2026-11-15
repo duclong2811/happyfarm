@@ -10,6 +10,7 @@ export * from "./economy";
 export * from "./fishing";
 export * from "./forestry";
 export * from "./items";
+export * from "./mines";
 export * from "./plots";
 export * from "./placement";
 export * from "./progression";

@@ -69,6 +69,7 @@ import {
   parseActorId,
   parseAutoAnchorKind,
   parseJobId,
+  parseMineId,
   MAX_CARGO_CAPACITY,
   NO_AUTO_TRAVEL,
   PLOT_TILE_COUNT,
@@ -83,6 +84,10 @@ import type {
   ConstructionRemoval,
   WarehouseRepository,
   WarehouseUpgrade,
+  FarmMineRecord,
+  MineDig,
+  MineRepository,
+  MineUpgrade,
   ConstructionSeed,
   CropInstanceRepository,
   FarmExpansionRepository,
@@ -733,6 +738,244 @@ export class D1WarehouseRepository implements WarehouseRepository {
         (error.message.includes("economy conflict") || error.message.includes("idempotency_keys.actor_player_id"))
       ) {
         throw new ApplicationError("ECONOMY_CONFLICT", "Warehouse or economy state changed concurrently");
+      }
+      throw error;
+    }
+  }
+}
+
+interface FarmMineRow {
+  readonly id: string;
+  readonly farm_id: string;
+  readonly slot: number;
+  readonly level: number;
+  readonly banked_milli: number;
+  readonly accrued_since: string;
+  readonly ore_dug_total: number;
+  readonly version: number;
+}
+
+/**
+ * Island mines: the rows, and the two guarded writes.
+ *
+ * Both writes follow the warehouse's shape: every statement in one batch, the mine row updated only
+ * at the version the caller read, and the receipt inserted only if the row now carries this write's
+ * own marker at the next version - otherwise its actor is NULL and the whole batch rolls back. A dig
+ * also requires the experience row where the caller read it and room in the stack; an upgrade also
+ * requires the wallet, the ledger row and each consumed stack exactly where the write left them.
+ */
+export class D1MineRepository implements MineRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async listByFarm(farmId: FarmId): Promise<readonly FarmMineRecord[]> {
+    let result;
+    try {
+      result = await this.db
+        .prepare("SELECT id, farm_id, slot, level, banked_milli, accrued_since, ore_dug_total, version FROM farm_mines WHERE farm_id = ? ORDER BY slot")
+        .bind(farmId)
+        .all<FarmMineRow>();
+    } catch (error: unknown) {
+      // A database that predates the mines migration simply has no mines yet.
+      if (error instanceof Error && error.message.includes("no such table: farm_mines")) return [];
+      throw error;
+    }
+    return result.results.map((row) => ({
+      id: parseMineId(row.id),
+      farmId: parseFarmId(row.farm_id),
+      slot: row.slot,
+      level: row.level,
+      bankedMilli: row.banked_milli,
+      accruedSince: row.accrued_since,
+      oreDugTotal: row.ore_dug_total,
+      version: row.version
+    }));
+  }
+
+  async ensureSlots(farmId: FarmId, slots: readonly { readonly id: string; readonly slot: number }[], now: string): Promise<void> {
+    if (slots.length === 0) return;
+    await this.db.batch(
+      slots.map((entry) =>
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO farm_mines (id, farm_id, slot, level, banked_milli, accrued_since, ore_dug_total, version, last_change_id, created_at, updated_at) VALUES (?, ?, ?, 1, 0, ?, 0, 1, NULL, ?, ?)"
+          )
+          .bind(entry.id, farmId, entry.slot, now, now, now)
+      )
+    );
+  }
+
+  private mineUpdate(mine: FarmMineRecord, change: MineDig["change"], timestamp: string): D1PreparedStatementLike {
+    return this.db
+      .prepare(
+        "UPDATE farm_mines SET level = ?, banked_milli = ?, accrued_since = ?, ore_dug_total = ?, version = version + 1, last_change_id = ?, updated_at = ? WHERE id = ? AND farm_id = ? AND version = ? AND level = ?"
+      )
+      .bind(change.level, change.bankedMilli, change.accruedSince, change.oreDugTotal, change.marker, timestamp, mine.id, mine.farmId, mine.version, mine.level);
+  }
+
+  async digAtomically(dig: MineDig, idempotency: IdempotencyRecord): Promise<void> {
+    if (dig.playerId !== idempotency.actorPlayerId || dig.addition.playerId !== dig.playerId || (dig.award !== null && dig.award.playerId !== dig.playerId)) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Mine dig ownership does not match");
+    }
+    const award = dig.award;
+    const statements: D1PreparedStatementLike[] = [this.mineUpdate(dig.mine, dig.change, dig.timestamp)];
+    if (award !== null) {
+      statements.push(
+        this.db
+          .prepare("INSERT OR IGNORE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 0, 1, ?, ?)")
+          .bind(award.playerId, award.timestamp, award.timestamp)
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM farm_mines WHERE id = ? AND version = ? AND last_change_id = ?) AND (? = 0 OR EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?)) AND COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) <= ? - ? THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          dig.mine.id,
+          dig.mine.version + 1,
+          dig.change.marker,
+          award === null ? 0 : 1,
+          dig.playerId,
+          award?.xpBefore ?? -1,
+          award?.expectedProgressionVersion ?? -1,
+          dig.addition.playerId,
+          dig.addition.itemDefinitionId,
+          dig.addition.maxQuantity,
+          dig.addition.quantity,
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        ),
+      this.db
+        .prepare(
+          "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = inventory_items.quantity + excluded.quantity, updated_at = excluded.updated_at, version = inventory_items.version + 1"
+        )
+        .bind(dig.addition.playerId, dig.addition.itemDefinitionId, dig.addition.quantity, dig.addition.timestamp)
+    );
+    if (award !== null) {
+      statements.push(
+        this.db
+          .prepare(
+            "UPDATE player_progression SET level = ?, xp = ?, progression_version = progression_version + 1, updated_at = ? WHERE player_id = ? AND xp = ? AND progression_version = ?"
+          )
+          .bind(award.levelAfter, award.xpAfter, award.timestamp, award.playerId, award.xpBefore, award.expectedProgressionVersion)
+      );
+    }
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) {
+        throw new Error("Atomic mine dig failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("warehouse_full")) {
+        // Someone else filled the warehouse between the read and the write: the dig is re-sized.
+        throw new ApplicationError("MINE_CONFLICT", "The warehouse changed while digging");
+      }
+      if (
+        error instanceof Error &&
+        (error.message.includes("NOT NULL constraint failed: idempotency_keys") || error.message.includes("player progression"))
+      ) {
+        throw new ApplicationError("MINE_CONFLICT", "The mine changed while digging");
+      }
+      throw error;
+    }
+  }
+
+  async upgradeAtomically(upgrade: MineUpgrade, idempotency: IdempotencyRecord): Promise<void> {
+    if (
+      upgrade.playerId !== idempotency.actorPlayerId ||
+      upgrade.economy.playerId !== upgrade.playerId ||
+      upgrade.economy.reason !== "MINE_UPGRADE" ||
+      upgrade.economy.referenceId !== upgrade.mine.id ||
+      upgrade.change.marker !== upgrade.economy.transactionId
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Mine upgrade ownership does not match");
+    }
+    if (upgrade.expectedInventory.length !== upgrade.removals.length) {
+      throw new ApplicationError("INVALID_INPUT", "Mine upgrade materials do not match");
+    }
+    const inventoryGuards = upgrade.removals.map(() => "EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?)");
+    const inventoryGuardValues = upgrade.removals.flatMap((removal, index) => {
+      const expected = upgrade.expectedInventory[index];
+      return [removal.playerId, removal.itemDefinitionId, (expected?.quantity ?? -1) - removal.quantity, (expected?.version ?? -2) + 1];
+    });
+    const statements: D1PreparedStatementLike[] = [
+      this.db
+        .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+        .bind(upgrade.economy.playerId, upgrade.economy.currencyDefinitionId, upgrade.timestamp, upgrade.timestamp),
+      this.db
+        .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(
+          upgrade.economy.transactionId,
+          upgrade.economy.playerId,
+          upgrade.economy.currencyDefinitionId,
+          upgrade.economy.delta,
+          upgrade.economy.balanceBefore,
+          upgrade.economy.balanceAfter,
+          upgrade.economy.expectedWalletVersion,
+          upgrade.economy.reason,
+          upgrade.economy.referenceType,
+          upgrade.economy.referenceId,
+          upgrade.economy.requestId,
+          upgrade.economy.createdAt
+        ),
+      ...upgrade.removals.map((removal, index) => {
+        const expected = upgrade.expectedInventory[index];
+        return this.db
+          .prepare(
+            "UPDATE inventory_items SET quantity = quantity - ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity >= ?"
+          )
+          .bind(removal.quantity, removal.timestamp, removal.playerId, removal.itemDefinitionId, expected?.quantity ?? -1, expected?.version ?? -1, removal.quantity);
+      }),
+      this.mineUpdate(upgrade.mine, upgrade.change, upgrade.timestamp),
+      this.db
+        .prepare(
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM farm_mines WHERE id = ? AND level = ? AND version = ? AND last_change_id = ?)${inventoryGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          upgrade.economy.playerId,
+          upgrade.economy.currencyDefinitionId,
+          upgrade.economy.balanceAfter,
+          upgrade.economy.expectedWalletVersion + 1,
+          upgrade.economy.transactionId,
+          upgrade.economy.playerId,
+          upgrade.mine.id,
+          upgrade.change.level,
+          upgrade.mine.version + 1,
+          upgrade.change.marker,
+          ...inventoryGuardValues,
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        )
+    ];
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) {
+        throw new Error("Atomic mine upgrade failed");
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("economy conflict")) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "The wallet changed while upgrading the mine");
+      }
+      // A failed guard leaves the receipt's actor NULL; the receipt trigger then refuses it first, so
+      // either message means the same thing: something moved, and nothing was written.
+      if (
+        error instanceof Error &&
+        (error.message.includes("NOT NULL constraint failed: idempotency_keys") ||
+          error.message.includes("completed mine upgrade idempotency requires its ledger row"))
+      ) {
+        throw new ApplicationError("MINE_CONFLICT", "The mine changed while upgrading");
       }
       throw error;
     }

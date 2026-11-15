@@ -73,6 +73,7 @@ import type {
   TreeDefinitionRepository,
   TreeIdGenerator,
   WarehouseTierRepository,
+  MineCatalogue,
   TileTerrainLookup,
   LandSaleLookup,
   WorkAreaGroundLookup,
@@ -127,6 +128,15 @@ import {
   ISLAND_SEED_MAX,
   worldObjectDefinition,
   WORLD_OBJECT_DEFINITIONS,
+  COMPOSED_ISLAND_MINE_POSITIONS,
+  MINE_ACCUMULATION_HOURS,
+  MINE_GOLD_CURRENCY_ID,
+  MINE_LEVELS,
+  MINE_ORE_ITEM_ID,
+  MINE_ORE_PER_XP,
+  MINE_WOOD_ITEM_ID,
+  islandMineTiles,
+  mineSlotLevels,
   type CropDefinitionData,
   type TreeDefinitionData
 } from "@happy-farm/game-data";
@@ -736,6 +746,34 @@ export class GameDataShopEntries implements ShopEntryRepository {
     return entry === undefined ? null : toShopEntry(entry);
   }
 }
+
+/**
+ * The mine rules, straight from game data: the level ladder, the slot ladders and where slots stand.
+ * A farm on the hand-composed island uses its fixed mine positions; a chosen island finds its slots
+ * from its own stored cells and ore sites.
+ */
+export const gameDataMineCatalogue: MineCatalogue = {
+  levels: () =>
+    MINE_LEVELS.map((entry) => ({
+      level: entry.level,
+      orePerHour: entry.orePerHour,
+      requiredPlayerLevel: entry.requiredPlayerLevel,
+      upgradeCost:
+        entry.upgradeCost === null
+          ? null
+          : {
+              currencyDefinitionId: MINE_GOLD_CURRENCY_ID,
+              gold: entry.upgradeCost.gold,
+              materials: { [MINE_WOOD_ITEM_ID]: entry.upgradeCost.wood, [MINE_ORE_ITEM_ID]: entry.upgradeCost.ore }
+            }
+    })),
+  accumulationHours: MINE_ACCUMULATION_HOURS,
+  orePerXp: MINE_ORE_PER_XP,
+  oreItemDefinitionId: MINE_ORE_ITEM_ID,
+  slotLevels: (element) => mineSlotLevels(element),
+  slotTiles: (island, count) =>
+    island === null ? COMPOSED_ISLAND_MINE_POSITIONS.slice(0, count) : islandMineTiles(island, count)
+};
 
 /** The warehouse tier table, straight from game data. Capacity lives here; the row stores it. */
 export class GameDataWarehouseTiers implements WarehouseTierRepository {

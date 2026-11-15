@@ -4,6 +4,7 @@ export * from "./construction";
 export * from "./economy";
 export * from "./farm";
 export * from "./farm-island";
+export * from "./mine";
 export * from "./fishing";
 export * from "./identity";
 export * from "./ids";

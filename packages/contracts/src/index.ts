@@ -1321,6 +1321,60 @@ export const WarehouseStatusDTOSchema = z
 export const GetWarehouseResponseSchema = z.object({ warehouse: WarehouseStatusDTOSchema }).strict();
 
 export const UpgradeWarehouseRequestSchema = z.object({ requestId: z.string().min(8).max(100) }).strict();
+
+/**
+ * Island mines. Every number is the server's: how much a mine holds is computed from server time at
+ * `readAt`, and the client only extrapolates from there with `orePerHour` until the next read.
+ */
+const MineSlotSchema = z.number().int().min(0).max(15);
+const MineTileSchema = z.number().int().min(-1_000).max(1_000);
+
+export const MineNextLevelDTOSchema = z
+  .object({
+    level: z.number().int().min(2),
+    orePerHour: z.number().int().positive(),
+    requiredPlayerLevel: z.number().int().positive(),
+    currencyId: z.string().regex(/^currency_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    gold: z.number().int().nonnegative(),
+    materials: z.array(WarehouseMaterialCostSchema)
+  })
+  .strict();
+
+export const MineDTOSchema = z
+  .object({
+    slot: MineSlotSchema,
+    x: MineTileSchema,
+    y: MineTileSchema,
+    level: z.number().int().positive(),
+    orePerHour: z.number().int().positive(),
+    capacityOre: z.number().int().positive(),
+    availableMilli: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    nextLevel: MineNextLevelDTOSchema.nullable()
+  })
+  .strict();
+
+export const LockedMineSlotDTOSchema = z
+  .object({ slot: MineSlotSchema, x: MineTileSchema, y: MineTileSchema, requiredPlayerLevel: z.number().int().positive() })
+  .strict();
+
+export const GetFarmMinesResponseSchema = z
+  .object({ readAt: z.iso.datetime(), mines: z.array(MineDTOSchema), locked: z.array(LockedMineSlotDTOSchema) })
+  .strict();
+
+export const MineCommandRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+
+export const CollectMineResponseSchema = z
+  .object({
+    readAt: z.iso.datetime(),
+    mine: MineDTOSchema,
+    collected: z.number().int().positive(),
+    xpAwarded: z.number().int().nonnegative().max(1_000_000),
+    leveledUp: z.boolean(),
+    progression: PlayerProgressionDTOSchema
+  })
+  .strict();
+
+export const UpgradeMineResponseSchema = z.object({ readAt: z.iso.datetime(), mine: MineDTOSchema }).strict();
 export const SettleProductionAssignmentRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
 export const SettleProductionAssignmentResponseSchema = z.object({
   assignmentId: ProductionAssignmentIdSchema,
@@ -1933,6 +1987,12 @@ export const ErrorCodeSchema = z.enum([
   "INVENTORY_LIMIT_EXCEEDED",
   "WAREHOUSE_FULL",
   "WAREHOUSE_MAX_TIER",
+  "MINE_NOT_FOUND",
+  "MINE_SLOT_LOCKED",
+  "MINE_EMPTY",
+  "MINE_MAX_LEVEL",
+  "MINE_LEVEL_REQUIRED",
+  "MINE_CONFLICT",
   "CURRENCY_DEFINITION_NOT_FOUND",
   "SHOP_ENTRY_NOT_FOUND",
   "SHOP_ENTRY_NOT_ALLOWED",
@@ -2037,6 +2097,12 @@ export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export type WarehouseStatusDTO = z.infer<typeof WarehouseStatusDTOSchema>;
 export type GetWarehouseResponse = z.infer<typeof GetWarehouseResponseSchema>;
 export type UpgradeWarehouseRequest = z.infer<typeof UpgradeWarehouseRequestSchema>;
+export type MineDTO = z.infer<typeof MineDTOSchema>;
+export type LockedMineSlotDTO = z.infer<typeof LockedMineSlotDTOSchema>;
+export type GetFarmMinesResponse = z.infer<typeof GetFarmMinesResponseSchema>;
+export type MineCommandRequest = z.infer<typeof MineCommandRequestSchema>;
+export type CollectMineResponse = z.infer<typeof CollectMineResponseSchema>;
+export type UpgradeMineResponse = z.infer<typeof UpgradeMineResponseSchema>;
 export type WorkAreaKind = z.infer<typeof WorkAreaKindSchema>;
 export type WorkAreaCellDTO = z.infer<typeof WorkAreaCellSchema>;
 export type WorkAreaSummaryDTO = z.infer<typeof WorkAreaSummaryDTOSchema>;
