@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  groundTapIntent,
   groundTapOpensContext,
   precisionActionForPanel,
   precisionFocusFor,
@@ -59,5 +60,22 @@ describe("when a tap on the ground opens the context surface", () => {
     // Wild land, water, somebody else's ground: the tap was just the world, and the joystick keeps the
     // screen rather than a surface appearing under the player's thumb.
     expect(groundTapOpensContext({ mode: "CHARACTER", hasContextAction: false })).toBe(false);
+  });
+});
+
+describe("groundTapIntent (click-to-move)", () => {
+  it("walks to plain ground in both views", () => {
+    for (const mode of ["ESTATE", "CHARACTER"] as const) {
+      expect(groundTapIntent({ mode, hasContextAction: false, repeatTap: false })).toBe("WALK");
+    }
+  });
+
+  it("selects and walks to an actionable cell in character view", () => {
+    expect(groundTapIntent({ mode: "CHARACTER", hasContextAction: true, repeatTap: false })).toBe("SELECT_AND_WALK");
+  });
+
+  it("selects first in estate view and walks on the second tap of the same cell", () => {
+    expect(groundTapIntent({ mode: "ESTATE", hasContextAction: true, repeatTap: false })).toBe("SELECT");
+    expect(groundTapIntent({ mode: "ESTATE", hasContextAction: true, repeatTap: true })).toBe("WALK");
   });
 });

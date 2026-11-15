@@ -235,7 +235,7 @@ import {
   toggleDockExpansion,
   type DockState
 } from "./dock";
-import { groundTapOpensContext, precisionFocusFor, type PrecisionActionKind } from "./render/precision-action";
+import { groundTapIntent, precisionFocusFor, type PrecisionActionKind } from "./render/precision-action";
 import type { EstateFollowBehaviour } from "./render/estate-follow";
 import type { EstateCameraFocus } from "./render";
 import { homeIslandContext, type GameplayContext } from "./interaction/context";
@@ -7464,12 +7464,35 @@ function onGroundTap(cell: SelectedTile): void {
     return;
   }
   const same = state.selected !== null && state.selected.x === cell.x && state.selected.y === cell.y;
-  if (same) return;
-  if (!groundTapOpensContext({ mode: state.cameraMode, hasContextAction: cellOffersContext(cell) })) {
-    clearSelection();
+  const intent = groundTapIntent({ mode: state.cameraMode, hasContextAction: cellOffersContext(cell), repeatTap: same });
+  if (intent === "SELECT") {
+    if (!same) selectCell(cell.x, cell.y);
     return;
   }
-  selectCell(cell.x, cell.y);
+  if (intent === "WALK") {
+    if (!same) clearSelection();
+    walkToCell(cell);
+    return;
+  }
+  if (!same) selectCell(cell.x, cell.y);
+  walkToCell(cell);
+}
+
+/**
+ * Click-to-move: walk to the nearest free spot at (or beside) a tapped cell.
+ *
+ * Presentation only - the server never takes a client position. While Auto is driving, a walk is the
+ * player taking the character back, exactly like pressing a movement key.
+ */
+function walkToCell(cell: SelectedTile): void {
+  const from = characterPose === null ? null : { worldX: characterPose.worldX, worldZ: characterPose.worldZ };
+  const destination = walkDestinationFor(cell, from);
+  if (destination === null) {
+    setStatus(message("interaction.tooFar"), true);
+    return;
+  }
+  if (autoIsDriving()) requestTakeoverFromInput("PLAYER_MOVEMENT");
+  playerRuntime.setDestination(destination);
 }
 
 /** Selects a directly tapped resource/fishing target without granting or starting its action. */

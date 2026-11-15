@@ -77,6 +77,28 @@ export function precisionActionForPanel(panel: "build" | "plant"): PrecisionActi
 }
 
 /**
+ * What a tap on the island's ground means. One rule for both camera views, so a click never
+ * "does nothing":
+ *
+ * - Plain ground (nothing to act on) is a place to walk: the character goes there.
+ * - In character view a cell that offers something is selected *and* walked to, so the action is in
+ *   reach when the panel opens.
+ * - In estate view (planning from above) the first tap on such a cell only selects it; tapping the
+ *   same cell again walks there, which replaces the separate "Go" step.
+ */
+export type GroundTapIntent = "WALK" | "SELECT" | "SELECT_AND_WALK";
+
+export function groundTapIntent(input: {
+  readonly mode: "ESTATE" | "CHARACTER";
+  readonly hasContextAction: boolean;
+  readonly repeatTap: boolean;
+}): GroundTapIntent {
+  if (!input.hasContextAction) return "WALK";
+  if (input.mode === "CHARACTER") return "SELECT_AND_WALK";
+  return input.repeatTap ? "WALK" : "SELECT";
+}
+
+/**
  * Whether a tap on the ground should open the contextual surface.
  *
  * Estate view selects anything a player points at, because selecting *is* the interaction there. In

@@ -4245,10 +4245,9 @@ let interactionGeometry: BufferGeometry | null = null;
       options.onWorldTargetSelected?.(picked);
       return;
     }
-    // Both views report the cell that was tapped, and the host decides what it means: estate view
-    // selects whatever is pointed at, while character view is usually just pointing at the world and
-    // only opens the contextual surface for a cell that offers something (see
-    // `groundTapOpensContext`). Neither is click-to-move - walking to a cell is the Go control's job.
+    // Both views report the cell that was tapped, and the host decides what it means (see
+    // `groundTapIntent`): plain ground is click-to-move, a cell that offers something is selected
+    // (and, in character view, walked to).
     const coordinate = raycastTileAt(event.clientX, event.clientY);
     bootPerfInteractionTrace(traceId, "cell_raycast_result", {
       tileX: coordinate?.x ?? null,
