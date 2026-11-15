@@ -53,7 +53,7 @@ describe("0041 stone to ore", () => {
     item(db, C, "item_stone", 500);
     item(db, C, "item_wood", 900);
     db.sqlite.exec(read(files.find((name) => name.startsWith("0018")) ?? "").match(/CREATE TRIGGER warehouse_capacity_guard_insert[\s\S]*?END;/u)?.[0] ?? "");
-    expect(() => db.sqlite.exec(stoneToOre)).not.toThrow();
+    expect(() => { db.sqlite.exec(stoneToOre); }).not.toThrow();
     expect(held(db, C, "item_stone")).toBe(500);
     expect(held(db, C, "item_ore")).toBeNull();
   });

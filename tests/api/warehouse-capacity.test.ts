@@ -341,7 +341,7 @@ describe("warehouse capacity across the reward paths", () => {
     const goldBefore = balance();
     const refused = await post("/warehouse/upgrade", { requestId: "wh_level_gate" });
     expect(refused.status).toBe(403);
-    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("WAREHOUSE_LEVEL_REQUIRED");
+    expect(await refused.json()).toMatchObject({ error: { code: "WAREHOUSE_LEVEL_REQUIRED" } });
     expect(capacity()).toBe(1000);
     expect(balance()).toBe(goldBefore);
     expect(held("item_ore")).toBe(50);
