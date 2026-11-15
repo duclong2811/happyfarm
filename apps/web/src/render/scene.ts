@@ -465,6 +465,11 @@ export interface FarmSceneHandle {
    * figure stays on screen until the new model has loaded, and an unknown id keeps the default.
    */
   setPlayerCharacter(modelId: string): void;
+  /**
+   * Which model a landmark kind's buildings draw, by kind (e.g. the storage shed at the current
+   * warehouse tier). Presentation of server state; a kind not named keeps its default tier.
+   */
+  setBuildingLooks(looks: Readonly<Record<string, string | null>>): void;
   /** Replaces the rendered farm state and redraws. Safe to call repeatedly. */
   setState(input: FarmSceneInput): void;
   /**
@@ -2528,6 +2533,8 @@ let interactionGeometry: BufferGeometry | null = null;
   let fishingSpots: readonly SceneFishingSpot[] = [];
   let resourceNodeSignature: string | null = null;
   let constructionSignature = "";
+  /** Per-kind model overrides from the host (`setBuildingLooks`), part of the construction signature. */
+  let buildingLooks: Readonly<Record<string, string | null>> = {};
   let constructionToken = 0;
   /** The built thing the player is editing, and whether a click may select one at all. */
   let selectedObjectId: string | null = null;
@@ -3494,7 +3501,7 @@ let interactionGeometry: BufferGeometry | null = null;
     // before the early return, because a *moved* building changes the occluders without changing the
     // picture's signature in a way that matters here.
     rebuildCameraBlockers();
-    const signature = constructionSignatureOf(constructions);
+    const signature = `${constructionSignatureOf(constructions)}|${JSON.stringify(buildingLooks)}`;
     if (signature === constructionSignature) return;
     constructionSignature = signature;
     constructionGroup.clear();
@@ -3507,7 +3514,7 @@ let interactionGeometry: BufferGeometry | null = null;
     // The primitives first: a building is placed, not batched, and there is one of each.
     for (const item of constructions) {
       if (item.landmarkKind === null) continue;
-      const node = buildLandmarkNode(assets, item.landmarkKind, null, buildingModel);
+      const node = buildLandmarkNode(assets, item.landmarkKind, buildingLooks[item.landmarkKind] ?? null, buildingModel);
       if (node === null) continue;
       node.position.set(
         item.worldX,
@@ -4444,6 +4451,12 @@ let interactionGeometry: BufferGeometry | null = null;
 
   return {
     canvas,
+    setBuildingLooks(looks: Readonly<Record<string, string | null>>): void {
+      if (JSON.stringify(looks) === JSON.stringify(buildingLooks)) return;
+      buildingLooks = { ...looks };
+      rebuildConstructions();
+      draw();
+    },
     setPlayerCharacter(modelId: string): void {
       if (modelId === characterModelId || !CHARACTER_MODEL_URL_BY_ID.has(modelId)) return;
       characterModelId = modelId;

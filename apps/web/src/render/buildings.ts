@@ -122,6 +122,29 @@ const LADDERS: Readonly<Record<LandmarkKind, readonly BuildingVariant[]>> = {
 };
 
 /**
+ * How the island's storage building looks at each Island Warehouse tier (0 = the starting shed).
+ *
+ * Presentation of server state: the tier is the one `GET /warehouse` reports, never a client guess,
+ * and a tier past the end of this list draws the last look. Seven tiers share three models today; a
+ * longer ladder of art replaces this list and nothing else.
+ */
+export const WAREHOUSE_TIER_LOOKS: readonly string[] = [
+  "farm.barn.t1",
+  "farm.barn.t1",
+  "farm.barn.t2",
+  "farm.barn.t2",
+  "farm.barn.t3",
+  "farm.barn.t3",
+  "farm.barn.t3"
+];
+
+/** The storage building's model for a warehouse tier, or null when no tier is known yet. */
+export function warehouseLookFor(tier: number | null): string | null {
+  if (tier === null || !Number.isInteger(tier) || tier < 0) return null;
+  return WAREHOUSE_TIER_LOOKS[Math.min(tier, WAREHOUSE_TIER_LOOKS.length - 1)] ?? null;
+}
+
+/**
  * The tier ladders for the buildings the island has reserved ground for.
  *
  * No model is named yet and nothing draws them: what this establishes is that the *shape* of the

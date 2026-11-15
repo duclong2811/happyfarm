@@ -229,6 +229,7 @@ import { movementDestination, movementDestinationForTarget } from "./render/worl
 import { cellActionKey, cellLandKey, getAvailableCellActions } from "./render/world-cell-actions";
 import { createPlayerCollisionWorld, shoreDepthFor } from "./player/collision";
 import { islandSpawnWorld, type IslandGroundView } from "./render/island-world";
+import { warehouseLookFor } from "./render/buildings";
 import { resourceNodeCollisionObstacles } from "./render/resource-cluster";
 import { neighborTerrainCollisionDepth } from "./player/neighbor-collision";
 import type { CollisionWorld } from "./player/controller";
@@ -2288,6 +2289,8 @@ let warehouseUpgradePending = false;
 function renderWarehouse(): void {
   const node = element<HTMLElement>("warehouse");
   const warehouse = state.warehouse;
+  // The storage building grows with the warehouse: the tier is the server's, the look is presentation.
+  scene?.setBuildingLooks({ STORAGE_SHED: warehouseLookFor(warehouse?.tier ?? null) });
   node.hidden = warehouse === null;
   if (warehouse === null) return;
   const format = (value: number): string => value.toLocaleString(state.language);
@@ -8405,6 +8408,7 @@ function enable3D(): void {
     // so a normal session never sees the lattice the engine thinks in.
     scene.setDebugMode(debugRequested());
     scene.setPlayerCharacter(state.characterId);
+    scene.setBuildingLooks({ STORAGE_SHED: warehouseLookFor(state.warehouse?.tier ?? null) });
   }
   // A fresh renderer holds nothing, whatever the last one was told: forgetting the signature is what
   // makes the very next refresh fill it.
