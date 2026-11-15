@@ -7354,6 +7354,9 @@ function startPlayer(): void {
   });
   movement.attach();
   playerRuntime.start();
+  // The runtime starts at the composed island's spawn; a chosen island puts the character at its camp.
+  // This has to follow `start`, because a teleport before there is a pose does nothing.
+  if (state.island !== null) playerRuntime.teleport(homeSpawnWorld());
 }
 
 function stopPlayer(): void {

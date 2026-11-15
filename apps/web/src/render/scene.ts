@@ -120,6 +120,7 @@ import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
 import { isTypingTarget } from "../player/input";
 import { createPlayerCharacterView, PLAYER_CHARACTER_ASSET, ROSTER_CHARACTER_SCALE } from "./player-character";
+import { cropStageFor, cropStageModelId } from "./model-urls";
 import { CHARACTER_MODEL_URL_BY_ID } from "./character-model-urls";
 import { HARVEST_GESTURE_DURATION_MS, harvestGestureBend } from "../interaction/feedback";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
@@ -148,6 +149,12 @@ export const GROUND_MARGIN = 1.5;
 export { TILE_SURFACE_Y, TILE_THICKNESS };
 /** Height of a fully grown placeholder crop, in world units. */
 export const CROP_MAX_HEIGHT = 0.95;
+/**
+ * The size a growth-stage crop model is drawn at, as a share of a tile. Its grown stage is one unit
+ * across, so this is how much of the tile a full-grown plant covers; younger stages are smaller by
+ * their own model, not by this number.
+ */
+export const CROP_STAGE_SCALE = 0.9;
 /** A just-planted crop still has to be visible, so growth never scales below this. */
 export const MIN_CROP_HEIGHT = 0.14;
 
@@ -1710,6 +1717,25 @@ let interactionGeometry: BufferGeometry | null = null;
     updatePlayer(0);
   }
 
+  /** The prepared growing/ripe looks of one crop stage model, keyed by its stage model id. */
+  const stageModels = new Map<string, ModelVariants>();
+  const unavailableStageModels = new Set<string>();
+
+  function stageVariants(stageModelId: string): ModelVariants | undefined {
+    const variants = stageModels.get(stageModelId);
+    if (variants !== undefined) return variants;
+    if (disposed || unavailableStageModels.has(stageModelId)) return undefined;
+    unavailableStageModels.add(stageModelId);
+    void library.load(stageModelId).then((model) => {
+      if (model === null || disposed) return;
+      unavailableStageModels.delete(stageModelId);
+      stageModels.set(stageModelId, prepareVariants(model));
+      applyState(state);
+      draw();
+    });
+    return undefined;
+  }
+
   function modelVariants(definitionId: string): ModelVariants | undefined {
     const modelId = cropModelId(definitionId);
     if (modelId === null) return undefined;
@@ -2420,11 +2446,15 @@ let interactionGeometry: BufferGeometry | null = null;
       }
       if (crop === null) continue;
       const height = Math.max(crop.heightFraction * CROP_MAX_HEIGHT, MIN_CROP_HEIGHT);
-      const variants = modelVariants(crop.definitionId);
+      // A crop with growth-stage models shows the stage it is at, at full size; one without keeps its
+      // single model grown by scale. A stage still loading draws the scaled single model meanwhile.
+      const stageId = cropStageModelId(crop.definitionId, cropStageFor(crop.mature, crop.heightFraction));
+      const staged = stageId === null ? undefined : stageVariants(stageId);
+      const variants = staged ?? modelVariants(crop.definitionId);
       const plant: Object3D =
         variants === undefined
           ? placeholderCrop(tile, crop.mature ? assets.cropMature : assets.cropGrowing, height)
-          : modelPlant(tile, variants, crop.mature, height);
+          : modelPlant(tile, variants, crop.mature, staged === undefined ? height : CROP_STAGE_SCALE * state.layout.tileSize);
       cropGroup.add(plant);
       pickTargets.set(plant, coordinate);
 

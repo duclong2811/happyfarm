@@ -1,0 +1,198 @@
+[
+  {
+    "id": "crops/crop_carrot.s1",
+    "source": "Carrot_1.fbx",
+    "triangles": 88,
+    "bytes": 6168,
+    "metres": 35.507
+  },
+  {
+    "id": "crops/crop_carrot.s2",
+    "source": "Carrot_2.fbx",
+    "triangles": 262,
+    "bytes": 15852,
+    "metres": 31.27
+  },
+  {
+    "id": "crops/crop_carrot.s3",
+    "source": "Carrot_3.fbx",
+    "triangles": 408,
+    "bytes": 23952,
+    "metres": 52.15
+  },
+  {
+    "id": "crops/crop_carrot.s4",
+    "source": "Carrot_4.fbx",
+    "triangles": 514,
+    "bytes": 29880,
+    "metres": 127.917
+  },
+  {
+    "id": "crops/crop_corn.s1",
+    "source": "Corn_1.fbx",
+    "triangles": 88,
+    "bytes": 4480,
+    "metres": 38.741
+  },
+  {
+    "id": "crops/crop_corn.s2",
+    "source": "Corn_2.fbx",
+    "triangles": 140,
+    "bytes": 6744,
+    "metres": 65.868
+  },
+  {
+    "id": "crops/crop_corn.s3",
+    "source": "Corn_3.fbx",
+    "triangles": 348,
+    "bytes": 14760,
+    "metres": 124.687
+  },
+  {
+    "id": "crops/crop_corn.s4",
+    "source": "Corn_4.fbx",
+    "triangles": 958,
+    "bytes": 40216,
+    "metres": 196.71
+  },
+  {
+    "id": "crops/crop_wheat.s1",
+    "source": "Wheat_1.fbx",
+    "triangles": 40,
+    "bytes": 4964,
+    "metres": 21.944
+  },
+  {
+    "id": "crops/crop_wheat.s2",
+    "source": "Wheat_2.fbx",
+    "triangles": 118,
+    "bytes": 12468,
+    "metres": 53.889
+  },
+  {
+    "id": "crops/crop_wheat.s3",
+    "source": "Wheat_3.fbx",
+    "triangles": 246,
+    "bytes": 24468,
+    "metres": 69.428
+  },
+  {
+    "id": "crops/crop_wheat.s4",
+    "source": "Wheat_4.fbx",
+    "triangles": 102,
+    "bytes": 10528,
+    "metres": 94.799
+  },
+  {
+    "id": "crops/crop_tomato.s1",
+    "source": "Tomato_1.fbx",
+    "triangles": 60,
+    "bytes": 2252,
+    "metres": 17.934
+  },
+  {
+    "id": "crops/crop_tomato.s2",
+    "source": "Tomato_2.fbx",
+    "triangles": 266,
+    "bytes": 6132,
+    "metres": 79.081
+  },
+  {
+    "id": "crops/crop_tomato.s3",
+    "source": "Tomato_3.fbx",
+    "triangles": 1194,
+    "bytes": 23604,
+    "metres": 142.796
+  },
+  {
+    "id": "crops/crop_tomato.s4",
+    "source": "Tomato_4.fbx",
+    "triangles": 1518,
+    "bytes": 29948,
+    "metres": 172.01
+  },
+  {
+    "id": "crops/crop_pumpkin.s1",
+    "source": "Pumpkin_1.fbx",
+    "triangles": 132,
+    "bytes": 3640,
+    "metres": 39.146
+  },
+  {
+    "id": "crops/crop_pumpkin.s2",
+    "source": "Pumpkin_2.fbx",
+    "triangles": 862,
+    "bytes": 16888,
+    "metres": 46.841
+  },
+  {
+    "id": "crops/crop_pumpkin.s3",
+    "source": "Pumpkin_3.fbx",
+    "triangles": 1752,
+    "bytes": 32980,
+    "metres": 87.543
+  },
+  {
+    "id": "crops/crop_pumpkin.s4",
+    "source": "Pumpkin_4.fbx",
+    "triangles": 2896,
+    "bytes": 54072,
+    "metres": 128.972
+  },
+  {
+    "id": "crops/crop_cabbage.s1",
+    "source": "Lettuce_1.fbx",
+    "triangles": 88,
+    "bytes": 2800,
+    "metres": 29.407
+  },
+  {
+    "id": "crops/crop_cabbage.s2",
+    "source": "Lettuce_2.fbx",
+    "triangles": 400,
+    "bytes": 8424,
+    "metres": 36.894
+  },
+  {
+    "id": "crops/crop_cabbage.s3",
+    "source": "Lettuce_3.fbx",
+    "triangles": 612,
+    "bytes": 12384,
+    "metres": 67.64
+  },
+  {
+    "id": "crops/crop_cabbage.s4",
+    "source": "Lettuce_4.fbx",
+    "triangles": 1392,
+    "bytes": 26584,
+    "metres": 104.4
+  },
+  {
+    "id": "crops/crop_strawberry.s1",
+    "source": "BushBerries_1.fbx",
+    "triangles": 88,
+    "bytes": 2904,
+    "metres": 35.287
+  },
+  {
+    "id": "crops/crop_strawberry.s2",
+    "source": "BushBerries_2.fbx",
+    "triangles": 140,
+    "bytes": 3692,
+    "metres": 59.227
+  },
+  {
+    "id": "crops/crop_strawberry.s3",
+    "source": "BushBerries_3.fbx",
+    "triangles": 163,
+    "bytes": 4124,
+    "metres": 127.457
+  },
+  {
+    "id": "crops/crop_strawberry.s4",
+    "source": "BushBerries_4.fbx",
+    "triangles": 892,
+    "bytes": 17732,
+    "metres": 171.889
+  }
+]
