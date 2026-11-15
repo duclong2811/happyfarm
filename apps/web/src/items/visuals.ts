@@ -5,7 +5,7 @@ import type {
   TreeDefinitionDTO
 } from "@happy-farm/contracts";
 import { cropModelId } from "../render/assets";
-import { fishModelUrl, resourceModelUrl } from "../render/model-urls";
+import { fishModelUrl, produceModelId, resourceModelUrl } from "../render/model-urls";
 import type { ThumbnailRequest } from "../render/thumbnail";
 import { ITEM_THUMBNAIL_MAP } from "./item-thumbnail-map";
 import { itemThumbnailUrl } from "./item-thumbnail-urls";
@@ -67,7 +67,9 @@ function explicitItemVisual(itemDefinitionId: string): ItemVisual | null {
 
 /** A crop's own art: the model the island draws it with, or the produce fallback when there is none. */
 export function cropVisualFor(cropDefinitionId: string): ItemVisual {
-  return modelVisual(cropModelId(cropDefinitionId), "PRODUCE");
+  // The harvested produce when the build ships it (a carrot, not the carrot plant); the crop's own
+  // model otherwise. One id either way, so the bag and the planting picker share one cached picture.
+  return modelVisual(produceModelId(cropDefinitionId) ?? cropModelId(cropDefinitionId), "PRODUCE");
 }
 
 /** A seed: no model exists for one, and a pouch is honest about that. */

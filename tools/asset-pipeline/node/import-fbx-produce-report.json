@@ -1,0 +1,72 @@
+[
+  {
+    "id": "produce/produce_carrot",
+    "source": "Carrot_Crop.fbx",
+    "triangles": 186,
+    "bytes": 4792,
+    "metres": 88.093
+  },
+  {
+    "id": "produce/produce_corn",
+    "source": "Corn_Crop.fbx",
+    "triangles": 80,
+    "bytes": 2772,
+    "metres": 34.817
+  },
+  {
+    "id": "produce/produce_wheat",
+    "source": "Wheat_Crop.fbx",
+    "triangles": 612,
+    "bytes": 12400,
+    "metres": 75.837
+  },
+  {
+    "id": "produce/produce_tomato",
+    "source": "Tomato_Crop.fbx",
+    "triangles": 344,
+    "bytes": 7480,
+    "metres": 17.797
+  },
+  {
+    "id": "produce/produce_pumpkin",
+    "source": "Pumpkin_Crop.fbx",
+    "triangles": 396,
+    "bytes": 8512,
+    "metres": 58.751
+  },
+  {
+    "id": "produce/produce_cabbage",
+    "source": "Lettuce_Crop.fbx",
+    "triangles": 448,
+    "bytes": 9224,
+    "metres": 40.863
+  },
+  {
+    "id": "produce/produce_strawberry",
+    "source": "BushBerries_Crop.fbx",
+    "triangles": 48,
+    "bytes": 2000,
+    "metres": 16.896
+  },
+  {
+    "id": "produce/produce_apple",
+    "source": "Apple_Crop.fbx",
+    "triangles": 440,
+    "bytes": 9248,
+    "metres": 16.798
+  },
+  {
+    "id": "produce/produce_orange",
+    "source": "Orange_Crop.fbx",
+    "triangles": 208,
+    "bytes": 4888,
+    "metres": 15.133
+  },
+  {
+    "id": "produce/produce_peach",
+    "source": "Apple_Crop.fbx",
+    "triangles": 440,
+    "bytes": 9248,
+    "metres": 16.798
+  }
+]

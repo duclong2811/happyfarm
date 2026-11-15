@@ -1,7 +1,14 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { FISH_MODEL_URLS, RESOURCE_MODEL_URLS, TREE_STAGE_MODEL_URLS, treeStageModelId } from "../../apps/web/src/render/model-urls";
+import {
+  FISH_MODEL_URLS,
+  PRODUCE_MODEL_URLS,
+  produceModelId,
+  RESOURCE_MODEL_URLS,
+  TREE_STAGE_MODEL_URLS,
+  treeStageModelId
+} from "../../apps/web/src/render/model-urls";
 
 /**
  * Imported CC0 model sets that replaced generated placeholders (2026-11-15): fruit-tree stages, the
@@ -50,5 +57,13 @@ describe("imported model sets", () => {
     for (const id of Object.keys(RESOURCE_MODEL_URLS)) expectSingleColouredMesh(`${MODELS}/resources/${id}.glb`, id);
     for (const file of readdirSync(`${MODELS}/fishing`)) expectSingleColouredMesh(`${MODELS}/fishing/${file}`, file);
     expect(readdirSync(`${MODELS}/fishing`).length).toBe(Object.keys(FISH_MODEL_URLS).length);
+  });
+
+  it("ships one produce model per id, and maps a crop to its produce", () => {
+    expect(readdirSync(`${MODELS}/produce`).sort()).toEqual(Object.keys(PRODUCE_MODEL_URLS).map((id) => `${id}.glb`).sort());
+    for (const id of Object.keys(PRODUCE_MODEL_URLS)) expectSingleColouredMesh(`${MODELS}/produce/${id}.glb`, id);
+    expect(produceModelId("crop_carrot")).toBe("produce_carrot");
+    expect(produceModelId("crop_potato")).toBeNull();
+    expect(produceModelId("tree_apple")).toBeNull();
   });
 });

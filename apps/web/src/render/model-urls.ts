@@ -66,6 +66,16 @@ import TreePeachS2Url from "../assets/models/trees/tree_peach.s2.glb?url";
 import TreePeachS3Url from "../assets/models/trees/tree_peach.s3.glb?url";
 import TreePeachS4Url from "../assets/models/trees/tree_peach.s4.glb?url";
 import TreePeachHarvestedUrl from "../assets/models/trees/tree_peach.harvested.glb?url";
+import produceCarrotUrl from "../assets/models/produce/produce_carrot.glb?url";
+import produceCornUrl from "../assets/models/produce/produce_corn.glb?url";
+import produceWheatUrl from "../assets/models/produce/produce_wheat.glb?url";
+import produceTomatoUrl from "../assets/models/produce/produce_tomato.glb?url";
+import producePumpkinUrl from "../assets/models/produce/produce_pumpkin.glb?url";
+import produceCabbageUrl from "../assets/models/produce/produce_cabbage.glb?url";
+import produceStrawberryUrl from "../assets/models/produce/produce_strawberry.glb?url";
+import produceAppleUrl from "../assets/models/produce/produce_apple.glb?url";
+import produceOrangeUrl from "../assets/models/produce/produce_orange.glb?url";
+import producePeachUrl from "../assets/models/produce/produce_peach.glb?url";
 import type { CropModelId } from "./assets";
 
 /**
@@ -225,4 +235,27 @@ export function treeStageModelId(definitionId: string, look: TreeLook, growthPro
     look === "SAPLING" ? "s1" : look === "GROWING" ? (progress < 0.5 ? "s2" : "s3") : look === "READY" ? "s4" : "harvested";
   const id = `${definitionId}.${suffix}`;
   return TREE_STAGE_MODEL_URLS[id] === undefined ? null : id;
+}
+
+/**
+ * Harvested produce (Quaternius Nature Crops Pack, CC0): what a crop or fruit tree yields, drawn as
+ * the item's thumbnail so the bag shows what the field grew.
+ */
+export const PRODUCE_MODEL_URLS: Readonly<Record<string, string>> = {
+  produce_carrot: produceCarrotUrl,
+  produce_corn: produceCornUrl,
+  produce_wheat: produceWheatUrl,
+  produce_tomato: produceTomatoUrl,
+  produce_pumpkin: producePumpkinUrl,
+  produce_cabbage: produceCabbageUrl,
+  produce_strawberry: produceStrawberryUrl,
+  produce_apple: produceAppleUrl,
+  produce_orange: produceOrangeUrl,
+  produce_peach: producePeachUrl
+};
+
+/** The produce model a crop yields (`crop_carrot` -> `produce_carrot`), or null when none ships. */
+export function produceModelId(cropDefinitionId: string): string | null {
+  const id = cropDefinitionId.replace(/^crop_/, "produce_");
+  return id !== cropDefinitionId && PRODUCE_MODEL_URLS[id] !== undefined ? id : null;
 }

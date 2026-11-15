@@ -140,9 +140,29 @@ const ORCHARD = ORCHARD_SOURCES.flatMap((tree) =>
   )
 );
 
-const SETS = { "farm-buildings": CURATED, crops: CROPS, resources: RESOURCES, fish: FISH, orchard: ORCHARD };
+/**
+ * Harvested produce (Quaternius Nature Crops Pack's `_Crop` models): what a crop or a fruit tree
+ * gives, for the item's thumbnail, so the bag shows the carrot the field grew. Peach is the apple
+ * recoloured, as on the tree.
+ */
+const PRODUCE = [
+  { id: "produce/produce_carrot", source: "Carrot_Crop", tint: { LightOrange: [0.85, 0.27, 0.04] } },
+  { id: "produce/produce_corn", source: "Corn_Crop" },
+  { id: "produce/produce_wheat", source: "Wheat_Crop" },
+  // The pack's fruit reds are dark enough to read as brown on a small thumbnail; the produce is
+  // brightened to the colour a player expects to pick.
+  { id: "produce/produce_tomato", source: "Tomato_Crop", tint: { Red: [0.72, 0.05, 0.025] } },
+  { id: "produce/produce_pumpkin", source: "Pumpkin_Crop" },
+  { id: "produce/produce_cabbage", source: "Lettuce_Crop", tint: { DarkGreen: [0.22, 0.45, 0.12] } },
+  { id: "produce/produce_strawberry", source: "BushBerries_Crop" },
+  { id: "produce/produce_apple", source: "Apple_Crop", tint: { "DarkRed.003": [0.62, 0.04, 0.03] } },
+  { id: "produce/produce_orange", source: "Orange_Crop" },
+  { id: "produce/produce_peach", source: "Apple_Crop", tint: { "DarkRed.003": [0.95, 0.42, 0.2] } }
+];
+
+const SETS = { "farm-buildings": CURATED, crops: CROPS, resources: RESOURCES, fish: FISH, orchard: ORCHARD, produce: PRODUCE };
 /** Sets of flat-coloured models: merged to one vertex-coloured mesh per model (one draw call each). */
-const MERGED_SETS = new Set(["crops", "resources", "fish", "orchard"]);
+const MERGED_SETS = new Set(["crops", "resources", "fish", "orchard", "produce"]);
 
 /**
  * One mesh, one material: every part's flat colour becomes a vertex colour and the parts are merged.

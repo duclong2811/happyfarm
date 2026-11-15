@@ -163,10 +163,10 @@ describe("the inventory shelf", () => {
 });
 
 describe("thumbnails and their fallbacks", () => {
-  it("asks for the crop's own model as produce", () => {
+  it("asks for the crop's harvested produce model", () => {
     const visual = itemVisualFor("item_carrot", { cropDefinitions: CROPS, treeDefinitions: TREES });
-    expect(visual.request.modelId).toBe("crop_carrot");
-    expect(visual.key).toBe("model:crop_carrot");
+    expect(visual.request.modelId).toBe("produce_carrot");
+    expect(visual.key).toBe("model:produce_carrot");
     expect(visual.fallback).toBe("PRODUCE");
   });
 
@@ -205,8 +205,8 @@ describe("thumbnails and their fallbacks", () => {
       (id) => itemVisualFor(id, { cropDefinitions: CROPS, treeDefinitions: TREES })
     );
     expect(visuals.map((visual) => visual.key)).toEqual([
-      "model:crop_carrot",
-      "model:crop_corn",
+      "model:produce_carrot",
+      "model:produce_corn",
       "image:seed_carrot",
       "image:seed_corn",
       "image:sapling_apple"
@@ -230,6 +230,8 @@ describe("thumbnails and their fallbacks", () => {
       } else {
         const path = spec.modelId.startsWith("crop_")
           ? `${assetRoot}/models/${spec.modelId}.glb`
+          : spec.modelId.startsWith("produce_")
+            ? `${assetRoot}/models/produce/${spec.modelId}.glb`
           : spec.modelId.startsWith("fish_")
             ? `${assetRoot}/models/fishing/${spec.modelId}.glb`
             : `${assetRoot}/models/resources/${spec.modelId}.glb`;
