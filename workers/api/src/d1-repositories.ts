@@ -733,9 +733,14 @@ export class D1WarehouseRepository implements WarehouseRepository {
         throw new Error("Atomic warehouse upgrade failed");
       }
     } catch (error: unknown) {
+      // A failed guard leaves the receipt's actor NULL; the receipt trigger then refuses it before the
+      // NOT NULL check does, so either message means the same thing: something moved, and nothing was
+      // written. The use case re-reads and tells a stale step from a wallet that merely moved.
       if (
         error instanceof Error &&
-        (error.message.includes("economy conflict") || error.message.includes("idempotency_keys.actor_player_id"))
+        (error.message.includes("economy conflict") ||
+          error.message.includes("idempotency_keys.actor_player_id") ||
+          error.message.includes("completed warehouse upgrade idempotency requires its ledger row"))
       ) {
         throw new ApplicationError("ECONOMY_CONFLICT", "Warehouse or economy state changed concurrently");
       }
@@ -2112,7 +2117,12 @@ export class D1ConstructionRepository implements ConstructionRepository {
       const results = await this.db.batch(statements);
       if (results.some((result) => !result.success)) throw new Error("Atomic construction removal failed");
     } catch (error: unknown) {
-      if (error instanceof Error && /economy conflict|idempotency_keys\.actor_player_id/.test(error.message)) {
+      // A delete refused by its version guard leaves the receipt's actor NULL, and the receipt trigger
+      // refuses that before the NOT NULL check does: both messages mean the object moved first.
+      if (
+        error instanceof Error &&
+        /economy conflict|idempotency_keys\.actor_player_id|completed construction removal idempotency requires its effect/.test(error.message)
+      ) {
         throw new ApplicationError("ECONOMY_CONFLICT", "Construction state changed concurrently");
       }
       throw error;

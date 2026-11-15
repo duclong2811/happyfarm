@@ -8,7 +8,15 @@ import {
   D1WalletRepository,
   D1WarehouseRepository
 } from "../../workers/api/src/d1-repositories";
-import { EconomyService, GetWarehouseStatus, InventoryService, UpgradeWarehouse } from "@happy-farm/application";
+import {
+  ApplicationError,
+  EconomyService,
+  GetWarehouseStatus,
+  InventoryService,
+  UpgradeWarehouse,
+  type IdempotencyRecord,
+  type WalletRepository
+} from "@happy-farm/application";
 import {
   CryptoIdGenerator,
   GameDataCurrencyDefinitions,
@@ -21,8 +29,12 @@ import {
   createEconomyMutation,
   createInventoryAddition,
   parseCurrencyDefinitionId,
+  parseEconomyTransactionId,
   parseItemDefinitionId,
-  parseShopEntryId
+  parseShopEntryId,
+  warehouseIdFromUuid,
+  type EconomyMutation,
+  type InventoryItem
 } from "@happy-farm/domain";
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
@@ -39,6 +51,7 @@ describe("island warehouse", () => {
   let warehouse: D1WarehouseRepository;
   let status: GetWarehouseStatus;
   let upgrade: UpgradeWarehouse;
+  let upgradeWith: (walletsPort: WalletRepository) => UpgradeWarehouse;
   let inventory: D1InventoryRepository;
   let wallets: D1WalletRepository;
   let economySettlement: D1EconomySettlementRepository;
@@ -71,18 +84,20 @@ describe("island warehouse", () => {
     wallets = new D1WalletRepository(db);
     warehouse = new D1WarehouseRepository(db);
     status = new GetWarehouseStatus(warehouse, tiers);
-    upgrade = new UpgradeWarehouse(
-      warehouse,
-      tiers,
-      wallets,
-      currencies,
-      inventory,
-      new EconomyService(ids, clock),
-      new InventoryService(items, clock),
-      new D1IdempotencyRepository(db),
-      new Sha256Fingerprint(),
-      clock
-    );
+    upgradeWith = (walletsPort) =>
+      new UpgradeWarehouse(
+        warehouse,
+        tiers,
+        walletsPort,
+        currencies,
+        inventory,
+        new EconomyService(ids, clock),
+        new InventoryService(items, clock),
+        new D1IdempotencyRepository(db),
+        new Sha256Fingerprint(),
+        clock
+      );
+    upgrade = upgradeWith(wallets);
     economySettlement = new D1EconomySettlementRepository(db);
   });
 
@@ -174,6 +189,122 @@ describe("island warehouse", () => {
     expect(row.tier).toBe(1);
     expect(ledger.n).toBe(1);
     expect(spent).toBe(500);
+  });
+
+  /** One step, written straight through the repository from the tier and version the caller read. */
+  async function upgradeThroughRepository(requestId: string, transactionId: string, read: { tier: number; version: number }): Promise<void> {
+    const gold = parseCurrencyDefinitionId("currency_gold");
+    const wallet = await wallets.find(PLAYER_ONE_ID, gold);
+    if (wallet === null) throw new Error("wallet was not seeded");
+    const expectedInventory: InventoryItem[] = [];
+    for (const itemId of ["item_wood", "item_ore"]) {
+      const row = await inventory.find(PLAYER_ONE_ID, parseItemDefinitionId(itemId));
+      if (row === null) throw new Error(`${itemId} was not stocked`);
+      expectedInventory.push(row);
+    }
+    const warehouseId = warehouseIdFromUuid(PLAYER_ONE_ID.slice("player_".length));
+    const economy: EconomyMutation = {
+      transactionId: parseEconomyTransactionId(transactionId),
+      playerId: PLAYER_ONE_ID,
+      currencyDefinitionId: gold,
+      delta: -500,
+      balanceBefore: wallet.balance,
+      balanceAfter: wallet.balance - 500,
+      expectedWalletVersion: wallet.version,
+      reason: "WAREHOUSE_UPGRADE",
+      referenceType: "WAREHOUSE",
+      referenceId: warehouseId,
+      requestId,
+      createdAt: NOW
+    };
+    const record: IdempotencyRecord = {
+      actorPlayerId: PLAYER_ONE_ID,
+      operation: "WAREHOUSE_UPGRADE",
+      requestId,
+      payloadFingerprint: "f".repeat(64),
+      resourceId: transactionId,
+      responseJson: "{}",
+      status: "COMPLETED",
+      createdAt: NOW
+    };
+    await warehouse.upgradeAtomically(
+      {
+        playerId: PLAYER_ONE_ID,
+        warehouseId,
+        expectedFromTier: read.tier,
+        expectedVersion: read.version,
+        toTier: read.tier + 1,
+        capacity: 2500,
+        economy,
+        removals: expectedInventory.map((row) => ({
+          kind: "REMOVE" as const,
+          playerId: PLAYER_ONE_ID,
+          itemDefinitionId: row.itemDefinitionId,
+          quantity: 50,
+          timestamp: NOW
+        })),
+        expectedInventory,
+        createdAt: NOW
+      },
+      record
+    );
+  }
+
+  function snapshot(): unknown {
+    return {
+      warehouse: db.sqlite.prepare("SELECT tier, capacity, version FROM home_island_warehouses WHERE owner_player_id = ?").get(PLAYER_ONE_ID),
+      wallet: db.sqlite.prepare("SELECT balance, version FROM wallets WHERE player_id = ?").get(PLAYER_ONE_ID),
+      inventory: db.sqlite.prepare("SELECT item_definition_id, quantity, version FROM inventory_items WHERE player_id = ? ORDER BY item_definition_id").all(PLAYER_ONE_ID),
+      ledger: db.sqlite.prepare("SELECT id FROM economy_ledger ORDER BY id").all(),
+      receipts: db.sqlite.prepare("SELECT request_id FROM idempotency_keys ORDER BY request_id").all()
+    };
+  }
+
+  it("refuses, as an economy conflict, an upgrade whose warehouse step another request already took", async () => {
+    // Two upgrades with different request ids, both read at tier 0 / version 1. The second reads the
+    // wallet and the materials after the first landed, so its charge is valid and only the warehouse
+    // guard can refuse it. That leaves the receipt's actor NULL, and the receipt trigger - which fires
+    // before the NOT NULL check - is what reports it; it must still read as a conflict, not a crash.
+    stock("item_wood", 500);
+    stock("item_ore", 500);
+    const read = { tier: 0, version: 1 };
+    await upgradeThroughRepository("req_upgrade_first", "econ_eeeeeeee-eeee-4eee-8eee-000000000001", read);
+    const afterFirst = snapshot();
+    expect(afterFirst).toMatchObject({ warehouse: { tier: 1, capacity: 2500, version: 2 }, wallet: { balance: 99_500, version: 2 } });
+
+    const second = upgradeThroughRepository("req_upgrade_second", "econ_eeeeeeee-eeee-4eee-8eee-000000000002", read);
+    await expect(second).rejects.toSatisfy((error: unknown) => error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT");
+    // Nothing of the second request was kept: no gold, no materials, no tier, no ledger row, no receipt.
+    expect(snapshot()).toEqual(afterFirst);
+  });
+
+  it("answers stale state when another upgrade lands between reading the warehouse and the wallet", async () => {
+    stock("item_wood", 500);
+    stock("item_ore", 500);
+    // The interleaving the repository test pins down, through the use case: this request reads the
+    // warehouse at tier 0, then a sibling request with its own id upgrades, then this request reads the
+    // wallet the sibling left behind and writes.
+    let sibling: Promise<unknown> | null = null;
+    const walletsAfterSibling: WalletRepository = {
+      find: async (playerId, currencyId) => {
+        sibling ??= upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_sibling" });
+        await sibling;
+        return wallets.find(playerId, currencyId);
+      },
+      listByPlayer: (playerId) => wallets.listByPlayer(playerId)
+    };
+    const attempt = upgradeWith(walletsAfterSibling).execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_stale" });
+    await expect(attempt).rejects.toSatisfy((error: unknown) => error instanceof ApplicationError && error.code === "CONFLICT_STALE_STATE");
+
+    expect(db.sqlite.prepare("SELECT tier, capacity FROM home_island_warehouses WHERE owner_player_id = ?").get(PLAYER_ONE_ID)).toEqual({
+      tier: 1,
+      capacity: 2500
+    });
+    expect((await wallets.find(PLAYER_ONE_ID, parseCurrencyDefinitionId("currency_gold")))?.balance).toBe(99_500);
+    expect((await inventory.find(PLAYER_ONE_ID, parseItemDefinitionId("item_wood")))?.quantity).toBe(450);
+    expect((await inventory.find(PLAYER_ONE_ID, parseItemDefinitionId("item_ore")))?.quantity).toBe(450);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'WAREHOUSE_UPGRADE'").get()).toEqual({ n: 1 });
+    expect(db.sqlite.prepare("SELECT request_id FROM idempotency_keys").all()).toEqual([{ request_id: "req_upgrade_sibling" }]);
   });
 
   it("refuses an upgrade the island lacks materials for", async () => {
