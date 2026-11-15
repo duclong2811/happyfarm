@@ -1,6 +1,8 @@
 import {
   BuyItemResultDTOSchema,
   CreateFarmResponseSchema,
+  GetFarmIslandResponseSchema,
+  GetMyFarmResponseSchema,
   GetCropDefinitionsResponseSchema,
   GetBuildCatalogResponseSchema,
   GetFarmCropsResponseSchema,
@@ -121,6 +123,10 @@ import type {
   ,AutoStepDTO
   ,AutoReconcileDTO
   ,NeighborSnapshotDTO
+  ,FarmIslandSummaryDTO
+  ,GetFarmIslandResponse
+  ,GetMyFarmResponse
+  ,IslandChoiceDTO
 } from "@happy-farm/contracts";
 import { bootPerfApiEnd, bootPerfApiStart, bootPerfApiValidationFailure } from "./boot-performance";
 
@@ -172,6 +178,8 @@ function settlementValidator<T>(inner: Validator<T>): Validator<{ readonly settl
 export interface CreateFarmResult {
   readonly farm: FarmDTO;
   readonly membership: FarmMemberDTO;
+  /** The farm's chosen island, or null/absent for the hand-composed island. */
+  readonly island?: FarmIslandSummaryDTO | null | undefined;
 }
 export interface PlantCropBody {
   readonly requestId: string;
@@ -276,8 +284,19 @@ export class ApiClient {
   }
 
 
-  createFarm(name: string): Promise<CreateFarmResult> {
-    return this.post("/farms", { name }, CreateFarmResponseSchema);
+  /** Creates the player's farm; `island` is honoured only when the farm is new and choice is offered. */
+  createFarm(name: string, island?: IslandChoiceDTO): Promise<CreateFarmResult> {
+    return this.post("/farms", island === undefined ? { name } : { name, island }, CreateFarmResponseSchema);
+  }
+
+  /** The caller's own farm, if any, and whether a new farm may choose its island. */
+  getMyFarm(): Promise<GetMyFarmResponse> {
+    return this.get("/farms/mine", GetMyFarmResponseSchema);
+  }
+
+  /** A farm's stored island ground. Immutable per revision, so the caller may cache it. */
+  getFarmIsland(farmId: string): Promise<GetFarmIslandResponse> {
+    return this.get(`/farms/${encodeURIComponent(farmId)}/island`, GetFarmIslandResponseSchema);
   }
 
   /**

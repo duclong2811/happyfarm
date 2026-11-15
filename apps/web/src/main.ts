@@ -34,7 +34,8 @@ import type {
   ,AquaculturePondDTO
   ,NeighborSnapshotDTO
 } from "@happy-farm/contracts";
-import { ApiClient, ApiError } from "./api";
+import { ApiClient, ApiError, type CreateFarmResult } from "./api";
+import { showIslandPicker } from "./island-picker";
 import {
   MAX_WORK_AREA_CELLS,
   MAX_WORK_AREA_NAME_LENGTH,
@@ -8502,7 +8503,12 @@ async function reconcileAutoOnce(): Promise<boolean> {
 
 async function createFarm(): Promise<FarmBootContext> {
   const client = api();
-  const created = await client.createFarm("Starter Farm");
+  // This browser remembers no farm, but the player may still own one (a new device, cleared
+  // storage): they are given that farm, never asked to choose an island they already have. An older
+  // server without the route falls through to the plain creation it always did.
+  const mine = await client.getMyFarm().catch(() => null);
+  if (mine?.farm != null) return loadFarm(mine.farm.id);
+  const created = mine?.islandChoice.enabled === true ? await createFarmOnChosenIsland(client) : await client.createFarm("Starter Farm");
   accountRefreshGeneration += 1;
   state.farmId = created.farm.id;
   state.farmName = created.farm.name;
@@ -8518,6 +8524,27 @@ async function createFarm(): Promise<FarmBootContext> {
   playerRuntime.respawn();
   setStatus(message("status.createdDetail", { name: created.farm.name, tiles: state.tiles.length }));
   return { previousActiveAt: 0, returnAt: Date.now(), reconcile: false };
+}
+
+/**
+ * A new player's first farm, on the island they pick.
+ *
+ * The picker stays up until the server has created the farm, so a dropped request is a retry on the
+ * same choice rather than a lost one. Only the element, outline and seed are sent; the server builds
+ * and stores the island itself.
+ */
+async function createFarmOnChosenIsland(client: ApiClient): Promise<CreateFarmResult> {
+  let created: CreateFarmResult | null = null;
+  await showIslandPicker({
+    host: document.body,
+    translate: (key, params) => t(key, params),
+    onConfirm: async (pick) => {
+      created = await client.createFarm(pick.name, { element: pick.element, outline: pick.outline, seed: pick.seed });
+    },
+    describeError: (error) => describe(error)(t, state.language)
+  });
+  if (created === null) throw new Error("The island picker closed without a farm");
+  return created;
 }
 
 /**

@@ -637,3 +637,147 @@ html.ui-b.ui-warm #workers-panel .auto-portrait,
 html.ui-b.ui-warm #workers-panel .auto-thumb { background: #f3d6a4; }
 html.ui-b.ui-warm #return-popup #return-popup-items:empty { display: none; }
 html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island]::before { width: 3.2rem; height: 3.2rem; }
+
+/* ---------------------------------------------------------------------------------------------
+ * Home Island picker: shown once, before the farm exists. Sea behind, parchment card in front.
+ * ------------------------------------------------------------------------------------------- */
+html.ui-b.ui-warm .island-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 24px 16px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255, 255, 255, .35), transparent 60%),
+    linear-gradient(#7fd3f0, #2f8fc4 70%, #1f6f9f);
+  font-family: var(--w-display);
+  color: var(--w-ink);
+}
+html.ui-b.ui-warm .island-picker .ip-card {
+  width: min(1120px, 100%);
+  padding: 18px 22px 22px;
+  border: 5px solid var(--w-wood);
+  border-radius: 26px;
+  background: var(--w-parchment);
+  background-blend-mode: multiply;
+  box-shadow: 0 8px 0 var(--w-wood-deep), 0 22px 40px rgba(10, 40, 70, .35);
+}
+html.ui-b.ui-warm .island-picker .ip-head { text-align: center; margin-bottom: 14px; }
+html.ui-b.ui-warm .island-picker .ip-head h2 {
+  display: inline-block;
+  margin: -40px 0 6px;
+  padding: 8px 28px;
+  border-radius: 16px;
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: inset 0 -4px 0 #c8642a, 0 4px 0 var(--w-orange-edge);
+  color: #fff;
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-weight: 800;
+  line-height: 1.15;
+  text-shadow: var(--w-outline);
+}
+html.ui-b.ui-warm .island-picker .ip-head p { margin: 0; color: var(--w-ink-2); font-family: "Nunito Variable", system-ui, sans-serif; font-weight: 700; }
+html.ui-b.ui-warm .island-picker .ip-body { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+html.ui-b.ui-warm .island-picker .ip-preview { display: grid; gap: 10px; justify-items: center; }
+html.ui-b.ui-warm .island-picker .ip-preview canvas {
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1;
+  border: 4px solid #fff;
+  border-radius: 20px;
+  background: #1e5a96;
+  box-shadow: 0 5px 0 var(--w-wood), 0 10px 20px rgba(60, 30, 10, .25);
+}
+html.ui-b.ui-warm .island-picker .ip-counts { margin: 0; color: var(--w-ink-2); font-weight: 700; text-align: center; }
+html.ui-b.ui-warm .island-picker .ip-reroll {
+  min-height: 46px;
+  padding: 6px 22px;
+  border: 3px solid var(--w-wood-deep);
+  border-radius: 14px;
+  background: linear-gradient(#a8693a, var(--w-wood));
+  box-shadow: 0 4px 0 var(--w-wood-deep);
+  color: #fff3d6;
+  font: 800 1.08rem var(--w-display);
+  cursor: pointer;
+}
+html.ui-b.ui-warm .island-picker .ip-reroll::before { content: "↻ "; }
+html.ui-b.ui-warm .island-picker .ip-controls { display: grid; gap: 8px; }
+html.ui-b.ui-warm .island-picker .ip-controls h3 { margin: 6px 0 0; color: var(--w-wood-deep); font-size: 1.12rem; font-weight: 800; }
+html.ui-b.ui-warm .island-picker .ip-elements { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+html.ui-b.ui-warm .island-picker .ip-element,
+html.ui-b.ui-warm .island-picker .ip-outline {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 6px 4px 8px;
+  border: 3px solid var(--w-slot-edge);
+  border-radius: 16px;
+  background: linear-gradient(#fce6bf, #f6d6a0);
+  box-shadow: 0 3px 0 var(--w-slot-edge);
+  color: var(--w-ink);
+  font-family: var(--w-display);
+  align-content: start;
+  text-align: center;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+html.ui-b.ui-warm .island-picker .ip-element:hover,
+html.ui-b.ui-warm .island-picker .ip-outline:hover { transform: translateY(-2px); }
+html.ui-b.ui-warm .island-picker .ip-element.is-active,
+html.ui-b.ui-warm .island-picker .ip-outline.is-active {
+  border-color: var(--w-orange-edge);
+  background: linear-gradient(#ffe0b0, #ffc477);
+  box-shadow: 0 3px 0 var(--w-orange-edge), 0 0 0 3px rgba(242, 140, 69, .35);
+}
+html.ui-b.ui-warm .island-picker .ip-element canvas,
+html.ui-b.ui-warm .island-picker .ip-outline canvas { width: 64px; height: 64px; border-radius: 12px; border: 2px solid #fff; background: #1e5a96; }
+html.ui-b.ui-warm .island-picker .ip-element strong { font-size: 1.1rem; font-weight: 800; line-height: 1.1; }
+html.ui-b.ui-warm .island-picker .ip-element small { color: var(--w-ink-2); font: 700 .74rem/1.2 "Nunito Variable", system-ui, sans-serif; }
+html.ui-b.ui-warm .island-picker .ip-outlines { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+html.ui-b.ui-warm .island-picker .ip-outline span { font-size: .86rem; font-weight: 700; line-height: 1.1; }
+html.ui-b.ui-warm .island-picker .ip-name {
+  min-height: 48px;
+  padding: 6px 14px;
+  border: 3px solid var(--w-slot-edge);
+  border-radius: 14px;
+  background: var(--w-paper);
+  color: var(--w-ink);
+  font: 800 1.2rem var(--w-display);
+}
+html.ui-b.ui-warm .island-picker .ip-name:focus { outline: none; border-color: var(--w-orange); box-shadow: 0 0 0 3px rgba(242, 140, 69, .3); }
+html.ui-b.ui-warm .island-picker .ip-error { margin: 0; color: var(--w-red); font-weight: 800; }
+html.ui-b.ui-warm .island-picker .ip-confirm {
+  min-height: 58px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 18px;
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: 0 5px 0 var(--w-orange-edge), 0 9px 16px rgba(167, 68, 37, .3), inset 0 3px 0 rgba(255, 255, 255, .45);
+  color: #fff;
+  font: 800 1.45rem var(--w-display);
+  text-shadow: var(--w-outline);
+  cursor: pointer;
+}
+html.ui-b.ui-warm .island-picker .ip-confirm:disabled { filter: grayscale(.4); opacity: .75; cursor: default; }
+html.ui-b.ui-warm .island-picker.is-busy .ip-preview canvas { animation: ip-pulse 1.2s ease-in-out infinite; }
+@keyframes ip-pulse { 50% { filter: brightness(1.12); } }
+@media (max-width: 760px) {
+  html.ui-b.ui-warm .island-picker { place-items: start center; padding: 28px 10px 16px; }
+  html.ui-b.ui-warm .island-picker .ip-card { padding: 14px 12px 16px; border-radius: 20px; }
+  html.ui-b.ui-warm .island-picker .ip-body { grid-template-columns: 1fr; gap: 12px; }
+  html.ui-b.ui-warm .island-picker .ip-preview canvas { max-width: 300px; }
+  html.ui-b.ui-warm .island-picker .ip-elements { gap: 5px; }
+  html.ui-b.ui-warm .island-picker .ip-element { padding: 4px 2px 6px; }
+  html.ui-b.ui-warm .island-picker .ip-element canvas { width: 46px; height: 46px; }
+  html.ui-b.ui-warm .island-picker .ip-element small { display: none; }
+  html.ui-b.ui-warm .island-picker .ip-outlines { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html.ui-b.ui-warm .island-picker .ip-outline canvas { width: 52px; height: 52px; }
+  html.ui-b.ui-warm .island-picker .ip-confirm { position: sticky; bottom: 10px; z-index: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.ui-b.ui-warm .island-picker .ip-element,
+  html.ui-b.ui-warm .island-picker .ip-outline { transition: none; }
+  html.ui-b.ui-warm .island-picker.is-busy .ip-preview canvas { animation: none; }
+}
