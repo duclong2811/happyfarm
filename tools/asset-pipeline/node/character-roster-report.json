@@ -1,0 +1,182 @@
+{
+  "pack": "Kenney Mini Characters 2.0 (CC0 1.0)",
+  "importer": "tools/asset-pipeline/node/import-kenney-character.mjs",
+  "characters": [
+    {
+      "model": "character-alien.glb",
+      "out": "kenney-alien.glb",
+      "bytes": 281916,
+      "triangles": 926,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-female-a.glb",
+      "out": "kenney-female-a.glb",
+      "bytes": 277848,
+      "triangles": 924,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-female-b.glb",
+      "out": "kenney-female-b.glb",
+      "bytes": 258636,
+      "triangles": 790,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-female-c.glb",
+      "out": "kenney-female-c.glb",
+      "bytes": 258556,
+      "triangles": 780,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-female-d.glb",
+      "out": "kenney-female-d.glb",
+      "bytes": 264632,
+      "triangles": 845,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-female-e.glb",
+      "out": "kenney-female-e.glb",
+      "bytes": 253764,
+      "triangles": 804,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-female-f.glb",
+      "out": "kenney-female-f.glb",
+      "bytes": 265248,
+      "triangles": 836,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-knight.glb",
+      "out": "kenney-knight.glb",
+      "bytes": 266908,
+      "triangles": 780,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-male-b.glb",
+      "out": "kenney-male-b.glb",
+      "bytes": 246948,
+      "triangles": 686,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-male-c.glb",
+      "out": "kenney-male-c.glb",
+      "bytes": 268516,
+      "triangles": 837,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-male-d.glb",
+      "out": "kenney-male-d.glb",
+      "bytes": 252344,
+      "triangles": 759,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-male-e.glb",
+      "out": "kenney-male-e.glb",
+      "bytes": 244284,
+      "triangles": 758,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-male-f.glb",
+      "out": "kenney-male-f.glb",
+      "bytes": 256168,
+      "triangles": 749,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-male-g.glb",
+      "out": "kenney-male-g.glb",
+      "bytes": 271688,
+      "triangles": 877,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-robot.glb",
+      "out": "kenney-robot.glb",
+      "bytes": 273192,
+      "triangles": 870,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    },
+    {
+      "model": "character-worker.glb",
+      "out": "kenney-worker.glb",
+      "bytes": 268880,
+      "triangles": 893,
+      "joints": [
+        7,
+        7
+      ],
+      "animations": 32
+    }
+  ]
+}

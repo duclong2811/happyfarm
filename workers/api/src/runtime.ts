@@ -85,6 +85,7 @@ import type {
   ,IslandGroundBuilder
   ,FarmIslandRepository
   ,StarterWorldDefinition
+  ,CharacterCatalogue
 } from "@happy-farm/application";
 import {
   cropRegistry,
@@ -114,6 +115,8 @@ import {
   STARTER_WORLD_PLACEMENTS,
   STARTER_WORLD_VERSION,
   buildIslandGround,
+  DEFAULT_PLAYER_CHARACTER_ID,
+  isSelectablePlayerCharacter,
   classifyIslandTile,
   classifyTile,
   islandGroundCapabilities,
@@ -285,6 +288,12 @@ export function farmIslandGeography(
         })
   };
 }
+
+/** The characters a player may choose, from game data. */
+export const gameDataCharacterCatalogue: CharacterCatalogue = {
+  defaultCharacterId: DEFAULT_PLAYER_CHARACTER_ID,
+  isSelectable: (characterId) => isSelectablePlayerCharacter(characterId)
+};
 
 /**
  * Builds a chosen Home Island from game data.

@@ -8,6 +8,9 @@
   farmIslandSummary,
   type FarmIslandSummary,
   type IslandGroundBuilder,
+  GetPlayerAppearance,
+  SetPlayerAppearance,
+  type PlayerAppearanceView,
   GetInventory,
   GetProgression,
   HarvestCrop,
@@ -152,6 +155,8 @@ import {
   type FarmIslandSummaryDTO,
   type GetFarmIslandResponse,
   type GetMyFarmResponse,
+  SetPlayerAppearanceRequestSchema,
+  type PlayerAppearanceDTO,
   FarmIdSchema,
   CropInstanceIdSchema,
   TreeInstanceIdSchema,
@@ -273,7 +278,7 @@ import {
   ,type NeighborSnapshotDTO
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
-import { farmIslandGeography, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
+import { farmIslandGeography, gameDataCharacterCatalogue, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
 import { rejectsCrossOriginRequest } from "./origin-guard";
 import type { SessionPort } from "./session";
 import {
@@ -325,6 +330,7 @@ import {
   D1FarmMemberRepository,
   D1FarmIslandRepository,
   D1FarmRepository,
+  D1PlayerAppearanceRepository,
   D1FarmTileRepository,
   D1PlayerRepository,
   D1ProgressionRepository,
@@ -902,6 +908,7 @@ function errorStatus(code: ErrorCode): number {
     case "CROP_LEVEL_REQUIRED":
     case "WAREHOUSE_LEVEL_REQUIRED":
     case "ISLAND_CHOICE_UNAVAILABLE":
+    case "CHARACTER_NOT_AVAILABLE":
     case "PLOT_LEVEL_REQUIRED":
     case "LAND_NOT_DEVELOPABLE":
     case "TREE_LEVEL_REQUIRED":
@@ -1104,6 +1111,9 @@ export function createHandler(host: HandlerDependencies) {
   const getFarm = new GetFarm(farms, members, farmIslands);
   const getMyFarm = new GetMyFarm(farms, farmIslands, islandChoiceEnabled);
   const getFarmIsland = new GetFarmIsland(farms, members, farmIslands);
+  const playerAppearances = new D1PlayerAppearanceRepository(dependencies.db);
+  const getPlayerAppearance = new GetPlayerAppearance(playerAppearances, gameDataCharacterCatalogue);
+  const setPlayerAppearance = new SetPlayerAppearance(playerAppearances, gameDataCharacterCatalogue, dependencies.clock);
   const projector = new CropStateProjector(dependencies.cropDefinitions, dependencies.clock);
   const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
   const plantCrop = new PlantCrop({
@@ -2018,6 +2028,19 @@ export function createHandler(host: HandlerDependencies) {
         // 201 the first time, 200 when the player already had their farm: a retry from a phone on a
         // flaky connection gets their farm back rather than a second, empty one.
         return jsonResponse(body, result.created ? 201 : 200);
+      }
+
+      if (url.pathname === "/players/me/appearance" && (request.method === "GET" || request.method === "POST")) {
+        let appearance: PlayerAppearanceView;
+        if (request.method === "GET") {
+          appearance = await getPlayerAppearance.execute(actor);
+        } else {
+          const parsed = SetPlayerAppearanceRequestSchema.safeParse(await parseJson(request));
+          if (!parsed.success) return failure("INVALID_INPUT", requestId);
+          appearance = await setPlayerAppearance.execute(actor, parsed.data);
+        }
+        const body: ApiSuccess<{ appearance: PlayerAppearanceDTO }> = { ok: true, data: { appearance: { ...appearance } } };
+        return jsonResponse(body);
       }
 
       if (request.method === "GET" && url.pathname === "/farms/mine") {

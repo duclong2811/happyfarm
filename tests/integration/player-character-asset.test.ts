@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { PLAYER_CHARACTERS } from "@happy-farm/game-data";
 import { PLAYER_CHARACTER_ASSET } from "../../apps/web/src/render/player-character";
 
 /**
@@ -11,8 +12,9 @@ import { PLAYER_CHARACTER_ASSET } from "../../apps/web/src/render/player-charact
  * accessors without the skeleton would tear the skin apart), and instead the client measures the model
  * and scales it to the world's character height. What must hold is everything else:
  *
- * 1. it exists, and is the *only* thing in its folder - a stray archive or a second pack is a licence
- *    problem and bundle weight nobody renders;
+ * 1. the folder holds exactly the roster game data offers - one GLB per selectable character and
+ *    nothing else - because a stray archive or a second pack is a licence problem and bundle weight
+ *    nobody renders;
  * 2. it is **self-contained**: one embedded buffer, the palette embedded as an image, no sibling file
  *    (a GLB that refers to `Textures/colormap.png` next to it cannot survive Vite's asset hashing);
  * 3. it carries the clips the presentation config names, so the state machine has something to play;
@@ -22,6 +24,12 @@ import { PLAYER_CHARACTER_ASSET } from "../../apps/web/src/render/player-charact
 const MODEL_ROOT = fileURLToPath(new URL("../../apps/web/src/assets/models", import.meta.url));
 const CHARACTER_DIR = `${MODEL_ROOT}/player`;
 const FILE = `${CHARACTER_DIR}/player-farmer.glb`;
+
+/** The file a roster id is shipped as: `character.kenney_female_a` -> `kenney-female-a.glb`. */
+function rosterFile(id: string): string {
+  return `${id.slice("character.".length).replace(/_/g, "-")}.glb`;
+}
+const ROSTER_FILES = PLAYER_CHARACTERS.map((character) => rosterFile(character.id)).sort();
 
 interface GltfJson {
   readonly buffers?: { uri?: string; byteLength: number }[];
@@ -50,11 +58,26 @@ function readGlb(path: string): { readonly json: GltfJson; readonly bytes: numbe
 }
 
 describe("the imported player character", () => {
-  it("ships exactly one file, and nothing a pack left behind", () => {
+  it("ships exactly the roster, and nothing a pack left behind", () => {
     expect(existsSync(CHARACTER_DIR), "the character folder exists").toBe(true);
-    expect(readdirSync(CHARACTER_DIR).sort()).toEqual(["player-farmer.glb"]);
+    expect(readdirSync(CHARACTER_DIR).sort()).toEqual(ROSTER_FILES);
     const strays = readdirSync(CHARACTER_DIR).filter((name) => !name.endsWith(".glb"));
     expect(strays, "only GLBs belong in a model folder").toEqual([]);
+  });
+
+  it("gives every roster character the farmer's rig, clips and weight", () => {
+    const farmer = readGlb(FILE).json;
+    const farmerClips = (farmer.animations ?? []).map((animation) => animation.name ?? "");
+    const farmerJoints = (farmer.skins ?? []).map((skin) => skin.joints.length);
+    for (const file of ROSTER_FILES) {
+      const { json, bytes } = readGlb(`${CHARACTER_DIR}/${file}`);
+      // One rig and one clip set is what lets a player swap characters without a line of animation code.
+      expect((json.animations ?? []).map((animation) => animation.name ?? ""), file).toEqual(farmerClips);
+      expect((json.skins ?? []).map((skin) => skin.joints.length), file).toEqual(farmerJoints);
+      expect(json.buffers?.[0]?.uri, `${file} buffer embedded`).toBeUndefined();
+      for (const image of json.images ?? []) expect(image.uri, `${file} palette embedded`).toBeUndefined();
+      expect(bytes, file).toBeLessThan(400 * 1024);
+    }
   });
 
   it("is self-contained: one embedded buffer and an embedded palette", () => {

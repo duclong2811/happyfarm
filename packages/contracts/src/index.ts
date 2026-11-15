@@ -116,6 +116,17 @@ export const CreateFarmResponseSchema = z
   })
   .strict();
 export const GetFarmResponseSchema = CreateFarmResponseSchema;
+/** A character id: a stable, namespaced id such as `character.kenney_female_a`. */
+export const CharacterIdSchema = z.string().regex(/^character\.[a-z0-9_]{1,52}$/);
+
+/** How the caller appears. `chosen` is false until they have picked a character at least once. */
+export const PlayerAppearanceDTOSchema = z
+  .object({ characterId: CharacterIdSchema, chosen: z.boolean(), version: z.number().int().min(0) })
+  .strict();
+export const GetPlayerAppearanceResponseSchema = z.object({ appearance: PlayerAppearanceDTOSchema }).strict();
+/** The only thing a client sends about its look: which character. Never a model, colour or size. */
+export const SetPlayerAppearanceRequestSchema = z.object({ characterId: CharacterIdSchema }).strict();
+
 /** `GET /farms/mine`: the caller's farm if they have one, and whether a new farm may pick its island. */
 export const GetMyFarmResponseSchema = z
   .object({
@@ -1917,6 +1928,7 @@ export const ErrorCodeSchema = z.enum([
   "CROP_LEVEL_REQUIRED",
   "WAREHOUSE_LEVEL_REQUIRED",
   "ISLAND_CHOICE_UNAVAILABLE",
+  "CHARACTER_NOT_AVAILABLE",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
   "WAREHOUSE_FULL",
@@ -2016,6 +2028,8 @@ export type FarmIslandSummaryDTO = z.infer<typeof FarmIslandSummaryDTOSchema>;
 export type FarmIslandDTO = z.infer<typeof FarmIslandDTOSchema>;
 export type GetMyFarmResponse = z.infer<typeof GetMyFarmResponseSchema>;
 export type GetFarmIslandResponse = z.infer<typeof GetFarmIslandResponseSchema>;
+export type PlayerAppearanceDTO = z.infer<typeof PlayerAppearanceDTOSchema>;
+export type SetPlayerAppearanceRequest = z.infer<typeof SetPlayerAppearanceRequestSchema>;
 export type FarmDTO = z.infer<typeof FarmDTOSchema>;
 export type FarmMemberDTO = z.infer<typeof FarmMemberDTOSchema>;
 export type FarmTileDTO = z.infer<typeof FarmTileDTOSchema>;

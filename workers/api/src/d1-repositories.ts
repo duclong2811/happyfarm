@@ -95,6 +95,8 @@ import type {
   HomeIslandZoneResolver,
   FarmIslandRepository,
   FarmRepository,
+  PlayerAppearanceRecord,
+  PlayerAppearanceRepository,
   FarmTileRepository,
   PlayerRepository,
   IdempotencyRecord,
@@ -762,6 +764,49 @@ function parseIslandSites(json: string): FarmIsland["sites"] {
     }
     return { kind: site.kind, x: site.x as number, y: site.y as number };
   });
+}
+
+interface PlayerAppearanceRow {
+  readonly player_id: string;
+  readonly character_id: string;
+  readonly version: number;
+  readonly updated_at: string;
+}
+
+function appearanceOf(row: PlayerAppearanceRow): PlayerAppearanceRecord {
+  return { playerId: parsePlayerId(row.player_id), characterId: row.character_id, version: row.version, updatedAt: row.updated_at };
+}
+
+/** A player's chosen character: one row per player, upserted by the player's own request. */
+export class D1PlayerAppearanceRepository implements PlayerAppearanceRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  /** Null when the player never chose - and, before `0043` is applied, for everyone. */
+  async find(playerId: PlayerId): Promise<PlayerAppearanceRecord | null> {
+    try {
+      const row = await this.db
+        .prepare("SELECT player_id, character_id, version, updated_at FROM player_appearance WHERE player_id = ?")
+        .bind(playerId)
+        .first<PlayerAppearanceRow>();
+      return row === null ? null : appearanceOf(row);
+    } catch (error: unknown) {
+      if (error instanceof Error && /no such table: player_appearance/.test(error.message)) return null;
+      throw error;
+    }
+  }
+
+  async save(playerId: PlayerId, characterId: string, updatedAt: string): Promise<PlayerAppearanceRecord> {
+    const row = await this.db
+      .prepare(
+        "INSERT INTO player_appearance (player_id, character_id, version, updated_at) VALUES (?, ?, 1, ?) " +
+          "ON CONFLICT(player_id) DO UPDATE SET character_id = excluded.character_id, version = player_appearance.version + 1, updated_at = excluded.updated_at " +
+          "RETURNING player_id, character_id, version, updated_at"
+      )
+      .bind(playerId, characterId, updatedAt)
+      .first<PlayerAppearanceRow>();
+    if (row === null) throw new Error("Saving the player appearance returned no row");
+    return appearanceOf(row);
+  }
 }
 
 /** A farm's stored Home Island. Written only by `D1FarmRepository.createWithOwner`. */

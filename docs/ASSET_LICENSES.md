@@ -19,6 +19,7 @@ alternative is not "assume CC0"; it is to stop and ask.
 | Lowpoly Farm Buildings | Quaternius | https://quaternius.com/packs/farmbuildings.html | CC0 1.0 (stated on the pack page, linking to https://creativecommons.org/publicdomain/zero/1.0/) | 2026-09-30 | FBX → GLB | buildings: barn (three tiers), open barn, silo, silo house, tower windmill, well, coop | Yes - see "Normalization" |
 | Fantasy Props MegaKit (Standard) | Quaternius | https://quaternius.com/packs/fantasypropsmegakit.html | CC0 1.0 (stated in the pack's own `License_Standard.txt`, published inside the download, and on the pack page) | 2026-10-01 | glTF → GLB | props: barrels, crates, sacks, bucket, bench, market stall and cart, rope, lantern, planter, axe, chopping block, workbench, chest, cage, whetstone | Yes - see "Normalization" |
 | Mini Characters | Kenney | https://kenney.nl/assets/mini-characters | CC0 1.0 (stated on the pack page - "Download this package (25 assets) for free, CC0 licensed!" - and in the pack's own `License.txt`) | 2026-10-02 | GLB with the palette embedded | the player character (`character-male-a`); see `docs/assets/PLAYER_CHARACTER_ASSET.md` | Yes - palette embedded, geometry untouched |
+| Mini Characters 2.0 | Kenney | https://kenney.nl/assets/mini-characters | CC0 1.0 (the pack's own `License.txt`: "License: (Creative Commons Zero, CC0) ... You can use this content for personal, educational, and commercial purposes.") | 2026-11-15 | GLB with the palette embedded | the selectable character roster: `character-female-a..f`, `character-male-b..g`, `character-worker`, `-knight`, `-robot`, `-alien` (16 files, `apps/web/src/assets/models/player/kenney-*.glb`) and their pre-rendered portraits (`apps/web/src/assets/ui/characters/*.webp`) | Yes - palette embedded, geometry untouched |
 | ~~Kenney Nature Kit~~ | Kenney | https://kenney.nl/assets/nature-kit | CC0 1.0 | shipped 2026-09-2x, **removed in V5** | - | - | - |
 
 **Removed in V5.** The Kenney Nature Kit was the project's first scenery family and its licence was
@@ -46,6 +47,17 @@ sibling file, so it is embedded into the model's binary chunk - and it deliberat
 geometry alone, because this model is skinned: normalising it the way the static packs are normalised
 would tear the skin from its skeleton. Its size is a presentation concern instead. The measurements,
 the clip list and the replacement steps are in `docs/assets/PLAYER_CHARACTER_ASSET.md`.
+
+**The character roster (2026-11-15)** came from the 2.0 release of the same pack, supplied by the
+project owner as `kenney_mini-characters.zip` (kenney.nl refuses automated downloads from the build
+environment). Its `License.txt` states CC0. It was unpacked outside the repository and each model was
+run through the same importer; nothing else from the zip is committed. Sixteen characters ship beside
+the original farmer: six women, six more men, and four "special" looks (builder, knight, robot,
+alien). Left out on purpose: `character-zombie`, `-raider` and `-soldier` (horror and combat do not
+fit the cozy farm), plus every aid, wheelchair, weapon, shield and luggage model. All share the
+farmer's seven-joint rig and 32 clips, which `tests/integration/player-character-asset.test.ts`
+asserts. The portraits were rendered from the shipped GLBs in a headless browser and are derived work
+of CC0 material. The per-file import record is `tools/asset-pipeline/node/character-roster-report.json`.
 
 ## What was selected, and what was left out
 

@@ -3,6 +3,7 @@ import {
   CreateFarmResponseSchema,
   GetFarmIslandResponseSchema,
   GetMyFarmResponseSchema,
+  GetPlayerAppearanceResponseSchema,
   GetCropDefinitionsResponseSchema,
   GetBuildCatalogResponseSchema,
   GetFarmCropsResponseSchema,
@@ -127,6 +128,7 @@ import type {
   ,GetFarmIslandResponse
   ,GetMyFarmResponse
   ,IslandChoiceDTO
+  ,PlayerAppearanceDTO
 } from "@happy-farm/contracts";
 import { bootPerfApiEnd, bootPerfApiStart, bootPerfApiValidationFailure } from "./boot-performance";
 
@@ -287,6 +289,16 @@ export class ApiClient {
   /** Creates the player's farm; `island` is honoured only when the farm is new and choice is offered. */
   createFarm(name: string, island?: IslandChoiceDTO): Promise<CreateFarmResult> {
     return this.post("/farms", island === undefined ? { name } : { name, island }, CreateFarmResponseSchema);
+  }
+
+  /** The caller's own look. */
+  getAppearance(): Promise<{ readonly appearance: PlayerAppearanceDTO }> {
+    return this.get("/players/me/appearance", GetPlayerAppearanceResponseSchema);
+  }
+
+  /** Chooses a character; only the id is sent, and the server checks it against game data. */
+  setAppearance(characterId: string): Promise<{ readonly appearance: PlayerAppearanceDTO }> {
+    return this.post("/players/me/appearance", { characterId }, GetPlayerAppearanceResponseSchema);
   }
 
   /** The caller's own farm, if any, and whether a new farm may choose its island. */

@@ -4,6 +4,7 @@ export * from "./auto";
 export * from "./balance";
 export * from "./buildings";
 export * from "./cargo";
+export * from "./characters";
 export * from "./crops";
 export * from "./economy";
 export * from "./fishing";

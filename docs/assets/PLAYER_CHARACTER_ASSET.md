@@ -88,3 +88,25 @@ clips the game actually plays.
 4. Add a row to `docs/ASSET_LICENSES.md` and update this file.
 
 No controller, camera, collision or scene code changes.
+
+## The selectable roster
+
+Since 2026-11-15 a player chooses how they look from a roster of seventeen characters: the original
+farmer (`character.player_farmer`, the default) plus sixteen from Kenney's Mini Characters 2.0
+(`character.kenney_*`). The roster is game data (`packages/game-data/src/characters`), the choice is
+persistent player state (`player_appearance`, migration `0043`) written only through
+`POST /players/me/appearance` and validated against that list, and the client maps an id to a file in
+`apps/web/src/render/character-model-urls.ts`.
+
+* Every roster model uses the farmer's rig and clip set, so `PLAYER_CHARACTER_ASSET`'s animation names
+  apply unchanged. Roster characters are drawn at one fixed scale (`ROSTER_CHARACTER_SCALE`, the
+  farmer's own factor) rather than each normalised to 1.6 m, which keeps a short character short.
+* The scene swaps the model with `setPlayerCharacter(id)`; the fallback avatar shows until the new
+  model has loaded, and only the chosen character's file is downloaded.
+* Portraits for the picker are pre-rendered from the shipped GLBs
+  (`apps/web/src/assets/ui/characters/*.webp`, about 8 KB each).
+
+Adding a character: import it with `tools/asset-pipeline/node/import-kenney-character.mjs` into
+`apps/web/src/assets/models/player/`, add its id to `PLAYER_CHARACTERS`, its URL to
+`character-model-urls.ts`, a portrait to `character-portraits.ts`, and a name in both languages.
+

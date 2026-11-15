@@ -38,6 +38,9 @@ import type {
 import { FarmIslandDTOSchema } from "@happy-farm/contracts";
 import { ApiClient, ApiError, type CreateFarmResult } from "./api";
 import { showIslandPicker } from "./island-picker";
+import { characterNameKey, showCharacterPicker } from "./character-picker";
+import { CHARACTER_PORTRAITS } from "./character-portraits";
+import { DEFAULT_PLAYER_CHARACTER_ID } from "@happy-farm/game-data";
 import {
   MAX_WORK_AREA_CELLS,
   MAX_WORK_AREA_NAME_LENGTH,
@@ -344,6 +347,8 @@ interface AppState {
   farmName: string;
   /** The farm's chosen Home Island, as stored on the server, or null for the composed island. */
   island: IslandGroundView | null;
+  /** The character the player appears as: the server's answer, cached so a reload draws it at once. */
+  characterId: string;
   /**
    * The authenticated player, as the session endpoint reported them, or null before a session.
    *
@@ -511,6 +516,7 @@ const state: AppState = {
   farmId: null,
   farmName: "",
   island: null,
+  characterId: readCachedCharacter(),
   playerId: null,
   tiles: [],
   crops: [],
@@ -6385,6 +6391,9 @@ function renderChrome(): void {
   language.title = t("language.label");
   language.setAttribute("aria-label", t("language.label"));
   element<HTMLButtonElement>("refresh").title = t("hud.refresh");
+  const characterButton = element<HTMLButtonElement>("change-character");
+  characterButton.title = t("hud.character");
+  characterButton.setAttribute("aria-label", t("hud.character"));
   renderBootRetry();
 }
 
@@ -7779,6 +7788,69 @@ function homeSpawnWorld(): { readonly worldX: number; readonly worldZ: number } 
   return state.island === null ? SPAWN_WORLD : islandSpawnWorld(state.island, worldFrame());
 }
 
+const CHARACTER_CACHE_KEY = "happyfarm.character";
+const CHARACTER_OFFERED_KEY = "happyfarm.characterOffered";
+
+/**
+ * The last character this browser was told about, so the first frame already draws it.
+ *
+ * Called while `state` is being initialised - before this module's later constants exist - so it
+ * names its storage key literally rather than through `CHARACTER_CACHE_KEY`.
+ */
+function readCachedCharacter(): string {
+  try {
+    const cached = localStorage.getItem("happyfarm.character");
+    if (cached !== null && CHARACTER_PORTRAITS.has(cached)) return cached;
+  } catch {
+    // Blocked storage: draw the default until the server answers.
+  }
+  return DEFAULT_PLAYER_CHARACTER_ID;
+}
+
+function applyCharacter(characterId: string): void {
+  state.characterId = characterId;
+  try {
+    localStorage.setItem(CHARACTER_CACHE_KEY, characterId);
+  } catch {
+    // Not remembered: the server's answer is fetched again next visit.
+  }
+  scene?.setPlayerCharacter(characterId);
+}
+
+/**
+ * Reads the player's character once per boot, and offers the picker once to a player who has never
+ * chosen - a new player right after their island, an existing one the first time they see the feature.
+ */
+async function refreshAppearance(): Promise<void> {
+  const { appearance } = await api().getAppearance();
+  applyCharacter(appearance.characterId);
+  let offered = false;
+  try {
+    offered = localStorage.getItem(CHARACTER_OFFERED_KEY) === "1";
+    localStorage.setItem(CHARACTER_OFFERED_KEY, "1");
+  } catch {
+    offered = true;
+  }
+  if (!appearance.chosen && !offered) await openCharacterPicker("characterPicker.later");
+}
+
+/** Opens the picker over the game; the choice is saved on the server before it is drawn. */
+async function openCharacterPicker(closeLabel: MessageKey = "characterPicker.close"): Promise<void> {
+  if (document.getElementById("character-picker") !== null) return;
+  const chosen = await showCharacterPicker({
+    host: document.body,
+    translate: (key, params) => t(key, params),
+    current: state.characterId,
+    closeLabel,
+    onConfirm: async (characterId) => {
+      const { appearance } = await api().setAppearance(characterId);
+      applyCharacter(appearance.characterId);
+    },
+    describeError: (error) => describe(error)(t, state.language)
+  });
+  if (chosen !== null) setStatus(message("status.characterChanged", { name: t(characterNameKey(chosen)) }));
+}
+
 const ISLAND_CACHE_PREFIX = "happyfarm.island.";
 
 /**
@@ -8329,6 +8401,7 @@ function enable3D(): void {
     // The cell grid is a development tool: it is on only when the page was opened with `?debug=1`,
     // so a normal session never sees the lattice the engine thinks in.
     scene.setDebugMode(debugRequested());
+    scene.setPlayerCharacter(state.characterId);
   }
   // A fresh renderer holds nothing, whatever the last one was told: forgetting the signature is what
   // makes the very next refresh fill it.
@@ -9388,6 +9461,9 @@ function wire(): void {
   element<HTMLButtonElement>("language").addEventListener("click", () => {
     setLanguage(otherLanguage(state.language));
   });
+  element<HTMLButtonElement>("change-character").addEventListener("click", () => {
+    void openCharacterPicker();
+  });
   // The two camera buttons: named, so the mode is a choice rather than a mysterious switch.
   element<HTMLButtonElement>("camera-estate").addEventListener("click", () => {
     setCameraMode("ESTATE");
@@ -9824,6 +9900,7 @@ async function boot(): Promise<void> {
       enable3D();
       setStatus(message("status.loaded"));
       startInitialEconomicBootstrap(context);
+      void refreshAppearance().catch(() => undefined);
       return;
     } catch (error: unknown) {
       /**
@@ -9850,6 +9927,7 @@ async function boot(): Promise<void> {
   enable3D();
   setStatus(message("status.created"));
   startInitialEconomicBootstrap(context);
+  void refreshAppearance().catch(() => undefined);
 }
 
 void run(boot);

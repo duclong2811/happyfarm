@@ -25,7 +25,9 @@ describe("scene boot order", () => {
   it("builds the character before the model library, and loads it only afterwards", () => {
     const source = readFileSync(SCENE, "utf8");
     const libraryAt = source.indexOf("const library = sharedModelLibrary(");
-    const constructAt = source.indexOf("const characterView = createPlayerCharacterView({");
+    // The view is built by `makeCharacterView` (also used when the player swaps character later).
+    const factoryAt = source.indexOf("function makeCharacterView(");
+    const constructAt = source.indexOf("let characterView = makeCharacterView(");
     const loadAt = source.indexOf("characterView.load({");
 
     expect(libraryAt, "the scene builds a model library").toBeGreaterThan(-1);
@@ -35,7 +37,9 @@ describe("scene boot order", () => {
     // The view is built during the scene's own setup, long before the library is created...
     expect(constructAt).toBeLessThan(libraryAt);
     // ...which is only safe because the construction passes it no way to load anything.
-    const construction = source.slice(constructAt, source.indexOf("});", constructAt));
+    expect(factoryAt).toBeGreaterThan(-1);
+    expect(factoryAt).toBeLessThan(constructAt);
+    const construction = source.slice(factoryAt, source.indexOf("});", factoryAt));
     expect(construction, "construction must not reach for the library").not.toContain("library");
     expect(construction).not.toContain("loadModel");
 

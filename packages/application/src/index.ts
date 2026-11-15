@@ -39,3 +39,4 @@ export * from "./auto-plant";
 export * from "./auto-targets";
 export * from "./neighbor";
 export * from "./farm-ground";
+export * from "./appearance";

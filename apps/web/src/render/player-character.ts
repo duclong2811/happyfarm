@@ -91,6 +91,13 @@ export const PLAYER_CHARACTER_ASSET: PlayerCharacterAssetConfig = {
   crossFadeSeconds: 0.2
 };
 
+/**
+ * The scale every roster character is drawn at: the one that makes the original farmer 1.6 m tall
+ * (its model is 0.6713 units). Kenney authored the whole pack at one scale, so applying the farmer's
+ * factor to all of them keeps a short character short and a tall hat tall.
+ */
+export const ROSTER_CHARACTER_SCALE = CHARACTER_HEIGHT_WORLD / 0.6713;
+
 /** What the renderer knows about the character this frame. A subset of the scene's player pose. */
 export interface PlayerCharacterPose {
   readonly worldX: number;

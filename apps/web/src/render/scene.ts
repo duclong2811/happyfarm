@@ -119,7 +119,8 @@ import {
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
 import { isTypingTarget } from "../player/input";
-import { createPlayerCharacterView } from "./player-character";
+import { createPlayerCharacterView, PLAYER_CHARACTER_ASSET, ROSTER_CHARACTER_SCALE } from "./player-character";
+import { CHARACTER_MODEL_URL_BY_ID } from "./character-model-urls";
 import { HARVEST_GESTURE_DURATION_MS, harvestGestureBend } from "../interaction/feedback";
 import { ROAD_PREVIEW_STYLES } from "./thumbnail";
 import { buildRoadSpec, ROAD_LIFT_WORLD } from "./roads";
@@ -452,6 +453,11 @@ export interface FarmSceneOptions {
 
 export interface FarmSceneHandle {
   readonly canvas: HTMLCanvasElement;
+  /**
+   * Draws the local player as another roster character. Cosmetic and never awaited: the current
+   * figure stays on screen until the new model has loaded, and an unknown id keeps the default.
+   */
+  setPlayerCharacter(modelId: string): void;
   /** Replaces the rendered farm state and redraws. Safe to call repeatedly. */
   setState(input: FarmSceneInput): void;
   /**
@@ -1371,14 +1377,21 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
    * point in the scene's own setup, and a cosmetic asset must not be able to reach into boot at all.
    * The load is asked for at the end of `createFarmScene`, and its result is never awaited.
    */
-  const characterView = createPlayerCharacterView({
-    fallback: fallbackAvatar,
-    onProblem: (assetId, message) => {
-      // A failed model is a report, not a failure: the fallback is already on screen, and the console
-      // says which asset failed and what is being used instead.
-      options.onAssetProblem?.(assetId, new Error(message));
-    }
-  });
+  function makeCharacterView(modelId: string): ReturnType<typeof createPlayerCharacterView> {
+    return createPlayerCharacterView({
+      fallback: fallbackAvatar,
+      // Every roster character shares the farmer's rig and is authored at the farmer's scale, so one
+      // fixed scale keeps their relative heights instead of stretching a short character to 1.6 m.
+      config: modelId === PLAYER_CHARACTER_ASSET.modelId ? PLAYER_CHARACTER_ASSET : { ...PLAYER_CHARACTER_ASSET, id: modelId, modelId, scale: ROSTER_CHARACTER_SCALE },
+      onProblem: (assetId, message) => {
+        // A failed model is a report, not a failure: the fallback is already on screen, and the console
+        // says which asset failed and what is being used instead.
+        options.onAssetProblem?.(assetId, new Error(message));
+      }
+    });
+  }
+  let characterModelId = PLAYER_CHARACTER_ASSET.modelId;
+  let characterView = makeCharacterView(characterModelId);
   playerGroup.add(characterView.root);
   /**
    * Small scenery - flowers, tufts of grass - lives in its own pair of groups.
@@ -4375,6 +4388,23 @@ let interactionGeometry: BufferGeometry | null = null;
 
   return {
     canvas,
+    setPlayerCharacter(modelId: string): void {
+      if (modelId === characterModelId || !CHARACTER_MODEL_URL_BY_ID.has(modelId)) return;
+      characterModelId = modelId;
+      const previous = characterView;
+      const next = makeCharacterView(modelId);
+      // The old figure is released only when the new one replaces it, so the swap never shows an empty
+      // spot; the fallback moves to the new view, which is where `createPlayerCharacterView` puts it.
+      playerGroup.remove(previous.root);
+      previous.dispose();
+      characterView = next;
+      playerGroup.add(next.root);
+      next.load({
+        loadModel: (id) => library.load(id),
+        animationsOf: (id) => library.animations(id)
+      });
+      draw();
+    },
     setState(next: FarmSceneInput): void {
       applyState(next);
       draw();
