@@ -1,11 +1,13 @@
 import type { FarmId } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
-import type { ActorContext, FarmMemberRepository, FarmRepository } from "./ports";
+import { farmIslandSummary } from "./farm-island";
+import type { ActorContext, FarmIslandRepository, FarmMemberRepository, FarmRepository } from "./ports";
 
 export class GetFarm {
   constructor(
     private readonly farms: FarmRepository,
-    private readonly members: FarmMemberRepository
+    private readonly members: FarmMemberRepository,
+    private readonly islands?: FarmIslandRepository
   ) {}
 
   async execute(actor: ActorContext | null, farmId: FarmId) {
@@ -20,6 +22,7 @@ export class GetFarm {
     if (membership === null) {
       throw new ApplicationError("NOT_AUTHORIZED", "Farm access is not allowed");
     }
-    return { farm, membership };
+    const island = this.islands === undefined ? null : await this.islands.findByFarm(farmId);
+    return { farm, membership, island: farmIslandSummary(island) };
   }
 }

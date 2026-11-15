@@ -1,5 +1,6 @@
 import {
   cropInstanceIdFromUuid,
+  DomainError,
   economyTransactionIdFromUuid,
   constructionIdFromUuid,
   farmIdFromUuid,
@@ -81,6 +82,9 @@ import type {
   ,CargoCapacityLookup
   ,ForestryConstructionDefinition
   ,ForestryConstructionDefinitionRepository
+  ,IslandGroundBuilder
+  ,FarmIslandRepository
+  ,StarterWorldDefinition
 } from "@happy-farm/application";
 import {
   cropRegistry,
@@ -109,8 +113,15 @@ import {
   warehouseTiers,
   STARTER_WORLD_PLACEMENTS,
   STARTER_WORLD_VERSION,
+  buildIslandGround,
+  classifyIslandTile,
   classifyTile,
+  islandGroundCapabilities,
+  type IslandGroundCells,
   groundCapabilities,
+  ISLAND_ELEMENTS,
+  ISLAND_OUTLINES,
+  ISLAND_SEED_MAX,
   worldObjectDefinition,
   WORLD_OBJECT_DEFINITIONS,
   type CropDefinitionData,
@@ -179,6 +190,119 @@ export const gameDataTileTerrain: TileTerrainLookup = {
       shallowWater: classification.shallowWater,
       protectedGround: classification.protectedGround
     };
+  }
+};
+
+/** The three placement ports, answered from one farm's stored island. */
+export function storedIslandGeography(island: IslandGroundCells): {
+  readonly terrain: TileTerrainLookup;
+  readonly landSale: LandSaleLookup;
+  readonly ground: WorkAreaGroundLookup;
+} {
+  return {
+    terrain: {
+      classify(tile) {
+        const classification = classifyIslandTile(island, tile);
+        return {
+          terrain: classification.terrain,
+          shallowWater: classification.shallowWater,
+          protectedGround: classification.protectedGround
+        };
+      }
+    },
+    landSale: {
+      isDevelopable(tile) {
+        const classification = classifyIslandTile(island, tile);
+        return classification.terrain === "LAND" && !classification.protectedGround;
+      }
+    },
+    ground: {
+      capabilitiesAt(tile) {
+        return islandGroundCapabilities(island, tile);
+      }
+    }
+  };
+}
+
+/**
+ * The starter arrangement of a chosen Home Island: one choppable tree on every stored tree site.
+ *
+ * Deterministic from the stored sites alone - the key is the tile, the species alternates by a hash
+ * of it - so a retry, a second tab or a later read produces exactly the same rows, and the seeder's
+ * unique `(farm, key)` index absorbs any overlap. It carries the current starter version, which is
+ * what keeps a later version of the *old* island's arrangement from ever reaching this farm.
+ */
+export function islandStarterWorld(island: IslandGroundCells): StarterWorldDefinition {
+  return {
+    version: STARTER_WORLD_VERSION,
+    placements: island.sites
+      .filter((site) => site.kind === "TREE")
+      .map((site) => ({
+        key: `island.tree.${String(site.x)}_${String(site.y)}`,
+        definitionId: ((site.x * 7 + site.y * 13) & 3) === 0 ? "world.tree_broad" : "world.tree_pine",
+        version: 1,
+        tile: { x: site.x, y: site.y },
+        rotation: 0
+      }))
+  };
+}
+
+/**
+ * Makes a host's geography ports farm-aware.
+ *
+ * A farm with a stored island is judged by that island; every other farm falls through to the host's
+ * own lookup (the hand-composed island in production, whatever a test supplies). The island is read
+ * once per resolution - one row - and nothing is cached across requests, so no isolate can serve a
+ * stale coast.
+ */
+export function farmIslandGeography(
+  base: { readonly terrain: TileTerrainLookup; readonly landSale: LandSaleLookup; readonly ground?: WorkAreaGroundLookup },
+  islands: FarmIslandRepository
+): { readonly terrain: TileTerrainLookup; readonly landSale: LandSaleLookup; readonly ground?: WorkAreaGroundLookup } {
+  const stored = async (farmId: FarmId) => {
+    const island = await islands.findByFarm(farmId);
+    return island === null ? null : storedIslandGeography(island);
+  };
+  const terrain: TileTerrainLookup = {
+    classify: (tile) => base.terrain.classify(tile),
+    forFarm: async (farmId) => (await stored(farmId))?.terrain ?? (base.terrain.forFarm === undefined ? base.terrain : base.terrain.forFarm(farmId))
+  };
+  const landSale: LandSaleLookup = {
+    isDevelopable: (tile) => base.landSale.isDevelopable(tile),
+    forFarm: async (farmId) => (await stored(farmId))?.landSale ?? (base.landSale.forFarm === undefined ? base.landSale : base.landSale.forFarm(farmId))
+  };
+  const ground = base.ground;
+  return {
+    terrain,
+    landSale,
+    ...(ground === undefined
+      ? {}
+      : {
+          ground: {
+            capabilitiesAt: (tile) => ground.capabilitiesAt(tile),
+            forFarm: async (farmId) => (await stored(farmId))?.ground ?? (ground.forFarm === undefined ? ground : ground.forFarm(farmId))
+          } satisfies WorkAreaGroundLookup
+        })
+  };
+}
+
+/**
+ * Builds a chosen Home Island from game data.
+ *
+ * The request's three values are re-checked against game data's own lists here, independently of
+ * the contract, because this is the only place a template becomes stored ground.
+ */
+export const gameDataIslandGroundBuilder: IslandGroundBuilder = {
+  build(choice) {
+    const element = ISLAND_ELEMENTS.find((candidate) => candidate === choice.element);
+    const outline = ISLAND_OUTLINES.find((candidate) => candidate === choice.outline);
+    if (element === undefined || outline === undefined) {
+      throw new DomainError("INVALID_ISLAND", "Unknown island element or outline");
+    }
+    if (!Number.isInteger(choice.seed) || choice.seed < 1 || choice.seed > ISLAND_SEED_MAX) {
+      throw new DomainError("INVALID_ISLAND", "Island seed is out of range");
+    }
+    return buildIslandGround({ element, outline, seed: choice.seed });
   }
 };
 

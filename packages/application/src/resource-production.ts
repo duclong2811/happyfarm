@@ -9,6 +9,7 @@ import {
   type ProductionAssignmentSnapshot
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { workGroundForFarm } from "./farm-ground";
 import { requireOwnedFarm } from "./jobs";
 import type {
   ActorContext,
@@ -91,11 +92,12 @@ async function eligibleResourceNodes(
   const states = await dependencies.states.listByZone(area.zoneId);
   const stateByNode = new Map(states.map((state) => [state.nodeId, state]));
   const candidates: ResourceProductionNodeContext[] = [];
+  const ground = await workGroundForFarm(dependencies.ground, area.farmId);
   for (const node of dependencies.catalogue.listNodes()) {
     if (node.zoneKind !== area.zoneKind || node.definitionId !== definition.id) continue;
     const cellKey = workAreaCellKey({ x: Math.round(node.position.x), y: Math.round(node.position.y) });
     if (!cells.has(cellKey)) continue;
-    if (!dependencies.ground.capabilitiesAt({ x: Math.round(node.position.x), y: Math.round(node.position.y) }).includes(requiredGroundCapability(area.kind))) continue;
+    if (!ground.capabilitiesAt({ x: Math.round(node.position.x), y: Math.round(node.position.y) }).includes(requiredGroundCapability(area.kind))) continue;
     const state = stateByNode.get(node.id);
     // Unified ore is a durable work anchor. It must not inherit the legacy depletion window, or a
     // second actor would be paid from a node cooldown instead of from labour time.

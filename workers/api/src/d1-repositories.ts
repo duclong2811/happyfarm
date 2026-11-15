@@ -3,6 +3,7 @@
   ConstructionId,
   ConstructionInstance,
   Farm,
+  FarmIsland,
   FarmId,
   FarmMember,
   FarmRole,
@@ -92,6 +93,7 @@ import type {
   ResourceSettlementRepository,
   FarmMemberRepository,
   HomeIslandZoneResolver,
+  FarmIslandRepository,
   FarmRepository,
   FarmTileRepository,
   PlayerRepository,
@@ -735,13 +737,83 @@ export class D1WarehouseRepository implements WarehouseRepository {
   }
 }
 
+interface FarmIslandRow {
+  readonly farm_id: string;
+  readonly element: string;
+  readonly outline: string;
+  readonly seed: number;
+  readonly generator_version: number;
+  readonly grid_size: number;
+  readonly origin_x: number;
+  readonly origin_y: number;
+  readonly cells: string;
+  readonly sites_json: string;
+  readonly revision: number;
+  readonly created_at: string;
+}
+
+function parseIslandSites(json: string): FarmIsland["sites"] {
+  const parsed: unknown = JSON.parse(json);
+  if (!Array.isArray(parsed)) throw new Error("Stored island sites are not a list");
+  return parsed.map((entry: unknown) => {
+    const site = entry as { kind?: unknown; x?: unknown; y?: unknown };
+    if (typeof site.kind !== "string" || !Number.isInteger(site.x) || !Number.isInteger(site.y)) {
+      throw new Error("Stored island site is malformed");
+    }
+    return { kind: site.kind, x: site.x as number, y: site.y as number };
+  });
+}
+
+/** A farm's stored Home Island. Written only by `D1FarmRepository.createWithOwner`. */
+export class D1FarmIslandRepository implements FarmIslandRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  /**
+   * The farm's stored island, or null for a farm on the hand-composed island.
+   *
+   * A database that has not yet been given `0042` has no island table, and that means exactly "no
+   * farm has chosen an island": every existing farm keeps working while a deployment's code is ahead
+   * of its migrations. Any other failure is still thrown.
+   */
+  async findByFarm(farmId: FarmId): Promise<FarmIsland | null> {
+    let row: FarmIslandRow | null;
+    try {
+      row = await this.db
+        .prepare(
+          "SELECT farm_id, element, outline, seed, generator_version, grid_size, origin_x, origin_y, cells, sites_json, revision, created_at FROM farm_islands WHERE farm_id = ?"
+        )
+        .bind(farmId)
+        .first<FarmIslandRow>();
+    } catch (error: unknown) {
+      if (error instanceof Error && /no such table: farm_islands/.test(error.message)) return null;
+      throw error;
+    }
+    if (row === null) return null;
+    return {
+      farmId: parseFarmId(row.farm_id),
+      element: row.element,
+      outline: row.outline,
+      seed: row.seed,
+      generatorVersion: row.generator_version,
+      size: row.grid_size,
+      originX: row.origin_x,
+      originY: row.origin_y,
+      cells: row.cells,
+      sites: parseIslandSites(row.sites_json),
+      revision: row.revision,
+      createdAt: row.created_at
+    };
+  }
+}
+
 export class D1FarmRepository implements FarmRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
   async createWithOwner(
     farm: Farm,
     ownerMembership: FarmMember,
-    initialTiles: readonly FarmTile[]
+    initialTiles: readonly FarmTile[],
+    island: FarmIsland | null = null
   ): Promise<void> {
     const statements: D1PreparedStatementLike[] = [
       this.db
@@ -761,7 +833,29 @@ export class D1FarmRepository implements FarmRepository {
             "INSERT INTO farm_tiles (farm_id, x, y, terrain_type, tile_state, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
           )
           .bind(tile.farmId, tile.x, tile.y, tile.terrainType, tile.state, tile.version, tile.updatedAt)
-      )
+      ),
+      ...(island === null
+        ? []
+        : [
+            this.db
+              .prepare(
+                "INSERT INTO farm_islands (farm_id, element, outline, seed, generator_version, grid_size, origin_x, origin_y, cells, sites_json, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+              )
+              .bind(
+                island.farmId,
+                island.element,
+                island.outline,
+                island.seed,
+                island.generatorVersion,
+                island.size,
+                island.originX,
+                island.originY,
+                island.cells,
+                JSON.stringify(island.sites.map((site) => ({ kind: site.kind, x: site.x, y: site.y }))),
+                island.revision,
+                island.createdAt
+              )
+          ])
     ];
     const results = await this.db.batch(statements);
     if (results.length !== statements.length || results.some((result) => !result.success)) {

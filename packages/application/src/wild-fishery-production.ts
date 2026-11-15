@@ -10,6 +10,7 @@ import {
   type ProductionAssignmentSnapshot
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { workGroundForFarm } from "./farm-ground";
 import { requireOwnedFarm } from "./jobs";
 import type {
   ActorContext,
@@ -67,7 +68,7 @@ async function resolveSpot(dependencies: WildFisheryDependencies, job: WildFishe
   if (table === null || table.entries.length === 0) throw new ApplicationError("INVALID_INPUT", "The fishing spot has no catch table");
   const cells = new Set((await dependencies.workAreas.listCells(area.id)).map(workAreaCellKey));
   const cell = { x: Math.round(spot.position.x), y: Math.round(spot.position.y) };
-  if (!cells.has(workAreaCellKey(cell)) || !dependencies.ground.capabilitiesAt(cell).includes(requiredGroundCapability("FISHERY"))) {
+  if (!cells.has(workAreaCellKey(cell)) || !(await workGroundForFarm(dependencies.ground, job.farmId)).capabilitiesAt(cell).includes(requiredGroundCapability("FISHERY"))) {
     return {
       sourceRatePerHour: 0, availableStock: 0, spotId: spot.id, zoneKind: area.zoneKind, zoneId: area.zoneId,
       expectedStock: 0, expectedLastRegeneratedAt: null, expectedVersion: null, regenerationSeconds: spot.regenerationSeconds

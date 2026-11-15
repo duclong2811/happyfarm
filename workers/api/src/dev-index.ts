@@ -30,6 +30,7 @@ import {
   gameDataStarterWorld,
   gameDataTileTerrain,
   gameDataLandSale,
+  gameDataIslandGroundBuilder,
   gameDataWorkAreaGround,
   gameDataCargoCapacities,
   gameDataStarterPackage
@@ -51,6 +52,11 @@ import type { D1DatabaseLike } from "./d1-types";
  */
 export interface DevEnv extends DevAuthBindings {
   readonly DB: D1DatabaseLike;
+  /**
+   * Home Island choice for development. On unless set to "false": the local host is where the
+   * feature is built and tried before any deployment turns it on.
+   */
+  readonly ISLAND_CHOICE_ENABLED?: string;
 }
 
 export interface DevBootstrapStatus {
@@ -110,6 +116,10 @@ export function createDevWorker(env: DevEnv) {
     starterWorld: gameDataStarterWorld,
     terrain: gameDataTileTerrain,
     landSale: gameDataLandSale,
+    islands: {
+      choiceEnabled: env.ISLAND_CHOICE_ENABLED?.trim().toLowerCase() !== "false",
+      builder: gameDataIslandGroundBuilder
+    },
     fishing: {
       catalogue: new GameDataFishingCatalogue(),
       ids,

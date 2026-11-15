@@ -32,6 +32,7 @@ import {
   type Wallet
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { terrainForFarm } from "./farm-ground";
 import type { EconomyService } from "./economy";
 import type {
   ActorContext,
@@ -286,9 +287,10 @@ export class PlaceConstruction {
     const cells: ConstructionCell[] = [];
     const tilesToCreate: FarmTile[] = [];
     const now = this.dependencies.clock.now();
+    const terrain = await terrainForFarm(this.dependencies.terrain, farmId);
     for (const cell of wanted) {
       const tile = await this.dependencies.tiles.find(farmId, cell.x, cell.y);
-      const ground = this.dependencies.terrain.classify(cell);
+      const ground = terrain.classify(cell);
       // A cell the farm has no row for yet is a fresh natural-land cell: the settlement creates the
       // row it needs, with no land charge.
       if (tile === null) tilesToCreate.push(createFarmTile(farmId, cell, "SOIL", now));
@@ -498,9 +500,10 @@ async function editGroundCells(
   const cells: ConstructionCell[] = [];
   const tilesToCreate: FarmTile[] = [];
   const now = dependencies.clock.now();
+  const terrain = await terrainForFarm(dependencies.terrain, farmId);
   for (const cell of wanted) {
     const tile = await dependencies.tiles.find(farmId, cell.x, cell.y);
-    const ground = dependencies.terrain.classify(cell);
+    const ground = terrain.classify(cell);
     // A destination cell the farm has no row for yet is fresh natural land: it is not a refusal, and
     // the settlement writes the row it needs (V14.5.2).
     if (tile === null) tilesToCreate.push(createFarmTile(farmId, cell, "SOIL", now));
@@ -809,6 +812,13 @@ export class SeedStarterWorld {
       readonly constructions: ConstructionRepository;
       readonly definitions: ConstructionDefinitionRepository;
       readonly world: StarterWorldDefinition;
+      /**
+       * The starter arrangement of a farm on a chosen Home Island, or null for the hand-composed one.
+       *
+       * A chosen island brings its own objects (its forest stands, from the stored sites), so it is
+       * never given the old island's trees at the old island's coordinates.
+       */
+      readonly islandWorld?: { forFarm(farmId: FarmId): Promise<StarterWorldDefinition | null> };
       readonly ids: ConstructionIdGenerator;
       readonly clock: Clock;
     }
@@ -816,9 +826,10 @@ export class SeedStarterWorld {
 
   /** Seeds if the farm is behind, and reports how many objects it created. */
   async execute(farmId: FarmId): Promise<number> {
-    const { farms, constructions, definitions, world, ids, clock } = this.dependencies;
+    const { farms, constructions, definitions, ids, clock } = this.dependencies;
     const state = await farms.starterWorldState(farmId);
     if (state === null) return 0;
+    const world = (await this.dependencies.islandWorld?.forFarm(farmId)) ?? this.dependencies.world;
     if (state.version >= world.version) return 0;
 
     const now = clock.now();

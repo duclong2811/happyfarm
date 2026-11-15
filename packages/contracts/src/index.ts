@@ -30,11 +30,51 @@ export const TileCoordinateSchema = z
   })
   .strict();
 
+/** Stable ids of the five Home Island elements (Ngũ Hành) and the six outlines a player may pick. */
+export const IslandElementSchema = z.enum(["THO", "KIM", "MOC", "THUY", "HOA"]);
+export const IslandOutlineSchema = z.enum(["ROUND", "LONG", "CRESCENT", "TWIN", "ATOLL", "ARCHIPELAGO"]);
+export const IslandSeedSchema = z.number().int().min(1).max(2_147_483_647);
+
+/** A player's island choice: three values, from which the server builds the island itself. */
+export const IslandChoiceSchema = z
+  .object({ element: IslandElementSchema, outline: IslandOutlineSchema, seed: IslandSeedSchema })
+  .strict();
+
 export const CreateFarmRequestSchema = z
   .object({
-    name: z.string().trim().min(1).max(80)
+    name: z.string().trim().min(1).max(80),
+    island: IslandChoiceSchema.optional()
   })
   .strict();
+
+/** A farm's island without its ground; `revision` changes only when the ground does. */
+export const FarmIslandSummaryDTOSchema = z
+  .object({
+    element: IslandElementSchema,
+    outline: IslandOutlineSchema,
+    seed: IslandSeedSchema,
+    revision: z.number().int().min(1)
+  })
+  .strict();
+
+export const IslandSiteKindSchema = z.enum(["ORE", "TREE", "FISH_BAY", "PASTURE", "DOCK", "CAMP"]);
+
+/** A farm's stored island ground: one code per cell, row-major, plus the sites, in farm tiles. */
+export const FarmIslandDTOSchema = z
+  .object({
+    element: IslandElementSchema,
+    outline: IslandOutlineSchema,
+    seed: IslandSeedSchema,
+    generatorVersion: z.number().int().min(1),
+    size: z.number().int().min(16).max(256),
+    originX: z.number().int(),
+    originY: z.number().int(),
+    cells: z.string().regex(/^[dwsgfrml]+$/).max(65_536),
+    sites: z.array(z.object({ kind: IslandSiteKindSchema, x: z.number().int(), y: z.number().int() }).strict()).max(1_000),
+    revision: z.number().int().min(1)
+  })
+  .strict()
+  .refine((island) => island.cells.length === island.size * island.size, { message: "cells must cover the grid" });
 
 export const FarmDTOSchema = z
   .object({
@@ -68,9 +108,24 @@ export const FarmTileDTOSchema = z
   .strict();
 
 export const CreateFarmResponseSchema = z
-  .object({ farm: FarmDTOSchema, membership: FarmMemberDTOSchema })
+  .object({
+    farm: FarmDTOSchema,
+    membership: FarmMemberDTOSchema,
+    /** Null for a farm on the hand-composed island. Optional so an older server still parses. */
+    island: FarmIslandSummaryDTOSchema.nullable().optional()
+  })
   .strict();
 export const GetFarmResponseSchema = CreateFarmResponseSchema;
+/** `GET /farms/mine`: the caller's farm if they have one, and whether a new farm may pick its island. */
+export const GetMyFarmResponseSchema = z
+  .object({
+    farm: FarmDTOSchema.nullable(),
+    island: FarmIslandSummaryDTOSchema.nullable(),
+    islandChoice: z.object({ enabled: z.boolean() }).strict()
+  })
+  .strict();
+/** `GET /farms/:id/island`: the stored ground. Immutable per `revision`, so clients may cache it. */
+export const GetFarmIslandResponseSchema = z.object({ island: FarmIslandDTOSchema }).strict();
 export const GetFarmTilesResponseSchema = z.object({ tiles: z.array(FarmTileDTOSchema) }).strict();
 export const HealthResponseSchema = z
   .object({ ok: z.literal(true), data: z.object({ status: z.literal("ok") }).strict() })
@@ -1861,6 +1916,7 @@ export const ErrorCodeSchema = z.enum([
   "CROP_ALREADY_HARVESTED",
   "CROP_LEVEL_REQUIRED",
   "WAREHOUSE_LEVEL_REQUIRED",
+  "ISLAND_CHOICE_UNAVAILABLE",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
   "WAREHOUSE_FULL",
@@ -1955,6 +2011,11 @@ export const ErrorCodeSchema = z.enum([
 ]);
 
 export type CreateFarmRequest = z.infer<typeof CreateFarmRequestSchema>;
+export type IslandChoiceDTO = z.infer<typeof IslandChoiceSchema>;
+export type FarmIslandSummaryDTO = z.infer<typeof FarmIslandSummaryDTOSchema>;
+export type FarmIslandDTO = z.infer<typeof FarmIslandDTOSchema>;
+export type GetMyFarmResponse = z.infer<typeof GetMyFarmResponseSchema>;
+export type GetFarmIslandResponse = z.infer<typeof GetFarmIslandResponseSchema>;
 export type FarmDTO = z.infer<typeof FarmDTOSchema>;
 export type FarmMemberDTO = z.infer<typeof FarmMemberDTOSchema>;
 export type FarmTileDTO = z.infer<typeof FarmTileDTOSchema>;

@@ -17,6 +17,7 @@ import {
   type WorkAreaKind
 } from "@happy-farm/domain";
 import { ApplicationError, type ApplicationErrorCode } from "./errors";
+import { workGroundForFarm } from "./farm-ground";
 import type {
   ActorContext,
   Clock,
@@ -283,7 +284,7 @@ export class CreateWorkArea {
     const kind = normalizeKind(command.kind);
     const displayName = normalizeName(command.name);
     const cells = normalizeCells(command.cells);
-    assertKindFitsCells(kind, cells, this.dependencies.ground);
+    assertKindFitsCells(kind, cells, await workGroundForFarm(this.dependencies.ground, farmId));
 
     const fingerprint = await this.dependencies.fingerprints.hash(
       JSON.stringify([farmId, kind, displayName, cells.map((cell) => [cell.x, cell.y])])
@@ -383,7 +384,7 @@ export class ReplaceWorkAreaCells {
     const area = await loadArea(this.dependencies, farmId, workAreaId);
     mapDomain("CONFLICT_STALE_STATE", () => { assertWorkAreaVersion(area, command.expectedVersion); });
     const cells = normalizeCells(command.cells);
-    assertKindFitsCells(area.kind, cells, this.dependencies.ground);
+    assertKindFitsCells(area.kind, cells, await workGroundForFarm(this.dependencies.ground, farmId));
     const retargeted = retargetWorkAreaCells(area, this.dependencies.clock.now());
     const applied = await this.dependencies.workAreas.replaceCellsAtomically(
       retargeted,

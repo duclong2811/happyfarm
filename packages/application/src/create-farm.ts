@@ -2,7 +2,9 @@ import {
   assertActivePlayer,
   createInitialFarmTiles,
   createOwnedFarm,
-  DomainError
+  DomainError,
+  type FarmIsland,
+  type IslandChoice
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
 import type {
@@ -11,11 +13,25 @@ import type {
   FarmMemberRepository,
   FarmRepository,
   IdGenerator,
+  IslandGroundBuilder,
   PlayerRepository
 } from "./ports";
 
 export interface CreateFarmCommand {
   readonly name: string;
+  /**
+   * The Home Island the player picked, when island choice is offered.
+   *
+   * Only ever honoured when the farm is *created*: a player who already has a farm gets that farm
+   * back unchanged, because an island is chosen once and never swapped.
+   */
+  readonly island?: IslandChoice | undefined;
+}
+
+/** Whether this host offers island choice, and the game data that builds a chosen island. */
+export interface IslandChoicePolicy {
+  readonly enabled: boolean;
+  readonly builder: IslandGroundBuilder;
 }
 
 export interface CreateFarmResult {
@@ -50,7 +66,8 @@ export class CreateFarm {
     private readonly farms: FarmRepository,
     private readonly members: FarmMemberRepository,
     private readonly ids: IdGenerator,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    private readonly islands?: IslandChoicePolicy
   ) {}
 
   async execute(actor: ActorContext | null, command: CreateFarmCommand): Promise<CreateFarmResult> {
@@ -65,12 +82,14 @@ export class CreateFarm {
 
       const now = this.clock.now();
       const aggregate = createOwnedFarm(this.ids.newFarmId(), actor.playerId, command.name, now);
-      // Starter land is persisted in the same transaction as the farm and OWNER membership,
-      // so a partially created farm is never observable.
+      const island = this.chosenIsland(command.island, aggregate.farm.id, now);
+      // Starter land and the chosen island are persisted in the same transaction as the farm and
+      // OWNER membership, so a partially created farm is never observable.
       await this.farms.createWithOwner(
         aggregate.farm,
         aggregate.ownerMembership,
-        createInitialFarmTiles(aggregate.farm.id, now)
+        createInitialFarmTiles(aggregate.farm.id, now),
+        island
       );
       return { ...aggregate, created: true };
     } catch (error: unknown) {
@@ -83,6 +102,20 @@ export class CreateFarm {
       }
       throw error;
     }
+  }
+
+  /**
+   * The island a new farm is created with, or null for the hand-composed island.
+   *
+   * The ground is built here, on the server, from the three values the player chose; nothing about
+   * the ground itself is accepted from a request.
+   */
+  private chosenIsland(choice: IslandChoice | undefined, farmId: FarmIsland["farmId"], now: string): FarmIsland | null {
+    if (choice === undefined) return null;
+    if (this.islands === undefined || !this.islands.enabled) {
+      throw new ApplicationError("ISLAND_CHOICE_UNAVAILABLE", "Choosing a Home Island is not available yet");
+    }
+    return { ...this.islands.builder.build(choice), farmId, createdAt: now };
   }
 
   /** The farm a player already has, with the OWNER membership that was written with it. */

@@ -22,6 +22,7 @@ import {
   type XpAward
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { workGroundForFarm } from "./farm-ground";
 import { CargoService } from "./cargo";
 import type { InventoryService } from "./inventory";
 import {
@@ -729,7 +730,7 @@ export class MineResourceIntoCargoAuto {
     if (
       area === null || area.farmId !== farmId || area.kind !== "MINING" || area.zoneKind !== node.zoneKind ||
       !(await this.dependencies.workAreas.listCells(area.id)).some((cell) => workAreaCellKey(cell) === workAreaCellKey(nodeCell)) ||
-      !this.dependencies.ground.capabilitiesAt(nodeCell).includes("MINING")
+      !(await workGroundForFarm(this.dependencies.ground, farmId)).capabilitiesAt(nodeCell).includes("MINING")
     ) {
       throw new ApplicationError("INVALID_INPUT", "The Mining target is outside the assigned work area");
     }

@@ -1,17 +1,19 @@
 /**
  * Deterministic island generator, one recipe per element (Ngũ Hành).
  *
- * The same `{ element, seed }` always yields the same island, on the server and in the browser, so
- * the resource sites it places (ore faces, forest stands, fish bays, pastures) can be authoritative
- * server data rather than client decoration. Pure: no randomness source but the seed, no I/O.
+ * The same `{ element, seed, outline }` always yields the same island, so the picker can preview an
+ * island in the browser and the server can build exactly that island when the farm is created. The
+ * server *stores* what it built (`island-ground.ts`); a stored island never depends on this code
+ * again. Tuning a recipe here is therefore safe for existing farms, but it changes what new templates
+ * produce, so it must bump `ISLAND_GENERATOR_VERSION`. Pure: no randomness source but the seed.
  */
 
 export const ISLAND_ELEMENTS = ["THO", "KIM", "MOC", "THUY", "HOA"] as const;
 export type IslandElement = (typeof ISLAND_ELEMENTS)[number];
 
 /** The overall outline a player picks; the element decides what grows on it. */
-export const ISLAND_SHAPES = ["ROUND", "LONG", "CRESCENT", "TWIN", "ATOLL", "ARCHIPELAGO"] as const;
-export type IslandShape = (typeof ISLAND_SHAPES)[number];
+export const ISLAND_OUTLINES = ["ROUND", "LONG", "CRESCENT", "TWIN", "ATOLL", "ARCHIPELAGO"] as const;
+export type IslandOutline = (typeof ISLAND_OUTLINES)[number];
 
 export type IslandCellKind = "DEEP" | "SHALLOW" | "SAND" | "GRASS" | "FOREST" | "ROCK" | "MEADOW" | "FIELD";
 export type IslandSiteKind = "ORE" | "TREE" | "FISH_BAY" | "PASTURE" | "DOCK" | "CAMP";
@@ -24,7 +26,7 @@ export interface IslandSite {
 
 export interface GeneratedIsland {
   readonly element: IslandElement;
-  readonly shape: IslandShape;
+  readonly outline: IslandOutline;
   readonly seed: number;
   readonly size: number;
   /** Row-major cell kinds, `size * size` long. */
@@ -107,13 +109,13 @@ function angleDistance(a: number, b: number): number {
  * shape reuses one coastline rule. `null` marks water carved out by the shape itself (a crescent's
  * bite, an atoll's lagoon).
  */
-function shapeDistance(shape: IslandShape, dx: number, dy: number, turn: number, landRadius: number, islets: readonly { x: number; y: number; r: number }[]): number | "LAGOON" | null {
+function outlineDistance(outline: IslandOutline, dx: number, dy: number, turn: number, landRadius: number, islets: readonly { x: number; y: number; r: number }[]): number | "LAGOON" | null {
   const cos = Math.cos(turn);
   const sin = Math.sin(turn);
   const rx = dx * cos + dy * sin;
   const ry = -dx * sin + dy * cos;
   const round = Math.hypot(dx, dy);
-  switch (shape) {
+  switch (outline) {
     case "ROUND": return round;
     case "LONG": return Math.hypot(rx * 0.8, ry * 1.55);
     case "TWIN": return Math.min(Math.hypot(rx - 0.4, ry * 1.1), Math.hypot(rx + 0.4, ry * 1.1)) * 1.75;
@@ -127,9 +129,9 @@ function shapeDistance(shape: IslandShape, dx: number, dy: number, turn: number,
   }
 }
 
-const DEFAULT_SHAPE: Record<IslandElement, IslandShape> = { THO: "ROUND", KIM: "ROUND", MOC: "ROUND", THUY: "ROUND", HOA: "ROUND" };
+const DEFAULT_OUTLINE: Record<IslandElement, IslandOutline> = { THO: "ROUND", KIM: "ROUND", MOC: "ROUND", THUY: "ROUND", HOA: "ROUND" };
 
-export function generateIsland(element: IslandElement, seed: number, size = 96, shape: IslandShape = DEFAULT_SHAPE[element]): GeneratedIsland {
+export function generateIsland(element: IslandElement, seed: number, size = 96, outline: IslandOutline = DEFAULT_OUTLINE[element]): GeneratedIsland {
   const recipe = RECIPES[element];
   const random = rng(seed);
   const turn = random() * Math.PI * 2;
@@ -151,7 +153,7 @@ export function generateIsland(element: IslandElement, seed: number, size = 96, 
     for (let x = 0; x < size; x += 1) {
       const dx = (x + 0.5 - half) / half;
       const dy = (y + 0.5 - half) / half;
-      const shaped = shapeDistance(shape, dx, dy, turn, recipe.landRadius, islets);
+      const shaped = outlineDistance(outline, dx, dy, turn, recipe.landRadius, islets);
       const distance = typeof shaped === "number" ? shaped : Number.POSITIVE_INFINITY;
       const angle = Math.atan2(dy, dx);
       // The coast: a circle pushed in and out by noise sampled around the rim, minus the bays.
@@ -166,16 +168,14 @@ export function generateIsland(element: IslandElement, seed: number, size = 96, 
       inland.push(radius - distance);
     }
   }
-  const at = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < size && y < size && (land[y * size + x] ?? false);
+  const landCount = summedArea(size, (index) => land[index] ?? false);
   const cells: IslandCellKind[] = [];
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const index = y * size + x;
       if (!(land[index] ?? false)) {
         if (lagoon[index] ?? false) { cells.push("SHALLOW"); continue; }
-        let nearLand = false;
-        for (let oy = -3; oy <= 3 && !nearLand; oy += 1) for (let ox = -3; ox <= 3; ox += 1) if (at(x + ox, y + oy)) { nearLand = true; break; }
-        cells.push(nearLand ? "SHALLOW" : "DEEP");
+        cells.push(landCount(x, y, 3) > 0 ? "SHALLOW" : "DEEP");
         continue;
       }
       const depth = inland[index] ?? 0;
@@ -188,7 +188,31 @@ export function generateIsland(element: IslandElement, seed: number, size = 96, 
       else cells.push(n > 0.62 ? "FOREST" : "GRASS");
     }
   }
-  return { element, shape, seed, size, cells, sites: placeSites(element, seed, size, cells, recipe) };
+  return { element, outline, seed, size, cells, sites: placeSites(element, seed, size, cells, recipe) };
+}
+
+/**
+ * A summed-area table over a square grid: `count(x, y, r)` is how many cells in the
+ * `(2r+1) x (2r+1)` window around `(x, y)` pass `test`, clipped to the grid, in constant time.
+ */
+function summedArea(size: number, test: (index: number) => boolean): (x: number, y: number, r: number) => number {
+  const stride = size + 1;
+  const table = new Int32Array(stride * stride);
+  for (let y = 0; y < size; y += 1) {
+    let row = 0;
+    for (let x = 0; x < size; x += 1) {
+      if (test(y * size + x)) row += 1;
+      table[(y + 1) * stride + x + 1] = (table[y * stride + x + 1] ?? 0) + row;
+    }
+  }
+  return (x, y, r) => {
+    const x0 = Math.max(0, x - r);
+    const y0 = Math.max(0, y - r);
+    const x1 = Math.min(size, x + r + 1);
+    const y1 = Math.min(size, y + r + 1);
+    if (x0 >= x1 || y0 >= y1) return 0;
+    return (table[y1 * stride + x1] ?? 0) - (table[y0 * stride + x1] ?? 0) - (table[y1 * stride + x0] ?? 0) + (table[y0 * stride + x0] ?? 0);
+  };
 }
 
 function placeSites(element: IslandElement, seed: number, size: number, cells: readonly IslandCellKind[], recipe: Recipe): IslandSite[] {
@@ -196,17 +220,37 @@ function placeSites(element: IslandElement, seed: number, size: number, cells: r
   const sites: IslandSite[] = [];
   const kindAt = (x: number, y: number): IslandCellKind | undefined => (x >= 0 && y >= 0 && x < size && y < size ? cells[y * size + x] : undefined);
   const isLand = (kind: IslandCellKind | undefined): boolean => kind !== undefined && kind !== "DEEP" && kind !== "SHALLOW";
-  const landAround = (x: number, y: number, r: number): number => {
-    let count = 0;
-    for (let oy = -r; oy <= r; oy += 1) for (let ox = -r; ox <= r; ox += 1) if (isLand(kindAt(x + ox, y + oy))) count += 1;
-    return count;
+  const landAround = summedArea(size, (index) => isLand(cells[index]));
+  // Sites bucketed by a coarse grid, so the spacing rule looks at neighbours rather than every site.
+  const bucketSize = 10;
+  const buckets = new Map<number, IslandSite[]>();
+  const bucketKey = (bx: number, by: number): number => by * 1024 + bx;
+  const free = (x: number, y: number, spacing: number): boolean => {
+    const reach = Math.ceil(spacing / bucketSize);
+    const bx = Math.floor(x / bucketSize);
+    const by = Math.floor(y / bucketSize);
+    for (let oy = -reach; oy <= reach; oy += 1) {
+      for (let ox = -reach; ox <= reach; ox += 1) {
+        for (const site of buckets.get(bucketKey(bx + ox, by + oy)) ?? []) {
+          if (Math.hypot(site.x - x, site.y - y) < spacing) return false;
+        }
+      }
+    }
+    return true;
   };
-  const free = (x: number, y: number, spacing: number): boolean => sites.every((site) => Math.hypot(site.x - x, site.y - y) >= spacing);
   const pick = (kind: IslandSiteKind, count: number, spacing: number, accepts: (x: number, y: number) => boolean): void => {
     for (let attempt = 0, placed = 0; attempt < count * 400 && placed < count; attempt += 1) {
       const x = Math.floor(random() * size);
       const y = Math.floor(random() * size);
-      if (accepts(x, y) && free(x, y, spacing)) { sites.push({ kind, x, y }); placed += 1; }
+      if (accepts(x, y) && free(x, y, spacing)) {
+        const site = { kind, x, y };
+        sites.push(site);
+        const key = bucketKey(Math.floor(x / bucketSize), Math.floor(y / bucketSize));
+        const bucket = buckets.get(key);
+        if (bucket === undefined) buckets.set(key, [site]);
+        else bucket.push(site);
+        placed += 1;
+      }
     }
   };
   const want = recipe.sites;

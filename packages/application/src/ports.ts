@@ -14,6 +14,9 @@ import type {
   EconomyMutation,
   EconomyTransactionId,
   Farm,
+  FarmIsland,
+  FarmIslandGround,
+  IslandChoice,
   FarmId,
   FarmMember,
   FarmTile,
@@ -96,11 +99,15 @@ export interface PlayerRepository {
 }
 
 export interface FarmRepository {
-  /** Atomically creates the farm, its OWNER membership, and its starter land tiles. */
+  /**
+   * Atomically creates the farm, its OWNER membership, its starter land tiles and - when the player
+   * chose one - its Home Island. A farm is never observable without the island it was created with.
+   */
   createWithOwner(
     farm: Farm,
     ownerMembership: FarmMember,
-    initialTiles: readonly FarmTile[]
+    initialTiles: readonly FarmTile[],
+    island?: FarmIsland | null
   ): Promise<void>;
   findById(id: FarmId): Promise<Farm | null>;
   /**
@@ -752,6 +759,22 @@ export interface ConstructionSeed {
   readonly seededAt: string;
 }
 
+/** A farm's stored Home Island. Read-only: an island is written once, with its farm. */
+export interface FarmIslandRepository {
+  findByFarm(farmId: FarmId): Promise<FarmIsland | null>;
+}
+
+/**
+ * Builds the ground for a player's island choice.
+ *
+ * A port because generation is game data: the application decides *whether* a farm may have a
+ * chosen island, and the host's game data decides what that island is. Throws a `DomainError` for a
+ * choice that names an unknown element or outline or an out-of-range seed.
+ */
+export interface IslandGroundBuilder {
+  build(choice: IslandChoice): FarmIslandGround;
+}
+
 /**
  * What the island's geography says about a tile.
  *
@@ -767,6 +790,15 @@ export interface TileTerrainLookup {
     readonly shallowWater: boolean;
     readonly protectedGround: boolean;
   };
+  /**
+   * The lookup for one farm's own island.
+   *
+   * Farms may live on different islands (a chosen Home Island, or the hand-composed one), so every
+   * rule that has a farm asks through `terrainForFarm` rather than calling `classify` directly. A
+   * lookup without this method answers the same for every farm, which is what tests and hosts with
+   * one island rely on.
+   */
+  forFarm?(farmId: FarmId): Promise<TileTerrainLookup>;
 }
 
 /**
@@ -780,6 +812,8 @@ export interface TileTerrainLookup {
  */
 export interface LandSaleLookup {
   isDevelopable(tile: { readonly x: number; readonly y: number }): boolean;
+  /** The lookup for one farm's own island; see `TileTerrainLookup.forFarm`. */
+  forFarm?(farmId: FarmId): Promise<LandSaleLookup>;
 }
 
 /**
@@ -1130,6 +1164,8 @@ export interface WorkAreaRepository {
  */
 export interface WorkAreaGroundLookup {
   capabilitiesAt(tile: { readonly x: number; readonly y: number }): readonly WorkAreaGroundCapability[];
+  /** The lookup for one farm's own island; see `TileTerrainLookup.forFarm`. */
+  forFarm?(farmId: FarmId): Promise<WorkAreaGroundLookup>;
 }
 
 /** Mints the identifier of one work area. */

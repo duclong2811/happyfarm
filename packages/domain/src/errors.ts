@@ -2,6 +2,7 @@ export type DomainErrorCode =
   | "INVALID_ID"
   | "INVALID_PLAYER"
   | "INVALID_FARM"
+  | "INVALID_ISLAND"
   | "INVALID_ROLE"
   | "INVALID_TILE"
   | "INVALID_CROP"

@@ -1,5 +1,6 @@
 import { parseConstructionId, parseItemDefinitionId, type ConstructionId, type ConstructionInstance, type FarmId, type ItemDefinitionId } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { terrainForFarm } from "./farm-ground";
 import type { InventoryService } from "./inventory";
 import type { ActorContext, AquaculturePondCohort, AquaculturePondRepository, AquaculturePondState, Clock, ConstructionRepository, FarmMemberRepository, FarmRepository, IdempotencyRecord, IdempotencyRepository, InventoryRepository, PayloadFingerprint, TileTerrainLookup, WorkAreaRepository } from "./ports";
 
@@ -49,7 +50,7 @@ async function requireFarmEditor(dependencies: Dependencies, actor: ActorContext
 async function requireActiveWaterCage(dependencies: Dependencies, farmId: FarmId, constructionId: ConstructionId): Promise<ConstructionInstance> {
   const construction = await dependencies.constructions.findById(constructionId);
   if (construction === null || construction.farmId !== farmId || construction.state !== "ACTIVE" || construction.entryId !== AQUACULTURE_POND_ENTRY_ID) throw new ApplicationError("AQUACULTURE_POND_NOT_FOUND", "Aquaculture pond was not found on this farm");
-  const ground = dependencies.terrain.classify({ x: Math.trunc(construction.anchorX), y: Math.trunc(construction.anchorY) });
+  const ground = (await terrainForFarm(dependencies.terrain, farmId)).classify({ x: Math.trunc(construction.anchorX), y: Math.trunc(construction.anchorY) });
   if (ground.terrain !== "WATER" || !ground.shallowWater || ground.protectedGround) throw new ApplicationError("AQUACULTURE_POND_NOT_FOUND", "Aquaculture pond is not on a valid shallow-water tile");
   return construction;
 }

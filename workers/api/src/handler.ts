@@ -3,6 +3,11 @@
   CropStateProjector,
   GetFarmCrops,
   GetFarm,
+  GetFarmIsland,
+  GetMyFarm,
+  farmIslandSummary,
+  type FarmIslandSummary,
+  type IslandGroundBuilder,
   GetInventory,
   GetProgression,
   HarvestCrop,
@@ -141,6 +146,12 @@
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
+  FarmIslandDTOSchema,
+  FarmIslandSummaryDTOSchema,
+  type FarmIslandDTO,
+  type FarmIslandSummaryDTO,
+  type GetFarmIslandResponse,
+  type GetMyFarmResponse,
   FarmIdSchema,
   CropInstanceIdSchema,
   TreeInstanceIdSchema,
@@ -262,7 +273,7 @@ import {
   ,type NeighborSnapshotDTO
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
-import { gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
+import { farmIslandGeography, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
 import { rejectsCrossOriginRequest } from "./origin-guard";
 import type { SessionPort } from "./session";
 import {
@@ -271,6 +282,7 @@ import {
   parseWorkAreaId,
   parseJobId,
   type FarmId,
+  type FarmIsland,
   type JobId,
   type ConstructionInstance,
   type ProgressionDefinition,
@@ -311,6 +323,7 @@ import {
   D1WalletRepository,
   D1InventoryRepository,
   D1FarmMemberRepository,
+  D1FarmIslandRepository,
   D1FarmRepository,
   D1FarmTileRepository,
   D1PlayerRepository,
@@ -363,6 +376,16 @@ export interface HandlerDependencies {
   readonly terrain: TileTerrainLookup;
   /** Where the island lets a farm own land, for the single-cell land sale. */
   readonly landSale: LandSaleLookup;
+  /**
+   * Home Island choice: whether a new farm may pick its island, and the game data that builds one.
+   *
+   * Optional and off unless a host says otherwise, so a deployment that has not opted in keeps
+   * creating every farm on the hand-composed island and refuses a request that names one.
+   */
+  readonly islands?: {
+    readonly choiceEnabled: boolean;
+    readonly builder: IslandGroundBuilder;
+  };
   /** The manual aquaculture definition; omitted hosts use the shipped game-data value. */
   readonly aquaculture?: AquacultureDefinition;
   /**
@@ -730,6 +753,31 @@ function toFarmDTO(farm: {
   return { ...farm };
 }
 
+function toIslandSummaryDTO(island: FarmIslandSummary | null): FarmIslandSummaryDTO | null {
+  if (island === null) return null;
+  const parsed = FarmIslandSummaryDTOSchema.safeParse(island);
+  // A stored row the contract cannot describe is corrupt; failing loudly beats drawing the wrong island.
+  if (!parsed.success) throw new Error("Stored farm island does not match the contract");
+  return parsed.data;
+}
+
+function toFarmIslandDTO(island: FarmIsland): FarmIslandDTO {
+  const parsed = FarmIslandDTOSchema.safeParse({
+    element: island.element,
+    outline: island.outline,
+    seed: island.seed,
+    generatorVersion: island.generatorVersion,
+    size: island.size,
+    originX: island.originX,
+    originY: island.originY,
+    cells: island.cells,
+    sites: island.sites.map((site) => ({ kind: site.kind, x: site.x, y: site.y })),
+    revision: island.revision
+  });
+  if (!parsed.success) throw new Error("Stored farm island does not match the contract");
+  return parsed.data;
+}
+
 function toMemberDTO(member: {
   farmId: string;
   playerId: string;
@@ -853,6 +901,7 @@ function errorStatus(code: ErrorCode): number {
     case "FARM_PERMISSION_DENIED":
     case "CROP_LEVEL_REQUIRED":
     case "WAREHOUSE_LEVEL_REQUIRED":
+    case "ISLAND_CHOICE_UNAVAILABLE":
     case "PLOT_LEVEL_REQUIRED":
     case "LAND_NOT_DEVELOPABLE":
     case "TREE_LEVEL_REQUIRED":
@@ -971,7 +1020,19 @@ function failure(code: ErrorCode, requestId: string): Response {
   return jsonResponse(body, errorStatus(code));
 }
 
-export function createHandler(dependencies: HandlerDependencies) {
+export function createHandler(host: HandlerDependencies) {
+  // Every rule below reads the ground of the farm it acts on: a farm with a chosen Home Island is
+  // judged by its stored island, any other farm by the host's own geography.
+  const islandGeography = farmIslandGeography(
+    { terrain: host.terrain, landSale: host.landSale, ...(host.workAreas === undefined ? {} : { ground: host.workAreas.ground }) },
+    new D1FarmIslandRepository(host.db)
+  );
+  const dependencies: HandlerDependencies = {
+    ...host,
+    terrain: islandGeography.terrain,
+    landSale: islandGeography.landSale,
+    ...(host.workAreas === undefined ? {} : { workAreas: { ...host.workAreas, ground: islandGeography.ground ?? host.workAreas.ground } })
+  };
   const players = new D1PlayerRepository(dependencies.db);
   const farms = new D1FarmRepository(dependencies.db);
   const members = new D1FarmMemberRepository(dependencies.db);
@@ -1030,8 +1091,19 @@ export function createHandler(dependencies: HandlerDependencies) {
   const forestryConstructionStates = new D1ForestryConstructionStateRepository(dependencies.db);
   const treeHarvestSettlement = new D1TreeHarvestSettlementRepository(dependencies.db);
   const progressions = new D1ProgressionRepository(dependencies.db);
-  const createFarm = new CreateFarm(players, farms, members, dependencies.ids, dependencies.clock);
-  const getFarm = new GetFarm(farms, members);
+  const farmIslands = new D1FarmIslandRepository(dependencies.db);
+  const islandChoiceEnabled = dependencies.islands?.choiceEnabled === true;
+  const createFarm = new CreateFarm(
+    players,
+    farms,
+    members,
+    dependencies.ids,
+    dependencies.clock,
+    dependencies.islands === undefined ? undefined : { enabled: islandChoiceEnabled, builder: dependencies.islands.builder }
+  );
+  const getFarm = new GetFarm(farms, members, farmIslands);
+  const getMyFarm = new GetMyFarm(farms, farmIslands, islandChoiceEnabled);
+  const getFarmIsland = new GetFarmIsland(farms, members, farmIslands);
   const projector = new CropStateProjector(dependencies.cropDefinitions, dependencies.clock);
   const inventoryService = new InventoryService(dependencies.itemDefinitions, dependencies.clock);
   const plantCrop = new PlantCrop({
@@ -1541,6 +1613,12 @@ export function createHandler(dependencies: HandlerDependencies) {
     constructions,
     definitions: dependencies.constructionDefinitions,
     world: dependencies.starterWorld,
+    islandWorld: {
+      forFarm: async (farmId) => {
+        const island = await farmIslands.findByFarm(farmId);
+        return island === null ? null : islandStarterWorld(island);
+      }
+    },
     ids: dependencies.ids,
     clock: dependencies.clock
   });
@@ -1932,13 +2010,27 @@ export function createHandler(dependencies: HandlerDependencies) {
           return failure("INVALID_INPUT", requestId);
         }
         const result = await createFarm.execute(actor, parsed.data);
-        const body: ApiSuccess<{ farm: FarmDTO; membership: FarmMemberDTO }> = {
+        const island = farmIslandSummary(await farmIslands.findByFarm(result.farm.id));
+        const body: ApiSuccess<{ farm: FarmDTO; membership: FarmMemberDTO; island: FarmIslandSummaryDTO | null }> = {
           ok: true,
-          data: { farm: toFarmDTO(result.farm), membership: toMemberDTO(result.ownerMembership) }
+          data: { farm: toFarmDTO(result.farm), membership: toMemberDTO(result.ownerMembership), island: toIslandSummaryDTO(island) }
         };
         // 201 the first time, 200 when the player already had their farm: a retry from a phone on a
         // flaky connection gets their farm back rather than a second, empty one.
         return jsonResponse(body, result.created ? 201 : 200);
+      }
+
+      if (request.method === "GET" && url.pathname === "/farms/mine") {
+        const result = await getMyFarm.execute(actor);
+        const body: ApiSuccess<GetMyFarmResponse> = {
+          ok: true,
+          data: {
+            farm: result.farm === null ? null : toFarmDTO(result.farm),
+            island: toIslandSummaryDTO(result.island),
+            islandChoice: { enabled: result.islandChoiceEnabled }
+          }
+        };
+        return jsonResponse(body);
       }
 
       if (request.method === "GET" && url.pathname === "/inventory") {
@@ -3145,15 +3237,26 @@ export function createHandler(dependencies: HandlerDependencies) {
         return jsonResponse(body);
       }
 
+      const islandRoute = /^\/farms\/([^/]+)\/island$/.exec(url.pathname);
+      if (request.method === "GET" && islandRoute?.[1] !== undefined) {
+        const decodedId = decodePathSegment(islandRoute[1]);
+        if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
+          return failure("INVALID_INPUT", requestId);
+        }
+        const island = await getFarmIsland.execute(actor, parseFarmId(decodedId));
+        const body: ApiSuccess<GetFarmIslandResponse> = { ok: true, data: { island: toFarmIslandDTO(island) } };
+        return jsonResponse(body);
+      }
+
       if (request.method === "GET" && match?.[1] !== undefined) {
         const decodedId = decodePathSegment(match[1]);
         if (decodedId === null || !FarmIdSchema.safeParse(decodedId).success) {
           return failure("INVALID_INPUT", requestId);
         }
         const result = await getFarm.execute(actor, parseFarmId(decodedId));
-        const body: ApiSuccess<{ farm: FarmDTO; membership: FarmMemberDTO }> = {
+        const body: ApiSuccess<{ farm: FarmDTO; membership: FarmMemberDTO; island: FarmIslandSummaryDTO | null }> = {
           ok: true,
-          data: { farm: toFarmDTO(result.farm), membership: toMemberDTO(result.membership) }
+          data: { farm: toFarmDTO(result.farm), membership: toMemberDTO(result.membership), island: toIslandSummaryDTO(result.island) }
         };
         return jsonResponse(body);
       }

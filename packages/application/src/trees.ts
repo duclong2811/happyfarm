@@ -26,6 +26,7 @@ import {
   type XpAward
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { terrainForFarm } from "./farm-ground";
 import type { InventoryService } from "./inventory";
 import {
   assertStoredXpAward,
@@ -227,7 +228,7 @@ export class PlantTree {
     // V14.5.2: valid natural Home Island land is free to use, with no ownership row required. The
     // island's classifier says whether the ground is usable; a fresh cell gets its tile row created
     // with the planting.
-    const ground = terrain.classify({ x: command.x, y: command.y });
+    const ground = (await terrainForFarm(terrain, farmId)).classify({ x: command.x, y: command.y });
     if (!isUsableLand(landOriginFor(ground))) {
       throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot be planted");
     }
@@ -1186,7 +1187,7 @@ export class ManageTree {
     expectedTileVersion: number | undefined
   ): Promise<void> {
     try { assertValidCoordinate({ x, y }); } catch { throw new ApplicationError("INVALID_INPUT", "Tree destination is invalid"); }
-    if (!isUsableLand(landOriginFor(this.dependencies.terrain.classify({ x, y })))) {
+    if (!isUsableLand(landOriginFor((await terrainForFarm(this.dependencies.terrain, farmId)).classify({ x, y })))) {
       throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot hold a tree");
     }
     const tile = await this.dependencies.tiles.find(farmId, x, y);

@@ -10,6 +10,7 @@ import {
   type TileCoordinate
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { terrainForFarm } from "./farm-ground";
 import type {
   ActorContext,
   Clock,
@@ -34,7 +35,7 @@ export class FarmTileService {
   ) {
     await this.assertCanMutate(actor, farmId);
     this.validateCoordinate(coordinate);
-    if (!isUsableLand(landOriginFor(this.terrain.classify(coordinate)))) {
+    if (!isUsableLand(landOriginFor((await terrainForFarm(this.terrain, farmId)).classify(coordinate)))) {
       throw new ApplicationError("INVALID_INPUT", "That cell is not usable land");
     }
     try {

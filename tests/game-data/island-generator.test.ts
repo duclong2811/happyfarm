@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateIsland, ISLAND_ELEMENTS, ISLAND_SHAPES, type IslandSiteKind } from "@happy-farm/domain";
+import { generateIsland, ISLAND_ELEMENTS, ISLAND_OUTLINES, type IslandSiteKind } from "@happy-farm/game-data";
 
 const count = (kind: IslandSiteKind, sites: readonly { kind: IslandSiteKind }[]): number => sites.filter((site) => site.kind === kind).length;
 
@@ -57,8 +57,8 @@ describe("island generator", () => {
   });
 
   it("keeps each element's specialty whatever outline the player picks", () => {
-    for (const shape of ISLAND_SHAPES) {
-      expect(generateIsland("KIM", 7, 96, shape).shape).toBe(shape);
+    for (const shape of ISLAND_OUTLINES) {
+      expect(generateIsland("KIM", 7, 96, shape).outline).toBe(shape);
       expect(count("ORE", generateIsland("KIM", 7, 96, shape).sites)).toBe(6);
       expect(count("FISH_BAY", generateIsland("THUY", 7, 96, shape).sites)).toBeGreaterThanOrEqual(8);
       expect(count("PASTURE", generateIsland("HOA", 7, 96, shape).sites)).toBeGreaterThanOrEqual(5);

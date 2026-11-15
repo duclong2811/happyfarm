@@ -12,6 +12,7 @@ import {
   type TileCoordinate
 } from "@happy-farm/domain";
 import { ApplicationError, type ApplicationErrorCode } from "./errors";
+import { landSaleForFarm } from "./farm-ground";
 import type { EconomyService } from "./economy";
 import { storedLevel } from "./progression";
 import type {
@@ -122,7 +123,7 @@ export class QuoteLandCells {
     const coordinates = normaliseCells(command.cells);
     const owned = await this.ownedKeys(farmId);
     const level = await this.level(actor);
-    return this.decide(coordinates, owned, level);
+    return this.decide(coordinates, owned, level, await landSaleForFarm(this.dependencies.landSale, farmId));
   }
 
   private async ownedKeys(farmId: FarmId): Promise<ReadonlySet<string>> {
@@ -137,17 +138,18 @@ export class QuoteLandCells {
   private decide(
     coordinates: readonly TileCoordinate[],
     owned: ReadonlySet<string>,
-    level: number
+    level: number,
+    landSale: LandSaleLookup
   ): LandQuote {
-    const cells = coordinates.map((coordinate) => this.judge(coordinate, owned, level));
+    const cells = coordinates.map((coordinate) => this.judge(coordinate, owned, level, landSale));
     const priced = cells.filter((cell) => cell.eligible);
     const totalPrice = priced.reduce((total, cell) => total + cell.price, 0);
     return { cells, totalPrice, currencyId: priced[0]?.currencyId ?? null };
   }
 
-  private judge(coordinate: TileCoordinate, owned: ReadonlySet<string>, level: number): LandCellQuote {
+  private judge(coordinate: TileCoordinate, owned: ReadonlySet<string>, level: number, landSale: LandSaleLookup): LandCellQuote {
     const location = { x: coordinate.x, y: coordinate.y };
-    const judgement = judgeLandCell(this.dependencies.plots, this.dependencies.landSale, location, owned, level);
+    const judgement = judgeLandCell(this.dependencies.plots, landSale, location, owned, level);
     return {
       x: coordinate.x,
       y: coordinate.y,
@@ -212,8 +214,9 @@ export class BuyLandCells {
 
     // Judge every cell before any write: a mixed request must not buy the legal half and fail the
     // rest, and the price is the catalogue's, never the client's.
+    const landSale = await landSaleForFarm(this.dependencies.landSale, farmId);
     const judgements = coordinates.map((coordinate) =>
-      judgeLandCell(this.dependencies.plots, this.dependencies.landSale, coordinate, owned, level)
+      judgeLandCell(this.dependencies.plots, landSale, coordinate, owned, level)
     );
     const illegal = judgements.find((judgement) => !judgement.eligible);
     if (illegal !== undefined) throw new ApplicationError(codeForReason(illegal.reason), messageForReason(illegal.reason));

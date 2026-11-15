@@ -22,6 +22,7 @@ import {
   type TileCoordinate
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
+import { terrainForFarm } from "./farm-ground";
 import { requireMainCharacterPlayerControl } from "./jobs";
 import { autoTransitionId } from "./auto-plant";
 import type { InventoryService } from "./inventory";
@@ -281,7 +282,7 @@ export class PlantCrop {
     // V14.5.2: the natural Home Island is the player's land, so a cell needs no ownership row to be
     // planted. What it needs is to *be* usable natural land, which the island's own classifier
     // answers; a cell with no tile row yet gets one written with the planting, for free.
-    const ground = terrain.classify(command);
+    const ground = (await terrainForFarm(terrain, farmId)).classify(command);
     if (!isUsableLand(landOriginFor(ground))) {
       throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot be planted");
     }

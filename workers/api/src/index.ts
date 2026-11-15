@@ -34,6 +34,7 @@ import {
   gameDataStarterWorld,
   gameDataTileTerrain,
   gameDataLandSale,
+  gameDataIslandGroundBuilder,
   gameDataWorkAreaGround,
   gameDataCargoCapacities,
   gameDataStarterPackage
@@ -82,6 +83,11 @@ export interface DeploymentEnv extends AccessAuthBindings {
    * keeps a deployment fail-closed without any route having to know which environment it is in.
    */
   readonly GUEST_AUTH_ENABLED?: string;
+  /**
+   * Whether a new farm may choose its Home Island. Off unless exactly "true": the generated islands
+   * are not yet wired to every production system, so a deployment opts in deliberately.
+   */
+  readonly ISLAND_CHOICE_ENABLED?: string;
 }
 
 export interface DeploymentWorkerOptions {
@@ -141,6 +147,10 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
     starterWorld: gameDataStarterWorld,
     terrain: gameDataTileTerrain,
     landSale: gameDataLandSale,
+    islands: {
+      choiceEnabled: env.ISLAND_CHOICE_ENABLED?.trim().toLowerCase() === "true",
+      builder: gameDataIslandGroundBuilder
+    },
     fishing: {
       catalogue: new GameDataFishingCatalogue(),
       ids,
