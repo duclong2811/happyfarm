@@ -108,6 +108,7 @@ import {
   resourceDefinitionRegistry,
   resourceDropTableRegistry,
   activeResourceNodes,
+  type ResourceNodeData,
   shopRegistry,
   starterPackage,
   starterCargoCapacity,
@@ -136,6 +137,7 @@ import {
   MINE_ORE_PER_XP,
   MINE_WOOD_ITEM_ID,
   islandMineTiles,
+  inMineFootprint,
   mineSlotLevels,
   type CropDefinitionData,
   type TreeDefinitionData
@@ -207,14 +209,18 @@ export const gameDataTileTerrain: TileTerrainLookup = {
 };
 
 /** The three placement ports, answered from one farm's stored island. */
-export function storedIslandGeography(island: IslandGroundCells): {
+export function storedIslandGeography(island: IslandGroundCells & { readonly element?: string }): {
   readonly terrain: TileTerrainLookup;
   readonly landSale: LandSaleLookup;
   readonly ground: WorkAreaGroundLookup;
 } {
+  // Every mine slot's yard, opened or not, is the mine's: nothing is planted, built or worked there.
+  // Computed once per lookup from the stored cells and sites, the same answer the browser draws.
+  const mines = islandMineTiles(island, mineSlotLevels(island.element ?? null).length);
   return {
     terrain: {
       classify(tile) {
+        if (inMineFootprint(mines, tile)) return { terrain: "BLOCKED", shallowWater: false, protectedGround: false };
         const classification = classifyIslandTile(island, tile);
         return {
           terrain: classification.terrain,
@@ -225,13 +231,14 @@ export function storedIslandGeography(island: IslandGroundCells): {
     },
     landSale: {
       isDevelopable(tile) {
+        if (inMineFootprint(mines, tile)) return false;
         const classification = classifyIslandTile(island, tile);
         return classification.terrain === "LAND" && !classification.protectedGround;
       }
     },
     ground: {
       capabilitiesAt(tile) {
-        return islandGroundCapabilities(island, tile);
+        return inMineFootprint(mines, tile) ? [] : islandGroundCapabilities(island, tile);
       }
     }
   };
@@ -523,6 +530,13 @@ export class CryptoResourceRandom implements RandomPort {
  * this class never touches the database.
  */
 export class GameDataResourceCatalogue implements ResourceCataloguePort {
+  /**
+   * The placements this world serves: the active ones. A host can hand a different list - the tests
+   * that still exercise the retired hold-to-mine engine (kept so old actions settle) re-activate the
+   * old ore ridge this way - without game data shipping it to players.
+   */
+  constructor(private readonly nodes: readonly ResourceNodeData[] = activeResourceNodes) {}
+
   listDefinitions(): readonly ResourceDefinitionView[] {
     return [...resourceDefinitionRegistry.values()].map((definition) => ({
       id: definition.id,
@@ -541,7 +555,7 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
   }
 
   listNodes(): readonly ResourceNodePlacement[] {
-    return activeResourceNodes.map((node) => ({
+    return this.nodes.map((node) => ({
       id: node.id,
       definitionId: node.definitionId,
       zoneKind: node.zoneKind,
@@ -570,7 +584,7 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
   }
 
   findNode(id: string): ResourceNodePlacement | null {
-    const node = activeResourceNodes.find((candidate) => candidate.id === id);
+    const node = this.nodes.find((candidate) => candidate.id === id);
     return node === undefined
       ? null
       : {

@@ -111,12 +111,12 @@ describe("the forestry economy (provisional)", () => {
     }
   });
 
-  it("remains a separate lower-throughput profession than unified Mining", () => {
-    const forestryGold = forestryBalance.resources.reduce((sum, entry) => sum + entry.sustainedGoldPerMinute, 0);
-    const miningGold = miningBalance.resources.reduce((sum, entry) => sum + entry.sustainedGoldPerMinute, 0);
-    // Unified Mining is intentionally labor-driven at 2 ore / 6 seconds; forestry keeps its
-    // regenerating-node rate and therefore does not share the mining throughput number.
-    expect(miningGold).toBeGreaterThan(forestryGold);
+  it("stays a separate profession from the island mines: no tree yields ore", () => {
+    const forestryDrops = forestryBalance.resources.map((entry) => entry.dropItemDefinitionId);
+    const miningDrops = miningBalance.resources.map((entry) => entry.dropItemDefinitionId);
+    expect(forestryDrops.length).toBeGreaterThan(0);
+    for (const drop of miningDrops) expect(forestryDrops).not.toContain(drop);
+    expect(forestryBalance.resources.every((entry) => entry.verb === "CHOP")).toBe(true);
   });
 
   it("keeps every forestry material cheap and sellable through the same market", () => {

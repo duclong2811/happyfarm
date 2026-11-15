@@ -17,6 +17,8 @@ import type {
   TreeStateDTO,
   WalletDTO,
   WarehouseStatusDTO,
+  GetFarmMinesResponse,
+  MineDTO,
   WorkAreaCellDTO,
   WorkAreaDTO,
   WorkAreaKind,
@@ -166,6 +168,8 @@ import {
 } from "./aquaculture/panel";
 import { plantedForestryPanelState, resourcePanelState } from "./forestry/panel";
 import { miningPanelState } from "./mining/panel";
+import { minePanelView, mineOreAt, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
+import { mineFootprintTiles } from "@happy-farm/game-data";
 import {
   createAquaculturePondLoader,
   selectedAquaculturePond,
@@ -619,6 +623,35 @@ let interactionCandidate: InteractionCandidate | null = null;
 let interactionFocusKey: string | null = null;
 /** The contextual profession panel's resource id, separate from player-owned constructions. */
 let selectedResourceNodeId: string | null = null;
+/**
+ * The farm's island mines as last read, and the local clock when they were: the panel extrapolates
+ * from there with each mine's own rate. Null until the first read (or when the host has no mines).
+ */
+let farmMines: {
+  readonly mines: readonly { readonly mine: MineDTO; readonly readAtMs: number }[];
+  readonly locked: GetFarmMinesResponse["locked"];
+} | null = null;
+/** The mine whose panel is open, by slot. */
+let selectedMineSlot: number | null = null;
+/** A dig or an upgrade in flight, so one press cannot become two commands. */
+let mineCommandPending = false;
+/** Ticks the open mine panel and relights a mine's ring when it starts holding ore. */
+let mineTicker: number | null = null;
+/** What the scene was last told about the mines, so an unchanged tick writes nothing. */
+let mineSceneSignature = "";
+/**
+ * The open mine panel's live parts. The panel is rebuilt only when what it offers changes; the
+ * once-a-second tick rewrites these in place, so a button is never swapped out under a click.
+ */
+let minePanelDom: {
+  readonly panel: HTMLElement;
+  readonly signature: string;
+  readonly stock: HTMLElement;
+  readonly fill: HTMLElement;
+  readonly bar: HTMLElement;
+  readonly note: HTMLElement;
+  readonly dig: HTMLButtonElement;
+} | null = null;
 /** The last thing the interaction surfaces were drawn from, so an unchanged frame writes no DOM. */
 let interactionSignature = "";
 /** Whether an interaction command is in flight, so one press cannot become two commands. */
@@ -6482,8 +6515,318 @@ function resourceYieldLabel(definitionId: string, itemName: string): string {
 /** The contextual profession surface for a wild resource node, kept separate from object editing. */
 function clearResourceNodeSelection(): void {
   selectedResourceNodeId = null;
-  if (interactionFocusKey?.startsWith("resource:")) interactionFocusKey = null;
+  selectedMineSlot = null;
+  if (interactionFocusKey?.startsWith("resource:") || interactionFocusKey?.startsWith("mine:")) interactionFocusKey = null;
   renderResourcePanel();
+}
+
+/** Where every mine slot stands, opened or not. */
+function mineTiles(): readonly { readonly x: number; readonly y: number }[] {
+  return [
+    ...(farmMines?.mines ?? []).map(({ mine }) => ({ x: mine.x, y: mine.y })),
+    ...(farmMines?.locked ?? []).map((slot) => ({ x: slot.x, y: slot.y }))
+  ];
+}
+
+/** One mine as last read, with the local time it was read at. */
+function mineEntry(slot: number): { readonly mine: MineDTO; readonly readAtMs: number } | null {
+  return farmMines?.mines.find((entry) => entry.mine.slot === slot) ?? null;
+}
+
+function heldQuantity(itemDefinitionId: string): number {
+  return state.inventory.find((entry) => entry.itemDefinitionId === itemDefinitionId)?.quantity ?? 0;
+}
+
+/** Tells the renderer where the mines stand and whether each has ore; an unchanged tick writes nothing. */
+function pushMinesToScene(): void {
+  if (scene === null) return;
+  const now = Date.now();
+  const mines = (farmMines?.mines ?? []).map(({ mine, readAtMs }) => {
+    const at = tileToWorld({ x: mine.x, y: mine.y }, worldFrame());
+    return { slot: mine.slot, level: mine.level, worldX: at.worldX, worldZ: at.worldZ, hasOre: mineOreAt(mine, readAtMs, now) >= 1 };
+  });
+  const signature = JSON.stringify(mines);
+  if (signature === mineSceneSignature) return;
+  mineSceneSignature = signature;
+  scene.setIslandMines(mines);
+}
+
+/**
+ * One slow tick while the farm has mines: it relights a mine's ring when it starts holding ore and
+ * counts the open panel up. Nothing here asks the server; the next dig or read corrects any drift.
+ */
+function ensureMineTicker(): void {
+  if (mineTicker !== null || farmMines === null) return;
+  mineTicker = window.setInterval(() => {
+    pushMinesToScene();
+    if (selectedMineSlot !== null && selectedResourceNodeId === null) renderResourcePanel();
+  }, 1000);
+}
+
+/** Adopts a mine read: positions feed collision and the interaction index, levels feed the scene. */
+function adoptMines(next: typeof farmMines): void {
+  const slotsBefore = `${(farmMines?.mines ?? []).map(({ mine }) => mine.slot).join(",")}|${JSON.stringify(mineTiles())}`;
+  farmMines = next;
+  if (selectedMineSlot !== null && mineEntry(selectedMineSlot) === null) selectedMineSlot = null;
+  pushMinesToScene();
+  rebuildInteractionIndex();
+  refreshInteractionCandidate();
+  // Collision is built behind the scene's presentation gate; a new set of mines has to rebuild it.
+  if (`${(farmMines?.mines ?? []).map(({ mine }) => mine.slot).join(",")}|${JSON.stringify(mineTiles())}` !== slotsBefore) {
+    scenePushSignature = null;
+    refreshScene();
+  }
+  renderResourcePanel();
+  ensureMineTicker();
+}
+
+/** The farm's mines, read once at load and after each dig or upgrade. Never polled. */
+async function refreshMines(): Promise<void> {
+  if (state.farmId === null) return;
+  try {
+    const view = await api().getFarmMines(state.farmId);
+    const readAtMs = Date.now();
+    adoptMines({ mines: view.mines.map((mine) => ({ mine, readAtMs })), locked: view.locked });
+  } catch {
+    // A host without mines answers RESOURCE_NOT_FOUND, and a failed read leaves the last one standing:
+    // either way there is nothing new to draw, and the next dig reads again.
+  }
+}
+
+function replaceMine(mine: MineDTO): void {
+  if (farmMines === null) return;
+  const readAtMs = Date.now();
+  adoptMines({
+    mines: farmMines.mines.map((entry) => (entry.mine.slot === mine.slot ? { mine, readAtMs } : entry)),
+    locked: farmMines.locked
+  });
+}
+
+/** Opens a mine's panel from a tap on its rocks, walking the character over in character view. */
+function selectMine(slot: number): void {
+  const key = `mine:${String(slot)}`;
+  const resolved = interactionIndex.targets.find((candidate) => candidate.key === key);
+  if (resolved === undefined) return;
+  clearObjectSelection();
+  selectedResourceNodeId = null;
+  selectedMineSlot = slot;
+  interactionFocusKey = key;
+  state.selected = { x: resolved.tileX, y: resolved.tileY };
+  renderField();
+  renderSelection();
+  renderGo();
+  scene?.setSelection(state.selected);
+  if (state.cameraMode === "CHARACTER" && !autoIsDriving()) {
+    const destination = walkDestinationFor(
+      state.selected,
+      characterPose === null ? null : { worldX: characterPose.worldX, worldZ: characterPose.worldZ }
+    );
+    if (destination !== null) playerRuntime.setDestination(destination);
+  }
+  refreshInteractionCandidate();
+  renderResourcePanel();
+}
+
+/** The [E] press at a mine: dig when there is ore, otherwise just open it. */
+async function digOrOpenMine(slot: number): Promise<void> {
+  selectedResourceNodeId = null;
+  selectedMineSlot = slot;
+  const entry = mineEntry(slot);
+  if (entry !== null && mineOreAt(entry.mine, entry.readAtMs, Date.now()) >= 1) {
+    await digMine(slot);
+    return;
+  }
+  renderResourcePanel();
+}
+
+/**
+ * Empties one mine into the warehouse. The server decides how much fits and what it pays; the page
+ * adopts the mine it returns and refreshes the account so the shelf, the wallet and the level agree.
+ */
+async function digMine(slot: number): Promise<void> {
+  const entry = mineEntry(slot);
+  if (!requireEconomicState() || state.farmId === null || entry === null || mineCommandPending) return;
+  const previousLevel = state.progression?.level ?? null;
+  mineCommandPending = true;
+  renderResourcePanel();
+  try {
+    scene?.playHarvestGesture();
+    const result = await api().collectMine(state.farmId, slot, newRequestId("mine"));
+    replaceMine(result.mine);
+    await refreshAccount();
+    // The wallet, the warehouse strip and the level are drawn from the refreshed account.
+    render();
+    showRewardPop(MINE_ORE_ITEM_ID, result.collected, { x: entry.mine.x, y: entry.mine.y });
+    const partial = result.mine.availableMilli >= 1000;
+    setStatus((translate) => {
+      const base = translate(partial ? "mine.dugPartial" : "mine.dug", { ore: result.collected });
+      return result.leveledUp ? `${base}${translate("status.levelUp", { level: result.progression.level })}` : base;
+    });
+    if (result.leveledUp) showLevelUp(previousLevel, result.progression.level);
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+    // Whatever the refusal, the mine the page shows may be stale: read it again.
+    await refreshMines();
+  } finally {
+    mineCommandPending = false;
+    renderResourcePanel();
+  }
+}
+
+/** Raises one mine a level. The server decides the level, the price and the materials. */
+async function upgradeMine(slot: number): Promise<void> {
+  if (!requireEconomicState() || state.farmId === null || mineEntry(slot) === null || mineCommandPending) return;
+  mineCommandPending = true;
+  renderResourcePanel();
+  try {
+    const result = await api().upgradeMine(state.farmId, slot, newRequestId("mineup"));
+    replaceMine(result.mine);
+    await refreshAccount();
+    render();
+    setStatus((translate) => translate("mine.upgraded", { level: result.mine.level }));
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+    await refreshMines();
+  } finally {
+    mineCommandPending = false;
+    renderResourcePanel();
+  }
+}
+
+function mineUpgradeBlockerText(view: MinePanelView): string | null {
+  const upgrade = view.upgrade;
+  if (upgrade === null) return null;
+  switch (upgrade.blocker) {
+    case "LEVEL": return t("mine.blocker.LEVEL", { level: upgrade.requiredPlayerLevel });
+    case "MATERIALS": return t("mine.blocker.MATERIALS");
+    case "GOLD": return t("mine.blocker.GOLD");
+    case "NOT_OWNER": return t("mine.blocker.NOT_OWNER");
+    case "BUSY":
+    case null:
+      return null;
+  }
+}
+
+/** The open mine: what it holds, filling live, the dig, and the next level's price. */
+function renderMinePanel(panel: HTMLElement, slot: number): void {
+  const entry = mineEntry(slot);
+  if (entry === null) {
+    panel.hidden = true;
+    panel.replaceChildren();
+    return;
+  }
+  const view = minePanelView({
+    mine: entry.mine,
+    readAtMs: entry.readAtMs,
+    nowMs: Date.now(),
+    owner: true,
+    playerLevel: state.progression?.level ?? 1,
+    gold: goldBalance(),
+    held: heldQuantity,
+    busy: mineCommandPending || !economicStateReady()
+  });
+  const stockText = t("mine.stock", {
+    ore: view.ore.toLocaleString(state.language),
+    capacity: view.capacity.toLocaleString(state.language)
+  });
+  const noteText = view.secondsUntilFull <= 0
+    ? t("mine.full")
+    : t("mine.fullIn", { time: formatRemainingGrowth(view.secondsUntilFull, t) });
+  const digText = view.ore > 0 ? t("mine.dig", { ore: view.ore.toLocaleString(state.language) }) : t("mine.digEmpty");
+  const signature = JSON.stringify([slot, state.language, view.level, view.digBlocker, view.upgrade, farmMines?.locked[0]?.requiredPlayerLevel ?? null]);
+  if (minePanelDom !== null && minePanelDom.panel === panel && minePanelDom.signature === signature && panel.contains(minePanelDom.dig)) {
+    minePanelDom.stock.textContent = stockText;
+    minePanelDom.fill.style.width = `${String(Math.round(view.fill * 100))}%`;
+    minePanelDom.bar.setAttribute("aria-valuenow", String(view.ore));
+    minePanelDom.note.textContent = noteText;
+    minePanelDom.dig.textContent = digText;
+    return;
+  }
+  panel.hidden = false;
+  panel.replaceChildren();
+  const head = make("div", "resource-panel-head");
+  head.appendChild(make("h2", "resource-panel-title", t("mine.title", { level: view.level })));
+  const close = make("button", "resource-panel-close", "×");
+  close.type = "button";
+  close.setAttribute("aria-label", t("mine.close"));
+  close.addEventListener("click", () => {
+    clearResourceNodeSelection();
+    renderSelection();
+    refreshInteractionCandidate();
+  });
+  head.appendChild(close);
+  panel.appendChild(head);
+
+  const grid = make("div", "resource-panel-grid");
+  const row = (label: string, value: string): HTMLElement => {
+    const item = make("div", "resource-panel-row");
+    item.appendChild(make("span", "resource-panel-label", label));
+    const valueNode = make("span", "resource-panel-value", value);
+    item.appendChild(valueNode);
+    grid.appendChild(item);
+    return valueNode;
+  };
+  row(t("mine.label.product"), itemLabel(MINE_ORE_ITEM_ID));
+  row(t("mine.label.rate"), t("mine.rate", { rate: view.orePerHour.toLocaleString(state.language) }));
+  const stock = row(t("mine.label.stock"), stockText);
+  panel.appendChild(grid);
+
+  const bar = make("div", "mine-fill");
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", String(view.capacity));
+  bar.setAttribute("aria-valuenow", String(view.ore));
+  const fill = make("div", "mine-fill-bar");
+  fill.style.width = `${String(Math.round(view.fill * 100))}%`;
+  bar.appendChild(fill);
+  panel.appendChild(bar);
+  const note = make("p", "resource-panel-note", noteText);
+  panel.appendChild(note);
+
+  const actions = make("div", "resource-panel-actions");
+  const dig = make("button", "object-action primary", digText);
+  dig.type = "button";
+  dig.disabled = view.digBlocker !== null;
+  dig.addEventListener("click", () => { void digMine(slot); });
+  actions.appendChild(dig);
+  panel.appendChild(actions);
+
+  const upgrade = view.upgrade;
+  const section = make("div", "mine-upgrade");
+  if (upgrade === null) {
+    section.appendChild(make("p", "resource-panel-note", t("mine.maxLevel")));
+  } else {
+    section.appendChild(make("h3", "mine-upgrade-title", t("mine.upgradeTitle", { level: upgrade.level })));
+    const list = make("ul", "mine-upgrade-costs");
+    const cost = (text: string, ok: boolean): void => {
+      list.appendChild(make("li", ok ? "is-met" : "is-missing", text));
+    };
+    cost(t("mine.upgradeRate", { rate: upgrade.orePerHour.toLocaleString(state.language) }), true);
+    cost(t("mine.upgradeLevel", { level: upgrade.requiredPlayerLevel }), (state.progression?.level ?? 1) >= upgrade.requiredPlayerLevel);
+    cost(t("mine.upgradeGold", { gold: upgrade.gold.toLocaleString(state.language) }), goldBalance() >= upgrade.gold);
+    for (const material of upgrade.materials) {
+      cost(t("mine.upgradeMaterial", {
+        item: itemLabel(material.itemDefinitionId),
+        held: material.held.toLocaleString(state.language),
+        quantity: material.quantity.toLocaleString(state.language)
+      }), material.enough);
+    }
+    section.appendChild(list);
+    const blocker = mineUpgradeBlockerText(view);
+    if (blocker !== null) section.appendChild(make("p", "resource-panel-note", blocker));
+    const button = make("button", "object-action", t("mine.upgrade"));
+    button.type = "button";
+    button.disabled = upgrade.blocker !== null;
+    button.addEventListener("click", () => { void upgradeMine(slot); });
+    section.appendChild(button);
+  }
+  panel.appendChild(section);
+
+  const nextLocked = farmMines?.locked[0];
+  if (nextLocked !== undefined) {
+    panel.appendChild(make("p", "resource-panel-note", t("mine.nextSlot", { level: nextLocked.requiredPlayerLevel })));
+  }
+  minePanelDom = { panel, signature, stock, fill, bar, note, dig };
 }
 
 function miningStatusText(status: ReturnType<typeof miningPanelState>["status"]): string {
@@ -6531,6 +6874,10 @@ function openMiningAssignmentSetup(): void {
 function renderResourcePanel(): void {
   ensureForestryCountdownTimer();
   const panel = element<HTMLElement>("resource-panel");
+  if (selectedResourceNodeId === null && selectedMineSlot !== null) {
+    renderMinePanel(panel, selectedMineSlot);
+    return;
+  }
   const plantedTree = selectedWildwoodTree();
   const node = selectedResourceNodeId === null
     ? null
@@ -7533,6 +7880,10 @@ function onWorldTargetSelected(target: SceneWorldTarget): void {
     renderNeighborPanel();
     return;
   }
+  if (target.kind === "ISLAND_MINE") {
+    selectMine(Number(target.id));
+    return;
+  }
   const key = target.kind === "RESOURCE_NODE" ? `resource:${target.id}` : `fishing:${target.id}`;
   const resolved = interactionIndex.targets.find((candidate) => candidate.key === key);
   if (resolved === undefined) return;
@@ -7542,6 +7893,7 @@ function onWorldTargetSelected(target: SceneWorldTarget): void {
   }
   if (target.kind === "RESOURCE_NODE") {
     clearObjectSelection();
+    selectedMineSlot = null;
     selectedResourceNodeId = target.id;
     const selectedNode = state.resourceNodes.find((candidate) => candidate.nodeId === target.id);
     if (selectedNode?.definitionId === "resource_ore" && !workersBusy && !workersLoaded) {
@@ -7783,7 +8135,8 @@ function sceneInput(): FarmSceneInput {
     trees: state.trees,
     plots: state.plots,
     constructions: state.constructions,
-    resourceNodes: state.resourceNodes,
+    // A mine's yard is occupied ground, open or still locked: nothing is planted or built in it.
+    resourceNodes: [...state.resourceNodes, ...mineFootprintTiles(mineTiles()).map((position) => ({ position }))],
     selected: state.selected,
     island: state.island
   });
@@ -7930,10 +8283,14 @@ function refreshScene(): void {
   // The island's own objects are solid too: a tree the player can select is a tree the character
   // walks around, and because the circles come from the rows, moving or storing one takes it away.
   const objectCircles = objectObstacles(state.constructions, worldFrame(), state.worldObjects);
-  const resourceCircles = state.resourceNodes.flatMap((node) => {
+  const resourceCircles = [
+    ...state.resourceNodes.map((node) => ({ id: node.nodeId, definitionId: node.definitionId, position: node.position })),
+    // A mine is drawn as the ore cluster, so it keeps the cluster's solid shoulders.
+    ...(farmMines?.mines ?? []).map(({ mine }) => ({ id: `mine:${String(mine.slot)}`, definitionId: "resource_ore", position: { x: mine.x, y: mine.y } }))
+  ].flatMap((node) => {
     const at = tileToWorld(node.position, worldFrame());
     return resourceNodeCollisionObstacles({
-      id: node.nodeId,
+      id: node.id,
       definitionId: node.definitionId,
       worldX: at.worldX,
       worldZ: at.worldZ
@@ -8008,6 +8365,7 @@ function rebuildInteractionIndex(): void {
     fishingSpots: state.fishingSpots,
     resourceNodes: state.resourceNodes,
     aquaculturePonds: state.aquaculturePonds,
+    mines: (farmMines?.mines ?? []).map(({ mine }) => ({ slot: mine.slot, x: mine.x, y: mine.y, level: mine.level })),
     nowMs: Date.now()
   });
 }
@@ -8194,6 +8552,9 @@ async function activateInteraction(): Promise<void> {
     case "HARVEST_AQUACULTURE":
       await harvestAquaculturePond(decision.pondId, decision.expectedPondVersion);
       return;
+    case "DIG_MINE":
+      await digOrOpenMine(decision.slot);
+      return;
   }
 }
 
@@ -8272,6 +8633,8 @@ let levelUpTimer: number | null = null;
  * describe a state the server already enforces.
  */
 function showLevelUp(previousLevel: number | null, level: number): void {
+  // A level can open a mine slot; the server opens it on the owner's next read.
+  void refreshMines();
   const notices = unlockNotices({
     cropDefinitions: state.cropDefinitions,
     treeDefinitions: state.treeDefinitions,
@@ -8409,6 +8772,8 @@ function enable3D(): void {
     scene.setDebugMode(debugRequested());
     scene.setPlayerCharacter(state.characterId);
     scene.setBuildingLooks({ STORAGE_SHED: warehouseLookFor(state.warehouse?.tier ?? null) });
+    mineSceneSignature = "";
+    pushMinesToScene();
   }
   // A fresh renderer holds nothing, whatever the last one was told: forgetting the signature is what
   // makes the very next refresh fill it.
@@ -8533,6 +8898,8 @@ async function loadFarm(farmId: string): Promise<FarmBootContext> {
   localStorage.setItem(FARM_KEY, result.farm.id);
   // These are the minimum world reads. They are independent of account settlement and can complete
   // while the renderer initializes.
+  // The mines are not on the critical path: they arrive when they arrive and draw themselves.
+  void refreshMines();
   await Promise.all([refreshFishing(), refreshResources(), refreshFarm()]);
   playerRuntime.respawn();
   if (state.island !== null) playerRuntime.teleport(homeSpawnWorld());
@@ -8650,6 +9017,8 @@ async function createFarm(): Promise<FarmBootContext> {
   state.selected = null;
   localStorage.setItem(FARM_KEY, created.farm.id);
   localStorage.setItem("happyfarm.lastVisibleAt", String(Date.now()));
+  // The mines are not on the critical path: they arrive when they arrive and draw themselves.
+  void refreshMines();
   await Promise.all([refreshFishing(), refreshResources(), refreshFarm()]);
   playerRuntime.respawn();
   if (state.island !== null) playerRuntime.teleport(homeSpawnWorld());

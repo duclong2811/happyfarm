@@ -27,6 +27,8 @@ export const CONSTRUCTION_IDS_KEY = "constructionIds";
 /** Stable metadata keys for direct world-resource picking. */
 export const RESOURCE_NODE_ID_KEY = "resourceNodeId";
 export const FISHING_SPOT_ID_KEY = "fishingSpotId";
+/** The tag on an island mine's root: its slot, as a string. */
+export const ISLAND_MINE_SLOT_KEY = "islandMineSlot";
 
 /** The two things a `userData` bag and a parent pointer are all this needs. */
 export interface PickableNode {
@@ -111,7 +113,7 @@ export function constructionIdFromWorldPoint(
 /** Resolves a resource/fishing id from a hit mesh or one of its GLB ancestors. */
 export function worldTargetIdFromNode(
   node: PickableNode | null,
-  key: typeof RESOURCE_NODE_ID_KEY | typeof FISHING_SPOT_ID_KEY
+  key: typeof RESOURCE_NODE_ID_KEY | typeof FISHING_SPOT_ID_KEY | typeof ISLAND_MINE_SLOT_KEY
 ): string | null {
   let current = node;
   while (current !== null) {
@@ -123,7 +125,7 @@ export function worldTargetIdFromNode(
 }
 
 export type WorldPickTarget =
-  | { readonly kind: "RESOURCE_NODE" | "FISHING_SPOT"; readonly id: string }
+  | { readonly kind: "RESOURCE_NODE" | "FISHING_SPOT" | "ISLAND_MINE"; readonly id: string }
   | { readonly kind: "CONSTRUCTION"; readonly id: string };
 
 /**

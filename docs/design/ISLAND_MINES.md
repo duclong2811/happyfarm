@@ -61,9 +61,27 @@ mine fills at its level's rate from server time ── stops at 4 hours of outpu
   `MINE_LEVEL_REQUIRED`, `MINE_CONFLICT`, plus the shared `WAREHOUSE_FULL`, `INSUFFICIENT_ITEMS`,
   `INSUFFICIENT_FUNDS`.
 
+## In the browser
+
+- `GET /farms/:id/mines` is read once at farm load (not on the boot's critical path), after each dig or
+  upgrade, and after a level-up (which can open a slot). It is never polled: the page extrapolates each
+  mine from its own read time and rate (`apps/web/src/mines/model.ts`), capped at capacity.
+- A mine is drawn as an ore cluster that gains copper, iron and coal rocks and grows a little with each
+  level; a gold ring under it lights while it holds ore. Its rocks are solid to the walker.
+- `[E]` at a mine digs when it holds ore and otherwise opens it; tapping it opens the panel (live fill
+  bar, dig, next level's price with each requirement met or missing). The panel's live parts update in
+  place once a second, so a button is never replaced under a click.
+- A mine's yard (`MINE_FOOTPRINT_RADIUS_TILES` around every slot, opened or not) is occupied ground: the
+  server classifies it as blocked on chosen islands, and the browser's cell map treats it as occupied.
+
+## The old ore ridge
+
+`node_stone_ridge` is now `active: false`: it is no longer served, a new gather there is refused, and an
+Auto Mining job waits with `NO_ELIGIBLE_TARGETS`. Its definition and the hold-to-mine/Auto-mining engine
+stay so actions recorded before the change still settle; their tests run against
+`tests/support/legacy-mining.ts`, which re-activates the ridge for them only. The economy model now reads
+mining as the level-1 island mine (`islandMineEconomics`).
+
 ## Not yet
 
-- Client: mine models per level, the dig/upgrade panel, and retiring `node_stone_ridge` and Auto MINE jobs.
-- Mines do not yet block placement on chosen islands (production sites, task "production sites on chosen
-  islands").
 - Helpers/editors working someone else's mines, and NPC miners, are later phases.

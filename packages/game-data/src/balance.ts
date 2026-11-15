@@ -14,6 +14,7 @@ import {
   activeResourceNodes
 } from "./resources";
 import { treeRegistry, type TreeDefinitionData } from "./trees";
+import { MINE_ACCUMULATION_HOURS, MINE_LEVELS, MINE_ORE_ITEM_ID, MINE_ORE_PER_XP } from "./mines";
 
 /**
  * The farming economy, computed from the definitions rather than restated.
@@ -262,10 +263,40 @@ export function resourceEconomics(definitionId: string): ResourceEconomics {
   };
 }
 
+/**
+ * An island mine's economy, in the same shape as a node's so every consumer reads it the same way.
+ *
+ * Mines replaced the hold-to-mine ore node (`docs/design/ISLAND_MINES.md`): one "gather" is a dig of a
+ * full mine, which takes the accumulation window to refill, and the experience is one point per
+ * `MINE_ORE_PER_XP` ore. `nodeCount` is one: the slot every island opens at level 1.
+ */
+export function islandMineEconomics(level: number): ResourceEconomics {
+  const entry = MINE_LEVELS.find((candidate) => candidate.level === level);
+  if (entry === undefined) throw new Error(`Unknown mine level: ${String(level)}`);
+  const unitSellPrice = requiredSellPrice(MINE_ORE_ITEM_ID);
+  const refillSeconds = MINE_ACCUMULATION_HOURS * 3600;
+  const quantityPerGather = entry.orePerHour * MINE_ACCUMULATION_HOURS;
+  const goldPerGather = quantityPerGather * unitSellPrice;
+  const xp = Math.floor(quantityPerGather / MINE_ORE_PER_XP);
+  return {
+    id: `mine_level_${String(level)}`,
+    verb: "MINE",
+    actionSeconds: refillSeconds,
+    regenerationSeconds: refillSeconds,
+    xp,
+    dropItemDefinitionId: MINE_ORE_ITEM_ID,
+    quantityPerGather,
+    unitSellPrice,
+    goldPerGather,
+    nodeCount: 1,
+    sustainedGoldPerMinute: (goldPerGather * 60) / refillSeconds,
+    sustainedXpPerMinute: (xp * 60) / refillSeconds
+  };
+}
+
+/** Mining is the island mines now: the level-1 mine every island starts with. */
 export const miningBalance = {
-  resources: [...resourceDefinitionRegistry.values()]
-    .filter((definition) => definition.verb === "MINE" && activeResourceNodes.some((node) => node.definitionId === definition.id))
-    .map((definition) => resourceEconomics(definition.id))
+  resources: [islandMineEconomics(1)]
 } as const;
 
 /** The forestry half of the same computation: the same shape, filtered by verb. */

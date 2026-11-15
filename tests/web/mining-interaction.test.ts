@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ResourceNodeDTO } from "@happy-farm/contracts";
-import { activeResourceNodes, resourceDefinitionRegistry, resourceDefinitions } from "@happy-farm/game-data";
+import { activeResourceNodes, resourceDefinitionRegistry, resourceDefinitions, resourceNodeRegistry } from "@happy-farm/game-data";
 import { tileToWorld, worldFrame } from "../../apps/web/src/render/layout";
 import { resourceModelUrl } from "../../apps/web/src/render/model-urls";
 import { INTERACTION_RANGE_WORLD, interactionPromptFor } from "../../apps/web/src/interaction/model";
@@ -133,9 +133,11 @@ describe("the resource model manifest", () => {
     expect(resourceModelUrl(null)).toBeNull();
   });
 
-  it("maps the active unified ore node to the shipped stone GLB at one canonical world position", () => {
-    const active = activeResourceNodes.find((entry) => entry.id === "node_stone_ridge");
-    expect(active).toMatchObject({ definitionId: "resource_ore", position: { x: 12, y: -12 } });
+  it("no longer ships the retired ore ridge, but keeps its model and position for old state", () => {
+    // Island mines replaced the hold-to-mine ridge; the first mine stands where it did.
+    expect(activeResourceNodes.some((entry) => entry.id === "node_stone_ridge")).toBe(false);
+    const active = resourceNodeRegistry.get("node_stone_ridge");
+    expect(active).toMatchObject({ definitionId: "resource_ore", active: false, position: { x: 12, y: -12 } });
     const definition = active === undefined ? undefined : resourceDefinitionRegistry.get(active.definitionId);
     expect(definition?.modelId).toBe("resource_stone");
     expect(resourceModelUrl(definition?.modelId ?? null)).toBeTypeOf("string");

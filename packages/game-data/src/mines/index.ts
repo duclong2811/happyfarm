@@ -114,3 +114,33 @@ export function islandMineTiles(ground: IslandGroundCells, count: number): reado
   }
   return chosen;
 }
+
+/**
+ * How far a mine's yard reaches from its tile, in tiles (Chebyshev). The yard is the mine's: nothing
+ * is planted or built in it, whether the slot is open yet or not, so a slot that opens later is never
+ * found under someone's barn. Two tiles covers the widest, level-10 cluster.
+ */
+export const MINE_FOOTPRINT_RADIUS_TILES = 2;
+
+/** Every tile in the yards of the given mine tiles. */
+export function mineFootprintTiles(mines: readonly { readonly x: number; readonly y: number }[]): readonly { readonly x: number; readonly y: number }[] {
+  const seen = new Set<string>();
+  const tiles: { x: number; y: number }[] = [];
+  for (const mine of mines) {
+    for (let dy = -MINE_FOOTPRINT_RADIUS_TILES; dy <= MINE_FOOTPRINT_RADIUS_TILES; dy += 1) {
+      for (let dx = -MINE_FOOTPRINT_RADIUS_TILES; dx <= MINE_FOOTPRINT_RADIUS_TILES; dx += 1) {
+        const tile = { x: mine.x + dx, y: mine.y + dy };
+        const key = `${String(tile.x)},${String(tile.y)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        tiles.push(tile);
+      }
+    }
+  }
+  return tiles;
+}
+
+/** Whether a tile is in any mine's yard. */
+export function inMineFootprint(mines: readonly { readonly x: number; readonly y: number }[], tile: { readonly x: number; readonly y: number }): boolean {
+  return mines.some((mine) => Math.max(Math.abs(mine.x - tile.x), Math.abs(mine.y - tile.y)) <= MINE_FOOTPRINT_RADIUS_TILES);
+}

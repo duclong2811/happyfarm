@@ -156,7 +156,7 @@ export const resourceNodeRegistry = registry(
   z.array(ResourceNodeSchema).parse([
     // Stable identity retained; the placement sits on the walkable volcano slope that the Work Area
     // rules classify as MINING, rather than on a forestry foothill.
-    { id: "node_stone_ridge", definitionId: "resource_ore", zoneKind: "HOME_ISLAND", position: { x: 12, y: -12 }, interactionRadiusTiles: 3, active: true },
+    { id: "node_stone_ridge", definitionId: "resource_ore", zoneKind: "HOME_ISLAND", position: { x: 12, y: -12 }, interactionRadiusTiles: 3, active: false },
     // Retired from new snapshots. Their definitions remain above for old active actions and replay.
     { id: "node_stone_west", definitionId: "resource_stone", zoneKind: "HOME_ISLAND", position: { x: -3, y: -23 }, interactionRadiusTiles: 3, active: false },
     { id: "node_stone_south", definitionId: "resource_stone", zoneKind: "HOME_ISLAND", position: { x: 20, y: -30 }, interactionRadiusTiles: 3, active: false },

@@ -32,7 +32,9 @@ export type InteractionAction =
   | "CHOP_TREE"
   | "CHOP_CONSTRUCTION"
   | "STOCK_AQUACULTURE"
-  | "HARVEST_AQUACULTURE";
+  | "HARVEST_AQUACULTURE"
+  /** An island mine: dig what it holds, or open it to see and upgrade it. */
+  | "DIG_MINE";
 
 /**
  * What the target *is*, for range, priority and the adapter that reads it.
@@ -46,7 +48,8 @@ export type InteractableKind =
   | "TREE"
   | "WORLD_OBJECT"
   | "FISHING_SPOT"
-  | "RESOURCE_NODE";
+  | "RESOURCE_NODE"
+  | "ISLAND_MINE";
 
 /**
  * How close the player has to be, in world metres, by kind.
@@ -65,7 +68,9 @@ export const INTERACTION_RANGE_WORLD: Readonly<Record<InteractableKind, number>>
   // reaches it: the same order as a building, and generous enough for a bank that curves.
   FISHING_SPOT: 3,
   // A deposit is a lump of rock the player stands beside, so it reaches about as far as a tree.
-  RESOURCE_NODE: 3.2
+  RESOURCE_NODE: 3.2,
+  // A mine is a cluster of rocks several metres across: the player stands at its edge.
+  ISLAND_MINE: 3.6
 };
 
 /**
@@ -86,6 +91,7 @@ export const INTERACTION_ACTION_PRIORITY: Readonly<Record<InteractionAction, num
   CHOP_CONSTRUCTION: 2,
   STOCK_AQUACULTURE: 2,
   HARVEST_AQUACULTURE: 2,
+  DIG_MINE: 2,
   INSPECT: 1
 };
 
@@ -162,7 +168,8 @@ export interface InteractionPrompt {
     | "interaction.mine"
     | "interaction.chop"
     | "interaction.stockAquaculture"
-    | "interaction.harvestAquaculture";
+    | "interaction.harvestAquaculture"
+    | "interaction.digMine";
   readonly nameKey: string | null;
   readonly nameFallback: string;
   readonly readyInSeconds: number | null;
@@ -189,7 +196,8 @@ export function interactionActionKey(
   | "interaction.mine"
   | "interaction.chop"
   | "interaction.stockAquaculture"
-  | "interaction.harvestAquaculture" {
+  | "interaction.harvestAquaculture"
+  | "interaction.digMine" {
   switch (action) {
     case "HARVEST":
       return "interaction.harvest";
@@ -207,6 +215,8 @@ export function interactionActionKey(
       return "interaction.stockAquaculture";
     case "HARVEST_AQUACULTURE":
       return "interaction.harvestAquaculture";
+    case "DIG_MINE":
+      return "interaction.digMine";
     case "INSPECT":
       return "interaction.inspect";
   }

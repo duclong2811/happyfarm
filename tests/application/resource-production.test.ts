@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { ResolveResourceProductionContext } from "@happy-farm/application";
-import { GameDataResourceCatalogue, gameDataWorkAreaGround } from "../../workers/api/src/runtime";
+import { gameDataWorkAreaGround } from "../../workers/api/src/runtime";
 import type { ActorJob, FarmId, JobId, WorkAreaId } from "@happy-farm/domain";
 import type { WorkArea } from "@happy-farm/domain";
+import { legacyMiningResourceCatalogue } from "../support/legacy-mining";
 
 const FARM = "farm_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" as FarmId;
 const JOB = "job_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" as JobId;
@@ -49,7 +50,7 @@ function resolver(kind: "FORESTRY" | "MINING", target: string, cells: readonly {
     members: {} as never,
     jobs: { findById: vi.fn(() => Promise.resolve(job(kind, target))) } as never,
     workAreas: { findById: vi.fn(() => Promise.resolve(area(kind))), listCells: vi.fn(() => Promise.resolve(cells)) } as never,
-    catalogue: new GameDataResourceCatalogue(),
+    catalogue: legacyMiningResourceCatalogue(),
     states: { listByZone: vi.fn(() => Promise.resolve(states)) } as never,
     ground: gameDataWorkAreaGround,
     clock: { now: () => NOW }

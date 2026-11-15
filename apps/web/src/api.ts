@@ -2,6 +2,9 @@ import {
   BuyItemResultDTOSchema,
   CreateFarmResponseSchema,
   GetFarmIslandResponseSchema,
+  GetFarmMinesResponseSchema,
+  CollectMineResponseSchema,
+  UpgradeMineResponseSchema,
   GetMyFarmResponseSchema,
   GetPlayerAppearanceResponseSchema,
   GetCropDefinitionsResponseSchema,
@@ -126,6 +129,9 @@ import type {
   ,NeighborSnapshotDTO
   ,FarmIslandSummaryDTO
   ,GetFarmIslandResponse
+  ,GetFarmMinesResponse
+  ,CollectMineResponse
+  ,UpgradeMineResponse
   ,GetMyFarmResponse
   ,IslandChoiceDTO
   ,PlayerAppearanceDTO
@@ -789,6 +795,21 @@ export class ApiClient {
 
   getOrchardVisualSnapshot(farmId: string) {
     return this.get(`/farms/${encodeURIComponent(farmId)}/orchard/visual`, GetOrchardVisualSnapshotResponseSchema);
+  }
+
+  /** The farm's island mines: what each held at the server's `readAt`, and the slots still locked. */
+  getFarmMines(farmId: string): Promise<GetFarmMinesResponse> {
+    return this.get(`/farms/${encodeURIComponent(farmId)}/mines`, GetFarmMinesResponseSchema);
+  }
+
+  /** Empties one mine into the warehouse. The server decides how much fits; the client names the slot. */
+  collectMine(farmId: string, slot: number, requestId: string): Promise<CollectMineResponse> {
+    return this.post(`/farms/${encodeURIComponent(farmId)}/mines/${String(slot)}/collect`, { requestId }, CollectMineResponseSchema);
+  }
+
+  /** Raises one mine a level. Never a level, a price or a material: those are the server's. */
+  upgradeMine(farmId: string, slot: number, requestId: string): Promise<UpgradeMineResponse> {
+    return this.post(`/farms/${encodeURIComponent(farmId)}/mines/${String(slot)}/upgrade`, { requestId }, UpgradeMineResponseSchema);
   }
 
   /** Buys the next warehouse tier. The client sends a request id and nothing else the server needs. */

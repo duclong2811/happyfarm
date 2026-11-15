@@ -67,6 +67,7 @@ import {
 import {
   CONSTRUCTION_ID_KEY,
   RESOURCE_NODE_ID_KEY,
+  ISLAND_MINE_SLOT_KEY,
   constructionIdFromHits,
   constructionIdFromWorldPoint,
   prioritizeWorldPick,
@@ -84,6 +85,7 @@ import {
   resourceClusterPieces,
   resourceNodePickRadius
 } from "./resource-cluster";
+import { MINE_PICK_RADIUS_WORLD, minePieces, mineScale } from "../mines/model";
 import { NEIGHBOR_PREVIEW_WATER_SCALE, neighborForestLayout, neighborGroundHeight, neighborIslandTemplate, neighborWorldPoint, type NeighborIslandKind } from "./neighbor-island-template";
 import { MOC_PREVIEW_LAYOUT, mocPresentationDockWorld, mocPreviewForestPlacements, mocPreviewPlacement } from "../moc-island-preview-data";
 import { tileDrawsSoil, type FarmSceneInput, type SceneTile, type SceneTree } from "./view-model";
@@ -245,6 +247,19 @@ export interface SceneResourceNode {
   readonly available: boolean;
 }
 
+/**
+ * One opened island mine, as the renderer needs it: where, how developed, and whether a dig would
+ * find ore. The level picks the cluster (richer rocks show through as it rises); the ring under it
+ * lights while there is ore to dig. Both are the server's state, drawn.
+ */
+export interface SceneIslandMine {
+  readonly slot: number;
+  readonly level: number;
+  readonly worldX: number;
+  readonly worldZ: number;
+  readonly hasOre: boolean;
+}
+
 /** Read-only presentation proof used by the HUD's resource locator. */
 export type ResourceNodePresentationResult =
   | {
@@ -269,6 +284,7 @@ export interface SceneFishingSpot {
 
 export type SceneWorldTarget =
   | { readonly kind: "RESOURCE_NODE"; readonly id: string }
+  | { readonly kind: "ISLAND_MINE"; readonly id: string }
   | { readonly kind: "FISHING_SPOT"; readonly id: string }
   | { readonly kind: "NEIGHBOR_DOCK"; readonly id: string }
   | { readonly kind: "NEIGHBOR_NPC"; readonly id: string };
@@ -575,6 +591,8 @@ export interface FarmSceneHandle {
    * completes). A depleted deposit is drawn as a smaller rubble stub, so the place stays legible.
    */
   setResourceNodes(nodes: readonly SceneResourceNode[]): void;
+  /** Draws the farm's opened island mines (same layer as the resource nodes, its own pick tag). */
+  setIslandMines(mines: readonly SceneIslandMine[]): void;
   /** Ensures a server-reported node has loaded art and a visible pick root before the camera moves. */
   prepareResourceNode(nodeId: string): Promise<ResourceNodePresentationResult>;
   /** Supplies authoritative fishing places for direct water hit-testing. */
@@ -2530,6 +2548,7 @@ let interactionGeometry: BufferGeometry | null = null;
   /** What the player has built, and the last signature drawn, so a poll that changed nothing is free. */
   let constructions: readonly SceneConstruction[] = [];
   let resourceNodes: readonly SceneResourceNode[] = [];
+  let islandMines: readonly SceneIslandMine[] = [];
   let fishingSpots: readonly SceneFishingSpot[] = [];
   let resourceNodeSignature: string | null = null;
   let constructionSignature = "";
@@ -2559,10 +2578,17 @@ let interactionGeometry: BufferGeometry | null = null;
       const modelId = depleted ? node.depletedModelId : node.modelId;
       return { node, depleted, modelId, model: library.get(modelId) };
     });
+    const mineModels = new Map<string, Object3D | undefined>();
+    for (const mine of islandMines) {
+      for (const piece of minePieces(mine.level)) {
+        if (!mineModels.has(piece.modelId)) mineModels.set(piece.modelId, library.get(piece.modelId));
+      }
+    }
     const signature = resourceNodeLayerSignature(
       resolved.map(({ node }) => node),
       (modelId) => resolved.some((entry) => entry.modelId === modelId && entry.model !== undefined)
-    );
+    ) + "#" + islandMines.map((mine) => `${String(mine.slot)}:${String(mine.level)}:${mine.hasOre ? "1" : "0"}:${String(mine.worldX)}:${String(mine.worldZ)}`).join("|") +
+      "#" + [...mineModels].map(([modelId, model]) => `${modelId}:${model === undefined ? "pending" : "ready"}`).join("|");
     if (signature === resourceNodeSignature) return;
     resourceNodeSignature = signature;
     resourceGroup.clear();
@@ -2613,6 +2639,41 @@ let interactionGeometry: BufferGeometry | null = null;
       resourceMarker.receiveShadow = false;
       plant.add(resourceMarker);
       resourceGroup.add(plant);
+    }
+    for (const mine of islandMines) {
+      // A mine is one tagged root holding its whole cluster, so any rock of it picks the same slot.
+      const root = new Group();
+      (root.userData as Record<string, unknown>)[ISLAND_MINE_SLOT_KEY] = String(mine.slot);
+      const groundY = terrainHeightAt(mine.worldX, mine.worldZ, state.world.terrain);
+      root.position.set(mine.worldX, GROUND_SURFACE_Y + groundY, mine.worldZ);
+      root.scale.setScalar(RESOURCE_NODE_MODEL_SCALE * mineScale(mine.level));
+      for (const piece of minePieces(mine.level)) {
+        const pieceRoot = mineModels.get(piece.modelId)?.clone(true) ?? new Group();
+        (pieceRoot.userData as Record<string, unknown>)[ISLAND_MINE_SLOT_KEY] = String(mine.slot);
+        pieceRoot.position.set(
+          piece.offsetX,
+          terrainHeightAt(mine.worldX + piece.offsetX, mine.worldZ + piece.offsetZ, state.world.terrain) - groundY,
+          piece.offsetZ
+        );
+        pieceRoot.rotation.y = piece.rotationY;
+        pieceRoot.scale.setScalar(piece.scale);
+        pieceRoot.traverse((child) => {
+          child.castShadow = true;
+        });
+        root.add(pieceRoot);
+      }
+      // The ring lights while there is ore to dig, so a full mine reads from across the island.
+      if (mine.hasOre) {
+        const marker = new Mesh(assets.ring, assets.ready);
+        marker.rotation.x = -Math.PI / 2;
+        marker.position.y = 0.025;
+        marker.scale.setScalar(0.95);
+        marker.renderOrder = 2;
+        marker.castShadow = false;
+        marker.receiveShadow = false;
+        root.add(marker);
+      }
+      resourceGroup.add(root);
     }
   }
 
@@ -3929,7 +3990,7 @@ let interactionGeometry: BufferGeometry | null = null;
     clientX: number,
     clientY: number,
     includeGroundFallback = true
-  ): { readonly kind: "RESOURCE_NODE" | "FISHING_SPOT"; readonly id: string } | null {
+  ): { readonly kind: "RESOURCE_NODE" | "FISHING_SPOT" | "ISLAND_MINE"; readonly id: string } | null {
     const bounds = canvas.getBoundingClientRect();
     if (bounds.width === 0 || bounds.height === 0) return null;
     pointer.set(
@@ -3939,6 +4000,8 @@ let interactionGeometry: BufferGeometry | null = null;
     raycaster.setFromCamera(pointer, camera);
     const resourceHits = raycaster.intersectObjects(resourceGroup.children, true);
     for (const hit of resourceHits) {
+      const slot = worldTargetIdFromNode(hit.object, ISLAND_MINE_SLOT_KEY);
+      if (slot !== null) return { kind: "ISLAND_MINE", id: slot };
       const id = worldTargetIdFromNode(hit.object, RESOURCE_NODE_ID_KEY);
       if (id !== null) return { kind: "RESOURCE_NODE", id };
     }
@@ -3947,6 +4010,14 @@ let interactionGeometry: BufferGeometry | null = null;
     const terrainHit = groundMesh === null ? undefined : raycaster.intersectObject(groundMesh, true)[0];
     const point = terrainHit?.point;
     if (point === undefined) return null;
+
+    let nearestMine: { readonly id: string; readonly distance: number } | null = null;
+    for (const mine of islandMines) {
+      const distance = Math.hypot(point.x - mine.worldX, point.z - mine.worldZ);
+      if (distance > MINE_PICK_RADIUS_WORLD * mineScale(mine.level)) continue;
+      if (nearestMine === null || distance < nearestMine.distance) nearestMine = { id: String(mine.slot), distance };
+    }
+    if (nearestMine !== null) return { kind: "ISLAND_MINE", id: nearestMine.id };
 
     let nearestResource: { readonly id: string; readonly distance: number } | null = null;
     for (const node of resourceNodes) {
@@ -4666,6 +4737,11 @@ let interactionGeometry: BufferGeometry | null = null;
     },
     setResourceNodes(next: readonly SceneResourceNode[]): void {
       resourceNodes = next;
+      rebuildResourceNodes();
+      draw();
+    },
+    setIslandMines(next: readonly SceneIslandMine[]): void {
+      islandMines = next;
       rebuildResourceNodes();
       draw();
     },

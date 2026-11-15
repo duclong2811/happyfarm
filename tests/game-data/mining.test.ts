@@ -13,7 +13,9 @@ import {
   resourceNodeRegistry,
   resourceNodes,
   shops,
-  validateResourceDefinitions
+  validateResourceDefinitions,
+  COMPOSED_ISLAND_MINE_POSITIONS,
+  MINE_ORE_ITEM_ID
 } from "@happy-farm/game-data";
 
 /**
@@ -37,51 +39,35 @@ describe("the mining catalogue", () => {
     }
   });
 
-  it("ships one active mining definition and one active placement, all in the home island zone", () => {
+  it("retires every hold-to-mine placement: island mines replace them, and the old ridge keeps its identity", () => {
     const mining = resourceDefinitions.filter((definition) => definition.verb === "MINE");
-    const miningNodes = activeResourceNodes.filter((node) =>
+    const activeMiningNodes = activeResourceNodes.filter((node) =>
       mining.some((definition) => definition.id === node.definitionId)
     );
-    expect(miningNodes).toHaveLength(1);
-    expect(miningNodes[0]).toMatchObject({ id: "node_stone_ridge", definitionId: "resource_ore", position: { x: 12, y: -12 } });
-    expect(mining.filter((definition) => activeResourceNodes.some((node) => node.definitionId === definition.id))).toHaveLength(1);
-    expect(new Set(resourceDefinitions.map((definition) => definition.id)).size).toBe(
-      resourceDefinitions.length
-    );
-    expect(miningNodes.length).toBe(1);
-    expect(new Set(resourceNodes.map((node) => node.id)).size).toBe(resourceNodes.length);
-    for (const node of miningNodes) {
-      expect(node.zoneKind, node.id).toBe("HOME_ISLAND");
-      expect(resourceDefinitionRegistry.has(node.definitionId), node.id).toBe(true);
-      expect(Number.isFinite(node.position.x), node.id).toBe(true);
-      expect(node.interactionRadiusTiles, node.id).toBeGreaterThan(0);
+    expect(activeMiningNodes).toEqual([]);
+    // The ridge stays in the registry, inactive, so old state keyed by its id still reads; the first
+    // island mine stands exactly where it did, on the volcano's mining ground.
+    const ridge = resourceNodeRegistry.get("node_stone_ridge");
+    expect(ridge).toMatchObject({ definitionId: "resource_ore", active: false, position: { x: 12, y: -12 } });
+    expect(COMPOSED_ISLAND_MINE_POSITIONS[0]).toEqual({ x: 12, y: -12 });
+    for (const position of COMPOSED_ISLAND_MINE_POSITIONS) {
+      expect(classifyTile(position).terrain, JSON.stringify(position)).toBe("VOLCANO");
+      expect(groundCapabilities(position), JSON.stringify(position)).toContain("MINING");
     }
-    const mineTile = miningNodes[0]?.position;
-    if (mineTile === undefined) throw new Error("active mining placement is missing");
-    expect(classifyTile(mineTile).terrain).toBe("VOLCANO");
-    expect(groundCapabilities(mineTile)).toContain("MINING");
+    expect(new Set(resourceDefinitions.map((definition) => definition.id)).size).toBe(resourceDefinitions.length);
+    expect(new Set(resourceNodes.map((node) => node.id)).size).toBe(resourceNodes.length);
     for (const definition of mining) {
-      expect(definition.verb, definition.id).toBe("MINE");
       expect(definition.actionSeconds, definition.id).toBeGreaterThan(0);
-      expect(definition.actionSeconds, definition.id).toBeLessThanOrEqual(60);
       expect(definition.regenerationSeconds, definition.id).toBeGreaterThan(definition.actionSeconds);
-      expect(definition.xp, definition.id).toBeGreaterThan(0);
-      expect((definition.requiredLevel ?? 1) <= 10_000, definition.id).toBe(true);
       expect(resourceDropTableRegistry.has(definition.dropTableId), definition.id).toBe(true);
     }
   });
 
   it("keeps one definition per material so the catalogue reads as production, not luck", () => {
-    const activeMiningDefinitions = resourceDefinitions.filter((definition) =>
-      definition.verb === "MINE" && activeResourceNodes.some((node) => node.definitionId === definition.id)
-    );
-    const miningTables = resourceDropTables.filter((table) =>
-      activeMiningDefinitions.some((definition) => definition.dropTableId === table.id)
-    );
-    const dropped = miningTables.flatMap((table) => table.entries.map((entry) => entry.itemDefinitionId));
-    expect([...new Set(dropped)].sort()).toEqual(
-      ["item_ore"]
-    );
+    // The retained unified definition (for replaying old actions) and the island mines both yield ore.
+    const unified = resourceDropTableRegistry.get(resourceDefinitionRegistry.get("resource_ore")?.dropTableId ?? "");
+    expect(unified?.entries.map((entry) => entry.itemDefinitionId)).toEqual(["item_ore"]);
+    expect(miningBalance.resources.map((resource) => resource.dropItemDefinitionId)).toEqual([MINE_ORE_ITEM_ID]);
     // Every shipped table is deterministic for the alpha: one entry, one exact quantity.
     for (const table of resourceDropTables) {
       expect(table.entries, table.id).toHaveLength(1);
@@ -178,14 +164,12 @@ describe("the mining economy", () => {
       expect(resource.goldPerGather, resource.id).toBe(resource.quantityPerGather * resource.unitSellPrice);
       const windowsPerMinute =
         60 / Math.max(resource.nodeCount * resource.actionSeconds, resource.regenerationSeconds);
-      const expectedRate = resource.id === "resource_ore"
-        ? resource.goldPerGather * 60 / resource.actionSeconds
-        : resource.nodeCount * resource.goldPerGather * windowsPerMinute;
+      const expectedRate = resource.nodeCount * resource.goldPerGather * windowsPerMinute;
       expect(resource.sustainedGoldPerMinute, resource.id).toBeCloseTo(
         expectedRate,
         10
       );
-      // Unified ore keeps the former starter timing/value until a broader economy pass.
+      // An island mine: one full dig per accumulation window.
       expect(resource.sustainedGoldPerMinute, resource.id).toBeGreaterThan(0);
     }
     const total = miningBalance.resources.reduce((sum, resource) => sum + resource.sustainedGoldPerMinute, 0);

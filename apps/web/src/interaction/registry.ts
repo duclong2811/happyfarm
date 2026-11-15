@@ -61,8 +61,18 @@ export interface InteractionWorldInput {
   readonly resourceNodes?: readonly ResourceNodeDTO[];
   /** Server-projected state for already placed aquaculture cages. */
   readonly aquaculturePonds?: readonly AquaculturePondDTO[];
+  /** The farm's opened island mines, as the server placed them. */
+  readonly mines?: readonly InteractionMine[];
   /** Current epoch milliseconds, used only to phrase a growing crop's countdown. */
   readonly nowMs: number;
+}
+
+/** An island mine, as the registry needs it: where it stands and which slot it is. */
+export interface InteractionMine {
+  readonly slot: number;
+  readonly x: number;
+  readonly y: number;
+  readonly level: number;
 }
 
 export interface InteractionIndex {
@@ -263,6 +273,31 @@ function resourceNodeTarget(node: ResourceNodeDTO): InteractableTarget {
   };
 }
 
+/**
+ * One island mine, as a target. It always offers `DIG_MINE`: with ore in it the press digs, and an
+ * empty mine opens instead - what it holds is the server's, so the registry never guesses.
+ */
+function mineTarget(mine: InteractionMine): InteractableTarget {
+  const position = tileToWorld({ x: mine.x, y: mine.y }, worldFrame());
+  const cell = worldToCell({ worldX: position.worldX, worldZ: position.worldZ }, worldFrame());
+  return {
+    key: `mine:${String(mine.slot)}`,
+    kind: "ISLAND_MINE",
+    action: "DIG_MINE",
+    targetId: String(mine.slot),
+    tileX: cell.x,
+    tileY: cell.y,
+    worldX: position.worldX,
+    worldZ: position.worldZ,
+    rangeWorld: INTERACTION_RANGE_WORLD.ISLAND_MINE,
+    priority: INTERACTION_ACTION_PRIORITY.DIG_MINE,
+    nameKey: "mine.name",
+    nameFallback: "Mine",
+    version: mine.level,
+    readyInSeconds: null
+  };
+}
+
 /** Adapts the read models into one flat list of targets. Pure: nothing here touches the network. */
 export function interactionTargets(input: InteractionWorldInput): readonly InteractableTarget[] {
   const targets: InteractableTarget[] = [];
@@ -271,6 +306,9 @@ export function interactionTargets(input: InteractionWorldInput): readonly Inter
   }
   for (const node of input.resourceNodes ?? []) {
     targets.push(resourceNodeTarget(node));
+  }
+  for (const mine of input.mines ?? []) {
+    targets.push(mineTarget(mine));
   }
   for (const crop of input.crops) {
     targets.push(cropTarget(crop, input.cropDefinitions, input.nowMs));

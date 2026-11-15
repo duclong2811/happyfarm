@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyTile, groundCapabilities, activeResourceNodes } from "@happy-farm/game-data";
+import { COMPOSED_ISLAND_MINE_POSITIONS, classifyTile, groundCapabilities } from "@happy-farm/game-data";
 import { layoutFarmTiles, tileToWorld, worldFrame } from "../../apps/web/src/render/layout";
 import { movementDestinationForTarget } from "../../apps/web/src/render/world-cell-selection";
 import { buildWorldCellMap } from "../../apps/web/src/render/world-cell-map";
@@ -44,29 +44,30 @@ function pathExists(goal: { readonly x: number; readonly y: number }): boolean {
   return false;
 }
 
-describe("active ore mine placement", () => {
-  it("is on mining ground, outside the starter field, and has a reachable interaction destination", () => {
-    const node = activeResourceNodes.find((candidate) => candidate.id === "node_stone_ridge");
-    if (node === undefined) throw new Error("active ore mine fixture is missing");
-    const cell = worldCellAt(map, node.position.x, node.position.y);
-    const destination = cell === null ? null : movementDestinationForTarget(cell, map, spawn, () => false);
-    const outsideField = node.position.x < FARM_FIELD_BOUNDS.minX || node.position.x > FARM_FIELD_BOUNDS.maxX
-      || node.position.y < FARM_FIELD_BOUNDS.minY || node.position.y > FARM_FIELD_BOUNDS.maxY;
+describe("the composed island's mine slots", () => {
+  it.each(COMPOSED_ISLAND_MINE_POSITIONS.map((position, slot) => ({ slot, position })))(
+    "slot $slot is on mining ground, outside the starter field, and walkable from the spawn",
+    ({ position }) => {
+      const cell = worldCellAt(map, position.x, position.y);
+      const destination = cell === null ? null : movementDestinationForTarget(cell, map, spawn, () => false);
+      const outsideField = position.x < FARM_FIELD_BOUNDS.minX || position.x > FARM_FIELD_BOUNDS.maxX
+        || position.y < FARM_FIELD_BOUNDS.minY || position.y > FARM_FIELD_BOUNDS.maxY;
 
-    expect(classifyTile(node.position).terrain).toBe("VOLCANO");
-    expect(groundCapabilities(node.position)).toContain("MINING");
-    expect(cell?.walkable).toBe(true);
-    expect(destination).not.toBeNull();
-    expect(pathExists(node.position)).toBe(true);
-    expect(outsideField).toBe(true);
-    expect(cell?.reserved).toBe(false);
-    expect(destination && Math.hypot(
-      destination.worldX - tileToWorld(node.position, frame).worldX,
-      destination.worldZ - tileToWorld(node.position, frame).worldZ
-    )).toBe(0);
+      expect(classifyTile(position).terrain).toBe("VOLCANO");
+      expect(groundCapabilities(position)).toContain("MINING");
+      expect(cell?.walkable).toBe(true);
+      expect(destination).not.toBeNull();
+      expect(pathExists(position)).toBe(true);
+      expect(outsideField).toBe(true);
+      expect(cell?.reserved).toBe(false);
+    }
+  );
 
-    // The authoritative work-area ground is the server-side placement gate. Character navigation
-    // may choose a stepped path around the volcano slope rather than the straight-line probe used by
-    // this fixture, so reachability is asserted by the walkable-cell search above.
+  it("keeps the slots apart, so one interaction range never holds two mines", () => {
+    COMPOSED_ISLAND_MINE_POSITIONS.forEach((a, index) => {
+      for (const b of COMPOSED_ISLAND_MINE_POSITIONS.slice(index + 1)) {
+        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(5);
+      }
+    });
   });
 });

@@ -36,7 +36,6 @@ import {
   GameDataCurrencyDefinitions,
   GameDataItemDefinitions,
   GameDataPlotDefinitions,
-  GameDataResourceCatalogue,
   GameDataShopEntries,
   GameDataTreeDefinitions,
   GameDataWarehouseTiers,
@@ -51,6 +50,7 @@ import {
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID, PLAYER_TWO_ID } from "../support/fixtures";
 import { schemaSql } from "../support/migrations";
+import { legacyMiningResourceCatalogue } from "../support/legacy-mining";
 
 /**
  * The Auto executor, end to end, through the real handler.
@@ -182,7 +182,7 @@ describe("Auto execution (D2)", () => {
       terrain: gameDataTileTerrain,
       landSale: gameDataLandSale,
       workAreas: { ground: gameDataWorkAreaGround, ids },
-      resources: { catalogue: new GameDataResourceCatalogue(), ids, random: { roll: () => 0.5 } },
+      resources: { catalogue: legacyMiningResourceCatalogue(), ids, random: { roll: () => 0.5 } },
       warehouse: { tiers: new GameDataWarehouseTiers() },
       workers: { ids },
       cargoCapacities: gameDataCargoCapacities,

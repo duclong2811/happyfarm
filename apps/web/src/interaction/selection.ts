@@ -168,6 +168,12 @@ export type InteractionActivation =
       readonly verb: "MINE" | "CHOP";
       readonly target: InteractionCandidate;
     }
+  | {
+      /** An island mine, by slot. The server decides how much a dig takes and what an upgrade costs. */
+      readonly kind: "DIG_MINE";
+      readonly slot: number;
+      readonly target: InteractionCandidate;
+    }
   | { readonly kind: "STALE"; readonly reason: "GONE" | "CHANGED" };
 
 export function interactionActivation(
@@ -194,6 +200,7 @@ export function interactionActivation(
       target: fresh
     };
   }
+  if (fresh.action === "DIG_MINE") return { kind: "DIG_MINE", slot: Number(fresh.targetId), target: fresh };
   if (fresh.action === "MINE" || fresh.action === "CHOP") {
     return { kind: "GATHER", nodeId: fresh.targetId, verb: fresh.action, target: fresh };
   }

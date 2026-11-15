@@ -36,7 +36,6 @@ import {
   GameDataFishingCatalogue,
   GameDataItemDefinitions,
   GameDataPlotDefinitions,
-  GameDataResourceCatalogue,
   GameDataShopEntries,
   GameDataTreeDefinitions,
   Sha256Fingerprint,
@@ -48,6 +47,7 @@ import {
 import { NodeD1Database } from "../support/node-d1";
 import { FARM_ONE_ID, NOW, PLAYER_ONE_ID } from "../support/fixtures";
 import { schemaSql } from "../support/migrations";
+import { legacyMiningResourceCatalogue } from "../support/legacy-mining";
 
 /**
  * Forestry through the same API mining already uses.
@@ -169,7 +169,7 @@ describe("the forestry loop", () => {
         random: new FixedRandom()
       },
       resources: {
-        catalogue: new GameDataResourceCatalogue(),
+        catalogue: legacyMiningResourceCatalogue(),
         ids: new ForestryIds(),
         random: new FixedRandom()
       },

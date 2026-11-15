@@ -2661,6 +2661,16 @@ body:not(.is-placing) .selection-panels > .object-panel {
 .resource-panel-value { font-weight: 800; text-align: right; }
 .resource-panel-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .resource-panel-note { margin: 0; font-size: .78rem; color: var(--ui-color-muted-on-parchment); }
+/* Island mines: a fill bar that counts up locally, and the next level's price with what is missing. */
+.mine-fill { height: .62rem; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--ui-color-wood-deep) 16%, transparent); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .18); }
+.mine-fill-bar { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--ui-color-wood), var(--ui-color-gold)); transition: width .4s ease; }
+.mine-upgrade { display: grid; gap: .3rem; padding-top: .45rem; border-top: 1px dashed var(--ui-color-border); }
+.mine-upgrade-title { margin: 0; font-size: .92rem; color: var(--ui-color-wood-deep); }
+.mine-upgrade-costs { display: grid; gap: .12rem; margin: 0; padding: 0; list-style: none; font-size: .82rem; }
+.mine-upgrade-costs li { font-weight: 700; }
+.mine-upgrade-costs li.is-met::before { content: "✓ "; color: var(--ui-color-accent); }
+.mine-upgrade-costs li.is-missing { color: #a3361f; }
+.mine-upgrade-costs li.is-missing::before { content: "✗ "; }
 .forestry-tree-panel { gap: .48rem; }
 .forestry-tree-title { color: var(--ui-color-wood-deep); }
 .forestry-tree-name { font-weight: 900; }

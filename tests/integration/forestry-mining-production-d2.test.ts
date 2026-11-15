@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActorContext, AuthenticationPort, Clock, IdGenerator, ActorIdGenerator, JobIdGenerator, WorkAreaIdGenerator, ResourceIdGenerator } from "@happy-farm/application";
 import { createHandler } from "../../workers/api/src/handler";
-import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataResourceCatalogue, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataCargoCapacities, gameDataLandSale, gameDataProgressionDefinition, gameDataStarterWorld, gameDataTileTerrain, gameDataWorkAreaGround } from "../../workers/api/src/runtime";
+import { GameDataConstructionDefinitions, GameDataCropDefinitions, GameDataCurrencyDefinitions, GameDataItemDefinitions, GameDataPlotDefinitions, GameDataShopEntries, GameDataTreeDefinitions, Sha256Fingerprint, gameDataCargoCapacities, gameDataLandSale, gameDataProgressionDefinition, gameDataStarterWorld, gameDataTileTerrain, gameDataWorkAreaGround } from "../../workers/api/src/runtime";
 import { NodeD1Database } from "../support/node-d1";
 import { schemaSql } from "../support/migrations";
 import { FARM_ONE_ID, PLAYER_ONE_ID } from "../support/fixtures";
 import { parseActorId, parseConstructionId, parseCropInstanceId, parseEconomyTransactionId, parseJobId, parseResourceActionId, parseTreeInstanceId, parseWorkAreaId, type FarmId, type ActorId, type JobId, type WorkAreaId } from "@happy-farm/domain";
+import { legacyMiningResourceCatalogue } from "../support/legacy-mining";
 
 const T0 = "2026-10-08T00:00:00.000Z";
 
@@ -60,7 +61,7 @@ describe("V16.2.3D2 Forestry and Mining Production Rate", () => {
       terrain: gameDataTileTerrain,
       landSale: gameDataLandSale,
       workAreas: { ground: gameDataWorkAreaGround, ids: new Ids() },
-      resources: { catalogue: new GameDataResourceCatalogue(), ids: new Ids(), random: { roll: () => 0.5 } },
+      resources: { catalogue: legacyMiningResourceCatalogue(), ids: new Ids(), random: { roll: () => 0.5 } },
       workers: { ids: new Ids() },
       cargoCapacities: gameDataCargoCapacities
     });

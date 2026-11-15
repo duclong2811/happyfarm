@@ -374,3 +374,27 @@ describe("island mines", () => {
     expect(view.locked).toEqual([]);
   });
 });
+
+describe("a mine's yard on a chosen island", () => {
+  it("is blocked ground for planting, building, land and work areas - opened slot or not", async () => {
+    const { storedIslandGeography } = await import("../../workers/api/src/runtime");
+    const { islandMineTiles, mineSlotLevels, MINE_FOOTPRINT_RADIUS_TILES } = await import("@happy-farm/game-data");
+    const choice = { element: "HOA", outline: "ROUND", seed: 77 };
+    const island = { ...gameDataIslandGroundBuilder.build(choice), element: "HOA" };
+    const geography = storedIslandGeography(island);
+    const mines = islandMineTiles(island, mineSlotLevels("HOA").length);
+    expect(mines).toHaveLength(3);
+    for (const mine of mines) {
+      for (const tile of [mine, { x: mine.x + MINE_FOOTPRINT_RADIUS_TILES, y: mine.y - MINE_FOOTPRINT_RADIUS_TILES }]) {
+        expect(geography.terrain.classify(tile).terrain, JSON.stringify(tile)).toBe("BLOCKED");
+        expect(geography.landSale.isDevelopable(tile)).toBe(false);
+        expect(geography.ground.capabilitiesAt(tile)).toEqual([]);
+      }
+    }
+    // Just past the yard the island's own ground answers again.
+    const outside = { x: (mines[0]?.x ?? 0) + MINE_FOOTPRINT_RADIUS_TILES + 1, y: mines[0]?.y ?? 0 };
+    if (!mines.some((mine) => Math.max(Math.abs(mine.x - outside.x), Math.abs(mine.y - outside.y)) <= MINE_FOOTPRINT_RADIUS_TILES)) {
+      expect(geography.terrain.classify(outside).terrain).not.toBe("BLOCKED");
+    }
+  });
+});
