@@ -9,6 +9,10 @@
 export const ISLAND_ELEMENTS = ["THO", "KIM", "MOC", "THUY", "HOA"] as const;
 export type IslandElement = (typeof ISLAND_ELEMENTS)[number];
 
+/** The overall outline a player picks; the element decides what grows on it. */
+export const ISLAND_SHAPES = ["ROUND", "LONG", "CRESCENT", "TWIN", "ATOLL", "ARCHIPELAGO"] as const;
+export type IslandShape = (typeof ISLAND_SHAPES)[number];
+
 export type IslandCellKind = "DEEP" | "SHALLOW" | "SAND" | "GRASS" | "FOREST" | "ROCK" | "MEADOW" | "FIELD";
 export type IslandSiteKind = "ORE" | "TREE" | "FISH_BAY" | "PASTURE" | "DOCK" | "CAMP";
 
@@ -20,6 +24,7 @@ export interface IslandSite {
 
 export interface GeneratedIsland {
   readonly element: IslandElement;
+  readonly shape: IslandShape;
   readonly seed: number;
   readonly size: number;
   /** Row-major cell kinds, `size * size` long. */
@@ -97,9 +102,42 @@ function angleDistance(a: number, b: number): number {
   return d > Math.PI ? Math.PI * 2 - d : d;
 }
 
-export function generateIsland(element: IslandElement, seed: number, size = 96): GeneratedIsland {
+/**
+ * Distance from the island's "centre" in the same units as the plain radial distance, so every
+ * shape reuses one coastline rule. `null` marks water carved out by the shape itself (a crescent's
+ * bite, an atoll's lagoon).
+ */
+function shapeDistance(shape: IslandShape, dx: number, dy: number, turn: number, landRadius: number, islets: readonly { x: number; y: number; r: number }[]): number | "LAGOON" | null {
+  const cos = Math.cos(turn);
+  const sin = Math.sin(turn);
+  const rx = dx * cos + dy * sin;
+  const ry = -dx * sin + dy * cos;
+  const round = Math.hypot(dx, dy);
+  switch (shape) {
+    case "ROUND": return round;
+    case "LONG": return Math.hypot(rx * 0.8, ry * 1.55);
+    case "TWIN": return Math.min(Math.hypot(rx - 0.4, ry * 1.1), Math.hypot(rx + 0.4, ry * 1.1)) * 1.75;
+    case "CRESCENT": return Math.hypot(rx - 0.42, ry) < landRadius * 0.7 ? null : round;
+    case "ATOLL": return round < landRadius * 0.55 ? "LAGOON" : round;
+    case "ARCHIPELAGO": {
+      let best = round * 1.7;
+      for (const islet of islets) best = Math.min(best, (Math.hypot(dx - islet.x, dy - islet.y) / islet.r) * landRadius);
+      return best;
+    }
+  }
+}
+
+const DEFAULT_SHAPE: Record<IslandElement, IslandShape> = { THO: "ROUND", KIM: "ROUND", MOC: "ROUND", THUY: "ROUND", HOA: "ROUND" };
+
+export function generateIsland(element: IslandElement, seed: number, size = 96, shape: IslandShape = DEFAULT_SHAPE[element]): GeneratedIsland {
   const recipe = RECIPES[element];
   const random = rng(seed);
+  const turn = random() * Math.PI * 2;
+  const islets = Array.from({ length: 3 + Math.floor(random() * 3) }, () => {
+    const angle = random() * Math.PI * 2;
+    const distance = 0.55 + random() * 0.25;
+    return { x: Math.cos(angle) * distance, y: Math.sin(angle) * distance, r: 0.12 + random() * 0.1 };
+  });
   const bays = Array.from({ length: recipe.bays }, () => ({
     angle: random() * Math.PI * 2,
     width: 0.12 + random() * 0.16,
@@ -107,12 +145,14 @@ export function generateIsland(element: IslandElement, seed: number, size = 96):
   }));
   const half = size / 2;
   const land: boolean[] = [];
+  const lagoon: boolean[] = [];
   const inland: number[] = [];
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const dx = (x + 0.5 - half) / half;
       const dy = (y + 0.5 - half) / half;
-      const distance = Math.hypot(dx, dy);
+      const shaped = shapeDistance(shape, dx, dy, turn, recipe.landRadius, islets);
+      const distance = typeof shaped === "number" ? shaped : Number.POSITIVE_INFINITY;
       const angle = Math.atan2(dy, dx);
       // The coast: a circle pushed in and out by noise sampled around the rim, minus the bays.
       const wobble = (fbm(seed, Math.cos(angle) * recipe.coastFrequency + 7, Math.sin(angle) * recipe.coastFrequency + 7, 4) - 0.5) * 2;
@@ -122,6 +162,7 @@ export function generateIsland(element: IslandElement, seed: number, size = 96):
         if (across < 1) radius -= bay.depth * recipe.landRadius * (1 - across * across);
       }
       land.push(distance < radius);
+      lagoon.push(shaped === "LAGOON");
       inland.push(radius - distance);
     }
   }
@@ -131,6 +172,7 @@ export function generateIsland(element: IslandElement, seed: number, size = 96):
     for (let x = 0; x < size; x += 1) {
       const index = y * size + x;
       if (!(land[index] ?? false)) {
+        if (lagoon[index] ?? false) { cells.push("SHALLOW"); continue; }
         let nearLand = false;
         for (let oy = -3; oy <= 3 && !nearLand; oy += 1) for (let ox = -3; ox <= 3; ox += 1) if (at(x + ox, y + oy)) { nearLand = true; break; }
         cells.push(nearLand ? "SHALLOW" : "DEEP");
@@ -146,7 +188,7 @@ export function generateIsland(element: IslandElement, seed: number, size = 96):
       else cells.push(n > 0.62 ? "FOREST" : "GRASS");
     }
   }
-  return { element, seed, size, cells, sites: placeSites(element, seed, size, cells, recipe) };
+  return { element, shape, seed, size, cells, sites: placeSites(element, seed, size, cells, recipe) };
 }
 
 function placeSites(element: IslandElement, seed: number, size: number, cells: readonly IslandCellKind[], recipe: Recipe): IslandSite[] {

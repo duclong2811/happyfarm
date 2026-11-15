@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateIsland, ISLAND_ELEMENTS, type IslandSiteKind } from "@happy-farm/domain";
+import { generateIsland, ISLAND_ELEMENTS, ISLAND_SHAPES, type IslandSiteKind } from "@happy-farm/domain";
 
 const count = (kind: IslandSiteKind, sites: readonly { kind: IslandSiteKind }[]): number => sites.filter((site) => site.kind === kind).length;
 
@@ -54,5 +54,20 @@ describe("island generator", () => {
       return coast / Math.sqrt(land);
     };
     expect(shoreline("THUY")).toBeGreaterThan(shoreline("THO") * 1.3);
+  });
+
+  it("keeps each element's specialty whatever outline the player picks", () => {
+    for (const shape of ISLAND_SHAPES) {
+      expect(generateIsland("KIM", 7, 96, shape).shape).toBe(shape);
+      expect(count("ORE", generateIsland("KIM", 7, 96, shape).sites)).toBe(6);
+      expect(count("FISH_BAY", generateIsland("THUY", 7, 96, shape).sites)).toBeGreaterThanOrEqual(8);
+      expect(count("PASTURE", generateIsland("HOA", 7, 96, shape).sites)).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it("gives an atoll a shallow lagoon in the middle", () => {
+    const atoll = generateIsland("THUY", 7, 96, "ATOLL");
+    expect(atoll.cells[48 * 96 + 48]).toBe("SHALLOW");
+    expect(generateIsland("THUY", 7, 96, "ROUND").cells[48 * 96 + 48]).not.toBe("SHALLOW");
   });
 });
