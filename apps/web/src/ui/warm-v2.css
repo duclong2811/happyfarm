@@ -480,3 +480,160 @@ html.ui-b.ui-warm .status:empty { display: none; }
   html.ui-b.ui-warm .top-hud .camera-mode { min-height: 2.4rem; }
   html.ui-b.ui-warm .top-hud .camera-mode-button { font-size: .72rem; padding: .2rem .55rem; }
 }
+
+/* ================================================================ livelier surfaces (Nov 2026 feedback)
+ * Flat near-white read as lifeless. Every sheet and floating panel now sits on warm, textured
+ * parchment; inner cards are a lighter warm paper, never white; small panels get an orange title pill.
+ */
+html.ui-b.ui-warm {
+  --w-cream: #fbe6c2;
+  --w-paper: #fff3dc;
+  --w-row: #f7d9a6;
+  --w-slot-line: #e5b56c;
+  --w-slot-edge: #c78a44;
+  --w-parchment: #f8dcac url("../assets/ui/inventory-premium/parchment-texture.png") center / 420px;
+  --w-title-pill: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+}
+html.ui-b.ui-warm #inventory-panel,
+html.ui-b.ui-warm #market-panel,
+html.ui-b.ui-warm #workers-panel,
+html.ui-b.ui-warm #work-areas-panel,
+html.ui-b.ui-warm #build-panel,
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .module-body,
+html.ui-b.ui-warm :is(#inventory-panel, #market-panel, #workers-panel, #work-areas-panel, #build-panel) .ui-panel-body,
+html.ui-b.ui-warm #build-panel .build-body,
+html.ui-b.ui-warm #build-panel .build-center,
+html.ui-b.ui-warm #build-panel .shop-rail,
+html.ui-b.ui-warm .neighbor-panel,
+html.ui-b.ui-warm #resource-panel,
+html.ui-b.ui-warm .selection-panels > *:not([hidden]),
+html.ui-b.ui-warm #area-harvest-panel,
+html.ui-b.ui-warm .action-dock,
+html.ui-b.ui-warm #return-popup {
+  background: var(--w-parchment);
+  background-blend-mode: multiply;
+}
+html.ui-b.ui-warm .muted,
+html.ui-b.ui-warm .neighbor-panel .neighbor-status { color: #7a5634; }
+
+/* Small panels: an orange title pill and the wooden close button. */
+html.ui-b.ui-warm .neighbor-panel .neighbor-head,
+html.ui-b.ui-warm #resource-panel .resource-panel-head {
+  align-items: center;
+  margin-bottom: .6rem;
+  padding: .45rem .5rem .45rem .9rem;
+  border-radius: 14px;
+  background: var(--w-title-pill);
+  box-shadow: inset 0 -4px 0 #c8642a, 0 3px 0 rgba(92, 50, 22, .25);
+}
+html.ui-b.ui-warm .neighbor-panel .neighbor-head h2,
+html.ui-b.ui-warm #resource-panel .resource-panel-title { margin: 0; color: #fff; font-size: 1.2rem; text-shadow: var(--w-outline); }
+html.ui-b.ui-warm .neighbor-panel .neighbor-head button {
+  width: 2.5rem;
+  height: 2.5rem;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  color: transparent;
+  font-size: 0;
+  background: var(--w-close) center / 100% 100% no-repeat;
+  box-shadow: none;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .3));
+}
+html.ui-b.ui-warm #return-popup {
+  border: 5px solid var(--w-wood);
+  border-radius: 24px;
+  box-shadow: 0 7px 0 var(--w-wood-deep), 0 26px 56px rgba(10, 5, 0, .45);
+}
+html.ui-b.ui-warm #return-popup h2 {
+  margin: 0 0 .8rem;
+  padding: .55rem 1rem;
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: var(--w-title-pill);
+  background-image: var(--w-title-pill);
+  box-shadow: inset 0 -4px 0 #c8642a;
+  font-family: var(--w-display);
+  text-align: center;
+  text-shadow: var(--w-outline);
+}
+html.ui-b.ui-warm #return-popup h3,
+html.ui-b.ui-warm #return-popup p { color: var(--w-ink); }
+html.ui-b.ui-warm #return-popup #return-popup-items,
+html.ui-b.ui-warm #return-popup #return-popup-empty {
+  padding: .7rem .9rem;
+  border: 3px solid var(--w-slot-line);
+  border-radius: 14px;
+  background: var(--w-paper);
+  box-shadow: 0 3px 0 var(--w-slot-edge);
+}
+
+/* Area harvest strip: the basket, and the chosen mode lit in orange. */
+html.ui-b.ui-warm #area-harvest-panel .area-harvest-tool {
+  width: 2.6rem;
+  height: 2.6rem;
+  background: url("../assets/ui/warm/basket.svg") center / contain no-repeat;
+}
+html.ui-b.ui-warm #area-harvest-panel .area-harvest-tool svg { display: none; }
+html.ui-b.ui-warm #area-harvest-panel button.is-selected,
+html.ui-b.ui-warm #area-harvest-panel button[aria-pressed="true"] {
+  border: 0;
+  color: #fff;
+  background: var(--w-title-pill);
+  box-shadow: 0 4px 0 var(--w-orange-edge);
+  text-shadow: 0 1px 0 rgba(120, 40, 10, .5);
+}
+html.ui-b.ui-warm #area-harvest-panel p,
+html.ui-b.ui-warm #area-harvest-panel span:not([data-icon]):not(.area-harvest-tool) { color: #5a3416; font-weight: 800; }
+
+/* Ferry: each island its own colour and picture. */
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; }
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .25rem;
+  min-height: 6rem;
+  padding: .5rem .4rem .6rem;
+  border: 3px solid #fff;
+  border-radius: 16px;
+  color: #fff;
+  font: 800 .95rem/1.15 var(--w-display);
+  text-shadow: var(--w-outline);
+  background: var(--island-bg);
+  box-shadow: 0 4px 0 var(--island-edge), 0 8px 14px rgba(30, 15, 5, .25);
+}
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island]::before {
+  content: "";
+  width: 2.8rem;
+  height: 2.8rem;
+  background: var(--island-icon) center / contain no-repeat;
+  filter: drop-shadow(0 2px 1px rgba(0, 0, 0, .25));
+}
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island]:hover { filter: brightness(1.06); transform: translateY(-1px); }
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island="KIM"] { --island-bg: linear-gradient(#e2c27a, #b88a2e); --island-edge: #7d5a14; --island-icon: url("../assets/ui/warm/pickaxe.svg"); }
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island="MOC"] { --island-bg: linear-gradient(#8fd06a, #3f8f2f); --island-edge: #2b6b1f; --island-icon: url("../assets/items/sapling_wildwood.svg"); }
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island="THUY"] { --island-bg: linear-gradient(#6fd0f5, #2a8fd0); --island-edge: #1d5f8e; --island-icon: url("../assets/items/fish_tilapia_fingerling.svg"); }
+/* Inner cards: warm paper with a soft gloss, not white. */
+html.ui-b.ui-warm { --w-paper: #fde9c4; }
+html.ui-b.ui-warm .item-grid .item-card,
+html.ui-b.ui-warm #action-dock .item-picker .item-card,
+html.ui-b.ui-warm #build-panel .shop-card,
+html.ui-b.ui-warm #build-panel .shop-inspector,
+html.ui-b.ui-warm #build-panel .shop-rail-item,
+html.ui-b.ui-warm #workers-panel .auto-actor,
+html.ui-b.ui-warm #workers-panel .auto-card,
+html.ui-b.ui-warm #workers-panel .workers-cargo,
+html.ui-b.ui-warm #work-areas-panel .work-area-row,
+html.ui-b.ui-warm .warehouse-strip,
+html.ui-b.ui-warm #market-panel .market-trade {
+  background: linear-gradient(#fce6bf, #f6d6a0);
+}
+html.ui-b.ui-warm .item-grid .item-card-thumb,
+html.ui-b.ui-warm #action-dock .item-picker .item-card-thumb,
+html.ui-b.ui-warm #build-panel .shop-card-thumb,
+html.ui-b.ui-warm #workers-panel .auto-portrait,
+html.ui-b.ui-warm #workers-panel .auto-thumb { background: #f3d6a4; }
+html.ui-b.ui-warm #return-popup #return-popup-items:empty { display: none; }
+html.ui-b.ui-warm .neighbor-panel .neighbor-actions button[data-island]::before { width: 3.2rem; height: 3.2rem; }

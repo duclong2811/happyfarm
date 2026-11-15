@@ -6931,7 +6931,7 @@ function renderNeighborPanel(): void {
     for (const island of neighbor.islands ?? [neighbor.island]) {
       const slot = "slot" in island && (island.slot === "KIM" || island.slot === "THUY" || island.slot === "MOC") ? island.slot : "MOC";
       const label = t(slot === "KIM" ? "neighbor.goKim" : slot === "THUY" ? "neighbor.goThuy" : "neighbor.goMoc");
-      const islandButton = make("button", undefined, label); islandButton.addEventListener("click", () => { void travelToNeighbor("NEIGHBOR_ISLAND", island.islandId); }); actions.appendChild(islandButton);
+      const islandButton = make("button", undefined, label); islandButton.dataset.island = slot; islandButton.addEventListener("click", () => { void travelToNeighbor("NEIGHBOR_ISLAND", island.islandId); }); actions.appendChild(islandButton);
     }
     panel.appendChild(actions);
   }
