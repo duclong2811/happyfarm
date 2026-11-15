@@ -8534,17 +8534,17 @@ async function createFarm(): Promise<FarmBootContext> {
  * and stores the island itself.
  */
 async function createFarmOnChosenIsland(client: ApiClient): Promise<CreateFarmResult> {
-  let created: CreateFarmResult | null = null;
+  const outcome: { created?: CreateFarmResult } = {};
   await showIslandPicker({
     host: document.body,
     translate: (key, params) => t(key, params),
     onConfirm: async (pick) => {
-      created = await client.createFarm(pick.name, { element: pick.element, outline: pick.outline, seed: pick.seed });
+      outcome.created = await client.createFarm(pick.name, { element: pick.element, outline: pick.outline, seed: pick.seed });
     },
     describeError: (error) => describe(error)(t, state.language)
   });
-  if (created === null) throw new Error("The island picker closed without a farm");
-  return created;
+  if (outcome.created === undefined) throw new Error("The island picker closed without a farm");
+  return outcome.created;
 }
 
 /**
