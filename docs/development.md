@@ -26,6 +26,16 @@ D1 - `docs/performance/D1_READ_AUDIT.md` records the V14.3.2 audit that proved i
 `tests/integration/d1-local-isolation.test.ts` is the guardrail. Remote D1 is touched only by a
 deliberate staging operation (`docs/deployment/STAGING.md`), never by a routine loop.
 
+**One local database.** Keep using `.wrangler/dev-local.sqlite` and nothing else: it is migrated by
+the same `database/migrations` chain, in the same order, that `wrangler d1 migrations apply` runs
+against the Cloudflare D1 database, so it is the local mirror of what a deploy ships. Local *data*
+is never uploaded - a deploy carries the schema (migrations) and the code, and each environment
+keeps its own players. If you tried something on a second file through `DEV_DATABASE_PATH` (the
+island picker was tried on `.wrangler/island-test.sqlite`) and want to keep it as your one local
+database, stop `npm run dev` and run `npm run db:adopt-island`: it backs the current
+`dev-local.sqlite` up to `.wrangler/backups/`, makes the island database the new `dev-local.sqlite`,
+and parks the second file in `backups/` as well.
+
 ## Configure local development
 
 1. Copy the template and fill in local-only values:
