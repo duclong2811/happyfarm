@@ -18,9 +18,9 @@ function glbJson(path: string): {
   readonly images?: unknown[];
   readonly buffers?: { uri?: string }[];
 } {
-  const bytes = readFileSync(path);
-  const length = bytes.readUInt32LE(12);
-  return JSON.parse(bytes.subarray(20, 20 + length).toString("utf8")) as ReturnType<typeof glbJson>;
+  const bytes = new Uint8Array(readFileSync(path));
+  const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(12, true);
+  return JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + length))) as ReturnType<typeof glbJson>;
 }
 
 describe("growth-stage crop models", () => {
