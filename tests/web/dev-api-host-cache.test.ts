@@ -80,4 +80,13 @@ describe("the dev API host cache", () => {
     expect(isServerSourceChange("C:\\repo\\workers\\api\\src\\handler.test.ts.md", roots)).toBe(false);
     expect(isServerSourceChange("C:\\repo\\packages\\package.json", roots)).toBe(false);
   });
+
+  it("matches a watcher path that uses the other separator", () => {
+    // Windows: roots from path.resolve use backslashes, the watcher may report forward slashes.
+    const roots = ["C:\\repo\\workers", "C:\\repo\\packages"];
+    expect(isServerSourceChange("C:/repo/packages/application/src/appearance.ts", roots)).toBe(true);
+    expect(isServerSourceChange("C:/repo/apps/web/src/main.ts", roots)).toBe(false);
+    expect(isServerSourceChange("/repo/packages/domain/src/farm.ts", ["/repo/packages/"])).toBe(true);
+    expect(isServerSourceChange("/repo/packages-old/x.ts", ["/repo/packages"])).toBe(false);
+  });
 });

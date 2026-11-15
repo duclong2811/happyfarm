@@ -84,5 +84,16 @@ export function createHostCache<H extends ClosableHost>(create: () => Promise<H>
  */
 export function isServerSourceChange(file: string, roots: readonly string[]): boolean {
   if (!file.endsWith(".ts") && !file.endsWith(".sql")) return false;
-  return roots.some((root) => file === root || file.startsWith(root.endsWith(sep) ? root : `${root}${sep}`));
+  // Compared with one separator. On Windows the roots come from `path.resolve` (`C:\repo\packages`)
+  // while the watcher may report `C:/repo/packages/...`; matching on the platform separator alone
+  // missed every server edit there, so a pulled API change was never rebuilt until a restart.
+  const target = toForwardSlashes(file);
+  return roots.some((root) => {
+    const base = toForwardSlashes(root).replace(/\/+$/, "");
+    return target === base || target.startsWith(`${base}/`);
+  });
+}
+
+function toForwardSlashes(path: string): string {
+  return path.split(sep).join("/").replace(/\\/g, "/");
 }
