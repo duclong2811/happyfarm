@@ -15,8 +15,8 @@ describe("construction forestry definitions", () => {
       "world.tree_broad",
       "world.tree_pine"
     ]);
-    expect(forestryConstructionDefinition("world.tree_broad")).toMatchObject({ dropItemDefinitionId: "item_wood", dropQuantity: 2, regenerationSeconds: 720, stumpSizeWorld: 1.15 });
-    expect(forestryConstructionDefinition("world.tree_pine")).toMatchObject({ dropItemDefinitionId: "item_wood", dropQuantity: 2, regenerationSeconds: 900, stumpSizeWorld: 1.3 });
+    expect(forestryConstructionDefinition("world.tree_broad")).toMatchObject({ dropItemDefinitionId: "item_wood", dropQuantity: 4, regenerationSeconds: 720, stumpSizeWorld: 1.15 });
+    expect(forestryConstructionDefinition("world.tree_pine")).toMatchObject({ dropItemDefinitionId: "item_wood", dropQuantity: 4, regenerationSeconds: 900, stumpSizeWorld: 1.3 });
     expect(forestryConstructionDefinition("world.tree_broad")).toEqual(forestryConstructionDefinition("place_tree_broad"));
   });
 
@@ -31,8 +31,8 @@ describe("construction forestry definitions", () => {
     expect(woodPrice).toBe(1);
 
     const ordinary = [
-      { id: "world.tree_broad", regenerationSeconds: 720, operationsPerHour: 5, goldPerHour: 10 },
-      { id: "world.tree_pine", regenerationSeconds: 900, operationsPerHour: 4, goldPerHour: 8 }
+      { id: "world.tree_broad", regenerationSeconds: 720, operationsPerHour: 5, goldPerHour: 20 },
+      { id: "world.tree_pine", regenerationSeconds: 900, operationsPerHour: 4, goldPerHour: 16 }
     ] as const;
     for (const rate of ordinary) {
       const definition = FORESTRY_CONSTRUCTION_DEFINITIONS[rate.id];

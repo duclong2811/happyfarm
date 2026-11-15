@@ -234,7 +234,7 @@ describe("V16.2.3D3B aquaculture manual vertical slice", () => {
     const sold = await post("/shop/sell", { requestId: "aqua_sell_adult_01", shopEntryId: "shop_fish_tilapia_adult", quantity: 1 });
     expect(sold.status, await sold.clone().text()).toBe(200);
     expect(await sold.json()).toMatchObject({ data: { settlement: {
-      itemDefinitionId: "item_fish_tilapia_adult", quantity: 1, amountReceived: 5
+      itemDefinitionId: "item_fish_tilapia_adult", quantity: 1, amountReceived: 6
     } } });
     expect(db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = 'item_fish_tilapia_adult'").get(PLAYER_ONE_ID)).toEqual({ quantity: 0 });
 

@@ -254,6 +254,12 @@ describe("warehouse capacity across the reward paths", () => {
     return row?.quantity ?? 0;
   }
 
+  /** Gives the player exactly the experience the curve needs for `level` (120 x (L-1) x L / 2). */
+  function reachLevel(level: number): void {
+    const xpNeeded = (120 * (level - 1) * level) / 2;
+    db.sqlite.prepare("INSERT INTO player_progression (player_id, xp, level, progression_version, created_at, updated_at) VALUES (?, ?, ?, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z') ON CONFLICT(player_id) DO UPDATE SET xp = excluded.xp, level = excluded.level").run(PLAYER_ONE_ID, xpNeeded, level);
+  }
+
   function xp(): number {
     const row = db.sqlite.prepare("SELECT xp FROM player_progression WHERE player_id = ?").get(PLAYER_ONE_ID) as
       | { xp: number }
@@ -328,7 +334,21 @@ describe("warehouse capacity across the reward paths", () => {
     expect(used()).toBe(900);
   });
 
+  it("refuses a warehouse upgrade below the next tier's player level and charges nothing", async () => {
+    db.sqlite.prepare("DELETE FROM player_progression WHERE player_id = ?").run(PLAYER_ONE_ID);
+    growItem("item_ore", 50);
+    growItem("item_wood", 50);
+    const goldBefore = balance();
+    const refused = await post("/warehouse/upgrade", { requestId: "wh_level_gate" });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("WAREHOUSE_LEVEL_REQUIRED");
+    expect(capacity()).toBe(1000);
+    expect(balance()).toBe(goldBefore);
+    expect(held("item_ore")).toBe(50);
+  });
+
   it.each([1000, 1100])("upgrades at usage %i, consuming only the required materials, then accepts grants", async (initial) => {
+    reachLevel(5);
     setCapacity(2500);
     growItem("item_ore", 50);
     growItem("item_wood", initial - used());

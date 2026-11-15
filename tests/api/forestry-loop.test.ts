@@ -334,24 +334,24 @@ describe("the forestry loop", () => {
     });
     expect(chopped.status).toBe(200);
     const first = (await body(chopped)) as { data: { quantityAdded: number; state: { status: string; version: number; regenerationAt: string | null } } };
-    expect(first.data).toMatchObject({ quantityAdded: 2, state: { status: "DEPLETED", version: 2 } });
+    expect(first.data).toMatchObject({ quantityAdded: 4, state: { status: "DEPLETED", version: 2 } });
     expect(first.data.state.regenerationAt).toBeTruthy();
-    expect(held("item_wood")).toBe(2);
+    expect(held("item_wood")).toBe(4);
 
     const replay = await post(`/farms/${FARM_ONE_ID}/forestry/constructions/${constructionId}/chop`, {
       requestId: "construction-chop-1",
       expectedForestryVersion: 1
     });
     expect(replay.status).toBe(200);
-    expect(((await body(replay)) as { data: { quantityAdded: number } }).data.quantityAdded).toBe(2);
-    expect(held("item_wood")).toBe(2);
+    expect(((await body(replay)) as { data: { quantityAdded: number } }).data.quantityAdded).toBe(4);
+    expect(held("item_wood")).toBe(4);
 
     const depleted = await post(`/farms/${FARM_ONE_ID}/forestry/constructions/${constructionId}/chop`, {
       requestId: "construction-chop-2",
       expectedForestryVersion: 2
     });
     expect(depleted.status).toBe(409);
-    expect(held("item_wood")).toBe(2);
+    expect(held("item_wood")).toBe(4);
 
     const stored = await post(`/farms/${FARM_ONE_ID}/constructions/${constructionId}/store`, {
       requestId: "construction-store-1",
@@ -373,7 +373,7 @@ describe("the forestry loop", () => {
     const afterRows = ((await body(afterRestore)) as { data: { constructions: typeof constructions } }).data.constructions;
     const restoredTree = afterRows.find((candidate) => candidate.constructionId === constructionId);
     expect(restoredTree?.forestry).toMatchObject({ status: "DEPLETED", version: 2, regenerationAt: first.data.state.regenerationAt });
-    expect(held("item_wood")).toBe(2);
+    expect(held("item_wood")).toBe(4);
 
     clock.advanceSeconds(721);
     const readyAgain = await get(`/farms/${FARM_ONE_ID}/constructions`);
@@ -384,7 +384,7 @@ describe("the forestry loop", () => {
       expectedForestryVersion: 1
     });
     expect(stale.status).toBe(409);
-    expect(held("item_wood")).toBe(2);
+    expect(held("item_wood")).toBe(4);
   });
 
   it("gates the advanced trees behind the same level check mining uses", async () => {

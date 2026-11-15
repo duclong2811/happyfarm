@@ -1247,6 +1247,7 @@ export const WarehouseStatusDTOSchema = z
     nextTier: z.number().int().min(0).nullable(),
     /** The capacity the next tier would hold, or null at the top of the ladder. */
     nextCapacity: z.number().int().nonnegative().nullable(),
+    nextRequiredLevel: z.number().int().positive().nullable().optional(),
     nextUpgrade: WarehouseUpgradeCostDTOSchema.nullable()
   })
   .strict();
@@ -1859,6 +1860,7 @@ export const ErrorCodeSchema = z.enum([
   "CROP_NOT_MATURE",
   "CROP_ALREADY_HARVESTED",
   "CROP_LEVEL_REQUIRED",
+  "WAREHOUSE_LEVEL_REQUIRED",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
   "WAREHOUSE_FULL",

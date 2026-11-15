@@ -286,7 +286,7 @@ describe("HarvestCrop", () => {
     expect(result.progression).toEqual({
       xpAwarded: 4,
       leveledUp: false,
-      progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 }
+      progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 100 }
     });
     expect(
       db.sqlite

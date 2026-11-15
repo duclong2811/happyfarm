@@ -687,7 +687,7 @@ describe("Worker API foundation", () => {
     // response is parsed by the schema the client validates against, so the served shape is checked.
     expect(ProgressionEnvelopeSchema.parse(await (await handle(new Request("https://api.test/progression"))).json())).toEqual({
       ok: true,
-      data: { progression: { level: 1, xp: 0, xpIntoLevel: 0, xpForNextLevel: 120, maxLevel: 50 } }
+      data: { progression: { level: 1, xp: 0, xpIntoLevel: 0, xpForNextLevel: 120, maxLevel: 100 } }
     });
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM player_progression").get()).toEqual({ count: 0 });
 
@@ -702,7 +702,7 @@ describe("Worker API foundation", () => {
       ok: true,
       data: {
         harvest: { cropInstanceId: "cropinst_cccccccc-cccc-4ccc-8ccc-cccccccccccc", itemDefinitionId: "item_carrot", quantityAdded: 2 },
-        progression: { xpAwarded: 4, leveledUp: false, progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 } }
+        progression: { xpAwarded: 4, leveledUp: false, progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 100 } }
       }
     });
 
@@ -710,7 +710,7 @@ describe("Worker API foundation", () => {
     // own validator accepts — this is the same row the planting gate reads.
     expect(ProgressionEnvelopeSchema.parse(await (await handle(new Request("https://api.test/progression"))).json())).toEqual({
       ok: true,
-      data: { progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 } }
+      data: { progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 100 } }
     });
 
     // The replay is answered from the stored award rather than recomputed, and the crop it names no
@@ -725,7 +725,7 @@ describe("Worker API foundation", () => {
     // Ownership, and any levelling input a client could name, are ignored exactly as for wallets.
     expect(await (await handle(new Request(`https://api.test/progression?playerId=${PLAYER_TWO_ID}&level=99&xp=147000`))).json()).toEqual({
       ok: true,
-      data: { progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 50 } }
+      data: { progression: { level: 1, xp: 4, xpIntoLevel: 4, xpForNextLevel: 120, maxLevel: 100 } }
     });
 
     auth.setActor(null);

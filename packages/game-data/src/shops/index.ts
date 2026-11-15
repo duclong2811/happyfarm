@@ -116,7 +116,7 @@ export const shopRegistry = createShopRegistry([
   // fingerlings and settles a distinct adult item after growth, so a new cycle cannot return input.
   { id: "shop_fish_tilapia", itemDefinitionId: "item_fish_tilapia", currencyDefinitionId: "currency_gold", shopDisplayNameKey: "shop.fish_tilapia_stock.name", buyPrice: 3, sellPrice: 2, maxQuantityPerRequest: 1_000 },
   // Adult output is distinct from the 3-gold fingerling input; 5 - 3 = 2 gold before cage cost.
-  { id: "shop_fish_tilapia_adult", itemDefinitionId: "item_fish_tilapia_adult", currencyDefinitionId: "currency_gold", shopDisplayNameKey: "shop.fish_tilapia_adult.name", sellPrice: 5, maxQuantityPerRequest: 1_000 },
+  { id: "shop_fish_tilapia_adult", itemDefinitionId: "item_fish_tilapia_adult", currencyDefinitionId: "currency_gold", shopDisplayNameKey: "shop.fish_tilapia_adult.name", sellPrice: 6, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_carp", itemDefinitionId: "item_fish_carp", currencyDefinitionId: "currency_gold", sellPrice: 3, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_catfish", itemDefinitionId: "item_fish_catfish", currencyDefinitionId: "currency_gold", sellPrice: 6, maxQuantityPerRequest: 1_000 },
   { id: "shop_fish_sardine", itemDefinitionId: "item_fish_sardine", currencyDefinitionId: "currency_gold", sellPrice: 2, maxQuantityPerRequest: 1_000 },

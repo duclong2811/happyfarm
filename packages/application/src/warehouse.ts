@@ -46,6 +46,8 @@ export interface WarehouseStatusView {
   readonly nextTier: number | null;
   /** The capacity the next tier would hold, or null at the top of the ladder. */
   readonly nextCapacity: number | null;
+  /** The player level the next tier needs, or null at the top of the ladder. */
+  readonly nextRequiredLevel: number | null;
   readonly nextUpgrade: WarehouseUpgradeView | null;
 }
 
@@ -70,6 +72,7 @@ function statusView(warehouse: WarehouseState, tiers: readonly WarehouseTierDefi
     overCapacity: warehouse.used > warehouse.capacity,
     nextTier: next?.tier ?? null,
     nextCapacity: next?.capacity ?? null,
+    nextRequiredLevel: next === null ? null : next.requiredLevel ?? 1,
     nextUpgrade:
       upgrade === null
         ? null
@@ -131,7 +134,9 @@ export class UpgradeWarehouse {
     private readonly inventoryService: InventoryService,
     private readonly idempotency: IdempotencyRepository,
     private readonly fingerprints: PayloadFingerprint,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    /** The player's authoritative level; without it no tier's level requirement can be checked. */
+    private readonly levelOf?: (playerId: ActorContext["playerId"]) => Promise<number>
   ) {}
 
   async execute(actor: ActorContext | null, command: UpgradeWarehouseCommand): Promise<WarehouseStatusView> {
@@ -151,6 +156,12 @@ export class UpgradeWarehouse {
     const fingerprint = await this.fingerprints.hash(JSON.stringify([warehouseId, UPGRADE_OPERATION]));
     const existing = await this.idempotency.find(actor.playerId, UPGRADE_OPERATION, command.requestId);
     if (existing !== null) return this.replay(existing, fingerprint);
+    // After the replay check: a retried upgrade that already landed answers from its receipt even
+    // though the *next* tier may now need a higher level.
+    const requiredLevel = next.requiredLevel ?? 1;
+    if (requiredLevel > 1 && this.levelOf !== undefined && (await this.levelOf(actor.playerId)) < requiredLevel) {
+      throw new ApplicationError("WAREHOUSE_LEVEL_REQUIRED", `The next warehouse tier needs level ${String(requiredLevel)}`);
+    }
 
     const currencyId = parseCurrencyDefinitionId(cost.currencyDefinitionId);
     const currency = this.currencies.findById(currencyId);

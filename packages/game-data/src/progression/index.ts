@@ -29,7 +29,7 @@ export const playerProgressionRegistry = new Map<string, ProgressionDefinitionDa
     ProgressionDefinitionSchema.parse({
       id: "progression_player_default",
       displayName: "Player progression",
-      maxLevel: 50,
+      maxLevel: 100,
       xpStep: 120
     })
   ]

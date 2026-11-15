@@ -32,6 +32,8 @@ export const WarehouseTierSchema = z
     tier: z.number().int().min(0).max(50),
     displayNameKey: z.string().regex(/^warehouse\.tier\.[a-z0-9_]+\.name$/),
     capacity: z.number().int().positive().max(1_000_000_000),
+    /** The player level needed to upgrade *into* this tier (1 for the starter tier). */
+    requiredLevel: z.number().int().min(1).max(10_000).default(1),
     /** The cost of moving from this tier to the next; null on the highest tier. */
     upgrade: WarehouseUpgradeCostSchema.nullable()
   })
@@ -75,24 +77,49 @@ export const warehouseTierRegistry = createWarehouseTierRegistry([
     tier: 0,
     displayNameKey: "warehouse.tier.starter.name",
     capacity: 1_000,
+    requiredLevel: 1,
     upgrade: { currencyDefinitionId: "currency_gold", gold: 500, materials: { item_wood: 50, item_ore: 50 } }
   },
   {
     tier: 1,
     displayNameKey: "warehouse.tier.early.name",
     capacity: 2_500,
+    requiredLevel: 5,
     upgrade: { currencyDefinitionId: "currency_gold", gold: 2_000, materials: { item_wood: 150, item_ore: 150 } }
   },
   {
     tier: 2,
     displayNameKey: "warehouse.tier.developing.name",
     capacity: 6_000,
-    upgrade: { currencyDefinitionId: "currency_gold", gold: 8_000, materials: { item_wood: 400, item_ore: 400 } }
+    requiredLevel: 15,
+    upgrade: { currencyDefinitionId: "currency_gold", gold: 20_000, materials: { item_wood: 800, item_ore: 800 } }
   },
   {
     tier: 3,
     displayNameKey: "warehouse.tier.mid.name",
     capacity: 15_000,
+    requiredLevel: 30,
+    upgrade: { currencyDefinitionId: "currency_gold", gold: 50_000, materials: { item_wood: 1_600, item_ore: 1_600 } }
+  },
+  {
+    tier: 4,
+    displayNameKey: "warehouse.tier.great.name",
+    capacity: 30_000,
+    requiredLevel: 50,
+    upgrade: { currencyDefinitionId: "currency_gold", gold: 120_000, materials: { item_wood: 3_200, item_ore: 3_200 } }
+  },
+  {
+    tier: 5,
+    displayNameKey: "warehouse.tier.vast.name",
+    capacity: 60_000,
+    requiredLevel: 70,
+    upgrade: { currencyDefinitionId: "currency_gold", gold: 250_000, materials: { item_wood: 6_000, item_ore: 6_000 } }
+  },
+  {
+    tier: 6,
+    displayNameKey: "warehouse.tier.harbour.name",
+    capacity: 100_000,
+    requiredLevel: 90,
     upgrade: null
   }
 ]);

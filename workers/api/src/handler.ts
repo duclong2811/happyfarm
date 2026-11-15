@@ -137,6 +137,7 @@
   ,type ForestryConstructionDefinitionRepository
   ,type ForestryConstructionState
   ,type AutoStepView
+  ,storedLevel
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
@@ -575,6 +576,7 @@ function toWarehouseDTO(status: WarehouseStatusView): WarehouseStatusDTO {
     overCapacity: status.overCapacity,
     nextTier: status.nextTier,
     nextCapacity: status.nextCapacity,
+    nextRequiredLevel: status.nextRequiredLevel,
     nextUpgrade:
       status.nextUpgrade === null
         ? null
@@ -850,6 +852,7 @@ function errorStatus(code: ErrorCode): number {
     case "NOT_AUTHORIZED":
     case "FARM_PERMISSION_DENIED":
     case "CROP_LEVEL_REQUIRED":
+    case "WAREHOUSE_LEVEL_REQUIRED":
     case "PLOT_LEVEL_REQUIRED":
     case "LAND_NOT_DEVELOPABLE":
     case "TREE_LEVEL_REQUIRED":
@@ -1221,7 +1224,8 @@ export function createHandler(dependencies: HandlerDependencies) {
           inventoryService,
           new D1IdempotencyRepository(dependencies.db),
           dependencies.fingerprints,
-          dependencies.clock
+          dependencies.clock,
+          async (playerId) => storedLevel(dependencies.progressionDefinition, await progressions.find(playerId))
         );
   // Work areas: a pure addition with no economic effect - no gold, no inventory, no land, no tiles.
   // Optional wiring, like fishing and the warehouse, so a host that has not configured it answers

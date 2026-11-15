@@ -53,7 +53,7 @@ describe("GetProgression", () => {
       xp: 0,
       xpIntoLevel: 0,
       xpForNextLevel: 120,
-      maxLevel: 50
+      maxLevel: 100
     });
   });
 
@@ -65,18 +65,19 @@ describe("GetProgression", () => {
       xp: 130,
       xpIntoLevel: 10,
       xpForNextLevel: 240,
-      maxLevel: 50
+      maxLevel: 100
     });
   });
 
   it("reports the cap without promising a level that does not exist", async () => {
-    seed(147_000, 50);
+    // The cap is level 100: 120 x 99 x 100 / 2 experience.
+    seed(594_000, 100);
     await expect(service().execute({ playerId: PLAYER_ONE_ID })).resolves.toEqual({
-      level: 50,
-      xp: 147_000,
+      level: 100,
+      xp: 594_000,
       xpIntoLevel: 0,
       xpForNextLevel: 0,
-      maxLevel: 50
+      maxLevel: 100
     });
   });
 });

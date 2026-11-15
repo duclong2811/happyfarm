@@ -196,7 +196,7 @@ describe("island warehouse", () => {
   it("refuses an upgrade past the highest tier", async () => {
     stock("item_wood", 500);
     stock("item_ore", 500);
-    db.sqlite.prepare("UPDATE home_island_warehouses SET tier = 3, capacity = 15000 WHERE owner_player_id = ?").run(PLAYER_ONE_ID);
+    db.sqlite.prepare("UPDATE home_island_warehouses SET tier = 6, capacity = 100000 WHERE owner_player_id = ?").run(PLAYER_ONE_ID);
     await expect(upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_max" })).rejects.toMatchObject({
       code: "WAREHOUSE_MAX_TIER"
     });

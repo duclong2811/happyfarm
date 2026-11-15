@@ -19,6 +19,8 @@ export interface WarehouseTierDefinition {
   readonly tier: number;
   readonly displayNameKey: string;
   readonly capacity: number;
+  /** Player level needed to upgrade into this tier; absent means no requirement. */
+  readonly requiredLevel?: number;
   /** The cost of moving from this tier to the next; null on the highest tier. */
   readonly upgrade: WarehouseUpgradeCost | null;
 }

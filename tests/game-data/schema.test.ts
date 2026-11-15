@@ -24,7 +24,7 @@ describe("aquaculture item contract", () => {
     expect(itemRegistry.get(aquacultureDefinition.stockingItemDefinitionId)?.displayNameKey).toBe("item.fish_tilapia.name");
     expect(itemRegistry.get(aquacultureDefinition.harvestItemDefinitionId)?.displayNameKey).toBe("item.fish_tilapia_adult.name");
     const adultSale = shops.find((entry) => entry.id === "shop_fish_tilapia_adult");
-    expect(adultSale).toMatchObject({ itemDefinitionId: "item_fish_tilapia_adult", sellPrice: 5 });
+    expect(adultSale).toMatchObject({ itemDefinitionId: "item_fish_tilapia_adult", sellPrice: 6 });
     expect(shops.find((entry) => entry.id === "shop_fish_tilapia")?.sellPrice).toBe(2);
     expect(adultSale?.buyPrice).toBeUndefined();
   });

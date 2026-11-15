@@ -611,6 +611,7 @@ export class GameDataWarehouseTiers implements WarehouseTierRepository {
       tier: tier.tier,
       displayNameKey: tier.displayNameKey,
       capacity: tier.capacity,
+      requiredLevel: tier.requiredLevel,
       upgrade:
         tier.upgrade === null
           ? null

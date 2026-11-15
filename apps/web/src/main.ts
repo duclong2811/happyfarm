@@ -2328,10 +2328,19 @@ function renderWarehouse(): void {
       (material) => `${format(material.quantity)} ${itemName(material.itemDefinitionId, itemDisplayKey(material.itemDefinitionId) ?? "")}`
     )
   ];
-  next.textContent = `${t("warehouse.nextCapacity", { capacity: format(warehouse.nextCapacity) })} · ${t("warehouse.cost", { cost: costParts.join(" · ") })}`;
+  // The server enforces the level; the panel says it first, so the button never promises a refusal.
+  const requiredLevel = warehouse.nextRequiredLevel ?? 1;
+  const levelShort = state.progression !== null && state.progression.level < requiredLevel;
+  next.textContent = [
+    t("warehouse.nextCapacity", { capacity: format(warehouse.nextCapacity) }),
+    ...(requiredLevel > 1 ? [t("warehouse.requiresLevel", { level: String(requiredLevel) })] : []),
+    t("warehouse.cost", { cost: costParts.join(" · ") })
+  ].join(" · ");
   upgrade.hidden = false;
-  upgrade.disabled = warehouseUpgradePending || !accountReady || reconciliationPending;
-  upgrade.textContent = warehouseUpgradePending ? t("warehouse.upgrading") : t("warehouse.upgrade");
+  upgrade.disabled = warehouseUpgradePending || !accountReady || reconciliationPending || levelShort;
+  upgrade.textContent = warehouseUpgradePending
+    ? t("warehouse.upgrading")
+    : levelShort ? t("warehouse.levelLocked", { level: String(requiredLevel) }) : t("warehouse.upgrade");
 }
 
 /**

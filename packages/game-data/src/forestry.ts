@@ -6,10 +6,10 @@
  * producer and intentionally yields more than these ordinary trees.
  */
 export const FORESTRY_CONSTRUCTION_DEFINITIONS = {
-  "world.tree_broad": { dropItemDefinitionId: "item_wood", dropQuantity: 2, regenerationSeconds: 720, stumpSizeWorld: 1.15, xp: 2 },
-  "world.tree_pine": { dropItemDefinitionId: "item_wood", dropQuantity: 2, regenerationSeconds: 900, stumpSizeWorld: 1.3, xp: 3 },
-  place_tree_broad: { dropItemDefinitionId: "item_wood", dropQuantity: 2, regenerationSeconds: 720, stumpSizeWorld: 1.15, xp: 2 },
-  place_tree_pine: { dropItemDefinitionId: "item_wood", dropQuantity: 2, regenerationSeconds: 900, stumpSizeWorld: 1.3, xp: 3 }
+  "world.tree_broad": { dropItemDefinitionId: "item_wood", dropQuantity: 4, regenerationSeconds: 720, stumpSizeWorld: 1.15, xp: 2 },
+  "world.tree_pine": { dropItemDefinitionId: "item_wood", dropQuantity: 4, regenerationSeconds: 900, stumpSizeWorld: 1.3, xp: 3 },
+  place_tree_broad: { dropItemDefinitionId: "item_wood", dropQuantity: 4, regenerationSeconds: 720, stumpSizeWorld: 1.15, xp: 2 },
+  place_tree_pine: { dropItemDefinitionId: "item_wood", dropQuantity: 4, regenerationSeconds: 900, stumpSizeWorld: 1.3, xp: 3 }
 } as const;
 
 export type ForestryConstructionEntryId = keyof typeof FORESTRY_CONSTRUCTION_DEFINITIONS;
