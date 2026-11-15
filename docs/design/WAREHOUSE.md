@@ -107,6 +107,14 @@ loser names the winner's transaction, so its whole batch rolls back and it fails
 `UpgradeWarehouse` also re-reads the row on a lost race and answers `CONFLICT_STALE_STATE` when the tier
 moved, rather than retrying a step that belongs to the past.
 
+The receipt also requires each consumed material stack exactly where this write's own removal leaves
+it (the quantity read less the cost, at the next version), the same guard the mine upgrade uses. A
+removal is guarded by the quantity and version the caller read, so a stack that moved after the read
+updates no row without raising an error; before this guard the batch still committed, charging gold and
+raising the tier while that material was never taken. Now the batch rolls back as an economy conflict,
+and `UpgradeWarehouse` re-reads the materials on each attempt: it takes them from where they now are,
+or answers `INSUFFICIENT_ITEMS` when they no longer cover the cost.
+
 ## Legacy / grandfathering
 
 Existing players are backfilled to the starter tier by the migration, and new players get a row in the

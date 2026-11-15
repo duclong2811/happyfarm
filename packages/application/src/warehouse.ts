@@ -168,20 +168,23 @@ export class UpgradeWarehouse {
     if (currency === null) throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
 
     const materials = Object.entries(cost.materials);
-    const expectedInventory: InventoryItem[] = [];
-    for (const [itemDefinitionId, quantity] of materials) {
-      const row = await this.inventory.find(actor.playerId, parseItemDefinitionId(itemDefinitionId));
-      if (row === null || row.quantity < quantity) {
-        throw new ApplicationError("INSUFFICIENT_ITEMS", "The upgrade requires materials the island does not have");
-      }
-      expectedInventory.push(row);
-    }
-    // The upgrade only removes materials, so the usage after it is deterministic; the response the
-    // receipt stores must agree with what a replay later returns.
-    const usedBefore = await this.warehouse.usedCapacity(actor.playerId);
-    const usedAfter = usedBefore - materials.reduce((sum, [, quantity]) => sum + quantity, 0);
+    const consumed = materials.reduce((sum, [, quantity]) => sum + quantity, 0);
 
     for (let attempt = 0; attempt < 16; attempt += 1) {
+      // The stacks are read on every attempt. The write consumes each one only exactly as it was read,
+      // and is refused if any moved since; retrying from the same rows could then never succeed. A
+      // fresh read takes the materials from where they are now, or refuses if they no longer suffice.
+      const expectedInventory: InventoryItem[] = [];
+      for (const [itemDefinitionId, quantity] of materials) {
+        const row = await this.inventory.find(actor.playerId, parseItemDefinitionId(itemDefinitionId));
+        if (row === null || row.quantity < quantity) {
+          throw new ApplicationError("INSUFFICIENT_ITEMS", "The upgrade requires materials the island does not have");
+        }
+        expectedInventory.push(row);
+      }
+      // The upgrade only removes materials, so the usage after it is deterministic; the response the
+      // receipt stores must agree with what a replay later returns.
+      const usedAfter = (await this.warehouse.usedCapacity(actor.playerId)) - consumed;
       const wallet = (await this.wallets.find(actor.playerId, currency.id)) ?? {
         playerId: actor.playerId,
         currencyDefinitionId: currency.id,
@@ -239,7 +242,8 @@ export class UpgradeWarehouse {
         // The step is chosen once, from the tier the caller read. If the island has moved on - another
         // upgrade raised it - this request's decision is stale. Retrying the same step would either
         // charge for a tier that is already paid for or, worse, be approved by the sibling's write;
-        // the honest answer is that the world changed, and the player can look again.
+        // the honest answer is that the world changed, and the player can look again. A wallet or a
+        // material stack that merely moved leaves the step valid: the next attempt reads them afresh.
         const latest = await this.warehouse.find(actor.playerId);
         if (latest !== null && latest.tier !== current.tier) {
           throw new ApplicationError("CONFLICT_STALE_STATE", "The warehouse changed while upgrading");

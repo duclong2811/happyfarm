@@ -606,14 +606,50 @@ export class D1PlayerRepository implements PlayerRepository {
 }
 
 /**
+ * The receipt guards proving that an upgrade took every material it was priced with.
+ *
+ * Each removal's UPDATE matches only the stack exactly as the caller read it, so a stack that moved
+ * after the read updates no row - and raises no error. One EXISTS per removal requires the stack where
+ * this write's own UPDATE leaves it (the quantity read less the removal, at the next version); if any
+ * UPDATE missed, the receipt's actor is NULL and the whole batch rolls back. That proof holds only for
+ * one removal per stack, read for the player being charged, so anything else is refused before writing.
+ */
+function consumedStackGuards(
+  playerId: PlayerId,
+  removals: readonly InventoryRemoval[],
+  expectedInventory: readonly InventoryItem[]
+): { readonly sql: string; readonly values: readonly (string | number)[] } {
+  const seen = new Set<string>();
+  const values = removals.flatMap((removal, index) => {
+    const expected = expectedInventory[index];
+    if (
+      expected === undefined ||
+      removal.playerId !== playerId ||
+      expected.playerId !== playerId ||
+      expected.itemDefinitionId !== removal.itemDefinitionId ||
+      seen.has(removal.itemDefinitionId)
+    ) {
+      throw new ApplicationError("INVALID_INPUT", "Upgrade materials do not match the stacks read");
+    }
+    seen.add(removal.itemDefinitionId);
+    return [playerId, removal.itemDefinitionId, expected.quantity - removal.quantity, expected.version + 1];
+  });
+  const sql = removals
+    .map(() => " AND EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?)")
+    .join("");
+  return { sql, values };
+}
+
+/**
  * The Island Warehouse's persistence: the capacity row, the used-capacity aggregate, and the one
  * atomic upgrade.
  *
  * `upgradeAtomically` writes the ledger row (which the ledger triggers validate against the wallet and
  * apply to it), the materials consumed, the tier and capacity change, and the receipt - all in one
  * batch. The warehouse update is guarded by the tier and version the caller read, and the receipt is
- * written only if the resulting state exists, so two racing upgrades cannot both win and the cap can
- * never rise without being paid for.
+ * written only if the resulting state exists - the wallet, the ledger row, the warehouse step and each
+ * consumed stack - so two racing upgrades cannot both win, and the cap can never rise without being
+ * paid for in gold and in materials.
  */
 export class D1WarehouseRepository implements WarehouseRepository {
   constructor(private readonly db: D1DatabaseLike) {}
@@ -648,6 +684,7 @@ export class D1WarehouseRepository implements WarehouseRepository {
     if (upgrade.expectedInventory.length !== upgrade.removals.length) {
       throw new ApplicationError("INVALID_INPUT", "Warehouse upgrade materials do not match");
     }
+    const stackGuards = consumedStackGuards(upgrade.playerId, upgrade.removals, upgrade.expectedInventory);
 
     const statements: D1PreparedStatementLike[] = [
       this.db
@@ -703,7 +740,7 @@ export class D1WarehouseRepository implements WarehouseRepository {
         ),
       this.db
         .prepare(
-          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM home_island_warehouses WHERE owner_player_id = ? AND tier = ? AND version = ? AND last_upgrade_transaction_id = ?) THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM home_island_warehouses WHERE owner_player_id = ? AND tier = ? AND version = ? AND last_upgrade_transaction_id = ?)${stackGuards.sql} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           upgrade.economy.playerId,
@@ -716,6 +753,7 @@ export class D1WarehouseRepository implements WarehouseRepository {
           upgrade.toTier,
           upgrade.expectedVersion + 1,
           upgrade.economy.transactionId,
+          ...stackGuards.values,
           idempotency.actorPlayerId,
           idempotency.operation,
           idempotency.requestId,
@@ -904,11 +942,7 @@ export class D1MineRepository implements MineRepository {
     if (upgrade.expectedInventory.length !== upgrade.removals.length) {
       throw new ApplicationError("INVALID_INPUT", "Mine upgrade materials do not match");
     }
-    const inventoryGuards = upgrade.removals.map(() => "EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?)");
-    const inventoryGuardValues = upgrade.removals.flatMap((removal, index) => {
-      const expected = upgrade.expectedInventory[index];
-      return [removal.playerId, removal.itemDefinitionId, (expected?.quantity ?? -1) - removal.quantity, (expected?.version ?? -2) + 1];
-    });
+    const stackGuards = consumedStackGuards(upgrade.playerId, upgrade.removals, upgrade.expectedInventory);
     const statements: D1PreparedStatementLike[] = [
       this.db
         .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
@@ -940,7 +974,7 @@ export class D1MineRepository implements MineRepository {
       this.mineUpdate(upgrade.mine, upgrade.change, upgrade.timestamp),
       this.db
         .prepare(
-          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM farm_mines WHERE id = ? AND level = ? AND version = ? AND last_change_id = ?)${inventoryGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM farm_mines WHERE id = ? AND level = ? AND version = ? AND last_change_id = ?)${stackGuards.sql} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           upgrade.economy.playerId,
@@ -953,7 +987,7 @@ export class D1MineRepository implements MineRepository {
           upgrade.change.level,
           upgrade.mine.version + 1,
           upgrade.change.marker,
-          ...inventoryGuardValues,
+          ...stackGuards.values,
           idempotency.actorPlayerId,
           idempotency.operation,
           idempotency.requestId,

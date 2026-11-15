@@ -15,6 +15,7 @@ import {
   InventoryService,
   UpgradeWarehouse,
   type IdempotencyRecord,
+  type InventoryRepository,
   type WalletRepository
 } from "@happy-farm/application";
 import {
@@ -51,7 +52,7 @@ describe("island warehouse", () => {
   let warehouse: D1WarehouseRepository;
   let status: GetWarehouseStatus;
   let upgrade: UpgradeWarehouse;
-  let upgradeWith: (walletsPort: WalletRepository) => UpgradeWarehouse;
+  let upgradeWith: (walletsPort: WalletRepository, inventoryPort?: InventoryRepository) => UpgradeWarehouse;
   let inventory: D1InventoryRepository;
   let wallets: D1WalletRepository;
   let economySettlement: D1EconomySettlementRepository;
@@ -84,13 +85,13 @@ describe("island warehouse", () => {
     wallets = new D1WalletRepository(db);
     warehouse = new D1WarehouseRepository(db);
     status = new GetWarehouseStatus(warehouse, tiers);
-    upgradeWith = (walletsPort) =>
+    upgradeWith = (walletsPort, inventoryPort = inventory) =>
       new UpgradeWarehouse(
         warehouse,
         tiers,
         walletsPort,
         currencies,
-        inventory,
+        inventoryPort,
         new EconomyService(ids, clock),
         new InventoryService(items, clock),
         new D1IdempotencyRepository(db),
@@ -191,13 +192,21 @@ describe("island warehouse", () => {
     expect(spent).toBe(500);
   });
 
-  /** One step, written straight through the repository from the tier and version the caller read. */
-  async function upgradeThroughRepository(requestId: string, transactionId: string, read: { tier: number; version: number }): Promise<void> {
+  /**
+   * One step, written straight through the repository from the tier and version the caller read.
+   * `items` are the stacks it reads and takes 50 of each; `beforeWrite` runs after every read.
+   */
+  async function upgradeThroughRepository(
+    requestId: string,
+    transactionId: string,
+    read: { tier: number; version: number },
+    options: { readonly items?: readonly string[]; readonly beforeWrite?: () => void } = {}
+  ): Promise<void> {
     const gold = parseCurrencyDefinitionId("currency_gold");
     const wallet = await wallets.find(PLAYER_ONE_ID, gold);
     if (wallet === null) throw new Error("wallet was not seeded");
     const expectedInventory: InventoryItem[] = [];
-    for (const itemId of ["item_wood", "item_ore"]) {
+    for (const itemId of options.items ?? ["item_wood", "item_ore"]) {
       const row = await inventory.find(PLAYER_ONE_ID, parseItemDefinitionId(itemId));
       if (row === null) throw new Error(`${itemId} was not stocked`);
       expectedInventory.push(row);
@@ -227,6 +236,7 @@ describe("island warehouse", () => {
       status: "COMPLETED",
       createdAt: NOW
     };
+    options.beforeWrite?.();
     await warehouse.upgradeAtomically(
       {
         playerId: PLAYER_ONE_ID,
@@ -305,6 +315,111 @@ describe("island warehouse", () => {
     expect((await inventory.find(PLAYER_ONE_ID, parseItemDefinitionId("item_ore")))?.quantity).toBe(450);
     expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'WAREHOUSE_UPGRADE'").get()).toEqual({ n: 1 });
     expect(db.sqlite.prepare("SELECT request_id FROM idempotency_keys").all()).toEqual([{ request_id: "req_upgrade_sibling" }]);
+  });
+
+  /** The island before any upgrade, with wood spent from 500 to `wood` by someone else (version 2). */
+  function untouchedExceptWood(wood: number): unknown {
+    return {
+      warehouse: { tier: 0, capacity: 1000, version: 1 },
+      wallet: { balance: 100_000, version: 1 },
+      inventory: [
+        { item_definition_id: "item_ore", quantity: 500, version: 1 },
+        { item_definition_id: "item_wood", quantity: wood, version: 2 }
+      ],
+      ledger: [],
+      receipts: []
+    };
+  }
+
+  function spendWood(quantity: number): void {
+    db.sqlite
+      .prepare("UPDATE inventory_items SET quantity = ?, version = version + 1 WHERE player_id = ? AND item_definition_id = 'item_wood'")
+      .run(quantity, PLAYER_ONE_ID);
+  }
+
+  it("refuses an upgrade whose materials moved after they were read, and charges nothing", async () => {
+    stock("item_wood", 500);
+    stock("item_ore", 500);
+    let moved: unknown = null;
+    // Someone spends wood between this request's read and its write, so the wood UPDATE - guarded by
+    // the quantity and version read - matches no row. The ledger, the ore and the warehouse guards all
+    // still hold; only a guard on the wood stack itself can tell that the wood was never taken.
+    const attempt = upgradeThroughRepository("req_upgrade_moved", "econ_eeeeeeee-eeee-4eee-8eee-000000000003", { tier: 0, version: 1 }, {
+      beforeWrite: () => {
+        spendWood(400);
+        moved = snapshot();
+      }
+    });
+    await expect(attempt).rejects.toSatisfy((error: unknown) => error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT");
+    // No gold charged, no material changed, the tier unchanged, no ledger row and no receipt.
+    expect(moved).toEqual(untouchedExceptWood(400));
+    expect(snapshot()).toEqual(moved);
+  });
+
+  it("refuses a material list that names one stack twice", async () => {
+    stock("item_wood", 500);
+    stock("item_ore", 500);
+    const before = snapshot();
+    // Both wood removals were read at 500/v1, so after the first one lands the second matches no row -
+    // yet the stack sits exactly where each guard expects it. One removal per stack is what makes the
+    // guard a proof, so the repository refuses anything else before writing.
+    const attempt = upgradeThroughRepository("req_upgrade_twice", "econ_eeeeeeee-eeee-4eee-8eee-000000000004", { tier: 0, version: 1 }, {
+      items: ["item_wood", "item_wood"]
+    });
+    await expect(attempt).rejects.toSatisfy((error: unknown) => error instanceof ApplicationError && error.code === "INVALID_INPUT");
+    expect(snapshot()).toEqual(before);
+  });
+
+  /** An inventory port that spends wood down to `wood` right after this request first reads it. */
+  function inventorySpendingWoodAfterRead(wood: number): InventoryRepository {
+    let spent = false;
+    return {
+      find: async (playerId, itemDefinitionId) => {
+        const row = await inventory.find(playerId, itemDefinitionId);
+        if (!spent && itemDefinitionId === "item_wood") {
+          spent = true;
+          spendWood(wood);
+        }
+        return row;
+      },
+      listByPlayer: (playerId) => inventory.listByPlayer(playerId)
+    };
+  }
+
+  it("re-reads materials that moved before the write, and takes them from where they now are", async () => {
+    stock("item_wood", 500);
+    stock("item_ore", 500);
+    const execute = (): Promise<unknown> =>
+      upgradeWith(wallets, inventorySpendingWoodAfterRead(400)).execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_moved_retry" });
+    // The first write is refused by the wood guard. Retrying from the same stale read could never
+    // succeed; the retry reads wood at 400 and takes its 50 from there.
+    const view = await execute();
+    expect(view).toMatchObject({ tier: 1, capacity: 2500, used: 800 });
+    expect(snapshot()).toMatchObject({
+      warehouse: { tier: 1, capacity: 2500, version: 2 },
+      wallet: { balance: 99_500, version: 2 },
+      inventory: [
+        { item_definition_id: "item_ore", quantity: 450, version: 2 },
+        { item_definition_id: "item_wood", quantity: 350, version: 3 }
+      ],
+      receipts: [{ request_id: "req_upgrade_moved_retry" }]
+    });
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'WAREHOUSE_UPGRADE'").get()).toEqual({ n: 1 });
+    // The receipt answers with what the island really holds, and a replay repeats it without a charge.
+    expect((await status.execute({ playerId: PLAYER_ONE_ID })).used).toBe(800);
+    expect(await upgrade.execute({ playerId: PLAYER_ONE_ID }, { requestId: "req_upgrade_moved_retry" })).toEqual(view);
+    expect((await wallets.find(PLAYER_ONE_ID, parseCurrencyDefinitionId("currency_gold")))?.balance).toBe(99_500);
+  });
+
+  it("refuses, charging nothing, an upgrade whose materials were spent below its cost before the write", async () => {
+    stock("item_wood", 500);
+    stock("item_ore", 500);
+    const attempt = upgradeWith(wallets, inventorySpendingWoodAfterRead(10)).execute(
+      { playerId: PLAYER_ONE_ID },
+      { requestId: "req_upgrade_moved_short" }
+    );
+    await expect(attempt).rejects.toMatchObject({ code: "INSUFFICIENT_ITEMS" });
+    expect(snapshot()).toEqual(untouchedExceptWood(10));
   });
 
   it("refuses an upgrade the island lacks materials for", async () => {
