@@ -14,6 +14,7 @@
     "assets:validate": "node tools/asset-pipeline/node/validate.mjs",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "dev": "npm run dev --workspace @happy-farm/web",
+    "dev:island": "node scripts/dev-island.mjs",
     "dev:worker": "wrangler dev --config workers/api/wrangler.dev.toml",
     "build:worker:dev": "wrangler deploy --dry-run --outdir ../../dist/worker-dev --config workers/api/wrangler.dev.toml",
     "build:worker:staging": "wrangler deploy --dry-run --outdir ../../dist/worker-staging --config workers/api/wrangler.staging.toml",
