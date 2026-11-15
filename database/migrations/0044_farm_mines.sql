@@ -5,7 +5,7 @@
 -- clock last restarted, and the server computes what a mine holds from server time when it is read,
 -- capped at the game data's accumulation window. Amounts are thousandths of an ore so a partial dig
 -- (the warehouse had room for only some) or a mid-hour upgrade never rounds ore away. Rows are made
--- lazily when the owner's level has opened the slot; a slot with no row has never been opened.
+-- lazily when the owner's level has opened the slot - a slot with no row has never been opened.
 --
 -- `last_change_id` is the marker of the write that produced the row's current version: the upgrade's
 -- ledger id, or the dig's own marker. A receipt is written only when the row carries *its* marker at
