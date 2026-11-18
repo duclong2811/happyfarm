@@ -1559,6 +1559,11 @@ export interface WorldChartPort {
   readonly wildGeneratorVersion: number;
   findSlot(slotId: string): WorldChartSlot | null;
   findArchipelago(archipelagoId: string): WorldChartArchipelago | null;
+  /**
+   * The archipelagos on one player's own chart: their home archipelago and what they have seen from
+   * the places they visited. The geography of "seen" is game data's, not the application's.
+   */
+  chartedArchipelagos(homeSlotId: string | null, visitedSlotIds: readonly string[]): readonly WorldChartArchipelago[];
   nextFreeSlot(region: SeaRegionName, isClaimed: (slotId: string) => boolean): WorldChartSlot | null;
   openArchipelagos(region: SeaRegionName, isClaimed: (slotId: string) => boolean): readonly WorldChartArchipelago[];
 }
@@ -1566,13 +1571,22 @@ export interface WorldChartPort {
 /** A claimed slot, with the island standing on it (null for a farm on the composed island). */
 export interface ClaimedWorldSlot extends WorldSlotClaim {
   readonly island: WorldIslandTemplate | null;
+  /** The island's name: the farm's own, as its owner named it. */
+  readonly name: string | null;
+}
+
+/** The places a player has visited on the world map: what their chart is grown from. */
+export interface WorldVisitRepository {
+  listVisited(playerId: PlayerId): Promise<readonly string[]>;
+  /** Records a visit once; visiting the same place again changes nothing. */
+  record(playerId: PlayerId, slotId: string, visitedAt: string): Promise<void>;
 }
 
 export interface WorldSlotRepository {
   claimedSlotIds(): Promise<ReadonlySet<string>>;
   findByFarm(farmId: FarmId): Promise<WorldSlotClaim | null>;
   listClaimed(): Promise<readonly ClaimedWorldSlot[]>;
-  /** The claims on these slots only (an archipelago's, at most sixteen): one indexed read. */
+  /** The claims on these slots only (one player's charted archipelagos): indexed reads. */
   listClaimedIn(slotIds: readonly string[]): Promise<readonly ClaimedWorldSlot[]>;
   /** Writes the claim unless the slot or the farm already has one; true when this call wrote it. */
   claim(claim: WorldSlotClaim): Promise<boolean>;

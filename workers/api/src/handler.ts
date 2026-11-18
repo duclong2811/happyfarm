@@ -3,6 +3,8 @@
   EnsureWorldSlot,
   GetMyArchipelago,
   GetWorldChart,
+  VisitWorldPlace,
+  type PublicIslandView,
   type WorldArchipelagoView,
   CropStateProjector,
   GetFarmCrops,
@@ -166,6 +168,9 @@ import {
   type GetFarmIslandResponse,
   type GetWorldChartResponse,
   type GetWorldArchipelagoResponse,
+  type VisitWorldPlaceResponse,
+  type PublicIslandDTO,
+  VisitWorldPlaceRequestSchema,
   type EnsureWorldSlotResponse,
   IslandElementSchema,
   IslandOutlineSchema,
@@ -352,6 +357,7 @@ import {
   D1FarmMemberRepository,
   D1FarmIslandRepository,
   D1WorldSlotRepository,
+  D1WorldVisitRepository,
   D1FarmRepository,
   D1PlayerAppearanceRepository,
   D1FarmTileRepository,
@@ -808,6 +814,7 @@ function toWorldArchipelagoDTO(archipelago: WorldArchipelagoView): GetWorldChart
       z: slot.z,
       claimed: slot.claimed,
       mine: slot.mine,
+      name: slot.name,
       island: {
         element: IslandElementSchema.parse(slot.island.element),
         outline: IslandOutlineSchema.parse(slot.island.outline),
@@ -815,6 +822,47 @@ function toWorldArchipelagoDTO(archipelago: WorldArchipelagoView): GetWorldChart
         generatorVersion: slot.island.generatorVersion
       }
     }))
+  };
+}
+
+/**
+ * A settled island as a visitor sees it: the renderer's fields only. No farm, player, crop, tree or
+ * object id leaves here, and nothing of the owner's private state was read to build it.
+ */
+function toPublicIslandDTO(view: PublicIslandView): PublicIslandDTO {
+  return {
+    name: view.name,
+    island: toFarmIslandDTO(view.island),
+    tiles: view.tiles.map((tile) => ({ x: tile.x, y: tile.y, terrainType: tile.terrainType, state: tile.state })),
+    crops: view.crops.map((crop) => ({
+      definitionId: crop.definitionId,
+      tileX: crop.tileX,
+      tileY: crop.tileY,
+      growthStage: crop.growthStage,
+      growthProgress: crop.growthProgress,
+      mature: crop.mature
+    })),
+    trees: view.trees.map((tree) => ({
+      definitionId: tree.definitionId,
+      tileX: tree.tileX,
+      tileY: tree.tileY,
+      phase: tree.phase,
+      growthStage: tree.growthStage,
+      growthProgress: tree.growthProgress,
+      ready: tree.ready,
+      rotation: tree.rotation
+    })),
+    constructions: view.constructions.map((construction) => {
+      const dto = toConstructionDTO(construction);
+      return {
+        entryId: dto.entryId,
+        category: dto.category,
+        anchorX: dto.anchorX,
+        anchorY: dto.anchorY,
+        rotation: dto.rotation,
+        footprint: { ...dto.footprint }
+      };
+    })
   };
 }
 
@@ -969,6 +1017,7 @@ function errorStatus(code: ErrorCode): number {
     case "MINE_SLOT_LOCKED":
     case "MINE_LEVEL_REQUIRED":
     case "ISLAND_CHOICE_UNAVAILABLE":
+    case "WORLD_PLACE_UNCHARTED":
     case "CHARACTER_NOT_AVAILABLE":
     case "PLOT_LEVEL_REQUIRED":
     case "LAND_NOT_DEVELOPABLE":
@@ -1166,7 +1215,10 @@ export function createHandler(host: HandlerDependencies) {
   const progressions = new D1ProgressionRepository(dependencies.db);
   const farmIslands = new D1FarmIslandRepository(dependencies.db);
   const islandChoiceEnabled = dependencies.islands?.choiceEnabled === true;
-  const worldPlacement = dependencies.world === undefined ? undefined : { chart: dependencies.world.chart, slots: new D1WorldSlotRepository(dependencies.db) };
+  const worldPlacement =
+    dependencies.world === undefined
+      ? undefined
+      : { chart: dependencies.world.chart, slots: new D1WorldSlotRepository(dependencies.db), visits: new D1WorldVisitRepository(dependencies.db) };
   const createFarm = new CreateFarm(
     players,
     farms,
@@ -1582,6 +1634,15 @@ export function createHandler(host: HandlerDependencies) {
         });
   const listPlots = new ListPlots(dependencies.plotDefinitions, farms, members, tiles);
   const treeProjector = new TreeStateProjector(dependencies.treeDefinitions, dependencies.clock);
+  const visitWorldPlace =
+    worldPlacement === undefined
+      ? null
+      : new VisitWorldPlace(
+          farms,
+          worldPlacement,
+          { islands: farmIslands, tiles, crops, cropProjector: projector, trees, treeProjector, constructions },
+          dependencies.clock
+        );
   const treeIdempotency = new D1IdempotencyRepository(dependencies.db);
   const plantTree = new PlantTree({
     farms,
@@ -2153,6 +2214,34 @@ export function createHandler(host: HandlerDependencies) {
               region: entry.region,
               archipelagos: entry.archipelagos.map((archipelago) => toWorldArchipelagoDTO(archipelago))
             }))
+          }
+        };
+        return jsonResponse(body);
+      }
+
+      if (visitWorldPlace !== null && request.method === "POST" && url.pathname === "/world/visit") {
+        const parsed = VisitWorldPlaceRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const visit = await visitWorldPlace.execute(actor, parsed.data);
+        const body: ApiSuccess<VisitWorldPlaceResponse> = {
+          ok: true,
+          data: {
+            place: {
+              slotId: visit.slotId,
+              region: visit.region,
+              archipelagoId: visit.archipelagoId,
+              archipelagoIndex: visit.archipelagoIndex,
+              claimed: visit.claimed,
+              mine: visit.mine,
+              name: visit.name,
+              island: {
+                element: IslandElementSchema.parse(visit.island.element),
+                outline: IslandOutlineSchema.parse(visit.island.outline),
+                seed: visit.island.seed,
+                generatorVersion: visit.island.generatorVersion
+              }
+            },
+            farm: visit.farm === null ? null : toPublicIslandDTO(visit.farm)
           }
         };
         return jsonResponse(body);

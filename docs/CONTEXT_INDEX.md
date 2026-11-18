@@ -934,7 +934,9 @@ slot claiming, or the chart API.
   - `packages/application/src/world.ts` (`nextWorldSlot`, `GetWorldChart`, `EnsureWorldSlot`);
   - the claim inside `CreateFarm`;
   - `D1WorldSlotRepository`, and migration `0045_world_slots.sql`.
-- API: `GET /world/chart`, `GET /world/archipelago`, `POST /world/slot`, and `region` on `POST /farms`. The Worker turns these on
+- API: `GET /world/chart` (per-player: charted archipelagos), `GET /world/archipelago`, `POST /world/visit`,
+  `POST /world/slot`, and `region` on `POST /farms`. Exploration: `chartedArchipelagos` in the chart,
+  `VisitWorldPlace`, `world_visits` (migration 0046). The Worker turns these on
   with `WORLD_MAP_ENABLED = "true"`, after 0045 is applied.
 - Client (W2):
   - `apps/web/src/sea-chart-view.ts`: the chart's geometry, archipelago names and the parchment drawing;
@@ -944,7 +946,8 @@ slot claiming, or the chart API.
   - W3, the archipelago on the horizon: `apps/web/src/render/horizon-islands.ts`, and `setHorizon` in
     `scene.ts`.
 - Tests: `tests/game-data/sea-chart.test.ts`, `tests/api/world-map.test.ts`,
-  `tests/integration/world-slots-migration.test.ts`, `tests/web/sea-chart-view.test.ts`,
+  `tests/integration/world-slots-migration.test.ts`, `tests/integration/world-visits-migration.test.ts`,
+  `tests/web/sea-chart-view.test.ts`,
   `tests/web/horizon-islands.test.ts`.
 
 ### Resource nodes, mining and forestry (V15.2 / V15.3)

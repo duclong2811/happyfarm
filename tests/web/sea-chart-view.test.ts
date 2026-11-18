@@ -38,6 +38,7 @@ function chartWith(claimed: readonly string[], mine: string | null): GetWorldCha
           z: slot.z,
           claimed: taken.has(slot.slotId),
           mine: slot.slotId === mine,
+          name: taken.has(slot.slotId) ? `Isle ${slot.slotId}` : null,
           island: { ...slot.wild, generatorVersion: 2 }
         }))
       }))

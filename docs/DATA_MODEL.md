@@ -483,3 +483,18 @@ seed once islands have been placed.
 - The migration places farms that already had a chosen island round the four regions' first
   archipelagos, in creation order (up to sixteen). Any later one is placed by `POST /world/slot`.
 
+`world_visits` (migration 0046) records the places a player has visited on the world map. A player's
+chart is grown from it: their home archipelago, plus what can be seen from each place listed here
+(`chartedArchipelagos`, `SEA_SIGHT_TILES`).
+
+| Column | Type | Rule |
+|---|---|---|
+| `player_id` | TEXT FK players | the visitor; rows go with the player |
+| `slot_id` | TEXT | a `slot_<region>_<archipelago>_<n>` id the chart has |
+| `visited_at` | TEXT | ISO time of the first visit |
+
+- Primary key `(player_id, slot_id)`: a place is recorded once, and visiting it again changes
+  nothing. Rows per player are bounded by the number of places on the chart.
+- Written only by `POST /world/visit`, after the server has checked the place is on the visitor's
+  own chart. A visit reads the visited island and writes nothing to it.
+

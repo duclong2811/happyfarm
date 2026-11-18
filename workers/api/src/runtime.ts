@@ -145,7 +145,7 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
-import { findSeaSlot, findSeaArchipelago, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import { chartedArchipelagos, findSeaSlot, findSeaArchipelago, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
 import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
@@ -813,6 +813,7 @@ export const gameDataWorldChart: WorldChartPort = {
   wildGeneratorVersion: ISLAND_GENERATOR_VERSION,
   findSlot: (slotId) => findSeaSlot(slotId),
   findArchipelago: (archipelagoId) => findSeaArchipelago(archipelagoId),
+  chartedArchipelagos: (homeSlotId, visitedSlotIds) => chartedArchipelagos(homeSlotId, visitedSlotIds),
   nextFreeSlot: (region, isClaimed) => nextFreeSeaSlot(region, isClaimed),
   openArchipelagos: (region, isClaimed) => openArchipelagos(region, isClaimed)
 };

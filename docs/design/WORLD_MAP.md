@@ -31,7 +31,25 @@ Status: design agreed with the owner on 2026-11-19 (decisions below).
   - Data: `GET /world/archipelago` returns only the reader's archipelago, at most eight places, read
     with one `WHERE slot_id IN (...)`. The game asks once per farm load, and again after the chart
     gives a placeless island its place.
-- W4 onward is not started. The constraints are the ones in `AGENTS.md`: the server is
+- **W4a is built** (owner decisions, 2026-11-20):
+  - **The chart shows only what the player has seen.** An island with a place sees its home
+    archipelago, and what can be seen from every place it has visited: an archipelago comes onto
+    the chart when one of its places is within `SEA_SIGHT_TILES` (520) of a visited place. A visit to
+    the outer edge of an archipelago usually reveals one or two more, a visit on its inner side often
+    none. A reader without a place (a newcomer choosing a sea) still sees the harbour's chart of every
+    open archipelago, so that choice is informed.
+  - **Visiting is looking only** (estate camera, no planting, building, walking or meeting). `POST
+    /world/visit { slotId }` is refused (`WORLD_PLACE_UNCHARTED`, 403) for a place that is not on the
+    visitor's own chart, and for a player without a place. The visit is recorded once in
+    `world_visits` (migration 0046), which is what grows the chart.
+  - What a visitor sees of a settled island: its name, ground, tiles, crops, standing trees and
+    standing objects. No farm, player, crop, tree or object id is returned, and nothing of the
+    owner's private state is read. A free place shows its wild island; home shows home.
+  - **Names:** the chart and a visit show the island's name (the farm's, chosen by its owner), never
+    the account's name.
+  - Known limits: visits are not rate-limited beyond authentication, and a visit is instant. Travel
+    time belongs with ships (W5).
+- W4b (the client's visit view) and W5 onward are not built yet. The constraints are the ones in `AGENTS.md`: the server is
 authoritative, every mutation is validated, migrations are used for every schema change, and no
 proprietary game's map, names or art is copied.
 

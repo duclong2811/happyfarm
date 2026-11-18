@@ -14,10 +14,16 @@ import {
   type PlayerId,
   type TreeInstanceId
 } from "@happy-farm/domain";
-import { seaChart } from "@happy-farm/game-data";
-import { EnsureWorldSlotResponseSchema, GetMyFarmResponseSchema, GetWorldArchipelagoResponseSchema, GetWorldChartResponseSchema } from "@happy-farm/contracts";
+import { chartedArchipelagos, seaChart } from "@happy-farm/game-data";
+import {
+  EnsureWorldSlotResponseSchema,
+  GetMyFarmResponseSchema,
+  GetWorldArchipelagoResponseSchema,
+  GetWorldChartResponseSchema,
+  VisitWorldPlaceResponseSchema
+} from "@happy-farm/contracts";
 import { createHandler } from "../../workers/api/src/handler";
-import { D1FarmMemberRepository, D1FarmRepository, D1PlayerRepository, D1WorldSlotRepository } from "../../workers/api/src/d1-repositories";
+import { D1FarmMemberRepository, D1FarmRepository, D1PlayerRepository, D1WorldSlotRepository, D1WorldVisitRepository } from "../../workers/api/src/d1-repositories";
 import {
   GameDataConstructionDefinitions,
   GameDataCropDefinitions,
@@ -155,6 +161,30 @@ describe("the world map", () => {
     return row?.slot_id ?? null;
   }
 
+  function farmOf(n: number): string {
+    const row = db.sqlite.prepare("SELECT id FROM farms WHERE owner_player_id = ?").get(playerId(n)) as { id: string } | undefined;
+    if (row === undefined) throw new Error(`player ${String(n)} has no farm`);
+    return row.id;
+  }
+
+  function visitsOf(n: number): string[] {
+    return (db.sqlite.prepare("SELECT slot_id FROM world_visits WHERE player_id = ? ORDER BY slot_id").all(playerId(n)) as { slot_id: string }[]).map(
+      (row) => row.slot_id
+    );
+  }
+
+  /** Every row an island's look is made of, to show a visit leaves them as they were. */
+  function islandRows(farmId: string): unknown {
+    return ["farm_tiles", "crop_instances", "tree_instances", "farm_constructions", "farm_islands", "farms"].map((table) =>
+      db.sqlite.prepare(`SELECT * FROM ${table} WHERE ${table === "farms" ? "id" : "farm_id"} = ? ORDER BY 1, 2`).all(farmId)
+    );
+  }
+
+  async function chartIds(): Promise<string[]> {
+    const chart = GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart")));
+    return chart.regions.flatMap((entry) => entry.archipelagos.map((archipelago) => archipelago.archipelagoId));
+  }
+
   beforeEach(() => {
     db = new NodeD1Database(MIGRATIONS);
     auth = new SwitchableAuth(null);
@@ -174,6 +204,7 @@ describe("the world map", () => {
     expect(GetMyFarmResponseSchema.parse(await dataOf(await request("/farms/mine"))).worldMap).toEqual({ enabled: false });
     expect((await request("/world/chart")).status).toBe(404);
     expect((await request("/world/archipelago")).status).toBe(404);
+    expect((await request("/world/visit", { slotId: "slot_north_1_1" })).status).toBe(404);
   });
 
   it("places a chosen island in the next free slot of the region it named", async () => {
@@ -195,17 +226,24 @@ describe("the world map", () => {
     expect(slotOf(size)).toBe(`slot_north_1_${String(size)}`);
     expect(slotOf(size + 1)).toBe("slot_north_2_1");
 
-    auth.setActor({ playerId: playerId(size + 1) });
-    const chart = GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart")));
-    const north = chart.regions.find((entry) => entry.region === "NORTH");
+    // A newcomer, still choosing a sea, reads the harbour's chart: every open archipelago.
+    auth.setActor({ playerId: playerId(size + 2) });
+    const harbour = GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart")));
+    const north = harbour.regions.find((entry) => entry.region === "NORTH");
     expect(north?.archipelagos.map((archipelago) => archipelago.archipelagoId)).toEqual(["sea_north_1", "sea_north_2"]);
-    expect(chart.mySlotId).toBe("slot_north_2_1");
+    expect(harbour.mySlotId).toBeNull();
     // Every other region shows its first archipelago, open from the start and still empty.
     for (const region of ["EAST", "SOUTH", "WEST"]) {
-      const entry = chart.regions.find((candidate) => candidate.region === region);
+      const entry = harbour.regions.find((candidate) => candidate.region === region);
       expect(entry?.archipelagos).toHaveLength(1);
       expect(entry?.archipelagos[0]?.slots.every((slot) => !slot.claimed)).toBe(true);
     }
+
+    // The island that opened the second archipelago knows only its own waters.
+    auth.setActor({ playerId: playerId(size + 1) });
+    const own = GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart")));
+    expect(own.mySlotId).toBe("slot_north_2_1");
+    expect(own.regions.flatMap((entry) => entry.archipelagos.map((archipelago) => archipelago.archipelagoId))).toEqual(["sea_north_2"]);
   });
 
   it("draws a claimed slot with its owner's island and a free one with its wild island", async () => {
@@ -272,7 +310,7 @@ describe("the world map", () => {
       ids,
       clock,
       { enabled: true, builder: gameDataIslandGroundBuilder },
-      { chart: gameDataWorldChart, slots: new StaleOnce(db) }
+      { chart: gameDataWorldChart, slots: new StaleOnce(db), visits: new D1WorldVisitRepository(db) }
     );
     const result = await createFarm.execute({ playerId: playerId(2) }, { name: "Late", island: CHOICE, region: "NORTH" });
     expect(result.created).toBe(true);
@@ -308,12 +346,91 @@ describe("the world map", () => {
     expect(composed.status).toBe(403);
   });
 
+  it("charts only a newcomer's own waters, and grows the chart with each visit", async () => {
+    await settle(1, "NORTH");
+    await settle(2, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    expect(await chartIds()).toEqual(["sea_north_1"]);
+    // A visit to the archipelago's outer edge brings the next archipelagos into sight.
+    const edge = "slot_north_1_5";
+    expect((await request("/world/visit", { slotId: edge })).status).toBe(200);
+    const grown = await chartIds();
+    expect(grown).toEqual(chartedArchipelagos("slot_north_1_1", [edge]).map((archipelago) => archipelago.archipelagoId));
+    expect(grown.length).toBeGreaterThan(1);
+    // Another player's chart is their own: it did not grow.
+    auth.setActor({ playerId: playerId(2) });
+    expect(await chartIds()).toEqual(["sea_north_1"]);
+  });
+
+  it("refuses a place that is not on the reader's chart, and records nothing", async () => {
+    await settle(1, "NORTH");
+    await settle(2, "EAST");
+    auth.setActor({ playerId: playerId(1) });
+    const refused = await request("/world/visit", { slotId: "slot_east_1_1" });
+    expect(refused.status).toBe(403);
+    expect(await codeOf(refused)).toBe("WORLD_PLACE_UNCHARTED");
+    expect(visitsOf(1)).toEqual([]);
+  });
+
+  it("shows a settled island as anyone sailing by would see it, and changes nothing on it", async () => {
+    await settle(1, "NORTH");
+    await settle(2, "NORTH");
+    const other = farmOf(2);
+    const before = islandRows(other);
+    auth.setActor({ playerId: playerId(1) });
+    const response = await request("/world/visit", { slotId: "slot_north_1_2" });
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    // No id of the other farm, its owner, or anything on it leaves the server.
+    expect(text).not.toContain(other);
+    expect(text).not.toContain(playerId(2));
+    expect(text).not.toMatch(/"(farmId|ownerPlayerId|cropInstanceId|treeInstanceId|constructionId|playerId)"/);
+    const body: { readonly data?: unknown } = JSON.parse(text) as { readonly data?: unknown };
+    const view = VisitWorldPlaceResponseSchema.parse(body.data);
+    expect(view.place).toMatchObject({ slotId: "slot_north_1_2", claimed: true, mine: false, name: "Isle 2", island: { ...CHOICE, generatorVersion: 2 } });
+    expect(view.farm?.name).toBe("Isle 2");
+    expect(view.farm?.island).toMatchObject(CHOICE);
+    expect(view.farm?.tiles.length).toBeGreaterThan(0);
+    expect(islandRows(other)).toEqual(before);
+    // A second visit records nothing new.
+    await request("/world/visit", { slotId: "slot_north_1_2" });
+    expect(visitsOf(1)).toEqual(["slot_north_1_2"]);
+  });
+
+  it("shows a free place's wild island, and home as home", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const wild = VisitWorldPlaceResponseSchema.parse(await dataOf(await request("/world/visit", { slotId: "slot_north_1_3" })));
+    const template = seaChart().get("NORTH")?.[0]?.slots[2]?.wild;
+    expect(wild.place).toMatchObject({ claimed: false, mine: false, name: null, island: { ...template, generatorVersion: 2 } });
+    expect(wild.farm).toBeNull();
+    const home = VisitWorldPlaceResponseSchema.parse(await dataOf(await request("/world/visit", { slotId: "slot_north_1_1" })));
+    expect(home.place).toMatchObject({ claimed: true, mine: true, name: "Isle 1" });
+    expect(home.farm).toBeNull();
+    expect(visitsOf(1)).toEqual(["slot_north_1_3"]);
+  });
+
+  it("lets only an island with a place on the chart sail", async () => {
+    auth.setActor({ playerId: playerId(1) });
+    expect(await codeOf(await request("/world/visit", { slotId: "slot_north_1_1" }))).toBe("WORLD_PLACE_UNCHARTED");
+    expect((await request("/farms", { name: "Composed" })).status).toBe(201);
+    const refused = await request("/world/visit", { slotId: "slot_north_1_1" });
+    expect(refused.status).toBe(403);
+    expect(await codeOf(refused)).toBe("WORLD_PLACE_UNCHARTED");
+  });
+
   it("validates what a client sends and who is asking", async () => {
     auth.setActor({ playerId: playerId(1) });
     expect((await request("/farms", { name: "Isle", island: CHOICE, region: "CENTRE" })).status).toBe(400);
     expect((await request("/farms", { name: "Isle", island: CHOICE, slotId: "slot_north_1_1" })).status).toBe(400);
     expect((await request("/world/slot", { region: "UP" })).status).toBe(400);
+    for (const body of [{}, { slotId: "north" }, { slotId: "slot_north_1_1", farmId: "farm_x" }, { slotId: "slot_north_1111_1" }, { slotId: 7 }]) {
+      expect((await request("/world/visit", body)).status).toBe(400);
+    }
+    await settle(1, "NORTH");
+    expect(await codeOf(await request("/world/visit", { slotId: "slot_north_99_1" }))).toBe("RESOURCE_NOT_FOUND");
     auth.setActor(null);
+    expect((await request("/world/visit", { slotId: "slot_north_1_1" })).status).toBe(401);
     expect((await request("/world/chart")).status).toBe(401);
     expect((await request("/world/archipelago")).status).toBe(401);
   });

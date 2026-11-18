@@ -69,6 +69,8 @@ export const WorldChartSlotDTOSchema = z
     z: z.number().int(),
     claimed: z.boolean(),
     mine: z.boolean(),
+    /** A settled island's name, as its owner named it; null on a free place. */
+    name: z.string().min(1).max(80).nullable(),
     island: WorldIslandTemplateSchema
   })
   .strict();
@@ -2053,6 +2055,7 @@ export const ErrorCodeSchema = z.enum([
   "WAREHOUSE_LEVEL_REQUIRED",
   "ISLAND_CHOICE_UNAVAILABLE",
   "WORLD_REGION_FULL",
+  "WORLD_PLACE_UNCHARTED",
   "CHARACTER_NOT_AVAILABLE",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
@@ -2152,6 +2155,81 @@ export const ErrorCodeSchema = z.enum([
   "RATE_LIMITED",
   "INTERNAL_ERROR"
 ]);
+
+/**
+ * `POST /world/visit` (W4): sail to a place on the reader's own chart and look at it.
+ *
+ * The answer is what anyone sailing by would see. A settled island's view carries no farm, player,
+ * crop, tree or object id and nothing of its owner's private state - only its ground and what stands
+ * and grows on it, for the renderer.
+ */
+export const VisitWorldPlaceRequestSchema = z.object({ slotId: z.string().max(40).regex(/^slot_[a-z]+_\d{1,3}_\d{1,3}$/) }).strict();
+
+export const PublicIslandTileDTOSchema = z
+  .object({ x: z.number().int(), y: z.number().int(), terrainType: TerrainTypeSchema, state: TileStateSchema })
+  .strict();
+export const PublicIslandCropDTOSchema = z
+  .object({
+    definitionId: CropDefinitionIdSchema,
+    tileX: z.number().int(),
+    tileY: z.number().int(),
+    growthStage: z.number().int().nonnegative(),
+    growthProgress: z.number().min(0).max(1),
+    mature: z.boolean()
+  })
+  .strict();
+export const PublicIslandTreeDTOSchema = z
+  .object({
+    definitionId: TreeDefinitionIdSchema,
+    tileX: z.number().int(),
+    tileY: z.number().int(),
+    phase: z.enum(TREE_PHASES),
+    growthStage: z.number().int().nonnegative(),
+    growthProgress: z.number().min(0).max(1),
+    ready: z.boolean(),
+    rotation: TreeRotationSchema
+  })
+  .strict();
+export const PublicIslandConstructionDTOSchema = z
+  .object({
+    entryId: z.string().regex(/^(place_[a-z0-9]+(?:_[a-z0-9]+)*|world\.[a-z0-9]+(?:_[a-z0-9]+)*)$/),
+    category: z.string().min(1).max(40),
+    anchorX: z.number().min(-1_000_000).max(1_000_000),
+    anchorY: z.number().min(-1_000_000).max(1_000_000),
+    rotation: ConstructionRotationSchema,
+    footprint: z.object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() }).strict()
+  })
+  .strict();
+export const PublicIslandDTOSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    island: FarmIslandDTOSchema,
+    tiles: z.array(PublicIslandTileDTOSchema).max(70_000),
+    crops: z.array(PublicIslandCropDTOSchema).max(70_000),
+    trees: z.array(PublicIslandTreeDTOSchema).max(20_000),
+    constructions: z.array(PublicIslandConstructionDTOSchema).max(20_000)
+  })
+  .strict();
+export const VisitWorldPlaceResponseSchema = z
+  .object({
+    place: z
+      .object({
+        slotId: z.string(),
+        region: SeaRegionSchema,
+        archipelagoId: z.string(),
+        archipelagoIndex: z.number().int().min(1),
+        claimed: z.boolean(),
+        mine: z.boolean(),
+        name: z.string().min(1).max(80).nullable(),
+        island: WorldIslandTemplateSchema
+      })
+      .strict(),
+    /** The settled island as it stands; null for a free place (its wild island) and for home. */
+    farm: PublicIslandDTOSchema.nullable()
+  })
+  .strict();
+export type VisitWorldPlaceResponse = z.infer<typeof VisitWorldPlaceResponseSchema>;
+export type PublicIslandDTO = z.infer<typeof PublicIslandDTOSchema>;
 
 export type CreateFarmRequest = z.infer<typeof CreateFarmRequestSchema>;
 export type IslandChoiceDTO = z.infer<typeof IslandChoiceSchema>;

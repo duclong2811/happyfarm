@@ -150,6 +150,7 @@ import type {
   ,SeaRegionName
   ,WorldSlotClaim
   ,WorldSlotRepository
+  ,WorldVisitRepository
 } from "@happy-farm/application";
 import { ApplicationError, MAX_LAND_CELLS_PER_REQUEST } from "@happy-farm/application";
 import { reconcileNeighborNpc, reconcileRecurringNeighborNpc } from "@happy-farm/domain";
@@ -1069,9 +1070,34 @@ interface ClaimedWorldSlotRow extends WorldSlotRow {
   readonly outline: string | null;
   readonly seed: number | null;
   readonly generator_version: number | null;
+  readonly name: string | null;
 }
 
 /** Which farm holds which world-map slot (migration 0045). The chart itself is game data. */
+/** A claimed place with its island's template and its name (the farm's). */
+const CLAIMED_WORLD_SLOT_SELECT =
+  "SELECT ws.slot_id, ws.region, ws.farm_id, ws.claimed_at, fi.element, fi.outline, fi.seed, fi.generator_version, f.name FROM world_slots ws LEFT JOIN farm_islands fi ON fi.farm_id = ws.farm_id LEFT JOIN farms f ON f.id = ws.farm_id";
+const WORLD_SLOT_BATCH = 90;
+
+export class D1WorldVisitRepository implements WorldVisitRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async listVisited(playerId: PlayerId): Promise<readonly string[]> {
+    const rows = await this.db
+      .prepare("SELECT slot_id FROM world_visits WHERE player_id = ? ORDER BY slot_id")
+      .bind(playerId)
+      .all<{ slot_id: string }>();
+    return rows.results.map((row) => row.slot_id);
+  }
+
+  async record(playerId: PlayerId, slotId: string, visitedAt: string): Promise<void> {
+    await this.db
+      .prepare("INSERT OR IGNORE INTO world_visits (player_id, slot_id, visited_at) VALUES (?, ?, ?)")
+      .bind(playerId, slotId, visitedAt)
+      .run();
+  }
+}
+
 export class D1WorldSlotRepository implements WorldSlotRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
@@ -1089,26 +1115,24 @@ export class D1WorldSlotRepository implements WorldSlotRepository {
   }
 
   async listClaimed(): Promise<readonly ClaimedWorldSlot[]> {
-    const rows = await this.db
-      .prepare(
-        "SELECT ws.slot_id, ws.region, ws.farm_id, ws.claimed_at, fi.element, fi.outline, fi.seed, fi.generator_version FROM world_slots ws LEFT JOIN farm_islands fi ON fi.farm_id = ws.farm_id ORDER BY ws.slot_id"
-      )
-      .all<ClaimedWorldSlotRow>();
+    const rows = await this.db.prepare(`${CLAIMED_WORLD_SLOT_SELECT} ORDER BY ws.slot_id`).all<ClaimedWorldSlotRow>();
     return rows.results.map((row) => D1WorldSlotRepository.claimed(row));
   }
 
   async listClaimedIn(slotIds: readonly string[]): Promise<readonly ClaimedWorldSlot[]> {
-    if (slotIds.length === 0) return [];
-    // An archipelago holds at most eight slots; the bound keeps the statement's parameters well
-    // inside D1's limit whatever a caller passes.
-    if (slotIds.length > 16) throw new Error("listClaimedIn reads one archipelago at a time");
-    const rows = await this.db
-      .prepare(
-        `SELECT ws.slot_id, ws.region, ws.farm_id, ws.claimed_at, fi.element, fi.outline, fi.seed, fi.generator_version FROM world_slots ws LEFT JOIN farm_islands fi ON fi.farm_id = ws.farm_id WHERE ws.slot_id IN (${slotIds.map(() => "?").join(", ")}) ORDER BY ws.slot_id`
-      )
-      .bind(...slotIds)
-      .all<ClaimedWorldSlotRow>();
-    return rows.results.map((row) => D1WorldSlotRepository.claimed(row));
+    // A charted world is a few hundred places at most; the reads go in batches that keep every
+    // statement well inside D1's parameter limit.
+    const unique = [...new Set(slotIds)];
+    const found: ClaimedWorldSlot[] = [];
+    for (let start = 0; start < unique.length; start += WORLD_SLOT_BATCH) {
+      const batch = unique.slice(start, start + WORLD_SLOT_BATCH);
+      const rows = await this.db
+        .prepare(`${CLAIMED_WORLD_SLOT_SELECT} WHERE ws.slot_id IN (${batch.map(() => "?").join(", ")}) ORDER BY ws.slot_id`)
+        .bind(...batch)
+        .all<ClaimedWorldSlotRow>();
+      found.push(...rows.results.map((row) => D1WorldSlotRepository.claimed(row)));
+    }
+    return found.sort((a, b) => a.slotId.localeCompare(b.slotId));
   }
 
   private static claimed(row: ClaimedWorldSlotRow): ClaimedWorldSlot {
@@ -1120,7 +1144,8 @@ export class D1WorldSlotRepository implements WorldSlotRepository {
       island:
         row.element === null || row.outline === null || row.seed === null || row.generator_version === null
           ? null
-          : { element: row.element, outline: row.outline, seed: row.seed, generatorVersion: row.generator_version }
+          : { element: row.element, outline: row.outline, seed: row.seed, generatorVersion: row.generator_version },
+      name: row.name
     };
   }
 

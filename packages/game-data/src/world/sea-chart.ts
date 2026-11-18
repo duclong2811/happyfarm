@@ -169,6 +169,41 @@ export function findSeaArchipelago(archipelagoId: string): SeaArchipelago | null
   return null;
 }
 
+/**
+ * How far a visit lets a player see, in tiles: an archipelago with a place this close to a place they
+ * have visited comes onto their chart. Archipelagos stand at least 720 tiles apart, so a visit to an
+ * archipelago's outer edge usually brings one or two more into view, and a visit on its inner side
+ * often none - the chart grows by the distance the player goes, a little at a time.
+ */
+export const SEA_SIGHT_TILES = 520;
+
+/**
+ * The archipelagos on one player's own chart (owner decision, 2026-11-20): the chart shows only what
+ * the player has seen, and grows as they travel.
+ * - Their home archipelago: a newcomer knows their own waters, and nothing else.
+ * - Every archipelago holding a place they have visited.
+ * - Every archipelago with a place within `SEA_SIGHT_TILES` of a place they have visited.
+ * In chart order: region by region, archipelago by archipelago. Unknown slot ids are ignored.
+ */
+export function chartedArchipelagos(homeSlotId: string | null, visitedSlotIds: readonly string[]): readonly SeaArchipelago[] {
+  const home = homeSlotId === null ? null : findSeaSlot(homeSlotId);
+  const visited = visitedSlotIds.map((slotId) => findSeaSlot(slotId)).filter((slot): slot is SeaSlot => slot !== null);
+  const charted: SeaArchipelago[] = [];
+  for (const region of SEA_REGIONS) {
+    for (const archipelago of seaChart().get(region) ?? []) {
+      const known =
+        archipelago.archipelagoId === home?.archipelagoId ||
+        visited.some(
+          (place) =>
+            place.archipelagoId === archipelago.archipelagoId ||
+            archipelago.slots.some((slot) => Math.hypot(slot.x - place.x, slot.z - place.z) <= SEA_SIGHT_TILES)
+        );
+      if (known) charted.push(archipelago);
+    }
+  }
+  return charted;
+}
+
 /** A region's slots in claiming order: archipelago by archipelago, slot by slot. */
 export function regionSlots(region: SeaRegion): readonly SeaSlot[] {
   return (seaChart().get(region) ?? []).flatMap((archipelago) => archipelago.slots);
