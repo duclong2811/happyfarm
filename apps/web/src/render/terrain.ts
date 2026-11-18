@@ -931,6 +931,11 @@ const SHELF_FLOOR_DEPTH = 0.45;
 const SHALLOW_WATER = new Color(0x5ec4e3);
 const DEEP_WATER = new Color(0x2b7fbf);
 let islandWaterMaterial: MeshStandardMaterial | null = null;
+/** How opaque a chosen island's sea surface is over the open ocean. */
+const ISLAND_WATER_OPACITY = 0.8;
+/** The surface is fully faded this many cells from the grid's edge, and fully opaque this many more in. */
+const WATER_RIM_FADE_START_CELLS = 1;
+const WATER_RIM_FADE_CELLS = 12;
 
 /**
  * A chosen island's ground and water, from its sampled field.
@@ -998,9 +1003,11 @@ function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, f
   group.add(ground);
 
   // The water surface at the ground's density, coloured per vertex from the field's depth gradient and
-  // foam line (or the two flat tints when an older ground has none).
+  // foam line (or the two flat tints when an older ground has none). Its alpha fades out over the last
+  // cells of the grid, so the island's sea melts into the open ocean below it instead of ending in a
+  // visible square.
   const waterPositions = new Float32Array(steps * steps * 3);
-  const waterColors = new Float32Array(steps * steps * 3);
+  const waterColors = new Float32Array(steps * steps * 4);
   const tintAt = (fx: number, fz: number, channel: number): number => {
     const colors = field.waterColors;
     if (colors === undefined) {
@@ -1023,11 +1030,15 @@ function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, f
       waterPositions.set([field.originWorldX + x * step, SEA_LEVEL_Y, field.originWorldZ + z * step], index * 3);
       const fx = x / GROUND_SAMPLES_PER_CELL;
       const fz = z / GROUND_SAMPLES_PER_CELL;
-      waterColors.set([tintAt(fx, fz, 0), tintAt(fx, fz, 1), tintAt(fx, fz, 2)], index * 3);
+      const fromEdge = Math.min(fx, fz, size - 1 - fx, size - 1 - fz);
+      const rim = Math.min(1, Math.max(0, (fromEdge - WATER_RIM_FADE_START_CELLS) / WATER_RIM_FADE_CELLS));
+      const alpha = ISLAND_WATER_OPACITY * rim * rim * (3 - 2 * rim);
+      waterColors.set([tintAt(fx, fz, 0), tintAt(fx, fz, 1), tintAt(fx, fz, 2), alpha], index * 4);
     }
   }
-  islandWaterMaterial ??= new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.8, roughness: 0.3 });
-  const surface = new Mesh(gridGeometry(steps, waterPositions, waterColors), islandWaterMaterial);
+  // The opacity lives in the vertices' alpha (see the rim fade above), so the material's own is 1.
+  islandWaterMaterial ??= new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: 1, roughness: 0.3 });
+  const surface = new Mesh(gridGeometry(steps, waterPositions, waterColors, 4), islandWaterMaterial);
   surface.name = "island-water";
   surface.renderOrder = 1;
   group.add(surface);
@@ -1035,7 +1046,7 @@ function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, f
 }
 
 /** A square grid of `side` x `side` vertices, wound so its normals point up. */
-function gridGeometry(side: number, positions: Float32Array, colors: Float32Array): BufferGeometry {
+function gridGeometry(side: number, positions: Float32Array, colors: Float32Array, colorSize: 3 | 4 = 3): BufferGeometry {
   const indices: number[] = [];
   for (let z = 0; z < side - 1; z += 1) {
     for (let x = 0; x < side - 1; x += 1) {
@@ -1049,7 +1060,7 @@ function gridGeometry(side: number, positions: Float32Array, colors: Float32Arra
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new BufferAttribute(colors, 3));
+  geometry.setAttribute("color", new BufferAttribute(colors, colorSize));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
