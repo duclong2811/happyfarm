@@ -1650,6 +1650,81 @@ function areaProgressPercent(progress: AreaHarvestSelectionState["progress"]): n
   return Math.floor((progress.completedCells / progress.totalCells) * 100);
 }
 
+/**
+ * The progress bar's clock. The server answers once per group, so between answers the bar moves on
+ * an estimate: the time a cell took in the groups so far (carried over to the next task), applied to
+ * the group in flight. It never runs past 92% of that group, never shows 100% before the server has
+ * answered for every cell, and snaps to the truth on every answer.
+ */
+let areaMsPerCell = 160;
+let areaGroupClock: { readonly startedAt: number; readonly cells: number } | null = null;
+let areaProgressTicker: ReturnType<typeof setInterval> | null = null;
+
+function areaProgressFraction(): number {
+  const progress = areaHarvestSelection.progress;
+  if (progress === null || progress.totalCells <= 0) return 0;
+  if (!areaHarvestSelection.pending) {
+    return areaHarvestSelection.lastResult !== null ? 1 : progress.completedCells / progress.totalCells;
+  }
+  let done = progress.completedCells;
+  const clock = areaGroupClock;
+  if (clock !== null && !areaHarvestSelection.syncing) {
+    const expected = Math.max(1, clock.cells * areaMsPerCell);
+    done += Math.min(0.92, (performance.now() - clock.startedAt) / expected) * clock.cells;
+  }
+  return Math.min(0.99, done / progress.totalCells);
+}
+
+/** A progress bar for the running (or just finished) area task; repainted in place by the ticker. */
+function areaProgressBar(): HTMLElement {
+  const bar = make("div", "area-progress");
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
+  bar.appendChild(make("div", "area-progress-fill"));
+  bar.appendChild(make("span", "area-progress-label"));
+  bar.appendChild(make("span", "area-progress-cells"));
+  paintAreaProgress(bar);
+  return bar;
+}
+
+function paintAreaProgress(bar: Element): void {
+  const fraction = areaProgressFraction();
+  const percent = Math.floor(fraction * 100);
+  const progress = areaHarvestSelection.progress;
+  const finished = !areaHarvestSelection.pending && areaHarvestSelection.lastResult !== null;
+  const fill = bar.querySelector<HTMLElement>(".area-progress-fill");
+  if (fill !== null) fill.style.width = `${String(fraction * 100)}%`;
+  bar.setAttribute("aria-valuenow", String(percent));
+  bar.classList.toggle("is-done", finished);
+  const label = bar.querySelector(".area-progress-label");
+  if (label !== null) {
+    label.textContent = finished
+      ? t("areaHarvest.barDone")
+      : areaHarvestSelection.syncing
+        ? t("areaHarvest.barSyncing", { percent })
+        : t(areaHarvestSelection.operation === "PLANT" ? "areaHarvest.barPlanting" : "areaHarvest.barHarvesting", { percent });
+  }
+  const cells = bar.querySelector(".area-progress-cells");
+  if (cells !== null) cells.textContent = progress === null ? "" : t("areaHarvest.barCells", { completed: progress.completedCells, total: progress.totalCells });
+}
+
+function repaintAreaProgressBars(): void {
+  for (const bar of document.querySelectorAll(".area-progress")) paintAreaProgress(bar);
+}
+
+function startAreaProgressTicker(): void {
+  if (areaProgressTicker !== null) return;
+  areaProgressTicker = setInterval(repaintAreaProgressBars, 200);
+}
+
+function stopAreaProgressTicker(): void {
+  if (areaProgressTicker !== null) clearInterval(areaProgressTicker);
+  areaProgressTicker = null;
+  areaGroupClock = null;
+  repaintAreaProgressBars();
+}
+
 function areaTaskIsCurrent(requestId: string, farmId: string): boolean {
   return state.farmId === farmId && areaHarvestSelection.pending && areaHarvestSelection.requestId === requestId && areaHarvestSelection.taskFarmId === farmId;
 }
@@ -1705,7 +1780,8 @@ function renderAreaHarvestProgressDock(): void {
   const body = progress === null
     ? t("areaHarvest.progressCells", { completed: 0, total: 0, percent: 0 })
     : t("areaHarvest.progressCells", { completed: progress.completedCells, total: progress.totalCells, percent: areaProgressPercent(progress) });
-  dock.textContent = areaHarvestSelection.syncing ? t("areaHarvest.syncing") : `${label} ${body}`;
+  dock.replaceChildren(make("span", "area-harvest-dock-text", areaHarvestSelection.syncing ? t("areaHarvest.syncing") : `${label} ${body}`));
+  if (progress !== null) dock.appendChild(areaProgressBar());
   dock.classList.toggle("is-error", !areaHarvestSelection.pending && areaHarvestSelection.lastResult !== null && areaHarvestSelection.lastResult.skipped > 0);
   dock.title = t("areaHarvest.restoreProgress");
   dock.setAttribute("aria-label", t("areaHarvest.restoreProgress"));
@@ -1986,9 +2062,7 @@ function renderAreaHarvestPanel(): void {
   actions.appendChild(cancel);
   const progress = areaHarvestSelection.progress;
   if (areaHarvestSelection.pending) {
-    actions.appendChild(make("span", "area-harvest-progress-action", progress === null
-      ? t("areaHarvest.progressCells", { completed: 0, total: 0, percent: 0 })
-      : t("areaHarvest.progressCells", { completed: progress.completedCells, total: progress.totalCells, percent: areaProgressPercent(progress) })));
+    actions.appendChild(areaProgressBar());
   } else {
     const confirm = make("button", "primary", plantingMode
       ? t("areaHarvest.plantConfirm", { count: planting.plannedCount })
@@ -2021,6 +2095,7 @@ function renderAreaHarvestPanel(): void {
   previewBody.appendChild(productCards);
   previewBody.appendChild(selector);
   for (const node of progressNodes) previewBody.appendChild(node);
+  if (areaHarvestSelection.lastResult !== null && progress !== null) previewBody.appendChild(areaProgressBar());
   if (areaHarvestSelection.lastResult !== null) {
     const result = areaHarvestSelection.lastResult;
     const reasons = result.reasons.length === 0 ? "" : ` ${t("areaHarvest.reasons")}: ${[...new Set(result.reasons)].map(areaHarvestReason).join(", ")}`;
@@ -2110,11 +2185,13 @@ async function runAreaTask(): Promise<void> {
   // next group is already on its way, so the field fills in as it goes. Each catch-up is awaited
   // before the next starts (and before the final refresh), so an older read never lands last.
   let catchUp: Promise<void> | null = null;
+  startAreaProgressTicker();
   try {
     for (let groupIndex = progress.completedGroups; groupIndex < groups.length; groupIndex += 1) {
       const group = groups[groupIndex];
       if (group === undefined) continue;
       const groupStartedAt = performance.now();
+      areaGroupClock = { startedAt: groupStartedAt, cells: group.items.length };
       const result = group.kind === "TREE"
         ? await api().harvestTreeArea(taskFarmId, { requestId: `${baseRequestId}_tree_${String(groupIndex)}`, trees: group.items.map(({ treeInstanceId, expectedTreeVersion }) => ({ treeInstanceId, expectedTreeVersion })) })
         : group.kind === "CROP"
@@ -2124,6 +2201,10 @@ async function runAreaTask(): Promise<void> {
             : await api().plantTreeArea(taskFarmId, { requestId: `${baseRequestId}_tree_${String(groupIndex)}`, treeDefinitionId: group.definitionId, cells: group.items });
       if (catchUp !== null) await catchUp;
       catchUp = null;
+      // Learn the pace for the bar: a moving average of this connection's time per cell.
+      const perCell = (performance.now() - groupStartedAt) / Math.max(1, group.items.length);
+      areaMsPerCell = Math.min(3000, Math.max(20, areaMsPerCell * 0.4 + perCell * 0.6));
+      areaGroupClock = null;
       if (!areaTaskIsCurrent(baseRequestId, taskFarmId)) return;
       const succeeded = "harvestedCount" in result ? result.harvestedCount : result.plantedCount;
       const skipped = result.skippedCount;
@@ -2160,6 +2241,7 @@ async function runAreaTask(): Promise<void> {
     }
     throw error;
   } finally {
+    stopAreaProgressTicker();
     renderAreaHarvestPanel();
     renderAreaHarvestLauncher();
     renderActionControls(currentSelection());
@@ -4849,13 +4931,18 @@ function resourceLabelKey(resource: string): MessageKey {
 }
 
 /** A duration in seconds, said the way the rest of the HUD says it. */
+/**
+ * A length of time ("2 phút"), not time remaining: the `time.*` strings say "còn ...", which reads
+ * wrongly inside "Chín sau ...". (It also used to pass `seconds`/`minutes`/`hours` to strings that
+ * read `{count}`, which is how "{count}" reached the screen.)
+ */
 function durationText(seconds: number): string {
-  if (seconds < 60) return t("time.seconds", { seconds });
+  if (seconds < 60) return t("duration.seconds", { count: seconds });
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return t("time.minutes", { minutes });
+  if (minutes < 60) return t("duration.minutes", { count: minutes });
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest === 0 ? t("time.hours", { hours }) : t("time.hoursMinutes", { hours, minutes: rest });
+  return rest === 0 ? t("duration.hours", { count: hours }) : t("duration.hoursMinutes", { hours, minutes: rest });
 }
 
 /** The price, formatted for the language the player is reading. The coin icon carries the currency. */

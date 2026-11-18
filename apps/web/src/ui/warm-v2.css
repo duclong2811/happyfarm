@@ -895,3 +895,20 @@ html.ui-b.ui-warm .character-picker button:disabled { opacity: .7; cursor: defau
 @media (prefers-reduced-motion: reduce) {
   html.ui-b.ui-warm .character-picker .cp-option { transition: none; }
 }
+
+/* Area planting / harvest progress bar: a wooden track with an orange fill that turns green when done. */
+html.ui-b.ui-warm .area-progress {
+  height: 2.1rem;
+  border: 2px solid var(--w-wood);
+  background: #e9cf9f;
+  box-shadow: inset 0 2px 4px rgba(92, 50, 22, .35);
+}
+html.ui-b.ui-warm .area-progress-fill { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); }
+html.ui-b.ui-warm .area-progress.is-done .area-progress-fill { background: linear-gradient(#7fd36a, var(--w-green)); }
+html.ui-b.ui-warm #area-harvest-panel .area-progress span.area-progress-label,
+html.ui-b.ui-warm #area-harvest-panel .area-progress span.area-progress-cells,
+html.ui-b.ui-warm .area-harvest-progress-dock .area-progress span {
+  color: #fff;
+  font-family: var(--w-display);
+  text-shadow: var(--w-outline);
+}
