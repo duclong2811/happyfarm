@@ -6583,6 +6583,7 @@ const RAIL_SHORT_LABELS: readonly (readonly [string, MessageKey])[] = [
 function renderChrome(): void {
   for (const [id, key] of RAIL_SHORT_LABELS) element<HTMLElement>(id).dataset.short = t(key);
   const islands = element<HTMLButtonElement>("islands-launcher");
+  islands.hidden = !neighborIslandsShown();
   islands.setAttribute("aria-label", t("rail.islands"));
   islands.title = t("rail.islands");
   element<HTMLElement>("gold-label").textContent = t("hud.gold");
@@ -7453,10 +7454,22 @@ function neighborStatusText(npc: NeighborSnapshotDTO["npc"]): string {
   return t("neighbor.status.built", { level: String(npc.constructionLevel) });
 }
 
+/**
+ * The neighbour islands - the ferry, and the NPC islands drawn around home - are an unfinished
+ * experiment the owner asked to hide (2026-11-18). The code and the server's state stay as they
+ * are; this switch keeps them out of the game: no "Đảo" button, no islands around home, no ferry
+ * from the dock. A player already on a visit still sees the visit, so nobody is stranded.
+ */
+const NEIGHBOR_ISLANDS_ENABLED = false;
+
+function neighborIslandsShown(): boolean {
+  return NEIGHBOR_ISLANDS_ENABLED || state.neighbor?.visit.currentPlace === "NEIGHBOR_ISLAND";
+}
+
 function renderNeighborPanel(): void {
   const panel = element<HTMLElement>("neighbor-panel");
   const neighbor = state.neighbor;
-  if (neighbor === null || (neighborSelectedTarget === null && neighbor.visit.currentPlace === "HOME_ISLAND")) {
+  if (neighbor === null || !neighborIslandsShown() || (neighborSelectedTarget === null && neighbor.visit.currentPlace === "HOME_ISLAND")) {
     panel.hidden = true; panel.replaceChildren(); return;
   }
   panel.hidden = false; panel.classList.toggle("is-visit", neighbor.visit.currentPlace === "NEIGHBOR_ISLAND"); panel.replaceChildren();
@@ -7492,6 +7505,13 @@ function applyNeighborPresentation(teleport: boolean): void {
       node.hidden = active;
       node.style.display = active ? "none" : "";
     }
+  }
+  if (!active && !NEIGHBOR_ISLANDS_ENABLED) {
+    // The neighbour islands are hidden: home stands alone in the ocean.
+    scene.setNeighborIsland(null);
+    scene.setNeighborIslandPreviews([]);
+    if (teleport) playerRuntime.teleport(homeSpawnWorld());
+    return;
   }
   // Neighbour identities and their persisted coordinates stay in the snapshot. HOME gets only the
   // renderer's low-detail template preview; the full shell, models, collision and NPC are reserved
@@ -8055,6 +8075,7 @@ function walkToCell(cell: SelectedTile): void {
 /** Selects a directly tapped resource/fishing target without granting or starting its action. */
 function onWorldTargetSelected(target: SceneWorldTarget): void {
   if (target.kind === "NEIGHBOR_DOCK" || target.kind === "NEIGHBOR_NPC") {
+    if (!neighborIslandsShown()) return;
     neighborSelectedTarget = target.kind === "NEIGHBOR_DOCK" ? "DOCK" : "NPC";
     renderNeighborPanel();
     return;
@@ -10188,7 +10209,7 @@ function wire(): void {
   // The ferry is reachable from the HUD as well as by tapping the dock in the world.
   element<HTMLButtonElement>("islands-launcher").addEventListener("click", () => {
     const neighbor = state.neighbor;
-    if (neighbor === null) return;
+    if (neighbor === null || !neighborIslandsShown()) return;
     neighborSelectedTarget = neighborSelectedTarget !== null
       ? null
       : neighbor.visit.currentPlace === "NEIGHBOR_ISLAND" ? "NPC" : "DOCK";
