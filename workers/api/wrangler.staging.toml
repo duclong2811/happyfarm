@@ -38,6 +38,10 @@ GUEST_AUTH_ENABLED = "true"
 # keep the island they were created on. Opted in deliberately (the Worker treats anything other than
 # exactly "true" as off); fish bays, pastures and Auto anchors on chosen islands are still to come.
 ISLAND_CHOICE_ENABLED = "true"
+# The world map (docs/design/WORLD_MAP.md): a chosen island takes a slot on the sea chart, and
+# /world/chart and /world/slot answer. Needs migration 0045 applied to this database BEFORE a deploy
+# with this flag, or creating an island farm fails on the missing world_slots table.
+WORLD_MAP_ENABLED = "true"
 
 [assets]
 # The built web app: SPA shell, hashed JS/CSS, and the generated GLB models. The path is relative to

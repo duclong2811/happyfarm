@@ -21,6 +21,18 @@ custom domain is the one to hand to testers: it is easier to type, and it is ver
 is scoped to the hostname it was created on (the cookie carries no `Domain`), so pick one URL per
 playtest - see the last section.
 
+**World map (2026-11-19): migration 0045 before the deploy.** `wrangler.staging.toml` now sets
+`WORLD_MAP_ENABLED = "true"`. With that flag on, a new island farm writes into `world_slots`, so apply
+`0045_world_slots.sql` to `happy-farm-staging-v2` *before* deploying a build that carries the flag:
+
+1. `npx wrangler d1 migrations apply happy-farm-staging-v2 --remote --config workers/api/wrangler.staging.toml`
+2. `npm run build`
+3. `npx wrangler deploy --config workers/api/wrangler.staging.toml`
+
+The restore point taken just before 0045 is bookmark
+`00000015-00000000-00005127-4fa1889516082ee0497bd66691d2e705`. The migration only creates
+`world_slots` and places the farms that already have a chosen island.
+
 **Staging reset (2026-11-18): island v2 and a fresh database.** The owner chose to start over once
 island generator v2 was live (islands are fixed at creation, so a reset before v2 would have left
 everyone on v1).
