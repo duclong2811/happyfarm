@@ -12,17 +12,30 @@
  */
 
 import {
-  generateIsland,
+  type GeneratedIsland,
   type IslandCellKind,
   type IslandElement,
   type IslandOutline,
   type IslandSiteKind
 } from "./island-generator";
+import { generateIslandV2 } from "./island-generator-v2";
 import type { TileClassification, WorkAreaGroundCapability } from "./geography";
 import type { TileCoordinate } from "./tiles";
 
-/** Bumped whenever `generateIsland` would produce a different island for the same template. */
-export const ISLAND_GENERATOR_VERSION = 1;
+/**
+ * The generator new farms are built with. Bumped whenever the generator would produce a different island
+ * for the same template. v1 (`generateIsland`) stays in the code, frozen, so its output is still
+ * reproducible; stored v1 islands never need it, because the ground is stored.
+ */
+export const ISLAND_GENERATOR_VERSION = 2;
+
+/**
+ * The current generator: what a new farm is built with, and what the picker previews - the same
+ * function on both sides, so the island chosen is the island stored.
+ */
+export function generateHomeIsland(element: IslandElement, seed: number, size: number, outline: IslandOutline): GeneratedIsland {
+  return generateIslandV2(element, seed, size, outline);
+}
 
 /** Cells along one side of a generated Home Island. One cell is one farm tile. */
 export const HOME_ISLAND_GRID_SIZE = 96;
@@ -109,7 +122,7 @@ export function isValidIslandCells(cells: string, size: number): boolean {
 
 /** Generates a template's island and lays it on the farm's tiles. The one way a ground is made. */
 export function buildIslandGround(template: IslandTemplate): IslandGround {
-  const island = generateIsland(template.element, template.seed, HOME_ISLAND_GRID_SIZE, template.outline);
+  const island = generateHomeIsland(template.element, template.seed, HOME_ISLAND_GRID_SIZE, template.outline);
   return {
     element: template.element,
     outline: template.outline,

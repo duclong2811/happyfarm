@@ -16,7 +16,11 @@ export const ISLAND_OUTLINES = ["ROUND", "LONG", "CRESCENT", "TWIN", "ATOLL", "A
 export type IslandOutline = (typeof ISLAND_OUTLINES)[number];
 
 export type IslandCellKind = "DEEP" | "SHALLOW" | "SAND" | "GRASS" | "FOREST" | "ROCK" | "MEADOW" | "FIELD";
-export type IslandSiteKind = "ORE" | "TREE" | "FISH_BAY" | "PASTURE" | "DOCK" | "CAMP";
+/**
+ * What a site marks. `FISH_BAY` is sheltered shallow water (aquaculture); `FISHING` (generator v2) is
+ * deep water just off the shallow shelf, where a player standing at the shelf's edge casts a line.
+ */
+export type IslandSiteKind = "ORE" | "TREE" | "FISH_BAY" | "FISHING" | "PASTURE" | "DOCK" | "CAMP";
 
 export interface IslandSite {
   readonly kind: IslandSiteKind;
@@ -55,7 +59,7 @@ const RECIPES: Record<IslandElement, Recipe> = {
 };
 
 /** mulberry32: tiny, fast, deterministic. */
-function rng(seed: number): () => number {
+export function rng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -66,7 +70,7 @@ function rng(seed: number): () => number {
   };
 }
 
-function hash2(seed: number, x: number, y: number): number {
+export function hash2(seed: number, x: number, y: number): number {
   let h = (seed ^ Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) >>> 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
@@ -87,7 +91,7 @@ function noise(seed: number, x: number, y: number): number {
   return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
 }
 
-function fbm(seed: number, x: number, y: number, octaves: number): number {
+export function fbm(seed: number, x: number, y: number, octaves: number): number {
   let sum = 0;
   let amplitude = 0.5;
   let frequency = 1;
@@ -195,7 +199,7 @@ export function generateIsland(element: IslandElement, seed: number, size = 96, 
  * A summed-area table over a square grid: `count(x, y, r)` is how many cells in the
  * `(2r+1) x (2r+1)` window around `(x, y)` pass `test`, clipped to the grid, in constant time.
  */
-function summedArea(size: number, test: (index: number) => boolean): (x: number, y: number, r: number) => number {
+export function summedArea(size: number, test: (index: number) => boolean): (x: number, y: number, r: number) => number {
   const stride = size + 1;
   const table = new Int32Array(stride * stride);
   for (let y = 0; y < size; y += 1) {

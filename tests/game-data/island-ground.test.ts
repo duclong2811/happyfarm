@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildIslandGround,
+  generateIsland,
+  islandCellCode,
+  ISLAND_GENERATOR_VERSION,
   classifyIslandTile,
   HOME_ISLAND_GRID_ORIGIN,
   HOME_ISLAND_GRID_SIZE,
@@ -70,15 +73,30 @@ describe("stored island ground", () => {
     if (camp !== undefined) expect(classifyIslandTile(thuy, camp).terrain).toBe("LAND");
   });
 
-  it("keeps generator v1 stable: a change must bump ISLAND_GENERATOR_VERSION", () => {
+  it("keeps generator v1 stable: stored v1 islands must stay reproducible", () => {
     const prints = ["THO", "KIM", "THUY"].map((element) =>
-      fingerprint(buildIslandGround({ element: element as "THO", outline: "ROUND", seed: 101 }).cells)
+      fingerprint(generateIsland(element as "THO", 101, HOME_ISLAND_GRID_SIZE, "ROUND").cells.map(islandCellCode).join(""))
     );
     expect(prints).toMatchInlineSnapshot(`
       [
         "5b696f6f",
         "137cfc41",
         "5791f59b",
+      ]
+    `);
+  });
+
+  it("builds new farms with generator v2, and keeps v2 stable: a change must bump ISLAND_GENERATOR_VERSION", () => {
+    expect(ISLAND_GENERATOR_VERSION).toBe(2);
+    const prints = ["THO", "KIM", "THUY"].map((element) =>
+      fingerprint(buildIslandGround({ element: element as "THO", outline: "ROUND", seed: 101 }).cells)
+    );
+    expect(buildIslandGround({ element: "KIM", outline: "ROUND", seed: 101 }).generatorVersion).toBe(2);
+    expect(prints).toMatchInlineSnapshot(`
+      [
+        "a9e86741",
+        "db6bd80b",
+        "a823b412",
       ]
     `);
   });

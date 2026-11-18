@@ -8,7 +8,7 @@
  */
 
 import {
-  generateIsland,
+  generateHomeIsland,
   ISLAND_ELEMENTS,
   ISLAND_OUTLINES,
   type GeneratedIsland,
@@ -149,7 +149,7 @@ export function showIslandPicker(options: {
     const key = `${element}:${outline}:${String(seed)}`;
     let found = cache.get(key);
     if (found === undefined) {
-      found = generateIsland(element, seed, PICKER_GRID_SIZE, outline);
+      found = generateHomeIsland(element, seed, PICKER_GRID_SIZE, outline);
       cache.set(key, found);
     }
     return found;

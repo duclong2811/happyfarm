@@ -57,7 +57,7 @@ export const FarmIslandSummaryDTOSchema = z
   })
   .strict();
 
-export const IslandSiteKindSchema = z.enum(["ORE", "TREE", "FISH_BAY", "PASTURE", "DOCK", "CAMP"]);
+export const IslandSiteKindSchema = z.enum(["ORE", "TREE", "FISH_BAY", "FISHING", "PASTURE", "DOCK", "CAMP"]);
 
 /** A farm's stored island ground: one code per cell, row-major, plus the sites, in farm tiles. */
 export const FarmIslandDTOSchema = z
