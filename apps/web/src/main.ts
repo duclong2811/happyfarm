@@ -152,6 +152,7 @@ import {
   type FarmSceneHandle,
   type SceneFishingSpot,
   type SceneNeighborIslandPreview,
+  type SceneHorizon,
   type SceneWorldTarget,
   type RenderQualityName
 } from "./render";
@@ -7476,6 +7477,9 @@ const NEIGHBOR_ISLANDS_ENABLED: boolean = false;
 let worldMapAvailable = false;
 let seaChartModal: SeaChartModal | null = null;
 
+/** The archipelago's other islands, as the horizon draws them; null when there is none to show. */
+let horizonView: SceneHorizon | null = null;
+
 /** Asks once, off the critical path, whether the world map is on; shows the Chart button if so. */
 async function refreshWorldMapAvailability(): Promise<void> {
   try {
@@ -7484,6 +7488,32 @@ async function refreshWorldMapAvailability(): Promise<void> {
     worldMapAvailable = false;
   }
   renderChrome();
+  if (worldMapAvailable) await refreshHorizon();
+}
+
+/**
+ * Reads the player's archipelago and stands its other islands on the horizon (W3). Only the
+ * player's own archipelago is read - a handful of places - and nothing here changes the farm.
+ */
+async function refreshHorizon(): Promise<void> {
+  const farmId = state.farmId;
+  try {
+    const view = await api().getWorldArchipelago();
+    if (state.farmId !== farmId) return;
+    const mine = view.archipelago?.slots.find((slot) => slot.slotId === view.mySlotId);
+    horizonView =
+      view.archipelago === null || mine === undefined
+        ? null
+        : {
+            home: { x: mine.x, z: mine.z },
+            slots: view.archipelago.slots
+              .filter((slot) => slot.slotId !== mine.slotId)
+              .map((slot) => ({ slotId: slot.slotId, x: slot.x, z: slot.z, claimed: slot.claimed, island: slot.island }))
+          };
+  } catch {
+    horizonView = null;
+  }
+  scene?.setHorizon(state.island === null ? null : horizonView);
 }
 
 /** Opens the sea chart over the farm. It only reads, except to give a placeless island its place. */
@@ -7497,6 +7527,7 @@ function showSeaChart(): void {
     // Only a chosen island has a place on the chart; a legacy square farm is offered none.
     claim: state.island === null ? null : async (region) => {
       await client.ensureWorldSlot(region);
+      void refreshHorizon();
     },
     describeError: (error) => describe(error)(t, state.language),
     onClose: () => {
@@ -9044,6 +9075,7 @@ function enable3D(): void {
     scene.setDebugMode(debugRequested());
     scene.setPlayerCharacter(state.characterId);
     scene.setBuildingLooks({ STORAGE_SHED: warehouseLookFor(state.warehouse?.tier ?? null) });
+    scene.setHorizon(state.island === null ? null : horizonView);
     mineSceneSignature = "";
     pushMinesToScene();
   }

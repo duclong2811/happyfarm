@@ -1,7 +1,9 @@
 ﻿import {
   CreateFarm,
   EnsureWorldSlot,
+  GetMyArchipelago,
   GetWorldChart,
+  type WorldArchipelagoView,
   CropStateProjector,
   GetFarmCrops,
   GetFarm,
@@ -163,6 +165,7 @@ import {
   type FarmIslandSummaryDTO,
   type GetFarmIslandResponse,
   type GetWorldChartResponse,
+  type GetWorldArchipelagoResponse,
   type EnsureWorldSlotResponse,
   IslandElementSchema,
   IslandOutlineSchema,
@@ -792,6 +795,29 @@ function toFarmDTO(farm: {
   return { ...farm };
 }
 
+/** One archipelago of the world chart, its islands' element and outline checked against the contract. */
+function toWorldArchipelagoDTO(archipelago: WorldArchipelagoView): GetWorldChartResponse["regions"][number]["archipelagos"][number] {
+  return {
+    archipelagoId: archipelago.archipelagoId,
+    index: archipelago.index,
+    centreX: archipelago.centreX,
+    centreZ: archipelago.centreZ,
+    slots: archipelago.slots.map((slot) => ({
+      slotId: slot.slotId,
+      x: slot.x,
+      z: slot.z,
+      claimed: slot.claimed,
+      mine: slot.mine,
+      island: {
+        element: IslandElementSchema.parse(slot.island.element),
+        outline: IslandOutlineSchema.parse(slot.island.outline),
+        seed: slot.island.seed,
+        generatorVersion: slot.island.generatorVersion
+      }
+    }))
+  };
+}
+
 function toIslandSummaryDTO(island: FarmIslandSummary | null): FarmIslandSummaryDTO | null {
   if (island === null) return null;
   const parsed = FarmIslandSummaryDTOSchema.safeParse(island);
@@ -1151,6 +1177,7 @@ export function createHandler(host: HandlerDependencies) {
     worldPlacement
   );
   const getWorldChart = worldPlacement === undefined ? null : new GetWorldChart(farms, worldPlacement);
+  const getMyArchipelago = worldPlacement === undefined ? null : new GetMyArchipelago(farms, worldPlacement);
   const ensureWorldSlot = worldPlacement === undefined ? null : new EnsureWorldSlot(farms, farmIslands, worldPlacement, dependencies.clock);
   const getFarm = new GetFarm(farms, members, farmIslands);
   const getMyFarm = new GetMyFarm(farms, farmIslands, islandChoiceEnabled);
@@ -2124,26 +2151,21 @@ export function createHandler(host: HandlerDependencies) {
             mySlotId: chart.mySlotId,
             regions: chart.regions.map((entry) => ({
               region: entry.region,
-              archipelagos: entry.archipelagos.map((archipelago) => ({
-                archipelagoId: archipelago.archipelagoId,
-                index: archipelago.index,
-                centreX: archipelago.centreX,
-                centreZ: archipelago.centreZ,
-                slots: archipelago.slots.map((slot) => ({
-                  slotId: slot.slotId,
-                  x: slot.x,
-                  z: slot.z,
-                  claimed: slot.claimed,
-                  mine: slot.mine,
-                  island: {
-                    element: IslandElementSchema.parse(slot.island.element),
-                    outline: IslandOutlineSchema.parse(slot.island.outline),
-                    seed: slot.island.seed,
-                    generatorVersion: slot.island.generatorVersion
-                  }
-                }))
-              }))
+              archipelagos: entry.archipelagos.map((archipelago) => toWorldArchipelagoDTO(archipelago))
             }))
+          }
+        };
+        return jsonResponse(body);
+      }
+
+      if (getMyArchipelago !== null && request.method === "GET" && url.pathname === "/world/archipelago") {
+        const view = await getMyArchipelago.execute(actor);
+        const body: ApiSuccess<GetWorldArchipelagoResponse> = {
+          ok: true,
+          data: {
+            mySlotId: view.mySlotId,
+            region: view.region,
+            archipelago: view.archipelago === null ? null : toWorldArchipelagoDTO(view.archipelago)
           }
         };
         return jsonResponse(body);

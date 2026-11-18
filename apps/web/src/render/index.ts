@@ -23,7 +23,8 @@ export {
   type EstateCameraFocus,
   type SceneFishingSpot,
   type SceneWorldTarget,
-  type SceneNeighborIslandPreview
+  type SceneNeighborIslandPreview,
+  type SceneHorizon
 } from "./scene";
 export {
   buildFarmSceneInput,

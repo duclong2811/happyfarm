@@ -160,6 +160,15 @@ export function findSeaSlot(slotId: string): SeaSlot | null {
   return slotIndex.get(slotId) ?? null;
 }
 
+/** One archipelago by id, or null for an id the chart does not have. */
+export function findSeaArchipelago(archipelagoId: string): SeaArchipelago | null {
+  for (const archipelagos of seaChart().values()) {
+    const found = archipelagos.find((archipelago) => archipelago.archipelagoId === archipelagoId);
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
 /** A region's slots in claiming order: archipelago by archipelago, slot by slot. */
 export function regionSlots(region: SeaRegion): readonly SeaSlot[] {
   return (seaChart().get(region) ?? []).flatMap((archipelago) => archipelago.slots);

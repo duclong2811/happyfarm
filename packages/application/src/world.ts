@@ -2,10 +2,12 @@ import type { FarmId } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
 import type {
   ActorContext,
+  ClaimedWorldSlot,
   Clock,
   FarmIslandRepository,
   FarmRepository,
   SeaRegionName,
+  WorldChartArchipelago,
   WorldChartPort,
   WorldIslandTemplate,
   WorldSlotClaim,
@@ -65,18 +67,46 @@ export interface WorldChartSlotView {
   readonly island: WorldIslandTemplate;
 }
 
+export interface WorldArchipelagoView {
+  readonly archipelagoId: string;
+  readonly index: number;
+  readonly centreX: number;
+  readonly centreZ: number;
+  readonly slots: readonly WorldChartSlotView[];
+}
+
 export interface WorldChartView {
   readonly regions: readonly {
     readonly region: SeaRegionName;
-    readonly archipelagos: readonly {
-      readonly archipelagoId: string;
-      readonly index: number;
-      readonly centreX: number;
-      readonly centreZ: number;
-      readonly slots: readonly WorldChartSlotView[];
-    }[];
+    readonly archipelagos: readonly WorldArchipelagoView[];
   }[];
   readonly mySlotId: string | null;
+}
+
+/** One archipelago as a chart shows it: each place with its owner's island, or its wild one. */
+function archipelagoView(
+  chart: WorldChartPort,
+  archipelago: WorldChartArchipelago,
+  bySlot: ReadonlyMap<string, ClaimedWorldSlot>,
+  mySlotId: string | null
+): WorldArchipelagoView {
+  return {
+    archipelagoId: archipelago.archipelagoId,
+    index: archipelago.index,
+    centreX: archipelago.centreX,
+    centreZ: archipelago.centreZ,
+    slots: archipelago.slots.map((slot) => {
+      const owner = bySlot.get(slot.slotId);
+      return {
+        slotId: slot.slotId,
+        x: slot.x,
+        z: slot.z,
+        claimed: owner !== undefined,
+        mine: owner !== undefined && owner.slotId === mySlotId,
+        island: owner?.island ?? { ...slot.wild, generatorVersion: chart.wildGeneratorVersion }
+      };
+    })
+  };
 }
 
 /** The world as the chart shows it: every open archipelago, which places are taken, and the reader's own. */
@@ -93,28 +123,50 @@ export class GetWorldChart {
     const bySlot = new Map(claimed.map((entry) => [entry.slotId, entry]));
     const mine = farm === null ? null : (claimed.find((entry) => entry.farmId === farm.id) ?? null);
     const isClaimed = (slotId: string): boolean => bySlot.has(slotId);
+    const mySlotId = mine?.slotId ?? null;
     return {
-      mySlotId: mine?.slotId ?? null,
+      mySlotId,
       regions: this.world.chart.regions.map((region) => ({
         region,
-        archipelagos: this.world.chart.openArchipelagos(region, isClaimed).map((archipelago) => ({
-          archipelagoId: archipelago.archipelagoId,
-          index: archipelago.index,
-          centreX: archipelago.centreX,
-          centreZ: archipelago.centreZ,
-          slots: archipelago.slots.map((slot) => {
-            const owner = bySlot.get(slot.slotId);
-            return {
-              slotId: slot.slotId,
-              x: slot.x,
-              z: slot.z,
-              claimed: owner !== undefined,
-              mine: owner !== undefined && owner.slotId === mine?.slotId,
-              island: owner?.island ?? { ...slot.wild, generatorVersion: this.world.chart.wildGeneratorVersion }
-            };
-          })
-        }))
+        archipelagos: this.world.chart
+          .openArchipelagos(region, isClaimed)
+          .map((archipelago) => archipelagoView(this.world.chart, archipelago, bySlot, mySlotId))
       }))
+    };
+  }
+}
+
+export interface MyArchipelagoView {
+  readonly mySlotId: string | null;
+  readonly region: SeaRegionName | null;
+  /** The reader's archipelago, or null while their island has no place on the chart. */
+  readonly archipelago: WorldArchipelagoView | null;
+}
+
+/**
+ * The reader's own archipelago: the islands they can see from home. It reads only that
+ * archipelago's few places, so the game can ask on every visit without reading the whole world.
+ */
+export class GetMyArchipelago {
+  constructor(
+    private readonly farms: FarmRepository,
+    private readonly world: WorldPlacement
+  ) {}
+
+  async execute(actor: ActorContext | null): Promise<MyArchipelagoView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const farm = await this.farms.findByOwner(actor.playerId);
+    if (farm === null) return { mySlotId: null, region: null, archipelago: null };
+    const mine = await this.world.slots.findByFarm(farm.id);
+    const slot = mine === null ? null : this.world.chart.findSlot(mine.slotId);
+    const archipelago = slot === null ? null : this.world.chart.findArchipelago(slot.archipelagoId);
+    if (mine === null || slot === null || archipelago === null) return { mySlotId: null, region: null, archipelago: null };
+    const claimed = await this.world.slots.listClaimedIn(archipelago.slots.map((entry) => entry.slotId));
+    const bySlot = new Map(claimed.map((entry) => [entry.slotId, entry]));
+    return {
+      mySlotId: mine.slotId,
+      region: slot.region,
+      archipelago: archipelagoView(this.world.chart, archipelago, bySlot, mine.slotId)
     };
   }
 }

@@ -82,6 +82,7 @@ import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
 import { islandDecorPlan } from "./island-decor";
 import { createClouds, createSun, driftClouds, placeSun } from "./sky-life";
+import { buildHorizonIsland, disposeHorizon, horizonPlacements, type HorizonSlot } from "./horizon-islands";
 import { worldFrame } from "./layout";
 import { buildLockedPlotOverlay, buildTerrain, TILE_SURFACE_Y, TILE_THICKNESS } from "./terrain";
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt } from "./terrain-height";
@@ -365,6 +366,15 @@ export interface SceneNeighborIsland {
   readonly npcCycle?: number;
   /** Legacy authoritative construction phase used to decide whether a completed building is visible. */
   readonly npcConstructionPhase?: string;
+}
+
+/**
+ * The player's archipelago as the horizon shows it (W3): where the home island stands on the chart,
+ * and every other place of its archipelago with the island standing there.
+ */
+export interface SceneHorizon {
+  readonly home: { readonly x: number; readonly z: number };
+  readonly slots: readonly HorizonSlot[];
 }
 
 /** HOME-only low-detail preview: presentation only, never a walkable or selectable island. */
@@ -664,6 +674,8 @@ export interface FarmSceneHandle {
   setNeighborIsland(island: SceneNeighborIsland | null): void;
   /** Draws low-detail silhouettes on HOME without adding collision, actors, or pick targets. */
   setNeighborIslandPreviews(islands: readonly SceneNeighborIslandPreview[]): void;
+  /** Stands the other islands of the player's archipelago on the horizon, or clears them (null). */
+  setHorizon(horizon: SceneHorizon | null): void;
   /** Moves the estate camera to a world-space place without inventing a cell coordinate. */
   focusWorld(worldX: number, worldZ: number, distance?: number, yaw?: number): void;
   /**
@@ -1584,6 +1596,16 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   if (skySun !== null) scene.add(skySun);
   const clouds = createClouds();
   scene.add(clouds);
+  // The archipelago's other islands on the horizon (horizon-islands.ts). Built one island per tick, so
+  // generating their ground never stalls a frame; rebuilt when the archipelago or the island changes.
+  const horizonGroup = new Group();
+  horizonGroup.name = "horizon";
+  scene.add(horizonGroup);
+  let horizonInput: SceneHorizon | null = null;
+  let horizonCentre: { x: number; z: number } | null = null;
+  let horizonExtent = 0;
+  let horizonBuildToken = 0;
+  let horizonSignature = "";
 
   // Sky light, ground bounce, and one warm sun. The hemisphere carries the colour that makes shade
   // read as shade rather than as darkness: cool from above, green from the ground.
@@ -2566,6 +2588,9 @@ let interactionGeometry: BufferGeometry | null = null;
       // island keeps its own bearing behind the camera, so the island is never backlit.
       if (skySun !== null) placeSun(skySun, next.world.centerWorldX, next.world.centerWorldZ, VISIBLE_SUN_DIRECTION, SKY_RADIUS * 0.82);
       clouds.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
+      horizonCentre = { x: next.world.centerWorldX, z: next.world.centerWorldZ };
+      horizonExtent = worldExtent;
+      rebuildHorizon();
     }
     // How far the camera may pull back is a property of the island: the estate view has to reach all
     // of it, on an island of any size, and the range is derived from the island's own extent.
@@ -2914,6 +2939,44 @@ let interactionGeometry: BufferGeometry | null = null;
     neighborCollisionDebugGeometries.push(geometry);
     neighborCollisionDebugGroup.add(new LineSegments(geometry, neighborCollisionDebugMaterial));
   }
+  /**
+   * Stands the archipelago's other islands round the home island, one island per tick. A newer
+   * archipelago or island cancels a build in progress; the same one is not rebuilt.
+   */
+  function rebuildHorizon(): void {
+    const input = horizonInput;
+    const centre = horizonCentre;
+    const signature =
+      input === null || centre === null
+        ? ""
+        : `${String(centre.x)},${String(centre.z)},${String(horizonExtent)}|${String(input.home.x)},${String(input.home.z)}|${input.slots
+            .map((slot) => `${slot.slotId}:${String(slot.claimed)}:${slot.island.element}:${slot.island.outline}:${String(slot.island.seed)}:${String(slot.island.generatorVersion)}`)
+            .join(";")}`;
+    if (signature === horizonSignature) return;
+    horizonSignature = signature;
+    horizonBuildToken += 1;
+    disposeHorizon(horizonGroup);
+    if (input === null || centre === null || disposed) {
+      draw();
+      return;
+    }
+    const token = horizonBuildToken;
+    const queue = horizonPlacements(input.home, input.slots, centre, horizonExtent);
+    const step = quality.name === "LOW" ? 3 : 2;
+    const buildNext = (): void => {
+      if (token !== horizonBuildToken || disposed) return;
+      const placement = queue.shift();
+      if (placement === undefined) return;
+      const island = buildHorizonIsland(placement, HORIZON_COLOR, step);
+      if (island !== null) {
+        horizonGroup.add(island);
+        draw();
+      }
+      window.setTimeout(buildNext, 0);
+    };
+    window.setTimeout(buildNext, 0);
+  }
+
   function rebuildNeighborIsland(): void {
     clearIslandDebugLabels(neighborGroup);
     neighborGroup.clear();
@@ -4993,9 +5056,14 @@ let interactionGeometry: BufferGeometry | null = null;
         workAreaGridGroup, workAreaMarkGroup, areaHarvestMarkGroup, previewGroup,
         constructionGroup
       ]) group.visible = homeVisible;
+      horizonGroup.visible = homeVisible;
       rebuildNeighborIsland();
       neighborPreviewGroup.visible = neighborPreviews.length > 0;
       scheduleCameraFrame(); draw();
+    },
+    setHorizon(next: SceneHorizon | null): void {
+      horizonInput = next;
+      rebuildHorizon();
     },
     setNeighborIslandPreviews(next: readonly SceneNeighborIslandPreview[]): void {
       const inputIslandIds = next.map((item) => item.islandId);
@@ -5062,6 +5130,8 @@ let interactionGeometry: BufferGeometry | null = null;
     cameraFrame: () => cameraRig.state,
     dispose(): void {
       disposed = true;
+      horizonBuildToken += 1;
+      disposeHorizon(horizonGroup);
       if (ambientTimer !== null) window.clearInterval(ambientTimer);
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);

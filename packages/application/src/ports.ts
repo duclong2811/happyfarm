@@ -1558,6 +1558,7 @@ export interface WorldChartPort {
   /** The generator version a wild island is drawn with. */
   readonly wildGeneratorVersion: number;
   findSlot(slotId: string): WorldChartSlot | null;
+  findArchipelago(archipelagoId: string): WorldChartArchipelago | null;
   nextFreeSlot(region: SeaRegionName, isClaimed: (slotId: string) => boolean): WorldChartSlot | null;
   openArchipelagos(region: SeaRegionName, isClaimed: (slotId: string) => boolean): readonly WorldChartArchipelago[];
 }
@@ -1571,6 +1572,8 @@ export interface WorldSlotRepository {
   claimedSlotIds(): Promise<ReadonlySet<string>>;
   findByFarm(farmId: FarmId): Promise<WorldSlotClaim | null>;
   listClaimed(): Promise<readonly ClaimedWorldSlot[]>;
+  /** The claims on these slots only (an archipelago's, at most sixteen): one indexed read. */
+  listClaimedIn(slotIds: readonly string[]): Promise<readonly ClaimedWorldSlot[]>;
   /** Writes the claim unless the slot or the farm already has one; true when this call wrote it. */
   claim(claim: WorldSlotClaim): Promise<boolean>;
 }

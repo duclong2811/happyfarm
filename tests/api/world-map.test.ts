@@ -15,7 +15,7 @@ import {
   type TreeInstanceId
 } from "@happy-farm/domain";
 import { seaChart } from "@happy-farm/game-data";
-import { EnsureWorldSlotResponseSchema, GetMyFarmResponseSchema, GetWorldChartResponseSchema } from "@happy-farm/contracts";
+import { EnsureWorldSlotResponseSchema, GetMyFarmResponseSchema, GetWorldArchipelagoResponseSchema, GetWorldChartResponseSchema } from "@happy-farm/contracts";
 import { createHandler } from "../../workers/api/src/handler";
 import { D1FarmMemberRepository, D1FarmRepository, D1PlayerRepository, D1WorldSlotRepository } from "../../workers/api/src/d1-repositories";
 import {
@@ -173,6 +173,7 @@ describe("the world map", () => {
     build(null);
     expect(GetMyFarmResponseSchema.parse(await dataOf(await request("/farms/mine"))).worldMap).toEqual({ enabled: false });
     expect((await request("/world/chart")).status).toBe(404);
+    expect((await request("/world/archipelago")).status).toBe(404);
   });
 
   it("places a chosen island in the next free slot of the region it named", async () => {
@@ -216,6 +217,28 @@ describe("the world map", () => {
     expect(mine).toMatchObject({ claimed: true, mine: true, island: { ...CHOICE, generatorVersion: 2 } });
     const wild = seaChart().get("WEST")?.[0]?.slots[1];
     expect(slots[1]).toMatchObject({ claimed: false, mine: false, island: { ...wild?.wild, generatorVersion: 2 } });
+  });
+
+  it("shows a player their own archipelago: its places, its islands, and which is theirs", async () => {
+    auth.setActor({ playerId: playerId(1) });
+    expect(GetWorldArchipelagoResponseSchema.parse(await dataOf(await request("/world/archipelago")))).toEqual({
+      mySlotId: null,
+      region: null,
+      archipelago: null
+    });
+    for (const n of [1, 2, 3]) await settle(n, "NORTH");
+    await settle(4, "EAST");
+    auth.setActor({ playerId: playerId(2) });
+    const view = GetWorldArchipelagoResponseSchema.parse(await dataOf(await request("/world/archipelago")));
+    const first = seaChart().get("NORTH")?.[0];
+    expect(view.mySlotId).toBe("slot_north_1_2");
+    expect(view.region).toBe("NORTH");
+    expect(view.archipelago?.archipelagoId).toBe("sea_north_1");
+    expect(view.archipelago?.slots.map((slot) => slot.slotId)).toEqual(first?.slots.map((slot) => slot.slotId));
+    expect(view.archipelago?.slots.filter((slot) => slot.claimed).map((slot) => slot.slotId)).toEqual(["slot_north_1_1", "slot_north_1_2", "slot_north_1_3"]);
+    expect(view.archipelago?.slots.filter((slot) => slot.mine).map((slot) => slot.slotId)).toEqual(["slot_north_1_2"]);
+    expect(view.archipelago?.slots[0]?.island).toEqual({ ...CHOICE, generatorVersion: 2 });
+    expect(view.archipelago?.slots[3]?.island).toEqual({ ...first?.slots[3]?.wild, generatorVersion: 2 });
   });
 
   it("gives a farm on the composed island no place, and a repeat creation no second one", async () => {
@@ -292,5 +315,6 @@ describe("the world map", () => {
     expect((await request("/world/slot", { region: "UP" })).status).toBe(400);
     auth.setActor(null);
     expect((await request("/world/chart")).status).toBe(401);
+    expect((await request("/world/archipelago")).status).toBe(401);
   });
 });

@@ -18,7 +18,20 @@ Status: design agreed with the owner on 2026-11-19 (decisions below).
     farm exists, and from `GET /world/chart` answering after boot. Without the flag, neither the step
     nor the button appears.
   - Archipelago names are our own Vietnamese names, fixed per sea in opening order.
-- W3 onward is not started. The constraints are the ones in `AGENTS.md`: the server is
+- **W3 is built** (`apps/web/src/render/horizon-islands.ts`):
+  - From home, the other places of the player's archipelago stand on the horizon. Each is drawn from
+    its own template (a settled island as its owner chose it, a free place as its wild island), with
+    its coast, forests and mountains, and a flag over a settled one.
+  - Bearings are the chart's. Distances are condensed into a band 2.35 to 3.25 home-island
+    half-widths out, nearer places nearer, and an island that would touch another moves out. The
+    islands are drawn at 0.42 of the home island's width, hazed toward the horizon colour instead of
+    fogged (the fog would hide them at that range).
+  - Presentation only: nothing there is picked, walked on, or casts a shadow. They are built one
+    island per tick.
+  - Data: `GET /world/archipelago` returns only the reader's archipelago, at most eight places, read
+    with one `WHERE slot_id IN (...)`. The game asks once per farm load, and again after the chart
+    gives a placeless island its place.
+- W4 onward is not started. The constraints are the ones in `AGENTS.md`: the server is
 authoritative, every mutation is validated, migrations are used for every schema change, and no
 proprietary game's map, names or art is copied.
 
@@ -135,7 +148,7 @@ element's region by a one-off, idempotent migration step.
 |---|---|---|
 | W1 | World data, slots and claiming: a new farm takes a slot in an open archipelago of its region | migration `world_slots`, game data, claim in farm creation, `GET /world/chart` |
 | W2 (built) | The nautical chart: onboarding choice and a world view from the HUD | `worldMap.enabled` on `GET /farms/mine`; otherwise none beyond W1 |
-| W3 | Neighbours on the horizon: the archipelago's islands in 3D | read slot templates near the player |
+| W3 (built) | Neighbours on the horizon: the archipelago's islands in 3D | `GET /world/archipelago` |
 | W4 | Visiting: sail to look at another player's island (read-only) | authorised read of another farm's public view |
 | W5+ | Ships and the sea: build a ship, sail it, then naval combat | a Durable Object per sea area for realtime positions and combat; anti-cheat; damage and loot rules; economy design (owner decision) |
 

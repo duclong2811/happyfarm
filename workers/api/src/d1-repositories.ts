@@ -1094,7 +1094,25 @@ export class D1WorldSlotRepository implements WorldSlotRepository {
         "SELECT ws.slot_id, ws.region, ws.farm_id, ws.claimed_at, fi.element, fi.outline, fi.seed, fi.generator_version FROM world_slots ws LEFT JOIN farm_islands fi ON fi.farm_id = ws.farm_id ORDER BY ws.slot_id"
       )
       .all<ClaimedWorldSlotRow>();
-    return rows.results.map((row) => ({
+    return rows.results.map((row) => D1WorldSlotRepository.claimed(row));
+  }
+
+  async listClaimedIn(slotIds: readonly string[]): Promise<readonly ClaimedWorldSlot[]> {
+    if (slotIds.length === 0) return [];
+    // An archipelago holds at most eight slots; the bound keeps the statement's parameters well
+    // inside D1's limit whatever a caller passes.
+    if (slotIds.length > 16) throw new Error("listClaimedIn reads one archipelago at a time");
+    const rows = await this.db
+      .prepare(
+        `SELECT ws.slot_id, ws.region, ws.farm_id, ws.claimed_at, fi.element, fi.outline, fi.seed, fi.generator_version FROM world_slots ws LEFT JOIN farm_islands fi ON fi.farm_id = ws.farm_id WHERE ws.slot_id IN (${slotIds.map(() => "?").join(", ")}) ORDER BY ws.slot_id`
+      )
+      .bind(...slotIds)
+      .all<ClaimedWorldSlotRow>();
+    return rows.results.map((row) => D1WorldSlotRepository.claimed(row));
+  }
+
+  private static claimed(row: ClaimedWorldSlotRow): ClaimedWorldSlot {
+    return {
       slotId: row.slot_id,
       region: row.region,
       farmId: parseFarmId(row.farm_id),
@@ -1103,7 +1121,7 @@ export class D1WorldSlotRepository implements WorldSlotRepository {
         row.element === null || row.outline === null || row.seed === null || row.generator_version === null
           ? null
           : { element: row.element, outline: row.outline, seed: row.seed, generatorVersion: row.generator_version }
-    }));
+    };
   }
 
   async claim(claim: WorldSlotClaim): Promise<boolean> {

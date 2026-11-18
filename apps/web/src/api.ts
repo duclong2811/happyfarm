@@ -72,6 +72,7 @@ import {
   ,NeighborTravelResponseSchema
   ,NeighborTalkResponseSchema
   ,GetWorldChartResponseSchema
+  ,GetWorldArchipelagoResponseSchema
   ,EnsureWorldSlotResponseSchema
 } from "@happy-farm/contracts";
 import type {
@@ -138,6 +139,7 @@ import type {
   ,IslandChoiceDTO
   ,PlayerAppearanceDTO
   ,GetWorldChartResponse
+  ,GetWorldArchipelagoResponse
   ,EnsureWorldSlotResponse
   ,SeaRegionDTO
 } from "@happy-farm/contracts";
@@ -312,6 +314,11 @@ export class ApiClient {
   /** The world's sea chart: every open archipelago, which places are taken, and the caller's own. */
   getWorldChart(): Promise<GetWorldChartResponse> {
     return this.get("/world/chart", GetWorldChartResponseSchema);
+  }
+
+  /** The caller's own archipelago: the islands seen from home. One small read. */
+  getWorldArchipelago(): Promise<GetWorldArchipelagoResponse> {
+    return this.get("/world/archipelago", GetWorldArchipelagoResponseSchema);
   }
 
   /**

@@ -92,6 +92,15 @@ export const GetWorldChartResponseSchema = z
   })
   .strict();
 
+/** `GET /world/archipelago`: the reader's own archipelago, the islands seen from home. */
+export const GetWorldArchipelagoResponseSchema = z
+  .object({
+    mySlotId: z.string().nullable(),
+    region: SeaRegionSchema.nullable(),
+    archipelago: WorldChartArchipelagoDTOSchema.nullable()
+  })
+  .strict();
+
 export const EnsureWorldSlotRequestSchema = z.object({ region: SeaRegionSchema.optional() }).strict();
 
 export const WorldSlotDTOSchema = z
@@ -2148,6 +2157,7 @@ export type CreateFarmRequest = z.infer<typeof CreateFarmRequestSchema>;
 export type IslandChoiceDTO = z.infer<typeof IslandChoiceSchema>;
 export type SeaRegionDTO = z.infer<typeof SeaRegionSchema>;
 export type GetWorldChartResponse = z.infer<typeof GetWorldChartResponseSchema>;
+export type GetWorldArchipelagoResponse = z.infer<typeof GetWorldArchipelagoResponseSchema>;
 export type EnsureWorldSlotResponse = z.infer<typeof EnsureWorldSlotResponseSchema>;
 export type FarmIslandSummaryDTO = z.infer<typeof FarmIslandSummaryDTOSchema>;
 export type FarmIslandDTO = z.infer<typeof FarmIslandDTOSchema>;
