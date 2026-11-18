@@ -176,6 +176,8 @@ const HORIZON_COLOR = 0xcfe9f7;
 const SKY_ZENITH_COLOR = 0x69b4e8;
 /** Where the sun stands relative to whatever the camera is framing, and how tall. */
 const SUN_OFFSET = new Vector3(28, 46, 20);
+/** Where the sun's disc is drawn: north-west and low, in front of the default estate view. */
+const VISIBLE_SUN_DIRECTION = { x: -0.95, y: 0.17, z: -0.55 } as const;
 /** Half-width of the sun's shadow box, in world metres: the island plus its beach. */
 const SHADOW_EXTENT_WORLD = 30;
 /** Warm tint applied to a loaded model once the server calls the crop mature. Placeholder art. */
@@ -2559,9 +2561,10 @@ let interactionGeometry: BufferGeometry | null = null;
       );
       sun.target.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
       sun.target.updateMatrixWorld();
-      // Seen on the light's own bearing, but lower in the sky than the light's steep angle, so the disc
-      // is in view above the horizon rather than straight overhead.
-      if (skySun !== null) placeSun(skySun, next.world.centerWorldX, next.world.centerWorldZ, { x: SUN_OFFSET.x, y: 5.5, z: SUN_OFFSET.z }, SKY_RADIUS * 0.82);
+      // The disc is where the player looks: low over the horizon a little left of the default view (the
+      // estate camera stands south-east of the island looking north-west). The light that shades the
+      // island keeps its own bearing behind the camera, so the island is never backlit.
+      if (skySun !== null) placeSun(skySun, next.world.centerWorldX, next.world.centerWorldZ, VISIBLE_SUN_DIRECTION, SKY_RADIUS * 0.82);
       clouds.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
     }
     // How far the camera may pull back is a property of the island: the estate view has to reach all

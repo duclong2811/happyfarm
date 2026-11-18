@@ -108,7 +108,7 @@ export function createClouds(seed = 7): Group {
     }
     const scale = 5 + roll() * 4;
     cloud.scale.setScalar(scale);
-    cloud.position.y = 14 + roll() * 30;
+    cloud.position.y = 7 + roll() * 20;
     cloud.rotation.y = roll() * Math.PI;
     const state: CloudState = { cloud, speed: 0.004 + roll() * 0.005, angle: (index / count) * Math.PI * 2 + roll() * 0.4, radius: 230 + roll() * 190 };
     states.push(state);
