@@ -14,6 +14,7 @@
 import type { FarmIslandDTO } from "@happy-farm/contracts";
 import { islandCellKindAt, ISLAND_DOCK_CLEARANCE_TILES, type IslandCellKind } from "@happy-farm/game-data";
 import { distanceToOutside, islandRelief, RELIEF_BASE_WORLD, RELIEF_TAG, RELIEF_WALKABLE_MAX_WORLD } from "./island-relief";
+import { islandDecorPlan, type IslandDecorPlan } from "./island-decor";
 import { tileToWorld, worldFrame, type FarmLayout, type TileBounds, type TileCoordinate, type WorldFrame } from "./layout";
 import { GROUND_SURFACE_Y, terrainHeightAt, type IslandField, type TerrainShape } from "./terrain-height";
 import { EMPTY_WORLD, type FarmWorld, type SceneryInstance, type SceneryKind } from "./world";
@@ -283,13 +284,18 @@ function scatterRules(kind: IslandCellKind, forestChance: number, element: strin
 }
 
 /** What grows on a chosen island: deterministic from its stored cells and nothing else. */
-export function islandScenery(ground: IslandGroundView, frame: WorldFrame, terrain: TerrainShape): SceneryInstance[] {
+export function islandScenery(ground: IslandGroundView, frame: WorldFrame, terrain: TerrainShape, decor: IslandDecorPlan = islandDecorPlan(ground)): SceneryInstance[] {
   // Keep clear of the island's own working sites: a chopped tree stands on a tree site, a dock and the
-  // camp need room, and a decorative trunk on top of either reads as a bug.
+  // camp need room, and a decorative trunk on top of either reads as a bug. The village's pieces get
+  // the same courtesy, so a bush never grows through the well.
   const keepClear = new Set<string>();
   for (const site of ground.sites) {
     const reach = site.kind === "DOCK" ? ISLAND_DOCK_CLEARANCE_TILES : site.kind === "CAMP" ? 3 : 1;
     for (let dy = -reach; dy <= reach; dy += 1) for (let dx = -reach; dx <= reach; dx += 1) keepClear.add(cellKey(site.x + dx, site.y + dy));
+  }
+  for (const piece of decor.props) {
+    const reach = Math.ceil(piece.radiusTiles + 0.5);
+    for (let dy = -reach; dy <= reach; dy += 1) for (let dx = -reach; dx <= reach; dx += 1) keepClear.add(cellKey(Math.round(piece.x) + dx, Math.round(piece.y) + dy));
   }
   let forestCells = 0;
   for (const code of ground.cells) if (code === "f") forestCells += 1;
@@ -338,11 +344,13 @@ export function buildIslandFarmWorld(layout: FarmLayout, ground: IslandGroundVie
     maxY: ground.originY + ground.size - 1
   };
   const half = (ground.size / 2) * frame.pitch;
+  const islandDecor = islandDecorPlan(ground);
   return {
     ...EMPTY_WORLD,
     inner: bounds,
     outer: bounds,
-    scenery: islandScenery(ground, frame, terrain),
+    scenery: islandScenery(ground, frame, terrain, islandDecor),
+    islandDecor,
     islandHalfWidthWorld: half,
     islandHalfDepthWorld: half,
     farmHalfExtentWorld: half * 0.45,

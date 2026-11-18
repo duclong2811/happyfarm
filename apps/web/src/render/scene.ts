@@ -80,6 +80,7 @@ import { CELL_OVERLAY_LIFT_WORLD } from "./world-cell-overlay";
 import { CELL_OVERLAY_TILE_LIFT_WORLD } from "./world-cell-overlay";
 import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
+import { visibleIslandDecor } from "./island-decor";
 import { worldFrame } from "./layout";
 import { buildLockedPlotOverlay, buildTerrain, TILE_SURFACE_Y, TILE_THICKNESS } from "./terrain";
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt } from "./terrain-height";
@@ -1303,6 +1304,10 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const resourceGroup = new Group();
   // Buoys over the deep-water fishing spots of a chosen island, rebuilt only when the spots change.
   const fishingMarkerGroup = new Group();
+  // A chosen island's village and dock crates (island-decor.ts): drawn where the player has not built.
+  const islandDecorGroup = new Group();
+  let islandDecorSignature = "";
+  let islandDecorToken = 0;
   const neighborGroup = new Group();
   const neighborGeometries: BufferGeometry[] = [];
   const neighborCollisionDebugGroup = new Group();
@@ -1546,6 +1551,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     treeGroup,
     resourceGroup,
     fishingMarkerGroup,
+    islandDecorGroup,
     neighborPreviewGroup,
     neighborGroup,
     neighborCollisionDebugGroup,
@@ -2418,8 +2424,52 @@ let interactionGeometry: BufferGeometry | null = null;
     return parts.join(";");
   }
 
+  /**
+   * Draws the chosen island's village and dock crates, minus every piece standing on a cell the player
+   * has built on, planted or tilled - set dressing gives way to the player's own island.
+   */
+  function refreshIslandDecor(next: FarmSceneInput): void {
+    const plan = next.world.islandDecor;
+    const visible = plan === undefined
+      ? []
+      : visibleIslandDecor(plan.props, (x, y) => {
+          const cell = next.cells.cells.get(cellKey(x, y));
+          return cell !== undefined && (cell.owned || cell.occupancy === "BUILDING" || cell.occupancy === "PRODUCTION");
+        });
+    const signature = visible.map((piece) => piece.id).join("|") + "#" + (plan === undefined ? "" : `${String(plan.props.length)}:${String(next.layout.pitch)}`);
+    if (signature === islandDecorSignature) return;
+    islandDecorSignature = signature;
+    islandDecorGroup.clear();
+    const token = ++islandDecorToken;
+    const frame = worldFrame(next.layout.pitch);
+    const buckets = new Map<string, typeof visible[number][]>();
+    for (const piece of visible) {
+      const bucket = buckets.get(piece.modelId);
+      if (bucket === undefined) buckets.set(piece.modelId, [piece]);
+      else bucket.push(piece);
+    }
+    for (const [modelId, pieces] of buckets) {
+      void library.load(modelId).then((model) => {
+        if (disposed || token !== islandDecorToken || model === null) return;
+        const placements = pieces.map((piece) => {
+          const at = tileToWorld({ x: piece.x, y: piece.y }, frame);
+          return {
+            worldX: at.worldX,
+            worldY: GROUND_SURFACE_Y + terrainHeightAt(at.worldX, at.worldZ, next.world.terrain),
+            worldZ: at.worldZ,
+            rotationY: piece.rotationY,
+            sizeWorld: piece.sizeWorld
+          };
+        });
+        buildInstancedObjects(islandDecorGroup, model, placements, true);
+        draw();
+      });
+    }
+  }
+
   function applyState(next: FarmSceneInput): void {
     state = next;
+    refreshIslandDecor(next);
     const signature = signatureOf(next);
     const dynamicSignature = dynamicSignatureOf(next);
     /**
@@ -4890,7 +4940,7 @@ let interactionGeometry: BufferGeometry | null = null;
       };
       const homeVisible = next === null;
       for (const group of [
-        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup, fishingMarkerGroup,
+        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup, fishingMarkerGroup, islandDecorGroup,
         overlayGroup, overlayDetailGroup, interactionGroup, cellOverlayGroup,
         workAreaGridGroup, workAreaMarkGroup, areaHarvestMarkGroup, previewGroup,
         constructionGroup

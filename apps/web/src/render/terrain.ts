@@ -1,4 +1,5 @@
 import {
+  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   CircleGeometry,
@@ -15,7 +16,8 @@ import {
   type Material,
   type Object3D
 } from "three";
-import type { FarmLayout } from "./layout";
+import { tileToWorld, worldFrame, type FarmLayout } from "./layout";
+import type { BoatPlan, PierPlan } from "./island-decor";
 import type { SharedAssets } from "./materials";
 import {
   districtOutlineScale,
@@ -1046,7 +1048,89 @@ function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, f
   surface.renderOrder = 1;
   group.add(surface);
   if (field.volcano !== undefined) addVolcanoCrater(group, world, field.volcano);
+  const decor = world.islandDecor;
+  if (decor?.pier != null) addPier(group, world, decor.pier, field.pitch);
+  if (decor?.boat != null) addRowingBoat(group, decor.boat, field.pitch);
   return ground;
+}
+
+/** Shared pieces of the dock's pier and boat: one box, a few woods and paints, made once. */
+let dockParts: {
+  readonly box: BoxGeometry;
+  readonly plank: MeshStandardMaterial;
+  readonly beam: MeshStandardMaterial;
+  readonly hull: MeshStandardMaterial;
+  readonly trim: MeshStandardMaterial;
+  readonly lamp: MeshBasicMaterial;
+} | null = null;
+
+function dockMaterials(): NonNullable<typeof dockParts> {
+  return dockParts ??= {
+    box: new BoxGeometry(1, 1, 1),
+    plank: new MeshStandardMaterial({ color: 0xa8774a, roughness: 0.85 }),
+    beam: new MeshStandardMaterial({ color: 0x6b4a2c, roughness: 0.9 }),
+    hull: new MeshStandardMaterial({ color: 0xb5452f, roughness: 0.7 }),
+    trim: new MeshStandardMaterial({ color: 0xf1e6cf, roughness: 0.8 }),
+    lamp: new MeshBasicMaterial({ color: 0xffd27a })
+  };
+}
+
+function block(parts: NonNullable<typeof dockParts>, material: Material, size: readonly [number, number, number], at: readonly [number, number, number], rotationY = 0): Mesh {
+  const mesh = new Mesh(parts.box, material);
+  mesh.scale.set(size[0], size[1], size[2]);
+  mesh.position.set(at[0], at[1], at[2]);
+  mesh.rotation.y = rotationY;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/**
+ * The dock's pier: planks across two beams on posts, from the beach out over the shallows, with a
+ * lamp post at its end. Presentation only - the dock's protected radius keeps the ground under it free.
+ */
+function addPier(group: Group, world: FarmWorld, pier: PierPlan, pitch: number): void {
+  const parts = dockMaterials();
+  const frame = worldFrame(pitch);
+  const start = tileToWorld({ x: pier.x, y: pier.y }, frame);
+  const length = pier.lengthTiles * pitch;
+  const deckY = Math.max(ISLAND_TOP_Y + terrainHeightAt(start.worldX, start.worldZ, world.terrain) + 0.1, SEA_LEVEL_Y + 0.62);
+  const root = new Group();
+  root.name = "island-pier";
+  root.position.set(start.worldX, 0, start.worldZ);
+  root.rotation.y = Math.atan2(pier.dirX, pier.dirY);
+  const width = 1.2;
+  for (let z = 0.15; z < length; z += 0.32) root.add(block(parts, parts.plank, [width, 0.07, 0.27], [0, deckY, z], ((Math.round(z * 10) % 3) - 1) * 0.015));
+  for (const side of [-1, 1]) {
+    root.add(block(parts, parts.beam, [0.12, 0.14, length], [side * (width / 2 - 0.12), deckY - 0.1, length / 2]));
+    for (let z = 0.4; z < length + 0.01; z += 1.1) {
+      const postTop = deckY + (z > length - 0.6 ? 0.25 : 0.02);
+      const postBottom = SEA_LEVEL_Y - 0.7;
+      root.add(block(parts, parts.beam, [0.14, postTop - postBottom, 0.14], [side * (width / 2), (postTop + postBottom) / 2, Math.min(z, length - 0.1)]));
+    }
+  }
+  // The lamp at the end: a post with a warm light on it, seen from across the bay.
+  root.add(block(parts, parts.beam, [0.1, 1.3, 0.1], [width / 2 - 0.1, deckY + 0.65, length - 0.15]));
+  const lamp = block(parts, parts.lamp, [0.2, 0.24, 0.2], [width / 2 - 0.1, deckY + 1.38, length - 0.15]);
+  lamp.castShadow = false;
+  root.add(lamp);
+  group.add(root);
+}
+
+/** A rowing boat moored beside the pier's end: a red hull with a pointed bow, a floor and a seat. */
+function addRowingBoat(group: Group, boat: BoatPlan, pitch: number): void {
+  const parts = dockMaterials();
+  const at = tileToWorld({ x: boat.x, y: boat.y }, worldFrame(pitch));
+  const root = new Group();
+  root.name = "island-boat";
+  root.position.set(at.worldX, SEA_LEVEL_Y + 0.05, at.worldZ);
+  root.rotation.y = Math.atan2(boat.dirX, boat.dirY) + 0.12;
+  root.add(block(parts, parts.hull, [0.9, 0.34, 1.7], [0, 0.12, -0.15]));
+  root.add(block(parts, parts.hull, [0.64, 0.34, 0.64], [0, 0.12, 0.72], Math.PI / 4));
+  root.add(block(parts, parts.trim, [0.94, 0.06, 1.74], [0, 0.3, -0.15]));
+  root.add(block(parts, parts.plank, [0.74, 0.05, 1.5], [0, 0.22, -0.15]));
+  root.add(block(parts, parts.plank, [0.78, 0.06, 0.24], [0, 0.32, -0.1]));
+  group.add(root);
 }
 
 /** Shared pieces of a volcano's crater: made once, reused by every island drawn. */

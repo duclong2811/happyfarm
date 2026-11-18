@@ -91,6 +91,25 @@ Walking is movement in the browser only, but it agrees with the stored cell kind
     tinted water surface.
   - `player/collision.ts` (`shoreDepthFor`) keeps the walker out of deep water.
 
+## Scenery (presentation only)
+
+- **Mountains** (`apps/web/src/render/island-relief.ts`). Relief rises from ROCK only, because nothing
+  is built or planted on rock.
+  - Kim gets ridged ranges with snow on the highest tips.
+  - Hỏa's largest rock mass becomes a volcano with a crater, a lava pool and smoke.
+  - Other rock becomes low hills. An island without rock stays flat.
+  - Rock above 0.9 m is not walkable, so the player walks around a mountain, and the shallows ring
+    makes that always possible.
+  - Every mine keeps a level yard and a three-cell pass to open ground.
+  - The picker preview draws the same relief.
+- **Dock and village** (`apps/web/src/render/island-decor.ts`).
+  - The pier, the moored boat and the dock crates stay inside the dock's protected radius.
+  - The village is a well, a windmill, a barn, a silo, a coop, carts, crates and lanterns. It stands
+    on open land around the camp, clear of the spawn, mines, trees and dock.
+  - Nothing here is a server object or has collision. A village piece *yields*: it is not drawn over
+    any cell the player has built on, planted or tilled (`visibleIslandDecor`).
+- Tests: `tests/web/island-relief.test.ts`, `tests/web/island-decor.test.ts`.
+
 ## Tests
 
 - `tests/game-data/island-generator-v2.test.ts`, for every element x outline x several seeds:

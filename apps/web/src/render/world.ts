@@ -50,6 +50,7 @@ import type { JunctionSpec } from "./road-surface";
 import { placementRejection, type PlacementWorld, type ShorelineClass } from "./placement";
 import { buildCompositions, type CompositionClearing, type CompositionWorld } from "./composition";
 import { PROP_MODELS } from "./prop-model-urls";
+import type { IslandDecorPlan } from "./island-decor";
 
 /**
  * The world model the renderer draws.
@@ -259,6 +260,8 @@ export interface FarmWorld {
   readonly centerWorldZ: number;
   /** The island's outline, its elevation, and the rectangles it holds level. */
   readonly terrain: TerrainShape;
+  /** A chosen island's pier, boat and village (island-decor.ts). Presentation only; absent elsewhere. */
+  readonly islandDecor?: IslandDecorPlan;
 }
 
 export interface BuildWorldInput {
