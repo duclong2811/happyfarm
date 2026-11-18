@@ -134,7 +134,7 @@ import {
 import { createHoldControl, createJoystickControl, type HoldControl, type JoystickControl } from "./mobile/joystick";
 import { deviceQualityProfile } from "./render/render-quality";
 import { DEFAULT_CAMERA_MODE, otherCameraMode, type CameraMode } from "./render/camera-mode";
-import { GROUND_SURFACE_Y, terrainHeightAt } from "./render/terrain-height";
+import { GROUND_SURFACE_Y, islandWadeDepthAt, terrainHeightAt } from "./render/terrain-height";
 import { neighborForestLayout, neighborGroundHeight, neighborIslandTemplate } from "./render/neighbor-island-template";
 import { MOC_PREVIEW_LAYOUT, mocPresentationDockWorld, mocPresentationSpawnWorld, mocPreviewForestPlacements, mocPreviewPlacement } from "./moc-island-preview-data";
 import { WORLD_CENTER_WORLD } from "./render/world-config";
@@ -8300,8 +8300,9 @@ function refreshScene(): void {
   // The island's own surface, so the character stands on the hills instead of the flat plane the
   // grid is laid out on - and so a cliff is something they cannot walk up.
   const terrain = {
+    // A walker in the shallows wades: their feet sit below the surface, not on it.
     heightAt: (worldX: number, worldZ: number) =>
-      GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, input.world.terrain),
+      GROUND_SURFACE_Y + terrainHeightAt(worldX, worldZ, input.world.terrain) - islandWadeDepthAt(worldX, worldZ, input.world.terrain),
     maxSlope: PLAYER_MAX_SLOPE,
     maxStepWorld: PLAYER_MAX_STEP_WORLD,
     // A chosen island brings its own coast and none of the composed island's fixed obstacles.

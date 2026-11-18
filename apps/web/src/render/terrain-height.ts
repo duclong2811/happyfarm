@@ -69,6 +69,35 @@ export interface IslandField {
   readonly colors?: Float32Array;
   /** Per cell: 0 land, 1 shallow water, 2 open sea. Presentation only. */
   readonly water?: Uint8Array;
+  /**
+   * Where a walker may go, in shore units like `shore`: below 1 on land and in the shallows, exactly 1
+   * on the edge of deep water, above 1 past it. Absent: the coast is the edge (the composed island).
+   */
+  readonly walk?: Float32Array;
+  /** Water surface colour per cell (r, g, b in 0..1): depth gradient and the foam line. Presentation only. */
+  readonly waterColors?: Float32Array;
+}
+
+/** How deep a walker wades at the deepest of the shallows, in world metres: about knee height. */
+export const ISLAND_WADE_DEPTH_WORLD = 0.34;
+/** Cells of shallows over which a walker goes from the waterline to full wading depth. */
+const WADE_RAMP_CELLS = 1.5;
+
+/**
+ * How far below the water surface a walker's feet are at a point, on a chosen island's shallows.
+ *
+ * Zero on land and on the composed island. It is a presentation offset for the walker only - props,
+ * cages and docks keep standing on the terrain height - so wading reads as wading rather than as
+ * walking on the water.
+ */
+export function islandWadeDepthAt(worldX: number, worldZ: number, island: IslandShape): number {
+  const field = island.field;
+  if (field === undefined) return 0;
+  const shore = sampleIslandField(field.shore, field, worldX, worldZ);
+  if (shore <= 1) return 0;
+  const cells = (shore - 1) * field.cellsPerShoreUnit;
+  const t = Math.min(1, cells / WADE_RAMP_CELLS);
+  return ISLAND_WADE_DEPTH_WORLD * t * t * (3 - 2 * t);
 }
 
 /** Cells of beach over which a chosen island's ground falls to the waterline. */

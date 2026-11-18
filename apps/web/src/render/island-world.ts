@@ -44,14 +44,14 @@ const ROCK_RISE_CELLS = 5;
 
 /** The ground's own colour per cell kind; water cells colour the sea floor under the surface. */
 const GROUND_COLORS: Readonly<Record<IslandCellKind, readonly [number, number, number]>> = {
-  DEEP: [40, 92, 128],
-  SHALLOW: [196, 178, 128],
-  SAND: [231, 213, 154],
-  GRASS: [100, 178, 72],
-  FOREST: [72, 140, 54],
-  ROCK: [150, 142, 132],
-  MEADOW: [152, 202, 92],
-  FIELD: [196, 164, 104]
+  DEEP: [26, 66, 98],
+  SHALLOW: [214, 198, 148],
+  SAND: [236, 214, 150],
+  GRASS: [84, 168, 58],
+  FOREST: [52, 124, 42],
+  ROCK: [146, 138, 128],
+  MEADOW: [138, 196, 70],
+  FIELD: [196, 156, 92]
 };
 
 function isWater(kind: IslandCellKind): boolean {
@@ -114,6 +114,34 @@ function kindAt(ground: IslandGroundView, x: number, y: number): IslandCellKind 
   return islandCellKindAt(ground, { x: x + ground.originX, y: y + ground.originY });
 }
 
+/** Water surface colours, by depth: turquoise over the shelf with a foam line, blue past its edge. */
+const FOAM = [0.82, 0.95, 0.93] as const;
+const SHALLOW_NEAR = [0.22, 0.8, 0.78] as const;
+const SHALLOW_FAR = [0.13, 0.62, 0.74] as const;
+const DEEP_NEAR = [0.13, 0.45, 0.66] as const;
+const DEEP_FAR = [0.07, 0.25, 0.44] as const;
+
+/**
+ * sRGB to linear, per channel. Three.js reads vertex colours as linear and converts on output, so a
+ * palette written in sRGB (as every colour here is) must be linearised first - otherwise every colour
+ * is shown lifted and washed out, which is how the chosen islands looked before this.
+ */
+function srgbToLinear(value: number): number {
+  const c = Math.min(1, Math.max(0, value));
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function linearised(values: Float32Array): Float32Array {
+  const out = new Float32Array(values.length);
+  for (let index = 0; index < values.length; index += 1) out[index] = srgbToLinear(values[index] ?? 0);
+  return out;
+}
+
+function mixInto(out: Float32Array, at: number, a: readonly number[], b: readonly number[], t: number): void {
+  const k = Math.min(1, Math.max(0, t));
+  for (let channel = 0; channel < 3; channel += 1) out[at + channel] = (a[channel] ?? 0) + ((b[channel] ?? 0) - (a[channel] ?? 0)) * k;
+}
+
 /** The island's sampled coast and elevation, on its own cell grid. */
 export function islandFieldFor(ground: IslandGroundView, frame: WorldFrame): IslandField {
   const { size } = ground;
@@ -122,6 +150,11 @@ export function islandFieldFor(ground: IslandGroundView, frame: WorldFrame): Isl
   const toWater = distanceToOutside(size, (index) => !isWater(kinds[index] ?? "DEEP"));
   const toLand = distanceToOutside(size, (index) => isWater(kinds[index] ?? "DEEP"));
   const toOpenGround = distanceToOutside(size, (index) => kinds[index] === "ROCK");
+  // The walker's edge is deep water, not the beach: shallows are wadeable.
+  const toDeep = distanceToOutside(size, (index) => kinds[index] !== "DEEP");
+  const toWalkable = distanceToOutside(size, (index) => kinds[index] === "DEEP");
+  const walk = new Float32Array(size * size);
+  const waterColors = new Float32Array(size * size * 3);
   const shore = new Float32Array(size * size);
   const height = new Float32Array(size * size);
   const colors = new Float32Array(size * size * 3);
@@ -134,6 +167,18 @@ export function islandFieldFor(ground: IslandGroundView, frame: WorldFrame): Isl
     colors[index * 3 + 1] = g / 255 + grain;
     colors[index * 3 + 2] = b / 255 + grain;
     water[index] = kind === "DEEP" ? 2 : kind === "SHALLOW" ? 1 : 0;
+    const walkSigned = kind === "DEEP" ? (toWalkable[index] ?? 0) - 0.5 : -((toDeep[index] ?? 0) - 0.5);
+    walk[index] = 1 + walkSigned / ISLAND_SHORE_SCALE_CELLS;
+    if (kind === "SHALLOW") {
+      const fromLand = toLand[index] ?? 0;
+      mixInto(waterColors, index * 3, SHALLOW_NEAR, SHALLOW_FAR, (fromLand - 1) / 6);
+      if (fromLand <= 1.01) mixInto(waterColors, index * 3, [waterColors[index * 3] ?? 0, waterColors[index * 3 + 1] ?? 0, waterColors[index * 3 + 2] ?? 0], FOAM, 0.3);
+    } else if (kind === "DEEP") {
+      mixInto(waterColors, index * 3, DEEP_NEAR, DEEP_FAR, ((toWalkable[index] ?? 0) - 1) / 8);
+      if ((toLand[index] ?? 9) <= 1.01) mixInto(waterColors, index * 3, [waterColors[index * 3] ?? 0, waterColors[index * 3 + 1] ?? 0, waterColors[index * 3 + 2] ?? 0], FOAM, 0.4);
+    } else {
+      mixInto(waterColors, index * 3, FOAM, FOAM, 0);
+    }
     // Signed distance to the waterline, which runs half way between a land cell and a water cell.
     const signed = isWater(kind) ? (toLand[index] ?? 0) - 0.5 : -((toWater[index] ?? 0) - 0.5);
     shore[index] = 1 + signed / ISLAND_SHORE_SCALE_CELLS;
@@ -156,8 +201,10 @@ export function islandFieldFor(ground: IslandGroundView, frame: WorldFrame): Isl
     height: soften(height, size, 1),
     cellsPerShoreUnit: ISLAND_SHORE_SCALE_CELLS,
     waterlineDrop: GROUND_SURFACE_Y - SEA_SURFACE_Y,
-    colors: soften(colors, size, 3),
-    water
+    colors: linearised(soften(colors, size, 3)),
+    water,
+    walk: soften(walk, size, 1),
+    waterColors: linearised(soften(waterColors, size, 3))
   };
 }
 
@@ -233,7 +280,11 @@ function scatterRules(kind: IslandCellKind, forestChance: number, element: strin
     case "FIELD":
       return [{ kind: "plant", chance: 0.02, scaleMin: 0.4, scaleMax: 0.6, detail: true }];
     case "SAND":
-      return [{ kind: "rock", chance: 0.008, scaleMin: 0.35, scaleMax: 0.6, detail: true }];
+      // Shore props: a scatter of beach stones and the odd tuft, so the beach reads as a place.
+      return [
+        { kind: "rock", chance: 0.022, scaleMin: 0.3, scaleMax: 0.7, detail: true },
+        { kind: "plant", chance: 0.02, scaleMin: 0.35, scaleMax: 0.55, detail: true }
+      ];
     case "DEEP":
     case "SHALLOW":
       return [];
@@ -406,7 +457,8 @@ export function buildIslandCellMap(input: WorldCellMapInput, ground: IslandGroun
               ? "EMPTY"
               : "SCENERY";
       const capabilities = cellCapabilitiesFor(terrainKind, zone);
-      const walkable = capabilities.includes("WALK");
+      // The shelf is wadeable on a chosen island: a walker may cross it, nothing may be built on it.
+      const walkable = capabilities.includes("WALK") || kind === "SHALLOW";
       const capability = protectedGround ? "NONE" : productionCapabilityFor(terrainKind, zone);
       const cell: WorldCell = {
         x,

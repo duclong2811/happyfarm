@@ -58,6 +58,7 @@ export const PREVIEW_CELL_COLORS: Readonly<Record<IslandCellKind, readonly [numb
 const SITE_COLORS: Partial<Readonly<Record<IslandSiteKind, string>>> = {
   ORE: "#5d5852",
   FISH_BAY: "#1e5a96",
+  FISHING: "#f4f8ff",
   PASTURE: "#f6f0c8",
   DOCK: "#8c5528",
   CAMP: "#d24832"
@@ -76,18 +77,101 @@ function grain(x: number, y: number): number {
   return ((h >>> 24) / 255 - 0.5) * 14;
 }
 
-/** RGBA pixels for an island, one per cell. Pure, so it is testable without a canvas. */
+const isWaterKind = (kind: IslandCellKind | undefined): boolean => kind === undefined || kind === "DEEP" || kind === "SHALLOW";
+
+/** Chamfer distance (1 / √2) from every cell to the nearest cell where `source` holds. */
+function cellDistance(size: number, source: (index: number) => boolean): Float32Array {
+  const far = size * 4;
+  const d = new Float32Array(size * size);
+  for (let index = 0; index < d.length; index += 1) d[index] = source(index) ? 0 : far;
+  const pass = (y: number, x: number, dx: number, dy: number): void => {
+    const index = y * size + x;
+    let best = d[index] ?? far;
+    const px = x - dx;
+    const py = y - dy;
+    if (px >= 0 && px < size) best = Math.min(best, (d[y * size + px] ?? far) + 1);
+    if (py >= 0 && py < size) {
+      best = Math.min(best, (d[py * size + x] ?? far) + 1);
+      if (px >= 0 && px < size) best = Math.min(best, (d[py * size + px] ?? far) + Math.SQRT2);
+      const qx = x + dx;
+      if (qx >= 0 && qx < size) best = Math.min(best, (d[py * size + qx] ?? far) + Math.SQRT2);
+    }
+    d[index] = best;
+  };
+  for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) pass(y, x, 1, 1);
+  for (let y = size - 1; y >= 0; y -= 1) for (let x = size - 1; x >= 0; x -= 1) pass(y, x, -1, -1);
+  return d;
+}
+
+/** Ground height for the preview's hill shading only: beaches low, forest and rock standing up. */
+function previewHeight(kind: IslandCellKind, inland: number): number {
+  switch (kind) {
+    case "DEEP": return -1;
+    case "SHALLOW": return -0.4;
+    case "SAND": return 0;
+    case "FIELD":
+    case "MEADOW":
+    case "GRASS": return 0.25;
+    case "FOREST": return 0.55;
+    case "ROCK": return 0.6 + Math.min(inland, 10) * 0.09;
+  }
+}
+
+function mix(a: readonly [number, number, number], b: readonly [number, number, number], t: number): [number, number, number] {
+  const k = Math.min(1, Math.max(0, t));
+  return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+}
+
+const FOAM: readonly [number, number, number] = [214, 244, 238];
+const SHALLOW_NEAR: readonly [number, number, number] = [112, 214, 214];
+const SHALLOW_FAR: readonly [number, number, number] = [62, 176, 206];
+const DEEP_NEAR: readonly [number, number, number] = [36, 118, 176];
+const DEEP_FAR: readonly [number, number, number] = [20, 62, 116];
+const WET_SAND: readonly [number, number, number] = [214, 190, 132];
+
+/**
+ * RGBA pixels for an island, one per cell. Pure, so it is testable without a canvas.
+ *
+ * Reads like the 3D island it previews:
+ * - water is coloured by depth: turquoise shallows with a foam line at the beach, a clear step to blue
+ *   deep water, darkening toward the open sea;
+ * - the beach is wet at the waterline;
+ * - land is hill-shaded from the top-left, so forest and rock stand up off the fields.
+ */
 export function islandPreviewPixels(island: GeneratedIsland): Uint8ClampedArray<ArrayBuffer> {
-  const pixels = new Uint8ClampedArray(new ArrayBuffer(island.size * island.size * 4));
-  for (let y = 0; y < island.size; y += 1) {
-    for (let x = 0; x < island.size; x += 1) {
-      const index = y * island.size + x;
-      const kind = island.cells[index] ?? "DEEP";
-      const [r, g, b] = PREVIEW_CELL_COLORS[kind];
-      const shade = kind === "DEEP" || kind === "SHALLOW" ? 0 : grain(x, y);
-      pixels[index * 4] = r + shade;
-      pixels[index * 4 + 1] = g + shade;
-      pixels[index * 4 + 2] = b + shade;
+  const { size, cells } = island;
+  const pixels = new Uint8ClampedArray(new ArrayBuffer(size * size * 4));
+  const toLand = cellDistance(size, (index) => !isWaterKind(cells[index]));
+  const toWater = cellDistance(size, (index) => isWaterKind(cells[index]));
+  const toShallowEdge = cellDistance(size, (index) => cells[index] !== "DEEP");
+  const height = new Float32Array(size * size);
+  for (let index = 0; index < height.length; index += 1) height[index] = previewHeight(cells[index] ?? "DEEP", toWater[index] ?? 0);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const index = y * size + x;
+      const kind = cells[index] ?? "DEEP";
+      let color: [number, number, number];
+      if (kind === "SHALLOW") {
+        const distance = toLand[index] ?? 0;
+        color = mix(SHALLOW_NEAR, SHALLOW_FAR, (distance - 1) / 6);
+        if (distance <= 1.01) color = mix(color, FOAM, 0.45);
+      } else if (kind === "DEEP") {
+        color = mix(DEEP_NEAR, DEEP_FAR, ((toShallowEdge[index] ?? 0) - 1) / 8);
+        if ((toLand[index] ?? 9) <= 1.01) color = mix(color, FOAM, 0.4);
+      } else {
+        const base = PREVIEW_CELL_COLORS[kind];
+        color = kind === "SAND" && (toWater[index] ?? 9) <= 1.01 ? [...WET_SAND] : [base[0], base[1], base[2]];
+        // Light from the top-left: a cell lower than its upper-left neighbour is in its shade.
+        const upLeft = height[Math.max(0, y - 1) * size + Math.max(0, x - 1)] ?? 0;
+        const downRight = height[Math.min(size - 1, y + 1) * size + Math.min(size - 1, x + 1)] ?? 0;
+        const light = (upLeft - downRight) * -60;
+        const speckle = kind === "FOREST" && grain(x * 3, y * 5) > 3 ? -18 : 0;
+        const shade = light + grain(x, y) + speckle;
+        color = [color[0] + shade, color[1] + shade, color[2] + shade];
+      }
+      pixels[index * 4] = color[0];
+      pixels[index * 4 + 1] = color[1];
+      pixels[index * 4 + 2] = color[2];
       pixels[index * 4 + 3] = 255;
     }
   }

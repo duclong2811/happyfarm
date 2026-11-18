@@ -6,7 +6,7 @@ import {
   STATIC_OBSTACLES,
   type WorldObstacle
 } from "../render/world-config";
-import { islandRadiusAt } from "../render/terrain-height";
+import { islandRadiusAt, sampleIslandField } from "../render/terrain-height";
 import { PLAYER_RADIUS, type CollisionWorld } from "./controller";
 
 /**
@@ -142,14 +142,22 @@ export interface TerrainFollow {
 /**
  * Signed shore depth for any island shape, the composed one or a chosen one: the same
  * outline-normal approximation `islandDepth` uses, against the shape handed in.
+ *
+ * On a chosen island with a walk field, the edge is deep water rather than the beach: the shallows
+ * are wadeable, so the walker stops where the shelf drops away.
  */
 export function shoreDepthFor(shape: Parameters<typeof islandRadiusAt>[2]): (x: number, z: number) => number {
+  const field = shape.field;
+  const walk = field?.walk;
+  const radiusAt = field !== undefined && walk !== undefined
+    ? (x: number, z: number) => sampleIslandField(walk, field, x, z)
+    : (x: number, z: number) => islandRadiusAt(x, z, shape);
   return (x, z) => {
-    const radius = islandRadiusAt(x, z, shape);
+    const radius = radiusAt(x, z);
     const step = 0.05;
     const gradient = Math.hypot(
-      (islandRadiusAt(x + step, z, shape) - islandRadiusAt(x - step, z, shape)) / (2 * step),
-      (islandRadiusAt(x, z + step, shape) - islandRadiusAt(x, z - step, shape)) / (2 * step)
+      (radiusAt(x + step, z) - radiusAt(x - step, z)) / (2 * step),
+      (radiusAt(x, z + step) - radiusAt(x, z - step)) / (2 * step)
     );
     if (gradient === 0) return radius > 1 ? PLAYER_RADIUS + 1 : PLAYER_RADIUS - Math.min(shape.halfWidthWorld, shape.halfDepthWorld);
     return (radius - 1) / gradient + PLAYER_RADIUS;

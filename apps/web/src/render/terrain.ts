@@ -926,6 +926,8 @@ function addHarbour(group: Group, assets: SharedAssets, harbour: FarmWorld["harb
 /** Ground vertices per cell side on a chosen island, and how deep its sea floor goes. */
 const GROUND_SAMPLES_PER_CELL = 2;
 const DEEP_FLOOR_DEPTH = 2.4;
+/** How deep the sand of a chosen island's shelf lies under the surface: a little below wading depth. */
+const SHELF_FLOOR_DEPTH = 0.45;
 const SHALLOW_WATER = new Color(0x5ec4e3);
 const DEEP_WATER = new Color(0x2b7fbf);
 let islandWaterMaterial: MeshStandardMaterial | null = null;
@@ -971,12 +973,18 @@ function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, f
       const worldX = field.originWorldX + x * step;
       const worldZ = field.originWorldZ + z * step;
       const shore = sampleIslandField(field.shore, field, worldX, worldZ);
-      // Under water the floor keeps falling with distance from the coast, so the shallows read light
-      // and the open sea dark through the water surface.
+      // Under water: a shallow shelf of sand a walker wades across, then a clear drop where deep water
+      // begins - the step the player reads as "no further". Without a walk field (older grounds) the
+      // floor simply keeps falling with distance from the coast.
+      const walk = field.walk === undefined ? null : sampleIslandField(field.walk, field, worldX, worldZ);
       const y =
         shore < 1
           ? ISLAND_TOP_Y + terrainHeightAt(worldX, worldZ, terrain)
-          : SEA_LEVEL_Y - Math.min(DEEP_FLOOR_DEPTH, (shore - 1) * field.cellsPerShoreUnit * 0.9);
+          : walk === null
+            ? SEA_LEVEL_Y - Math.min(DEEP_FLOOR_DEPTH, (shore - 1) * field.cellsPerShoreUnit * 0.9)
+            : walk < 1
+              ? SEA_LEVEL_Y - Math.min(SHELF_FLOOR_DEPTH, (shore - 1) * field.cellsPerShoreUnit * 0.5)
+              : SEA_LEVEL_Y - SHELF_FLOOR_DEPTH - Math.min(DEEP_FLOOR_DEPTH, (walk - 1) * field.cellsPerShoreUnit * 1.2);
       groundPositions.set([worldX, y, worldZ], index * 3);
       const fx = x / GROUND_SAMPLES_PER_CELL;
       const fz = z / GROUND_SAMPLES_PER_CELL;
@@ -989,18 +997,37 @@ function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, f
   ground.name = "island-ground";
   group.add(ground);
 
-  const waterPositions = new Float32Array(size * size * 3);
-  const waterColors = new Float32Array(size * size * 3);
-  for (let z = 0; z < size; z += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const index = z * size + x;
-      waterPositions.set([field.originWorldX + x * pitch, SEA_LEVEL_Y, field.originWorldZ + z * pitch], index * 3);
-      const tint = (field.water?.[index] ?? 0) === 2 ? DEEP_WATER : SHALLOW_WATER;
-      waterColors.set([tint.r, tint.g, tint.b], index * 3);
+  // The water surface at the ground's density, coloured per vertex from the field's depth gradient and
+  // foam line (or the two flat tints when an older ground has none).
+  const waterPositions = new Float32Array(steps * steps * 3);
+  const waterColors = new Float32Array(steps * steps * 3);
+  const tintAt = (fx: number, fz: number, channel: number): number => {
+    const colors = field.waterColors;
+    if (colors === undefined) {
+      const cell = Math.min(size - 1, Math.round(fz)) * size + Math.min(size - 1, Math.round(fx));
+      const tint = (field.water?.[cell] ?? 0) === 2 ? DEEP_WATER : SHALLOW_WATER;
+      return channel === 0 ? tint.r : channel === 1 ? tint.g : tint.b;
+    }
+    const x0 = Math.min(size - 2, Math.floor(fx));
+    const z0 = Math.min(size - 2, Math.floor(fz));
+    const tx = fx - x0;
+    const tz = fz - z0;
+    const at = (x: number, z: number): number => colors[(z * size + x) * 3 + channel] ?? 0;
+    const top = at(x0, z0) + (at(x0 + 1, z0) - at(x0, z0)) * tx;
+    const bottom = at(x0, z0 + 1) + (at(x0 + 1, z0 + 1) - at(x0, z0 + 1)) * tx;
+    return top + (bottom - top) * tz;
+  };
+  for (let z = 0; z < steps; z += 1) {
+    for (let x = 0; x < steps; x += 1) {
+      const index = z * steps + x;
+      waterPositions.set([field.originWorldX + x * step, SEA_LEVEL_Y, field.originWorldZ + z * step], index * 3);
+      const fx = x / GROUND_SAMPLES_PER_CELL;
+      const fz = z / GROUND_SAMPLES_PER_CELL;
+      waterColors.set([tintAt(fx, fz, 0), tintAt(fx, fz, 1), tintAt(fx, fz, 2)], index * 3);
     }
   }
-  islandWaterMaterial ??= new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.84, roughness: 0.35 });
-  const surface = new Mesh(gridGeometry(size, waterPositions, waterColors), islandWaterMaterial);
+  islandWaterMaterial ??= new MeshStandardMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.8, roughness: 0.3 });
+  const surface = new Mesh(gridGeometry(steps, waterPositions, waterColors), islandWaterMaterial);
   surface.name = "island-water";
   surface.renderOrder = 1;
   group.add(surface);
