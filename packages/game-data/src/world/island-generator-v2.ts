@@ -329,7 +329,7 @@ export function generateIslandV2(element: IslandElement, seed: number, size = 96
   // 3. Shallow coves (Thủy): carved into the coast, so the land stays joined round their heads.
   if (recipe.lagoons > 0) {
     for (let k = 0; k < recipe.lagoons; k += 1) {
-      const angle = turn + (k / recipe.lagoons) * Math.PI * 2 + (random() - 0.5) * 0.7;
+      const angle = turn + (k / recipe.lagoons) * Math.PI * 2 + (random() - 0.5) * 1.1;
       // Walk outward from the middle to the last land cell on this bearing: that is the coast.
       let coastX = half;
       let coastY = half;
@@ -342,7 +342,7 @@ export function generateIslandV2(element: IslandElement, seed: number, size = 96
           coastY = py;
         }
       }
-      const cove = recipe.lagoonSize * half * (0.8 + random() * 0.4);
+      const cove = recipe.lagoonSize * half * (0.7 + random() * 0.6);
       const centreX = coastX - Math.cos(angle) * cove * 0.35;
       const centreY = coastY - Math.sin(angle) * cove * 0.35;
       for (let y = Math.max(0, Math.floor(centreY - cove - 2)); y <= Math.min(size - 1, Math.ceil(centreY + cove + 2)); y += 1) {
@@ -357,6 +357,13 @@ export function generateIslandV2(element: IslandElement, seed: number, size = 96
           }
         }
       }
+    }
+    // Round the coves' mouths: a disk bitten out of a disk leaves sharp horns, which read as a cog.
+    const rounded = majority(majority(land, size), size);
+    for (let index = 0; index < total; index += 1) {
+      if (rounded[index] === land[index]) continue;
+      lagoon[index] = rounded[index] === 1 ? 0 : 1;
+      land[index] = rounded[index] as number;
     }
   }
 
@@ -373,10 +380,20 @@ export function generateIslandV2(element: IslandElement, seed: number, size = 96
       const y = Math.floor(index / size);
       if (placed.some((other) => Math.hypot((other % size) - x, Math.floor(other / size) - y) < 14)) continue;
       placed.push(index);
-      const pond = 2 + hash2(seed + 1212, x, y) * 1.6;
-      for (let py = y - 4; py <= y + 4; py += 1) {
-        for (let px = x - 4; px <= x + 4; px += 1) {
-          if (Math.hypot(px - x, py - y) <= pond && px >= 0 && py >= 0 && px < size && py < size) {
+      // A tilted, wobbly ellipse: a small grid disk is a square block and a larger one an octagon, and
+      // both read as man-made. It never comes within a few cells of the coast.
+      const pond = 3.3 + hash2(seed + 1212, x, y) * 1.3;
+      const stretch = 0.15 + hash2(seed + 1313, x, y) * 0.2;
+      const tilt = hash2(seed + 1616, x, y) * Math.PI;
+      const cos = Math.cos(tilt);
+      const sin = Math.sin(tilt);
+      for (let py = y - 7; py <= y + 7; py += 1) {
+        for (let px = x - 7; px <= x + 7; px += 1) {
+          if (px < 0 || py < 0 || px >= size || py >= size || (inland[py * size + px] ?? 0) < 3) continue;
+          const u = ((px - x) * cos + (py - y) * sin) / (1 + stretch);
+          const v = ((py - y) * cos - (px - x) * sin) / (1 - stretch);
+          const wobble = (fbm(seed + 1414, px / 2.2, py / 2.2, 2) - 0.5) * 3;
+          if (Math.hypot(u, v) <= pond + wobble) {
             land[py * size + px] = 0;
             lagoon[py * size + px] = 1;
           }
@@ -423,8 +440,14 @@ export function generateIslandV2(element: IslandElement, seed: number, size = 96
 
   // 6. Land: a beach band, then the element's biomes in broad patches.
   const beachNoise = noiseField(size, 3, (x, y) => fbm(seed + 606, x / 5, y / 5, 2));
-  const patchNoise = noiseField(size, 4, (x, y) => fbm(seed + 707, x / 13, y / 13, 3));
-  const reliefNoise = noiseField(size, 4, (x, y) => fbm(seed + 808, x / 17, y / 17, 3));
+  // Value noise is built on an axis-aligned lattice, and its contours show it: long straight biome
+  // edges. Sampling it rotated and gently warped breaks those lines up.
+  const organic = (salt: number, scale: number) => (x: number, y: number): number => {
+    const warp = (fbm(seed + salt + 11, x / 9, y / 9, 2) - 0.5) * 7;
+    return fbm(seed + salt, (x * 0.8 + y * 0.6 + warp) / scale, (y * 0.8 - x * 0.6 - warp) / scale, 3);
+  };
+  const patchNoise = noiseField(size, 4, organic(707, 13));
+  const reliefNoise = noiseField(size, 4, organic(808, 17));
   const interior: number[] = [];
   for (let index = 0; index < total; index += 1) {
     if (land[index] !== 1) continue;
@@ -451,8 +474,9 @@ export function generateIslandV2(element: IslandElement, seed: number, size = 96
     open: sortedPatch === null || shares.open <= 0 ? Number.NEGATIVE_INFINITY : quantileOf(sortedPatch, shares.open)
   };
   interior.forEach((index, k) => {
-    // Mộc's deep interior is old forest whatever the noise says: its landmark.
-    if (element === "MOC" && (inland[index] ?? 0) > 9) cells[index] = "FOREST";
+    // Mộc's deep interior is old forest whatever the noise says: its landmark. The depth it takes follows
+    // the patch noise, so the old wood's edge wanders instead of tracing a distance contour's octagon.
+    if (element === "MOC" && (inland[index] ?? 0) > 6 + (1 - (patch[k] as number)) * 8) cells[index] = "FOREST";
     else cells[index] = landBiome(element, patch[k] as number, relief[k] as number, cut);
   });
   // One mode pass over the biomes, so a lone cell of forest in a field reads as noise and goes.
@@ -610,12 +634,14 @@ function placeSitesV2(element: IslandElement, seed: number, size: number, cells:
   const campX = camp % size;
   const campY = Math.floor(camp / size);
   if (camp >= 0) {
-    // Clear the camp: open ground in a small square, whatever the forest or the rock wanted there.
+    // Clear the camp: a round glade of open ground with a wandering edge, whatever the forest or the
+    // fields wanted there.
     const clearing: IslandCellKind = element === "HOA" ? "MEADOW" : "GRASS";
-    for (let y = campY - 3; y <= campY + 3; y += 1) {
-      for (let x = campX - 3; x <= campX + 3; x += 1) {
+    for (let y = campY - 5; y <= campY + 5; y += 1) {
+      for (let x = campX - 5; x <= campX + 5; x += 1) {
         const kind = at(x, y);
-        if (kind === "FOREST" || kind === "ROCK" || kind === "FIELD") cells[y * size + x] = clearing;
+        const reach = 3.9 + (fbm(seed + 1515, x / 2.5, y / 2.5, 2) - 0.5) * 2.4;
+        if ((kind === "FOREST" || kind === "ROCK" || kind === "FIELD") && Math.hypot(x - campX, y - campY) <= reach) cells[y * size + x] = clearing;
       }
     }
     sites.push({ kind: "CAMP", x: campX, y: campY });

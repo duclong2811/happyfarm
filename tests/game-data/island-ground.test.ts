@@ -94,9 +94,9 @@ describe("stored island ground", () => {
     expect(buildIslandGround({ element: "KIM", outline: "ROUND", seed: 101 }).generatorVersion).toBe(2);
     expect(prints).toMatchInlineSnapshot(`
       [
-        "a9e86741",
-        "db6bd80b",
-        "a823b412",
+        "feeee862",
+        "cd090644",
+        "7ef80447",
       ]
     `);
   });
