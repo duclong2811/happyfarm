@@ -51,6 +51,7 @@ import { placementRejection, type PlacementWorld, type ShorelineClass } from "./
 import { buildCompositions, type CompositionClearing, type CompositionWorld } from "./composition";
 import { PROP_MODELS } from "./prop-model-urls";
 import type { IslandDecorPlan } from "./island-decor";
+import type { FarmIslandDTO } from "@happy-farm/contracts";
 
 /**
  * The world model the renderer draws.
@@ -260,8 +261,10 @@ export interface FarmWorld {
   readonly centerWorldZ: number;
   /** The island's outline, its elevation, and the rectangles it holds level. */
   readonly terrain: TerrainShape;
-  /** A chosen island's pier, boat and village (island-decor.ts). Presentation only; absent elsewhere. */
+  /** A chosen island's pier, boat and village (island-decor.ts), untouched. Presentation only. */
   readonly islandDecor?: IslandDecorPlan;
+  /** The chosen island's stored ground, so the village can be re-planned around the player's fields. */
+  readonly islandGround?: FarmIslandDTO;
 }
 
 export interface BuildWorldInput {

@@ -351,6 +351,7 @@ export function buildIslandFarmWorld(layout: FarmLayout, ground: IslandGroundVie
     outer: bounds,
     scenery: islandScenery(ground, frame, terrain, islandDecor),
     islandDecor,
+    islandGround: ground,
     islandHalfWidthWorld: half,
     islandHalfDepthWorld: half,
     farmHalfExtentWorld: half * 0.45,

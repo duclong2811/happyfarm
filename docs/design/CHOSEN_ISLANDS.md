@@ -108,7 +108,19 @@ Walking is movement in the browser only, but it agrees with the stored cell kind
     on open land around the camp, clear of the spawn, mines, trees and dock.
   - Nothing here is a server object or has collision. A village piece *yields*: it is not drawn over
     any cell the player has built on, planted or tilled (`visibleIslandDecor`).
-- Tests: `tests/web/island-relief.test.ts`, `tests/web/island-decor.test.ts`.
+- **The village moves, it does not vanish.** The scene re-plans the village around every cell the
+  player has built on, planted or tilled. A piece in the way takes the next free spot around the
+  camp, further out each ring, so a farm that has filled the camp's surroundings still has its
+  village at the edge of its fields.
+- **Sky and ambient motion** (`apps/web/src/render/sky-life.ts`, the scene's ambient tick).
+  - A sun disc stands on the light's bearing, low over the horizon.
+  - About a dozen low-poly clouds drift in a ring beyond the estate camera's farthest reach, so
+    they never come between the camera and the island.
+  - A volcano's smoke rises and fades.
+  - The tick runs at 25 fps on the normal profile and 12 fps on mobile, and it is off on the low
+    profile. It runs only while the page is visible, and it does not redraw when another loop has
+    just drawn.
+- Tests: `tests/web/island-relief.test.ts`, `tests/web/island-decor.test.ts`, `tests/web/sky-life.test.ts`.
 
 ## Tests
 

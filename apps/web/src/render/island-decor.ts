@@ -10,8 +10,9 @@ import type { FarmIslandDTO } from "@happy-farm/contracts";
  * - the pier, the boat and the dock's own crates stay inside the dock's protected radius, where
  *   nothing can be built;
  * - a village piece stands on open land, clear of the camp's spawn, the mines, the trees and the
- *   dock, and it *yields*: wherever the player builds, plants or places something, the piece over
- *   those cells is not drawn (`visibleIslandDecor`).
+ *   dock, and it *moves out of the way*: the village is planned around the cells the player has
+ *   built on, planted or tilled, so a piece in the way finds the next free spot around the camp
+ *   (further out if it must) instead of standing in a field - or vanishing.
  *
  * Pure and deterministic: the same stored island always gets the same village.
  */
@@ -173,7 +174,10 @@ const VILLAGE: readonly VillageSlot[] = [
   { modelId: "prop_planter", radius: 3.9, angle: 2.2, sizeWorld: 0.75, clearance: 0.4 }
 ];
 
-function planVillage(ground: Ground, dock: { x: number; y: number } | null): DecorPlacement[] {
+/** Placement attempts per village piece: 22 turns per ring, rings 1.6 tiles apart, about 9 tiles out. */
+const VILLAGE_ATTEMPTS = 22 * 7;
+
+function planVillage(ground: Ground, dock: { x: number; y: number } | null, occupied: (x: number, y: number) => boolean): DecorPlacement[] {
   const camp = ground.sites.find((site) => site.kind === "CAMP");
   if (camp === undefined) return [];
   const roll = random(ground.seed ^ 0x51ed27);
@@ -187,13 +191,16 @@ function planVillage(ground: Ground, dock: { x: number; y: number } | null): Dec
     if (ores.some((ore) => Math.hypot(x - ore.x, y - ore.y) < 3.5 + clearance)) return false;
     if (trees.some((tree) => Math.hypot(x - tree.x, y - tree.y) < 1 + clearance)) return false;
     if (placed.some((other) => Math.hypot(x - other.x, y - other.y) < other.radiusTiles + clearance + 0.3)) return false;
-    return covers(x, y, clearance, (cx, cy) => VILLAGE_LAND.has(islandCellKindAt(ground, { x: cx, y: cy })));
+    return covers(x, y, clearance, (cx, cy) => VILLAGE_LAND.has(islandCellKindAt(ground, { x: cx, y: cy })) && !occupied(cx, cy));
   };
   VILLAGE.forEach((slot, index) => {
-    // Try the slot's own place first, then turn around the camp (and a little further out) until it fits.
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      const turn = (attempt % 2 === 0 ? 1 : -1) * Math.ceil(attempt / 2) * 0.28;
-      const radius = slot.radius + Math.floor(attempt / 8) * 0.8;
+    // Try the slot's own place first, then turn around the camp - further out each full turn - until it
+    // fits. A farm that has filled the camp's surroundings pushes the village out to its edge.
+    for (let attempt = 0; attempt < VILLAGE_ATTEMPTS; attempt += 1) {
+      const ring = Math.floor(attempt / 22);
+      const step = attempt % 22;
+      const turn = (step % 2 === 0 ? 1 : -1) * Math.ceil(step / 2) * 0.28;
+      const radius = slot.radius + ring * 1.6;
       const angle = heading + slot.angle + turn;
       const x = camp.x + Math.cos(angle) * radius;
       const y = camp.y + Math.sin(angle) * radius;
@@ -213,16 +220,12 @@ function planVillage(ground: Ground, dock: { x: number; y: number } | null): Dec
   return placed;
 }
 
-export function islandDecorPlan(ground: Ground): IslandDecorPlan {
+/**
+ * The island's set dressing, planned around the cells the player has used (`occupied`: built on,
+ * planted or tilled). Without them it is the island's untouched village.
+ */
+export function islandDecorPlan(ground: Ground, occupied: (x: number, y: number) => boolean = () => false): IslandDecorPlan {
   const { pier, boat, dockProps } = planPier(ground);
   const dock = ground.sites.find((site) => site.kind === "DOCK") ?? null;
-  return { pier, boat, props: [...dockProps, ...planVillage(ground, dock)] };
-}
-
-/**
- * The pieces still drawn: one over a cell the player has built on, planted or placed something on
- * gives way, so the village never sits inside a player's barn.
- */
-export function visibleIslandDecor(props: readonly DecorPlacement[], occupied: (x: number, y: number) => boolean): readonly DecorPlacement[] {
-  return props.filter((prop) => covers(prop.x, prop.y, prop.radiusTiles, (x, y) => !occupied(x, y)));
+  return { pier, boat, props: [...dockProps, ...planVillage(ground, dock, occupied)] };
 }

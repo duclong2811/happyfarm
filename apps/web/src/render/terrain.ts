@@ -1137,8 +1137,9 @@ function addRowingBoat(group: Group, boat: BoatPlan, pitch: number): void {
 let volcanoParts: { readonly lava: CircleGeometry; readonly puff: IcosahedronGeometry; readonly glow: MeshBasicMaterial; readonly smoke: MeshStandardMaterial } | null = null;
 
 /**
- * A glowing pool of lava in the crater and a column of smoke above it. Static: the scene renders on
- * demand, so nothing here asks for frames of its own.
+ * A glowing pool of lava in the crater and a column of smoke rising from it. The smoke is drawn still
+ * until the scene's ambient tick moves it: the group carries `userData.ambient(seconds)`, which the
+ * scene calls on that tick (and never on the low quality profile).
  */
 function addVolcanoCrater(group: Group, world: FarmWorld, volcano: NonNullable<IslandField["volcano"]>): void {
   const parts = volcanoParts ??= {
@@ -1153,23 +1154,37 @@ function addVolcanoCrater(group: Group, world: FarmWorld, volcano: NonNullable<I
   lava.scale.setScalar(Math.max(0.5, volcano.craterRadiusWorld * 0.6));
   lava.name = "volcano-lava";
   group.add(lava);
-  const puffs = [
-    { up: 1.4, drift: 0, size: 0.7 },
-    { up: 2.6, drift: 0.5, size: 1 },
-    { up: 4, drift: 1.2, size: 1.35 },
-    { up: 5.6, drift: 2.1, size: 1.7 },
-    { up: 7.4, drift: 3.2, size: 2.1 }
-  ];
-  for (const [index, puff] of puffs.entries()) {
-    const mesh = new Mesh(parts.puff, parts.smoke);
-    mesh.position.set(volcano.worldX + puff.drift, floorY + puff.up, volcano.worldZ - puff.drift * 0.4);
-    mesh.scale.setScalar(puff.size);
+  const smoke = new Group();
+  smoke.name = "volcano-smoke";
+  // Each puff has its own material, so it can fade on its own as it rises.
+  const puffs = Array.from({ length: SMOKE_PUFFS }, (_, index) => {
+    const mesh = new Mesh(parts.puff, parts.smoke.clone());
     mesh.rotation.set(index * 0.7, index * 1.3, index * 0.4);
     mesh.renderOrder = 3;
-    mesh.name = "volcano-smoke";
-    group.add(mesh);
-  }
+    smoke.add(mesh);
+    return mesh;
+  });
+  const rise = (seconds: number): void => {
+    puffs.forEach((mesh, index) => {
+      const phase = (seconds / SMOKE_PERIOD_SECONDS + index / SMOKE_PUFFS) % 1;
+      mesh.position.set(
+        volcano.worldX + Math.pow(phase, 1.4) * 3.6,
+        floorY + 0.7 + phase * 9,
+        volcano.worldZ - phase * 1.3
+      );
+      mesh.scale.setScalar(0.55 + phase * 2.3);
+      mesh.rotation.y = index * 1.3 + phase * 1.5;
+      mesh.material.opacity = 0.5 * Math.min(1, phase * 6) * Math.pow(1 - phase, 1.1);
+    });
+  };
+  rise(0);
+  (smoke.userData as Record<string, unknown>).ambient = rise;
+  group.add(smoke);
 }
+
+/** The smoke column: how many puffs, and how long one takes to rise and fade. */
+const SMOKE_PUFFS = 8;
+const SMOKE_PERIOD_SECONDS = 9;
 
 /** A square grid of `side` x `side` vertices, wound so its normals point up. */
 function gridGeometry(side: number, positions: Float32Array, colors: Float32Array, colorSize: 3 | 4 = 3): BufferGeometry {

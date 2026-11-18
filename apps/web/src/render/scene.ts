@@ -80,7 +80,8 @@ import { CELL_OVERLAY_LIFT_WORLD } from "./world-cell-overlay";
 import { CELL_OVERLAY_TILE_LIFT_WORLD } from "./world-cell-overlay";
 import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
-import { visibleIslandDecor } from "./island-decor";
+import { islandDecorPlan } from "./island-decor";
+import { createClouds, createSun, driftClouds, placeSun } from "./sky-life";
 import { worldFrame } from "./layout";
 import { buildLockedPlotOverlay, buildTerrain, TILE_SURFACE_Y, TILE_THICKNESS } from "./terrain";
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt } from "./terrain-height";
@@ -1576,6 +1577,11 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
    */
   const sky = createSkyDome();
   scene.add(sky);
+  // The sun where the light comes from, and clouds drifting round the island (sky-life.ts).
+  const skySun = createSun();
+  if (skySun !== null) scene.add(skySun);
+  const clouds = createClouds();
+  scene.add(clouds);
 
   // Sky light, ground bounce, and one warm sun. The hemisphere carries the colour that makes shade
   // read as shade rather than as darkness: cool from above, green from the ground.
@@ -1886,7 +1892,41 @@ let interactionGeometry: BufferGeometry | null = null;
 
   let firstFrameReported = false;
 
+  /**
+   * The ambient tick: what moves on its own - the clouds, a volcano's smoke - at a modest frame rate,
+   * and only while the page is visible. The scene otherwise draws on demand, so this is the one
+   * steady cost, and the low quality profile does without it (the sky simply holds still).
+   */
+  let ambientAnimators: ((seconds: number) => void)[] = [];
+  let ambientSeconds = 0;
+  let lastAmbientMs = 0;
+  let lastDrawMs = 0;
+  const ambientIntervalMs = quality.name === "NORMAL" ? 40 : quality.name === "MOBILE" ? 80 : 0;
+  function collectAmbientAnimators(): void {
+    ambientAnimators = [];
+    worldGroup.traverse((node) => {
+      const ambient = (node.userData as Record<string, unknown>).ambient;
+      if (typeof ambient === "function") ambientAnimators.push(ambient as (seconds: number) => void);
+    });
+  }
+  function ambientTick(): void {
+    if (disposed || document.visibilityState !== "visible") {
+      lastAmbientMs = 0;
+      return;
+    }
+    const now = performance.now();
+    const seconds = lastAmbientMs === 0 ? 0 : Math.min(0.25, (now - lastAmbientMs) / 1000);
+    lastAmbientMs = now;
+    ambientSeconds += seconds;
+    driftClouds(clouds, seconds);
+    for (const animate of ambientAnimators) animate(ambientSeconds);
+    // Another loop (walking, the camera) may already be drawing every frame; then this adds nothing.
+    if (now - lastDrawMs >= ambientIntervalMs * 0.9) draw();
+  }
+  const ambientTimer = ambientIntervalMs > 0 ? window.setInterval(ambientTick, ambientIntervalMs) : null;
+
   function draw(): void {
+    lastDrawMs = performance.now();
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     if (width === 0 || height === 0) return;
@@ -2425,18 +2465,18 @@ let interactionGeometry: BufferGeometry | null = null;
   }
 
   /**
-   * Draws the chosen island's village and dock crates, minus every piece standing on a cell the player
-   * has built on, planted or tilled - set dressing gives way to the player's own island.
+   * Draws the chosen island's village and dock crates, planned around every cell the player has built
+   * on, planted or tilled: set dressing moves out of the way of the player's own island.
    */
   function refreshIslandDecor(next: FarmSceneInput): void {
-    const plan = next.world.islandDecor;
-    const visible = plan === undefined
+    const ground = next.world.islandGround;
+    const visible = ground === undefined
       ? []
-      : visibleIslandDecor(plan.props, (x, y) => {
+      : islandDecorPlan(ground, (x, y) => {
           const cell = next.cells.cells.get(cellKey(x, y));
           return cell !== undefined && (cell.owned || cell.occupancy === "BUILDING" || cell.occupancy === "PRODUCTION");
-        });
-    const signature = visible.map((piece) => piece.id).join("|") + "#" + (plan === undefined ? "" : `${String(plan.props.length)}:${String(next.layout.pitch)}`);
+        }).props;
+    const signature = visible.map((piece) => `${piece.id}@${piece.x.toFixed(2)},${piece.y.toFixed(2)}`).join("|") + "#" + String(next.layout.pitch);
     if (signature === islandDecorSignature) return;
     islandDecorSignature = signature;
     islandDecorGroup.clear();
@@ -2485,6 +2525,7 @@ let interactionGeometry: BufferGeometry | null = null;
       worldSignature = signature;
       worldGroup.clear();
       groundMesh = buildTerrain(worldGroup, assets, next.world, next.layout);
+      collectAmbientAnimators();
       // The island's mass scenery - the forest, the scrub, the boulders - is *not* drawn here any
       // more. V13.3.1 made every one of those an ordinary world object, and they are drawn from their
       // rows by the construction layer, so drawing the generator's copy as well would put two trees
@@ -2518,6 +2559,10 @@ let interactionGeometry: BufferGeometry | null = null;
       );
       sun.target.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
       sun.target.updateMatrixWorld();
+      // Seen on the light's own bearing, but lower in the sky than the light's steep angle, so the disc
+      // is in view above the horizon rather than straight overhead.
+      if (skySun !== null) placeSun(skySun, next.world.centerWorldX, next.world.centerWorldZ, { x: SUN_OFFSET.x, y: 5.5, z: SUN_OFFSET.z }, SKY_RADIUS * 0.82);
+      clouds.position.set(next.world.centerWorldX, 0, next.world.centerWorldZ);
     }
     // How far the camera may pull back is a property of the island: the estate view has to reach all
     // of it, on an island of any size, and the range is derived from the island's own extent.
@@ -5014,6 +5059,7 @@ let interactionGeometry: BufferGeometry | null = null;
     cameraFrame: () => cameraRig.state,
     dispose(): void {
       disposed = true;
+      if (ambientTimer !== null) window.clearInterval(ambientTimer);
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
