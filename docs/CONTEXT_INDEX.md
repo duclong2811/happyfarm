@@ -904,6 +904,25 @@ it.
 - **No gameplay value may change from a simulator finding without an explicit later phase.** The
   simulator informs; it does not rebalance.
 
+### Chosen home islands (island choice, generator v2)
+
+Read `docs/design/CHOSEN_ISLANDS.md` before changing an island generator, the stored ground, what a cell
+means to the server or the walker, the picker preview, or island fishing spots. The brief and the research
+notes are `docs/briefs/ISLAND_V2.md` and `docs/design/ISLAND_V2_RESEARCH.md`.
+
+- Generators: `packages/game-data/src/world/island-generator.ts` (v1, frozen) and
+  `island-generator-v2.ts` (new farms). Storage: `island-ground.ts` (`buildIslandGround`,
+  `ISLAND_GENERATOR_VERSION`) into `farm_islands` (migration 0042).
+- Server geography: `storedIslandGeography` and `islandFishingCatalogue` in `workers/api/src/runtime.ts`.
+- Browser: `apps/web/src/island-picker.ts`, `render/island-world.ts`, `render/terrain.ts`
+  (`addChosenIsland`), `render/terrain-height.ts` (`IslandField`, `islandWadeDepthAt`),
+  `player/collision.ts`.
+- Tests: `tests/game-data/island-generator-v2.test.ts`, `tests/game-data/island-ground.test.ts`,
+  `tests/web/island-water.test.ts`, `tests/web/island-picker.test.ts`, `tests/api/island-fishing.test.ts`.
+
+Never change a deployed generator's output without bumping `ISLAND_GENERATOR_VERSION`, and never
+regenerate a stored island.
+
 ### Resource nodes, mining and forestry (V15.2 / V15.3)
 
 Island mines (Phase B) supersede the hold-to-mine ore node and Auto mining: read
@@ -975,6 +994,10 @@ action duration, or the fishing commands.
 - Tests: `tests/domain/fishing.test.ts`, `tests/game-data/fishing.test.ts`,
   `tests/api/fishing-loop.test.ts`, `tests/web/fishing-interaction.test.ts`, plus `/fishing` in
   `tests/api/catalogue-read-cost.test.ts`.
+
+A chosen island fishes its own deep water: its spots are its stored `FISHING` sites
+(`islandFishingSpots`), checked per player at start and settle, while `GET /fishing` stays static. See
+`docs/design/CHOSEN_ISLANDS.md`.
 
 Never accept a fish, a reward, a price, a duration or a zone from a client; never poll for a fishing
 state (one targeted read at load and one settle request are the whole cost); and never authorize a spot
