@@ -177,7 +177,7 @@ const SKY_ZENITH_COLOR = 0x69b4e8;
 /** Where the sun stands relative to whatever the camera is framing, and how tall. */
 const SUN_OFFSET = new Vector3(28, 46, 20);
 /** Where the sun's disc is drawn: north-west and low, in front of the default estate view. */
-const VISIBLE_SUN_DIRECTION = { x: -0.95, y: 0.17, z: -0.55 } as const;
+const VISIBLE_SUN_DIRECTION = { x: -0.95, y: 0.075, z: -0.55 } as const;
 /** Half-width of the sun's shadow box, in world metres: the island plus its beach. */
 const SHADOW_EXTENT_WORLD = 30;
 /** Warm tint applied to a loaded model once the server calls the crop mature. Placeholder art. */
