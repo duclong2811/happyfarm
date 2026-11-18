@@ -36,6 +36,7 @@ import {
   gameDataTileTerrain,
   gameDataLandSale,
   gameDataIslandGroundBuilder,
+  gameDataWorldChart,
   gameDataWorkAreaGround,
   gameDataCargoCapacities,
   gameDataStarterPackage
@@ -89,6 +90,8 @@ export interface DeploymentEnv extends AccessAuthBindings {
    * are not yet wired to every production system, so a deployment opts in deliberately.
    */
   readonly ISLAND_CHOICE_ENABLED?: string;
+  /** "true" puts chosen islands on the world map (needs migration 0045 applied first). */
+  readonly WORLD_MAP_ENABLED?: string;
 }
 
 export interface DeploymentWorkerOptions {
@@ -152,6 +155,7 @@ export function createDeploymentWorker(env: DeploymentEnv, options: DeploymentWo
       choiceEnabled: env.ISLAND_CHOICE_ENABLED?.trim().toLowerCase() === "true",
       builder: gameDataIslandGroundBuilder
     },
+    ...(env.WORLD_MAP_ENABLED?.trim().toLowerCase() === "true" ? { world: { chart: gameDataWorldChart } } : {}),
     fishing: {
       catalogue: new GameDataFishingCatalogue(),
       ids,

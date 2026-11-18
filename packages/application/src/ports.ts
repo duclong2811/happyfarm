@@ -108,7 +108,9 @@ export interface FarmRepository {
     farm: Farm,
     ownerMembership: FarmMember,
     initialTiles: readonly FarmTile[],
-    island?: FarmIsland | null
+    island?: FarmIsland | null,
+    /** The world-map slot the island takes, written in the same transaction (unique per slot and farm). */
+    slot?: WorldSlotClaim | null
   ): Promise<void>;
   findById(id: FarmId): Promise<Farm | null>;
   /**
@@ -1505,4 +1507,70 @@ export interface MineCatalogue {
   slotLevels(element: string | null): readonly number[];
   /** Where each slot stands on this farm, in slot order; may be shorter than asked if the island has no room. */
   slotTiles(island: FarmIsland | null, count: number): readonly { readonly x: number; readonly y: number }[];
+}
+
+/** The four outer regions of the world map; the Centre is the hub and holds no player islands. */
+export type SeaRegionName = "NORTH" | "EAST" | "SOUTH" | "WEST";
+
+/** One farm's place on the world map. */
+export interface WorldSlotClaim {
+  readonly slotId: string;
+  readonly region: SeaRegionName;
+  readonly farmId: FarmId;
+  readonly claimedAt: string;
+}
+
+/** The island template a chart draws for a slot: three values, as a player chooses them. */
+export interface WorldIslandTemplate {
+  readonly element: string;
+  readonly outline: string;
+  readonly seed: number;
+  readonly generatorVersion: number;
+}
+
+export interface WorldChartSlot {
+  readonly slotId: string;
+  readonly region: SeaRegionName;
+  readonly archipelagoId: string;
+  readonly archipelagoIndex: number;
+  readonly index: number;
+  readonly x: number;
+  readonly z: number;
+  /** The wild island drawn while the slot is free. */
+  readonly wild: { readonly element: string; readonly outline: string; readonly seed: number };
+}
+
+export interface WorldChartArchipelago {
+  readonly archipelagoId: string;
+  readonly region: SeaRegionName;
+  readonly index: number;
+  readonly centreX: number;
+  readonly centreZ: number;
+  readonly slots: readonly WorldChartSlot[];
+}
+
+/**
+ * The world's sea chart, from game data: where every slot is, which slot a new island takes, and
+ * which archipelagos are open. The application never computes geography itself.
+ */
+export interface WorldChartPort {
+  readonly regions: readonly SeaRegionName[];
+  /** The generator version a wild island is drawn with. */
+  readonly wildGeneratorVersion: number;
+  findSlot(slotId: string): WorldChartSlot | null;
+  nextFreeSlot(region: SeaRegionName, isClaimed: (slotId: string) => boolean): WorldChartSlot | null;
+  openArchipelagos(region: SeaRegionName, isClaimed: (slotId: string) => boolean): readonly WorldChartArchipelago[];
+}
+
+/** A claimed slot, with the island standing on it (null for a farm on the composed island). */
+export interface ClaimedWorldSlot extends WorldSlotClaim {
+  readonly island: WorldIslandTemplate | null;
+}
+
+export interface WorldSlotRepository {
+  claimedSlotIds(): Promise<ReadonlySet<string>>;
+  findByFarm(farmId: FarmId): Promise<WorldSlotClaim | null>;
+  listClaimed(): Promise<readonly ClaimedWorldSlot[]>;
+  /** Writes the claim unless the slot or the farm already has one; true when this call wrote it. */
+  claim(claim: WorldSlotClaim): Promise<boolean>;
 }

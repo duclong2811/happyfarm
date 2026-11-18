@@ -40,12 +40,71 @@ export const IslandChoiceSchema = z
   .object({ element: IslandElementSchema, outline: IslandOutlineSchema, seed: IslandSeedSchema })
   .strict();
 
+/** The world map's four outer regions (docs/design/WORLD_MAP.md); the Centre is the hub. */
+export const SeaRegionSchema = z.enum(["NORTH", "EAST", "SOUTH", "WEST"]);
+
 export const CreateFarmRequestSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
-    island: IslandChoiceSchema.optional()
+    island: IslandChoiceSchema.optional(),
+    /** Where on the world map the chosen island goes; the server picks the slot there. */
+    region: SeaRegionSchema.optional()
   })
   .strict();
+
+/** The island a chart draws on a slot: its owner's, or the wild one while the slot is free. */
+export const WorldIslandTemplateSchema = z
+  .object({
+    element: IslandElementSchema,
+    outline: IslandOutlineSchema,
+    seed: IslandSeedSchema,
+    generatorVersion: z.number().int().min(1)
+  })
+  .strict();
+
+export const WorldChartSlotDTOSchema = z
+  .object({
+    slotId: z.string().regex(/^slot_[a-z]+_\d+_\d+$/),
+    x: z.number().int(),
+    z: z.number().int(),
+    claimed: z.boolean(),
+    mine: z.boolean(),
+    island: WorldIslandTemplateSchema
+  })
+  .strict();
+
+export const WorldChartArchipelagoDTOSchema = z
+  .object({
+    archipelagoId: z.string().regex(/^sea_[a-z]+_\d+$/),
+    index: z.number().int().min(1),
+    centreX: z.number().int(),
+    centreZ: z.number().int(),
+    slots: z.array(WorldChartSlotDTOSchema).max(16)
+  })
+  .strict();
+
+export const GetWorldChartResponseSchema = z
+  .object({
+    regions: z
+      .array(z.object({ region: SeaRegionSchema, archipelagos: z.array(WorldChartArchipelagoDTOSchema).max(64) }).strict())
+      .max(4),
+    mySlotId: z.string().nullable()
+  })
+  .strict();
+
+export const EnsureWorldSlotRequestSchema = z.object({ region: SeaRegionSchema.optional() }).strict();
+
+export const WorldSlotDTOSchema = z
+  .object({
+    slotId: z.string(),
+    region: SeaRegionSchema,
+    archipelagoId: z.string(),
+    x: z.number().int(),
+    z: z.number().int()
+  })
+  .strict();
+
+export const EnsureWorldSlotResponseSchema = z.object({ slot: WorldSlotDTOSchema }).strict();
 
 /** A farm's island without its ground; `revision` changes only when the ground does. */
 export const FarmIslandSummaryDTOSchema = z
@@ -1982,6 +2041,7 @@ export const ErrorCodeSchema = z.enum([
   "CROP_LEVEL_REQUIRED",
   "WAREHOUSE_LEVEL_REQUIRED",
   "ISLAND_CHOICE_UNAVAILABLE",
+  "WORLD_REGION_FULL",
   "CHARACTER_NOT_AVAILABLE",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
@@ -2084,6 +2144,9 @@ export const ErrorCodeSchema = z.enum([
 
 export type CreateFarmRequest = z.infer<typeof CreateFarmRequestSchema>;
 export type IslandChoiceDTO = z.infer<typeof IslandChoiceSchema>;
+export type SeaRegionDTO = z.infer<typeof SeaRegionSchema>;
+export type GetWorldChartResponse = z.infer<typeof GetWorldChartResponseSchema>;
+export type EnsureWorldSlotResponse = z.infer<typeof EnsureWorldSlotResponseSchema>;
 export type FarmIslandSummaryDTO = z.infer<typeof FarmIslandSummaryDTOSchema>;
 export type FarmIslandDTO = z.infer<typeof FarmIslandDTOSchema>;
 export type GetMyFarmResponse = z.infer<typeof GetMyFarmResponseSchema>;

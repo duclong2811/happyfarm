@@ -145,6 +145,8 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
+import { findSeaSlot, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
 
@@ -805,6 +807,15 @@ export class GameDataShopEntries implements ShopEntryRepository {
  * A farm on the hand-composed island uses its fixed mine positions; a chosen island finds its slots
  * from its own stored cells and ore sites.
  */
+/** The world's sea chart (docs/design/WORLD_MAP.md), from game data. */
+export const gameDataWorldChart: WorldChartPort = {
+  regions: SEA_REGIONS,
+  wildGeneratorVersion: ISLAND_GENERATOR_VERSION,
+  findSlot: (slotId) => findSeaSlot(slotId),
+  nextFreeSlot: (region, isClaimed) => nextFreeSeaSlot(region, isClaimed),
+  openArchipelagos: (region, isClaimed) => openArchipelagos(region, isClaimed)
+};
+
 export const gameDataMineCatalogue: MineCatalogue = {
   levels: () =>
     MINE_LEVELS.map((entry) => ({

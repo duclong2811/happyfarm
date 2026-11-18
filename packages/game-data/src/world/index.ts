@@ -6,3 +6,4 @@ export * from "./tiles";
 export * from "./island-generator";
 export * from "./island-generator-v2";
 export * from "./island-ground";
+export * from "./sea-chart";

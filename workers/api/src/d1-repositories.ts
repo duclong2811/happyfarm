@@ -146,6 +146,10 @@ import type {
   ,NeighborRepository
   ,NeighborSnapshot
   ,NeighborVisitRecord
+  ,ClaimedWorldSlot
+  ,SeaRegionName
+  ,WorldSlotClaim
+  ,WorldSlotRepository
 } from "@happy-farm/application";
 import { ApplicationError, MAX_LAND_CELLS_PER_REQUEST } from "@happy-farm/application";
 import { reconcileNeighborNpc, reconcileRecurringNeighborNpc } from "@happy-farm/domain";
@@ -1053,6 +1057,64 @@ export class D1PlayerAppearanceRepository implements PlayerAppearanceRepository 
 }
 
 /** A farm's stored Home Island. Written only by `D1FarmRepository.createWithOwner`. */
+interface WorldSlotRow {
+  readonly slot_id: string;
+  readonly region: SeaRegionName;
+  readonly farm_id: string;
+  readonly claimed_at: string;
+}
+
+interface ClaimedWorldSlotRow extends WorldSlotRow {
+  readonly element: string | null;
+  readonly outline: string | null;
+  readonly seed: number | null;
+  readonly generator_version: number | null;
+}
+
+/** Which farm holds which world-map slot (migration 0045). The chart itself is game data. */
+export class D1WorldSlotRepository implements WorldSlotRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async claimedSlotIds(): Promise<ReadonlySet<string>> {
+    const rows = await this.db.prepare("SELECT slot_id FROM world_slots").all<{ slot_id: string }>();
+    return new Set(rows.results.map((row) => row.slot_id));
+  }
+
+  async findByFarm(farmId: FarmId): Promise<WorldSlotClaim | null> {
+    const row = await this.db
+      .prepare("SELECT slot_id, region, farm_id, claimed_at FROM world_slots WHERE farm_id = ?")
+      .bind(farmId)
+      .first<WorldSlotRow>();
+    return row === null ? null : { slotId: row.slot_id, region: row.region, farmId: parseFarmId(row.farm_id), claimedAt: row.claimed_at };
+  }
+
+  async listClaimed(): Promise<readonly ClaimedWorldSlot[]> {
+    const rows = await this.db
+      .prepare(
+        "SELECT ws.slot_id, ws.region, ws.farm_id, ws.claimed_at, fi.element, fi.outline, fi.seed, fi.generator_version FROM world_slots ws LEFT JOIN farm_islands fi ON fi.farm_id = ws.farm_id ORDER BY ws.slot_id"
+      )
+      .all<ClaimedWorldSlotRow>();
+    return rows.results.map((row) => ({
+      slotId: row.slot_id,
+      region: row.region,
+      farmId: parseFarmId(row.farm_id),
+      claimedAt: row.claimed_at,
+      island:
+        row.element === null || row.outline === null || row.seed === null || row.generator_version === null
+          ? null
+          : { element: row.element, outline: row.outline, seed: row.seed, generatorVersion: row.generator_version }
+    }));
+  }
+
+  async claim(claim: WorldSlotClaim): Promise<boolean> {
+    const result = await this.db
+      .prepare("INSERT OR IGNORE INTO world_slots (slot_id, region, farm_id, claimed_at) VALUES (?, ?, ?, ?)")
+      .bind(claim.slotId, claim.region, claim.farmId, claim.claimedAt)
+      .run();
+    return (result.meta.changes ?? 0) === 1;
+  }
+}
+
 export class D1FarmIslandRepository implements FarmIslandRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
@@ -1101,7 +1163,8 @@ export class D1FarmRepository implements FarmRepository {
     farm: Farm,
     ownerMembership: FarmMember,
     initialTiles: readonly FarmTile[],
-    island: FarmIsland | null = null
+    island: FarmIsland | null = null,
+    slot: WorldSlotClaim | null = null
   ): Promise<void> {
     const statements: D1PreparedStatementLike[] = [
       this.db
@@ -1143,6 +1206,14 @@ export class D1FarmRepository implements FarmRepository {
                 island.revision,
                 island.createdAt
               )
+          ]),
+      // The world-map place, last: a slot another island took fails the batch and writes nothing.
+      ...(slot === null
+        ? []
+        : [
+            this.db
+              .prepare("INSERT INTO world_slots (slot_id, region, farm_id, claimed_at) VALUES (?, ?, ?, ?)")
+              .bind(slot.slotId, slot.region, slot.farmId, slot.claimedAt)
           ])
     ];
     const results = await this.db.batch(statements);

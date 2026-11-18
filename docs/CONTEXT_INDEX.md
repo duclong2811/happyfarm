@@ -923,6 +923,22 @@ notes are `docs/briefs/ISLAND_V2.md` and `docs/design/ISLAND_V2_RESEARCH.md`.
 Never change a deployed generator's output without bumping `ISLAND_GENERATOR_VERSION`, and never
 regenerate a stored island.
 
+### World map (regions, archipelagos, slots)
+
+Read `docs/design/WORLD_MAP.md` (the owner's decisions and the phases) before changing the sea chart,
+slot claiming, or the chart API.
+
+- Chart (game data): `packages/game-data/src/world/sea-chart.ts` (`seaChart`, `nextFreeSeaSlot`,
+  `openArchipelagos`).
+- Claims:
+  - `packages/application/src/world.ts` (`nextWorldSlot`, `GetWorldChart`, `EnsureWorldSlot`);
+  - the claim inside `CreateFarm`;
+  - `D1WorldSlotRepository`, and migration `0045_world_slots.sql`.
+- API: `GET /world/chart`, `POST /world/slot`, and `region` on `POST /farms`. The Worker turns these on
+  with `WORLD_MAP_ENABLED = "true"`, after 0045 is applied.
+- Tests: `tests/game-data/sea-chart.test.ts`, `tests/api/world-map.test.ts`,
+  `tests/integration/world-slots-migration.test.ts`.
+
 ### Resource nodes, mining and forestry (V15.2 / V15.3)
 
 Island mines (Phase B) supersede the hold-to-mine ore node and Auto mining: read

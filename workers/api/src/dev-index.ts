@@ -32,6 +32,7 @@ import {
   gameDataTileTerrain,
   gameDataLandSale,
   gameDataIslandGroundBuilder,
+  gameDataWorldChart,
   gameDataWorkAreaGround,
   gameDataCargoCapacities,
   gameDataStarterPackage
@@ -58,6 +59,7 @@ export interface DevEnv extends DevAuthBindings {
    * feature is built and tried before any deployment turns it on.
    */
   readonly ISLAND_CHOICE_ENABLED?: string;
+  readonly WORLD_MAP_ENABLED?: string;
 }
 
 export interface DevBootstrapStatus {
@@ -121,6 +123,8 @@ export function createDevWorker(env: DevEnv) {
       choiceEnabled: env.ISLAND_CHOICE_ENABLED?.trim().toLowerCase() !== "false",
       builder: gameDataIslandGroundBuilder
     },
+    // The local database applies every migration, so the world map is on unless switched off.
+    ...(env.WORLD_MAP_ENABLED?.trim().toLowerCase() === "false" ? {} : { world: { chart: gameDataWorldChart } }),
     fishing: {
       catalogue: new GameDataFishingCatalogue(),
       ids,

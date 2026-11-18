@@ -1,5 +1,7 @@
 ﻿import {
   CreateFarm,
+  EnsureWorldSlot,
+  GetWorldChart,
   CropStateProjector,
   GetFarmCrops,
   GetFarm,
@@ -8,6 +10,7 @@
   farmIslandSummary,
   type FarmIslandSummary,
   type IslandGroundBuilder,
+  type WorldChartPort,
   GetPlayerAppearance,
   SetPlayerAppearance,
   type PlayerAppearanceView,
@@ -153,11 +156,16 @@
 } from "@happy-farm/application";
 import {
   CreateFarmRequestSchema,
+  EnsureWorldSlotRequestSchema,
   FarmIslandDTOSchema,
   FarmIslandSummaryDTOSchema,
   type FarmIslandDTO,
   type FarmIslandSummaryDTO,
   type GetFarmIslandResponse,
+  type GetWorldChartResponse,
+  type EnsureWorldSlotResponse,
+  IslandElementSchema,
+  IslandOutlineSchema,
   type GetMyFarmResponse,
   SetPlayerAppearanceRequestSchema,
   type PlayerAppearanceDTO,
@@ -340,6 +348,7 @@ import {
   D1InventoryRepository,
   D1FarmMemberRepository,
   D1FarmIslandRepository,
+  D1WorldSlotRepository,
   D1FarmRepository,
   D1PlayerAppearanceRepository,
   D1FarmTileRepository,
@@ -404,6 +413,11 @@ export interface HandlerDependencies {
     readonly choiceEnabled: boolean;
     readonly builder: IslandGroundBuilder;
   };
+  /**
+   * The world map (docs/design/WORLD_MAP.md). When present, a chosen island takes a slot on the sea
+   * chart at creation, and `/world/chart` and `/world/slot` answer. Needs migration 0045.
+   */
+  readonly world?: { readonly chart: WorldChartPort };
   /** The manual aquaculture definition; omitted hosts use the shipped game-data value. */
   readonly aquaculture?: AquacultureDefinition;
   /**
@@ -969,6 +983,7 @@ function errorStatus(code: ErrorCode): number {
     case "JOB_NOT_FOUND":
       return 404;
     case "CONFLICT_STALE_STATE":
+    case "WORLD_REGION_FULL":
     case "REQUEST_ALREADY_PROCESSED":
     case "TILE_OCCUPIED":
     case "TILE_NOT_PLANTABLE":
@@ -1125,14 +1140,18 @@ export function createHandler(host: HandlerDependencies) {
   const progressions = new D1ProgressionRepository(dependencies.db);
   const farmIslands = new D1FarmIslandRepository(dependencies.db);
   const islandChoiceEnabled = dependencies.islands?.choiceEnabled === true;
+  const worldPlacement = dependencies.world === undefined ? undefined : { chart: dependencies.world.chart, slots: new D1WorldSlotRepository(dependencies.db) };
   const createFarm = new CreateFarm(
     players,
     farms,
     members,
     dependencies.ids,
     dependencies.clock,
-    dependencies.islands === undefined ? undefined : { enabled: islandChoiceEnabled, builder: dependencies.islands.builder }
+    dependencies.islands === undefined ? undefined : { enabled: islandChoiceEnabled, builder: dependencies.islands.builder },
+    worldPlacement
   );
+  const getWorldChart = worldPlacement === undefined ? null : new GetWorldChart(farms, worldPlacement);
+  const ensureWorldSlot = worldPlacement === undefined ? null : new EnsureWorldSlot(farms, farmIslands, worldPlacement, dependencies.clock);
   const getFarm = new GetFarm(farms, members, farmIslands);
   const getMyFarm = new GetMyFarm(farms, farmIslands, islandChoiceEnabled);
   const getFarmIsland = new GetFarmIsland(farms, members, farmIslands);
@@ -2094,6 +2113,47 @@ export function createHandler(host: HandlerDependencies) {
           appearance = await setPlayerAppearance.execute(actor, parsed.data);
         }
         const body: ApiSuccess<{ appearance: PlayerAppearanceDTO }> = { ok: true, data: { appearance: { ...appearance } } };
+        return jsonResponse(body);
+      }
+
+      if (getWorldChart !== null && request.method === "GET" && url.pathname === "/world/chart") {
+        const chart = await getWorldChart.execute(actor);
+        const body: ApiSuccess<GetWorldChartResponse> = {
+          ok: true,
+          data: {
+            mySlotId: chart.mySlotId,
+            regions: chart.regions.map((entry) => ({
+              region: entry.region,
+              archipelagos: entry.archipelagos.map((archipelago) => ({
+                archipelagoId: archipelago.archipelagoId,
+                index: archipelago.index,
+                centreX: archipelago.centreX,
+                centreZ: archipelago.centreZ,
+                slots: archipelago.slots.map((slot) => ({
+                  slotId: slot.slotId,
+                  x: slot.x,
+                  z: slot.z,
+                  claimed: slot.claimed,
+                  mine: slot.mine,
+                  island: {
+                    element: IslandElementSchema.parse(slot.island.element),
+                    outline: IslandOutlineSchema.parse(slot.island.outline),
+                    seed: slot.island.seed,
+                    generatorVersion: slot.island.generatorVersion
+                  }
+                }))
+              }))
+            }))
+          }
+        };
+        return jsonResponse(body);
+      }
+
+      if (ensureWorldSlot !== null && request.method === "POST" && url.pathname === "/world/slot") {
+        const parsed = EnsureWorldSlotRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const slot = await ensureWorldSlot.execute(actor, parsed.data);
+        const body: ApiSuccess<EnsureWorldSlotResponse> = { ok: true, data: { slot: { ...slot } } };
         return jsonResponse(body);
       }
 

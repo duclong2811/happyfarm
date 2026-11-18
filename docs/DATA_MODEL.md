@@ -462,3 +462,24 @@ Both directions now exist, and both are one transaction with a receipt:
 - Only supply categories (`SEED` today) may be bought into cargo; the destination is always the
   authenticated owner's Main Character, and no route accepts an owner, a capacity or a price.
 - Ordinary `POST /shop/buy` and all manual production still settle to the Warehouse.
+
+## World map slots (migration 0045)
+
+`world_slots` records which farm holds which place on the world map (`docs/design/WORLD_MAP.md`). The
+sea chart itself (regions, archipelagos, slot positions, wild islands) is game data in
+`packages/game-data/src/world/sea-chart.ts`, deterministic from `SEA_CHART_SEED`. Never change that
+seed once islands have been placed.
+
+| Column | Type | Rule |
+|---|---|---|
+| `slot_id` | TEXT PK | `slot_<region>_<archipelago>_<n>`; a slot holds one farm |
+| `region` | TEXT | `NORTH`, `EAST`, `SOUTH` or `WEST` (the Centre holds no islands) |
+| `farm_id` | TEXT UNIQUE FK farms | a farm holds one slot; the row goes when the farm does |
+| `claimed_at` | TEXT | ISO time of the claim |
+
+- A chosen island claims its slot in the same batch as the farm (`D1FarmRepository.createWithOwner`).
+  A slot taken in between fails the batch, writing nothing, and `CreateFarm` retries with the next
+  free slot.
+- The migration places farms that already had a chosen island round the four regions' first
+  archipelagos, in creation order (up to sixteen). Any later one is placed by `POST /world/slot`.
+

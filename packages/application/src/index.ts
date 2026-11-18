@@ -1,4 +1,5 @@
 export * from "./create-farm";
+export * from "./world";
 export * from "./farm-island";
 export * from "./construction";
 export * from "./crops";

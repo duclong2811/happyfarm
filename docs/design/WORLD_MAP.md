@@ -1,6 +1,12 @@
 # World map: five seas, archipelagos, and a world that opens as it fills
 
-Status: design agreed with the owner on 2026-11-19 (decisions below). Nothing is built yet. The constraints are the ones in `AGENTS.md`: the server is
+Status: design agreed with the owner on 2026-11-19 (decisions below).
+
+- **W1 is built** (sea chart, slots, claiming, `GET /world/chart`, `POST /world/slot`). It is switched on
+  in a Worker by `WORLD_MAP_ENABLED = "true"`, once migration 0045 is applied.
+- When an archipelago fills, the next one in that region opens on its own. This was my proposal, and
+  the owner has not yet confirmed it.
+- W2 onward is not started. The constraints are the ones in `AGENTS.md`: the server is
 authoritative, every mutation is validated, migrations are used for every schema change, and no
 proprietary game's map, names or art is copied.
 
