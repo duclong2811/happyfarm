@@ -40,6 +40,7 @@ import type {
 import { FarmIslandDTOSchema } from "@happy-farm/contracts";
 import { ApiClient, ApiError, type CreateFarmResult } from "./api";
 import { showIslandPicker } from "./island-picker";
+import { openSeaChart, type SeaChartModal } from "./sea-chart-modal";
 import { characterNameKey, showCharacterPicker } from "./character-picker";
 import { CHARACTER_PORTRAITS } from "./character-portraits";
 import { DEFAULT_PLAYER_CHARACTER_ID } from "@happy-farm/game-data";
@@ -6576,7 +6577,8 @@ const RAIL_SHORT_LABELS: readonly (readonly [string, MessageKey])[] = [
   ["build-launcher", "rail.build"],
   ["work-areas-launcher", "rail.workAreas"],
   ["workers-launcher", "rail.workers"],
-  ["islands-launcher", "rail.islands"]
+  ["islands-launcher", "rail.islands"],
+  ["chart-launcher", "rail.chart"]
 ];
 
 /** Every string the layout itself owns, so a language change reaches the panel headings too. */
@@ -6586,6 +6588,10 @@ function renderChrome(): void {
   islands.hidden = !neighborIslandsShown();
   islands.setAttribute("aria-label", t("rail.islands"));
   islands.title = t("rail.islands");
+  const chartLauncher = element<HTMLButtonElement>("chart-launcher");
+  chartLauncher.hidden = !worldMapAvailable;
+  chartLauncher.setAttribute("aria-label", t("rail.chart"));
+  chartLauncher.title = t("rail.chart");
   element<HTMLElement>("gold-label").textContent = t("hud.gold");
   element<HTMLElement>("inventory-title").textContent = t("panel.inventory");
   element<HTMLElement>("build-title").replaceChildren(
@@ -7461,6 +7467,44 @@ function neighborStatusText(npc: NeighborSnapshotDTO["npc"]): string {
  * from the dock. A player already on a visit still sees the visit, so nobody is stranded.
  */
 const NEIGHBOR_ISLANDS_ENABLED: boolean = false;
+
+/**
+ * Whether this server has the world map on (docs/design/WORLD_MAP.md). Learned from the chart route
+ * itself after boot, so a server without it simply never shows the Chart button.
+ */
+let worldMapAvailable = false;
+let seaChartModal: SeaChartModal | null = null;
+
+/** Asks once, off the critical path, whether the world map is on; shows the Chart button if so. */
+async function refreshWorldMapAvailability(): Promise<void> {
+  try {
+    await api().getWorldChart();
+    worldMapAvailable = true;
+  } catch {
+    worldMapAvailable = false;
+  }
+  renderChrome();
+}
+
+/** Opens the sea chart over the farm. It only reads, except to give a placeless island its place. */
+function showSeaChart(): void {
+  if (seaChartModal !== null) return;
+  const client = api();
+  seaChartModal = openSeaChart({
+    host: document.body,
+    translate: (key, params) => t(key, params),
+    load: () => client.getWorldChart(),
+    // Only a chosen island has a place on the chart; a legacy square farm is offered none.
+    claim: state.island === null ? null : async (region) => {
+      await client.ensureWorldSlot(region);
+    },
+    describeError: (error) => describe(error)(t, state.language),
+    onClose: () => {
+      seaChartModal = null;
+      element<HTMLButtonElement>("chart-launcher").focus();
+    }
+  });
+}
 
 function neighborIslandsShown(): boolean {
   return NEIGHBOR_ISLANDS_ENABLED || state.neighbor?.visit.currentPlace === "NEIGHBOR_ISLAND";
@@ -9128,6 +9172,7 @@ async function loadFarm(farmId: string): Promise<FarmBootContext> {
   // while the renderer initializes.
   // The mines are not on the critical path: they arrive when they arrive and draw themselves.
   void refreshMines();
+  void refreshWorldMapAvailability();
   await Promise.all([refreshFishing(), refreshResources(), refreshFarm()]);
   playerRuntime.respawn();
   if (state.island !== null) playerRuntime.teleport(homeSpawnWorld());
@@ -9232,7 +9277,10 @@ async function createFarm(): Promise<FarmBootContext> {
   // server without the route falls through to the plain creation it always did.
   const mine = await client.getMyFarm().catch(() => null);
   if (mine?.farm != null) return loadFarm(mine.farm.id);
-  const created = mine?.islandChoice.enabled === true ? await createFarmOnChosenIsland(client) : await client.createFarm("Starter Farm");
+  const created =
+    mine?.islandChoice.enabled === true
+      ? await createFarmOnChosenIsland(client, mine.worldMap?.enabled === true)
+      : await client.createFarm("Starter Farm");
   accountRefreshGeneration += 1;
   state.farmId = created.farm.id;
   state.farmName = created.farm.name;
@@ -9247,6 +9295,7 @@ async function createFarm(): Promise<FarmBootContext> {
   localStorage.setItem("happyfarm.lastVisibleAt", String(Date.now()));
   // The mines are not on the critical path: they arrive when they arrive and draw themselves.
   void refreshMines();
+  void refreshWorldMapAvailability();
   await Promise.all([refreshFishing(), refreshResources(), refreshFarm()]);
   playerRuntime.respawn();
   if (state.island !== null) playerRuntime.teleport(homeSpawnWorld());
@@ -9261,13 +9310,17 @@ async function createFarm(): Promise<FarmBootContext> {
  * same choice rather than a lost one. Only the element, outline and seed are sent; the server builds
  * and stores the island itself.
  */
-async function createFarmOnChosenIsland(client: ApiClient): Promise<CreateFarmResult> {
+async function createFarmOnChosenIsland(client: ApiClient, worldMap: boolean): Promise<CreateFarmResult> {
   const outcome: { created?: CreateFarmResult } = {};
+  // With the world map on, the player also picks a sea. A chart that does not load leaves the choice
+  // to the server (the emptiest sea), rather than blocking a new player.
+  const chart = worldMap ? await client.getWorldChart().catch(() => null) : null;
   await showIslandPicker({
     host: document.body,
     translate: (key, params) => t(key, params),
+    chart,
     onConfirm: async (pick) => {
-      outcome.created = await client.createFarm(pick.name, { element: pick.element, outline: pick.outline, seed: pick.seed });
+      outcome.created = await client.createFarm(pick.name, { element: pick.element, outline: pick.outline, seed: pick.seed }, pick.region);
     },
     describeError: (error) => describe(error)(t, state.language)
   });
@@ -10205,6 +10258,9 @@ function wire(): void {
   }
   element<HTMLButtonElement>("hud-warehouse").addEventListener("click", () => {
     setActivePanel(togglePanel(panels, "inventory"));
+  });
+  element<HTMLButtonElement>("chart-launcher").addEventListener("click", () => {
+    showSeaChart();
   });
   // The ferry is reachable from the HUD as well as by tapping the dock in the world.
   element<HTMLButtonElement>("islands-launcher").addEventListener("click", () => {

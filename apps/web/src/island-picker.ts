@@ -17,7 +17,9 @@ import {
   type IslandOutline,
   type IslandSiteKind
 } from "@happy-farm/game-data";
+import type { GetWorldChartResponse, SeaRegionDTO } from "@happy-farm/contracts";
 import type { MessageKey } from "./i18n";
+import { drawSeaChart, freePlaces, regionAt, SEA_REGION_ORDER, suggestedRegion } from "./sea-chart-view";
 import { islandRelief, RELIEF_BASE_WORLD, RELIEF_TAG } from "./render/island-relief";
 
 export interface IslandPick {
@@ -25,6 +27,8 @@ export interface IslandPick {
   readonly element: IslandElement;
   readonly outline: IslandOutline;
   readonly seed: number;
+  /** The sea the island goes to; absent while the world map is off. */
+  readonly region?: SeaRegionDTO;
 }
 
 /** The largest seed the server accepts. */
@@ -246,6 +250,8 @@ export function showIslandPicker(options: {
   readonly host: HTMLElement;
   readonly translate: Translate;
   readonly seed?: () => number;
+  /** The world's sea chart, when the world map is on: the player then also chooses a sea. */
+  readonly chart?: GetWorldChartResponse | null;
   readonly onConfirm: (pick: IslandPick) => Promise<void>;
   readonly describeError: (error: unknown) => string;
 }): Promise<IslandPick> {
@@ -266,6 +272,9 @@ export function showIslandPicker(options: {
   let outline: IslandOutline = "ROUND";
   let seed = nextSeed();
   let nameEdited = false;
+  const chart = options.chart ?? null;
+  const places = chart === null ? null : freePlaces(chart);
+  let region: SeaRegionDTO | null = chart === null ? null : suggestedRegion(chart);
 
   const root = document.createElement("div");
   root.id = "island-picker";
@@ -358,8 +367,52 @@ export function showIslandPicker(options: {
   });
   outlineRow.replaceChildren(...outlineButtons.map((entry) => entry.button));
 
+  // The sea: a small chart with the chosen sea lit, and one button per sea with its free places. The
+  // server puts the island in that sea's next free place; the player never picks a position.
+  const regionHeading = document.createElement("h3");
+  regionHeading.textContent = translate("islandPicker.step.region");
+  const regionRow = document.createElement("div");
+  regionRow.className = "ip-regions";
+  const regionChart = document.createElement("canvas");
+  regionChart.className = "ip-region-chart";
+  regionChart.width = 300;
+  regionChart.height = 300;
+  regionChart.setAttribute("role", "img");
+  const regionButtons = SEA_REGION_ORDER.map((candidate) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ip-region";
+    button.dataset.region = candidate;
+    const label = document.createElement("strong");
+    label.textContent = translate(`chart.region.${candidate}` as MessageKey);
+    const free = document.createElement("small");
+    const count = places?.[candidate] ?? 0;
+    free.textContent = count > 0 ? translate("islandPicker.regionFree", { count }) : translate("islandPicker.regionFull");
+    button.replaceChildren(label, free);
+    button.disabled = count === 0;
+    button.addEventListener("click", () => {
+      region = candidate;
+      render();
+    });
+    return button;
+  });
+  const regionList = document.createElement("div");
+  regionList.className = "ip-region-list";
+  regionList.replaceChildren(...regionButtons);
+  regionRow.replaceChildren(regionChart, regionList);
+  regionChart.addEventListener("click", (event) => {
+    if (chart === null || root.classList.contains("is-busy")) return;
+    const box = regionChart.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return;
+    const frame = drawSeaChart(regionChart, chart, chartOptions());
+    const picked = regionAt(frame, ((event.clientX - box.left) / box.width) * regionChart.width, ((event.clientY - box.top) / box.height) * regionChart.height);
+    if ((places?.[picked] ?? 0) === 0) return;
+    region = picked;
+    render();
+  });
+
   const nameHeading = document.createElement("h3");
-  nameHeading.textContent = translate("islandPicker.step.name");
+  nameHeading.textContent = translate(options.chart == null ? "islandPicker.step.name" : "islandPicker.step.nameAfterRegion");
   const nameInput = document.createElement("input");
   nameInput.className = "ip-name";
   nameInput.type = "text";
@@ -377,7 +430,17 @@ export function showIslandPicker(options: {
   confirm.type = "button";
   confirm.className = "primary ip-confirm";
   confirm.textContent = translate("islandPicker.confirm");
-  controls.replaceChildren(elementHeading, elementRow, outlineHeading, outlineRow, nameHeading, nameInput, error, confirm);
+  controls.replaceChildren(
+    elementHeading,
+    elementRow,
+    outlineHeading,
+    outlineRow,
+    ...(chart === null ? [] : [regionHeading, regionRow]),
+    nameHeading,
+    nameInput,
+    error,
+    confirm
+  );
 
   body.replaceChildren(previewColumn, controls);
   card.replaceChildren(head, body);
@@ -385,6 +448,14 @@ export function showIslandPicker(options: {
 
   function defaultName(): string {
     return translate("islandPicker.defaultName", { element: translate(`island.element.${element}` as MessageKey) });
+  }
+
+  function chartOptions(): Parameters<typeof drawSeaChart>[2] {
+    return {
+      translate: (key, params) => translate(key as MessageKey, params === undefined ? undefined : { ...params }),
+      selectedRegion: region,
+      compact: true
+    };
   }
 
   function render(): void {
@@ -413,6 +484,15 @@ export function showIslandPicker(options: {
       entry.button.setAttribute("aria-pressed", String(active));
       drawIslandPreview(entry.thumbnail, island(element, entry.candidate, seed), { sites: false });
     }
+    if (chart !== null) {
+      drawSeaChart(regionChart, chart, chartOptions());
+      regionChart.setAttribute("aria-label", region === null ? translate("chart.title") : translate(`chart.region.${region}` as MessageKey));
+      for (const button of regionButtons) {
+        const active = button.dataset.region === region;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      }
+    }
   }
 
   nameInput.value = defaultName();
@@ -428,7 +508,7 @@ export function showIslandPicker(options: {
     confirm.addEventListener("click", () => {
       const name = nameInput.value.trim();
       if (name.length === 0) return;
-      const pick: IslandPick = { name, element, outline, seed };
+      const pick: IslandPick = region === null ? { name, element, outline, seed } : { name, element, outline, seed, region };
       root.classList.add("is-busy");
       for (const control of root.querySelectorAll("button, input")) (control as HTMLButtonElement | HTMLInputElement).disabled = true;
       confirm.textContent = translate("islandPicker.creating");

@@ -71,6 +71,8 @@ import {
   ,GetNeighborResponseSchema
   ,NeighborTravelResponseSchema
   ,NeighborTalkResponseSchema
+  ,GetWorldChartResponseSchema
+  ,EnsureWorldSlotResponseSchema
 } from "@happy-farm/contracts";
 import type {
   BuyItemResultDTO,
@@ -135,6 +137,9 @@ import type {
   ,GetMyFarmResponse
   ,IslandChoiceDTO
   ,PlayerAppearanceDTO
+  ,GetWorldChartResponse
+  ,EnsureWorldSlotResponse
+  ,SeaRegionDTO
 } from "@happy-farm/contracts";
 import { bootPerfApiEnd, bootPerfApiStart, bootPerfApiValidationFailure } from "./boot-performance";
 
@@ -292,9 +297,29 @@ export class ApiClient {
   }
 
 
-  /** Creates the player's farm; `island` is honoured only when the farm is new and choice is offered. */
-  createFarm(name: string, island?: IslandChoiceDTO): Promise<CreateFarmResult> {
-    return this.post("/farms", island === undefined ? { name } : { name, island }, CreateFarmResponseSchema);
+  /**
+   * Creates the player's farm; `island` is honoured only when the farm is new and choice is offered,
+   * and `region` only while the world map is on (the server then picks the place in that sea).
+   */
+  createFarm(name: string, island?: IslandChoiceDTO, region?: SeaRegionDTO): Promise<CreateFarmResult> {
+    return this.post(
+      "/farms",
+      { name, ...(island === undefined ? {} : { island }), ...(region === undefined ? {} : { region }) },
+      CreateFarmResponseSchema
+    );
+  }
+
+  /** The world's sea chart: every open archipelago, which places are taken, and the caller's own. */
+  getWorldChart(): Promise<GetWorldChartResponse> {
+    return this.get("/world/chart", GetWorldChartResponseSchema);
+  }
+
+  /**
+   * Gives the caller's island a place on the chart, in `region` (or the emptiest sea), if it has none
+   * yet. Idempotent: an island that has a place keeps it. Only the sea is sent, never a position.
+   */
+  ensureWorldSlot(region?: SeaRegionDTO): Promise<EnsureWorldSlotResponse> {
+    return this.post("/world/slot", region === undefined ? {} : { region }, EnsureWorldSlotResponseSchema);
   }
 
   /** The caller's own look. */

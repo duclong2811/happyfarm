@@ -143,7 +143,7 @@ describe("Home Island choice", () => {
   it("tells a new player they may choose, and an existing player which island they have", async () => {
     const handle = handler(true);
     const before = GetMyFarmResponseSchema.parse(await data(await handle(request("/farms/mine"))));
-    expect(before).toEqual({ farm: null, island: null, islandChoice: { enabled: true } });
+    expect(before).toEqual({ farm: null, island: null, islandChoice: { enabled: true }, worldMap: { enabled: false } });
 
     const created = await handle(request("/farms", { name: "Đảo Ngọc", island: CHOICE }));
     expect(created.status).toBe(201);

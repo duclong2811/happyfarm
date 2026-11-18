@@ -44,7 +44,9 @@ export type IconName =
   /** A tick, for the chosen card in a picker. */
   | "check"
   /** Search: used by the Build Shop's collapsed catalogue tools. */
-  | "search";
+  | "search"
+  /** A compass: the world's sea chart. */
+  | "compass";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -106,7 +108,9 @@ const PATHS: Readonly<Record<IconName, readonly string[]>> = {
   /** Check: the marker on the chosen card, never the only signal (the card also has a border). */
   check: ["M5 12.5l4.5 4.5L19 7.5"],
   /** Search: used only by the Build Shop's collapsed catalogue tools. */
-  search: ["M10.5 5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z", "M14.5 14.5 20 20"]
+  search: ["M10.5 5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z", "M14.5 14.5 20 20"],
+  /** Compass: a ring with a needle, for the sea chart. */
+  compass: ["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z", "M15.5 8.5l-2.2 4.8-4.8 2.2 2.2-4.8z", "M12 3v2", "M12 19v2"]
 };
 
 /** Builds one icon as an SVG element the caller can drop into a button. */

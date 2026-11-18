@@ -936,8 +936,13 @@ slot claiming, or the chart API.
   - `D1WorldSlotRepository`, and migration `0045_world_slots.sql`.
 - API: `GET /world/chart`, `POST /world/slot`, and `region` on `POST /farms`. The Worker turns these on
   with `WORLD_MAP_ENABLED = "true"`, after 0045 is applied.
+- Client (W2):
+  - `apps/web/src/sea-chart-view.ts`: the chart's geometry, archipelago names and the parchment drawing;
+  - `apps/web/src/sea-chart-modal.ts`: the in-game "Chart" window;
+  - the "choose a sea" step in `apps/web/src/island-picker.ts`;
+  - in `main.ts`: `refreshWorldMapAvailability` and `showSeaChart`.
 - Tests: `tests/game-data/sea-chart.test.ts`, `tests/api/world-map.test.ts`,
-  `tests/integration/world-slots-migration.test.ts`.
+  `tests/integration/world-slots-migration.test.ts`, `tests/web/sea-chart-view.test.ts`.
 
 ### Resource nodes, mining and forestry (V15.2 / V15.3)
 

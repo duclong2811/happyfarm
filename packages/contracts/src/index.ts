@@ -191,7 +191,9 @@ export const GetMyFarmResponseSchema = z
   .object({
     farm: FarmDTOSchema.nullable(),
     island: FarmIslandSummaryDTOSchema.nullable(),
-    islandChoice: z.object({ enabled: z.boolean() }).strict()
+    islandChoice: z.object({ enabled: z.boolean() }).strict(),
+    /** Whether the world map (the sea chart, a region at creation) is on. Absent from older servers. */
+    worldMap: z.object({ enabled: z.boolean() }).strict().optional()
   })
   .strict();
 /** `GET /farms/:id/island`: the stored ground. Immutable per `revision`, so clients may cache it. */

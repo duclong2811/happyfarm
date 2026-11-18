@@ -6,7 +6,19 @@ Status: design agreed with the owner on 2026-11-19 (decisions below).
   in a Worker by `WORLD_MAP_ENABLED = "true"`, once migration 0045 is applied.
 - When an archipelago fills, the next one in that region opens on its own. This was my proposal, and
   the owner has not yet confirmed it.
-- W2 onward is not started. The constraints are the ones in `AGENTS.md`: the server is
+- **W2 is built** (the chart, in `apps/web/src/sea-chart-view.ts` and `sea-chart-modal.ts`):
+  - At onboarding, while the world map is on, the island picker adds a "choose a sea" step: a small
+    chart with the chosen sea lit, and one button per sea with its free places. Only the sea's name
+    is sent with the creation; the server still picks the place.
+  - In the game, a "Chart" button opens the full chart. It shows where the reader's island lies,
+    and what a tapped place holds (yours, a player's, or a free place with its wild island). An island
+    made before the world map, beyond the ones migration 0045 placed, is offered a sea to take its place
+    in (`POST /world/slot`).
+  - The client learns that the world map is on from `GET /farms/mine` (`worldMap.enabled`) before a
+    farm exists, and from `GET /world/chart` answering after boot. Without the flag, neither the step
+    nor the button appears.
+  - Archipelago names are our own Vietnamese names, fixed per sea in opening order.
+- W3 onward is not started. The constraints are the ones in `AGENTS.md`: the server is
 authoritative, every mutation is validated, migrations are used for every schema change, and no
 proprietary game's map, names or art is copied.
 
@@ -122,7 +134,7 @@ element's region by a one-off, idempotent migration step.
 | Phase | What ships | Server work |
 |---|---|---|
 | W1 | World data, slots and claiming: a new farm takes a slot in an open archipelago of its region | migration `world_slots`, game data, claim in farm creation, `GET /world/chart` |
-| W2 | The nautical chart: onboarding choice and a world view from the HUD | none beyond W1 |
+| W2 (built) | The nautical chart: onboarding choice and a world view from the HUD | `worldMap.enabled` on `GET /farms/mine`; otherwise none beyond W1 |
 | W3 | Neighbours on the horizon: the archipelago's islands in 3D | read slot templates near the player |
 | W4 | Visiting: sail to look at another player's island (read-only) | authorised read of another farm's public view |
 | W5+ | Ships and the sea: build a ship, sail it, then naval combat | a Durable Object per sea area for realtime positions and combat; anti-cheat; damage and loot rules; economy design (owner decision) |

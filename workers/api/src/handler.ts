@@ -2164,7 +2164,8 @@ export function createHandler(host: HandlerDependencies) {
           data: {
             farm: result.farm === null ? null : toFarmDTO(result.farm),
             island: toIslandSummaryDTO(result.island),
-            islandChoice: { enabled: result.islandChoiceEnabled }
+            islandChoice: { enabled: result.islandChoiceEnabled },
+            worldMap: { enabled: getWorldChart !== null }
           }
         };
         return jsonResponse(body);

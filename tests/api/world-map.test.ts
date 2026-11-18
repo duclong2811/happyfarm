@@ -15,7 +15,7 @@ import {
   type TreeInstanceId
 } from "@happy-farm/domain";
 import { seaChart } from "@happy-farm/game-data";
-import { EnsureWorldSlotResponseSchema, GetWorldChartResponseSchema } from "@happy-farm/contracts";
+import { EnsureWorldSlotResponseSchema, GetMyFarmResponseSchema, GetWorldChartResponseSchema } from "@happy-farm/contracts";
 import { createHandler } from "../../workers/api/src/handler";
 import { D1FarmMemberRepository, D1FarmRepository, D1PlayerRepository, D1WorldSlotRepository } from "../../workers/api/src/d1-repositories";
 import {
@@ -165,6 +165,14 @@ describe("the world map", () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it("tells a client whether the world map is on, and answers its routes only then", async () => {
+    auth.setActor({ playerId: playerId(1) });
+    expect(GetMyFarmResponseSchema.parse(await dataOf(await request("/farms/mine"))).worldMap).toEqual({ enabled: true });
+    build(null);
+    expect(GetMyFarmResponseSchema.parse(await dataOf(await request("/farms/mine"))).worldMap).toEqual({ enabled: false });
+    expect((await request("/world/chart")).status).toBe(404);
   });
 
   it("places a chosen island in the next free slot of the region it named", async () => {
