@@ -896,19 +896,22 @@ html.ui-b.ui-warm .character-picker button:disabled { opacity: .7; cursor: defau
   html.ui-b.ui-warm .character-picker .cp-option { transition: none; }
 }
 
-/* Area planting / harvest progress bar: a wooden track with an orange fill that turns green when done. */
-html.ui-b.ui-warm .area-progress {
-  height: 2.1rem;
+/* The activity tray, as small parchment cards with a wooden edge. */
+html.ui-b.ui-warm .activity-card {
   border: 2px solid var(--w-wood);
-  background: #e9cf9f;
-  box-shadow: inset 0 2px 4px rgba(92, 50, 22, .35);
+  background: var(--w-paper);
+  box-shadow: 0 3px 0 var(--w-wood-deep), 0 6px 14px rgba(60, 30, 10, .25);
+  color: var(--w-ink);
 }
-html.ui-b.ui-warm .area-progress-fill { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); }
-html.ui-b.ui-warm .area-progress.is-done .area-progress-fill { background: linear-gradient(#7fd36a, var(--w-green)); }
-html.ui-b.ui-warm #area-harvest-panel .area-progress span.area-progress-label,
-html.ui-b.ui-warm #area-harvest-panel .area-progress span.area-progress-cells,
-html.ui-b.ui-warm .area-harvest-progress-dock .area-progress span {
-  color: #fff;
-  font-family: var(--w-display);
-  text-shadow: var(--w-outline);
+html.ui-b.ui-warm .activity-title { color: var(--w-ink); font-family: var(--w-display); font-size: .86rem; }
+html.ui-b.ui-warm .activity-detail { color: var(--w-muted); }
+html.ui-b.ui-warm .activity-bar { background: #ecd5aa; box-shadow: inset 0 1px 2px rgba(92, 50, 22, .3); }
+html.ui-b.ui-warm .activity-fill { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); }
+html.ui-b.ui-warm .activity-card[data-tone="done"] .activity-fill { background: linear-gradient(#7fd36a, var(--w-green)); }
+html.ui-b.ui-warm .activity-card[data-tone="ready"] { border-color: #c98a16; }
+html.ui-b.ui-warm .activity-card[data-tone="ready"] .activity-fill { background: linear-gradient(#ffe07a, #f3b72e); }
+html.ui-b.ui-warm .activity-card[data-tone="warn"] .activity-fill { background: linear-gradient(#f0a37a, var(--w-red)); }
+html.ui-b.ui-warm .area-harvest-running-hint { color: #5a3416; }
+@media (max-width: 760px) {
+  html.ui-b.ui-warm .activity-title { font-size: .76rem; }
 }

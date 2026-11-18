@@ -169,7 +169,8 @@ import {
 } from "./aquaculture/panel";
 import { plantedForestryPanelState, resourcePanelState } from "./forestry/panel";
 import { miningPanelState } from "./mining/panel";
-import { minePanelView, mineOreAt, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
+import { minePanelView, mineMilliAt, mineOreAt, mineSecondsUntilFull, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
+import { activityTrayItems, renderActivityTray, type ActivityKind, type ActivityTrayInput } from "./activity-tray";
 import { islandCellKindAt, islandFishingSpots, mineFootprintTiles } from "@happy-farm/game-data";
 import {
   createAquaculturePondLoader,
@@ -1645,11 +1646,6 @@ function syncAreaHarvestOverlay(): void {
   });
 }
 
-function areaProgressPercent(progress: AreaHarvestSelectionState["progress"]): number {
-  if (progress === null || progress.totalCells <= 0) return 0;
-  return Math.floor((progress.completedCells / progress.totalCells) * 100);
-}
-
 /**
  * The progress bar's clock. The server answers once per group, so between answers the bar moves on
  * an estimate: the time a cell took in the groups so far (carried over to the next task), applied to
@@ -1658,7 +1654,6 @@ function areaProgressPercent(progress: AreaHarvestSelectionState["progress"]): n
  */
 let areaMsPerCell = 160;
 let areaGroupClock: { readonly startedAt: number; readonly cells: number } | null = null;
-let areaProgressTicker: ReturnType<typeof setInterval> | null = null;
 
 function areaProgressFraction(): number {
   const progress = areaHarvestSelection.progress;
@@ -1675,54 +1670,120 @@ function areaProgressFraction(): number {
   return Math.min(0.99, done / progress.totalCells);
 }
 
-/** A progress bar for the running (or just finished) area task; repainted in place by the ticker. */
-function areaProgressBar(): HTMLElement {
-  const bar = make("div", "area-progress");
-  bar.setAttribute("role", "progressbar");
-  bar.setAttribute("aria-valuemin", "0");
-  bar.setAttribute("aria-valuemax", "100");
-  bar.appendChild(make("div", "area-progress-fill"));
-  bar.appendChild(make("span", "area-progress-label"));
-  bar.appendChild(make("span", "area-progress-cells"));
-  paintAreaProgress(bar);
-  return bar;
+/** The last area task's outcome, shown in the activity tray for a few seconds after it finishes. */
+let areaTrayDone: {
+  readonly operation: "PLANT" | "HARVEST";
+  readonly succeeded: number;
+  readonly skipped: number;
+  readonly totalCells: number;
+  readonly untilMs: number;
+} | null = null;
+/** When this client first saw each timed action, so a skewed device clock cannot move its bar. */
+const activitySeenAt = new Map<string, number>();
+let activityTicker: ReturnType<typeof setInterval> | null = null;
+
+/** Ends area mode after a task the player closed the panel on; the result lives in the tray. */
+function endAreaTaskQuietly(): void {
+  areaPlantPickerOpen = false;
+  areaHarvestSelection = { active: false, operation: "HARVEST", plantOptionKey: null, first: null, second: null, pending: false, minimized: false, requestId: null, taskFarmId: null, taskGroups: null, syncing: false, focus: null, progress: null, lastResult: null };
+  syncAreaHarvestOverlay();
 }
 
-function paintAreaProgress(bar: Element): void {
-  const fraction = areaProgressFraction();
-  const percent = Math.floor(fraction * 100);
+function seenAt(id: string, nowMs: number): number {
+  const seen = activitySeenAt.get(id);
+  if (seen !== undefined) return seen;
+  if (activitySeenAt.size > 32) activitySeenAt.clear();
+  activitySeenAt.set(id, nowMs);
+  return nowMs;
+}
+
+/** What the tray shows, read from the state the client already holds. */
+function activityTrayInput(nowMs: number): ActivityTrayInput {
   const progress = areaHarvestSelection.progress;
-  const finished = !areaHarvestSelection.pending && areaHarvestSelection.lastResult !== null;
-  const fill = bar.querySelector<HTMLElement>(".area-progress-fill");
-  if (fill !== null) fill.style.width = `${String(fraction * 100)}%`;
-  bar.setAttribute("aria-valuenow", String(percent));
-  bar.classList.toggle("is-done", finished);
-  const label = bar.querySelector(".area-progress-label");
-  if (label !== null) {
-    label.textContent = finished
-      ? t("areaHarvest.barDone")
-      : areaHarvestSelection.syncing
-        ? t("areaHarvest.barSyncing", { percent })
-        : t(areaHarvestSelection.operation === "PLANT" ? "areaHarvest.barPlanting" : "areaHarvest.barHarvesting", { percent });
+  const area: ActivityTrayInput["area"] = areaHarvestSelection.pending && progress !== null
+    ? {
+        operation: areaHarvestSelection.operation,
+        phase: areaHarvestSelection.syncing ? "SYNCING" : "RUNNING",
+        fraction: areaProgressFraction(),
+        completedCells: progress.completedCells,
+        totalCells: progress.totalCells,
+        succeeded: progress.succeeded,
+        skipped: progress.skipped
+      }
+    : areaTrayDone !== null && nowMs < areaTrayDone.untilMs
+      ? {
+          operation: areaTrayDone.operation,
+          phase: "DONE",
+          fraction: 1,
+          completedCells: areaTrayDone.totalCells,
+          totalCells: areaTrayDone.totalCells,
+          succeeded: areaTrayDone.succeeded,
+          skipped: areaTrayDone.skipped
+        }
+      : null;
+  const cast = state.fishingAction;
+  const gather = state.resourceAction;
+  const gatherNode = gather === null ? undefined : state.resourceNodes.find((node) => node.nodeId === gather.nodeId);
+  let mines: ActivityTrayInput["mines"] = null;
+  if (farmMines !== null && farmMines.mines.length > 0) {
+    let milli = 0;
+    let capacityMilli = 0;
+    let ore = 0;
+    let capacity = 0;
+    let secondsUntilFull = Number.POSITIVE_INFINITY;
+    for (const { mine, readAtMs } of farmMines.mines) {
+      milli += mineMilliAt(mine, readAtMs, nowMs);
+      capacityMilli += mine.capacityOre * 1000;
+      ore += mineOreAt(mine, readAtMs, nowMs);
+      capacity += mine.capacityOre;
+      secondsUntilFull = Math.min(secondsUntilFull, mineSecondsUntilFull(mine, readAtMs, nowMs));
+    }
+    mines = { milli, capacityMilli, ore, capacity, secondsUntilFull };
   }
-  const cells = bar.querySelector(".area-progress-cells");
-  if (cells !== null) cells.textContent = progress === null ? "" : t("areaHarvest.barCells", { completed: progress.completedCells, total: progress.totalCells });
+  return {
+    nowMs,
+    area,
+    fishing: cast !== null && cast.status === "ACTIVE"
+      ? { id: cast.actionId, startedAt: cast.startedAt, readyAt: cast.readyAt, secondsUntilReady: cast.secondsUntilReady, seenAtMs: seenAt(cast.actionId, nowMs) }
+      : null,
+    gather: gather !== null && gather.status === "ACTIVE"
+      ? {
+          id: gather.actionId,
+          startedAt: gather.startedAt,
+          readyAt: gather.readyAt,
+          secondsUntilReady: gather.secondsUntilReady,
+          seenAtMs: seenAt(gather.actionId, nowMs),
+          name: gatherNode === undefined ? "" : displayName(state.language, gatherNode.displayNameKey, gatherNode.definitionId)
+        }
+      : null,
+    mines
+  };
 }
 
-function repaintAreaProgressBars(): void {
-  for (const bar of document.querySelectorAll(".area-progress")) paintAreaProgress(bar);
+/** Redraws the activity tray; cheap enough for the tray's own 4 Hz tick (text is only written on change). */
+function refreshActivityTray(): void {
+  const tray = document.getElementById("activity-tray");
+  if (tray === null) return;
+  const items = state.farmId === null ? [] : activityTrayItems(activityTrayInput(Date.now()), (key, params) => t(key as MessageKey, params));
+  renderActivityTray(tray, items, activateActivity);
 }
 
-function startAreaProgressTicker(): void {
-  if (areaProgressTicker !== null) return;
-  areaProgressTicker = setInterval(repaintAreaProgressBars, 200);
+function activateActivity(kind: ActivityKind): void {
+  if ((kind === "AREA_PLANT" || kind === "AREA_HARVEST") && areaHarvestSelection.active && areaHarvestSelection.minimized) {
+    restoreAreaHarvest();
+    return;
+  }
+  if (kind === "MINES" && farmMines !== null) {
+    // Open the fullest mine: the one the player most likely wants to dig.
+    const now = Date.now();
+    const fullest = [...farmMines.mines].sort((a, b) => mineMilliAt(b.mine, b.readAtMs, now) - mineMilliAt(a.mine, a.readAtMs, now))[0];
+    if (fullest !== undefined) selectMine(fullest.mine.slot);
+  }
 }
 
-function stopAreaProgressTicker(): void {
-  if (areaProgressTicker !== null) clearInterval(areaProgressTicker);
-  areaProgressTicker = null;
-  areaGroupClock = null;
-  repaintAreaProgressBars();
+function ensureActivityTicker(): void {
+  if (activityTicker !== null) return;
+  activityTicker = setInterval(refreshActivityTray, 250);
 }
 
 function areaTaskIsCurrent(requestId: string, farmId: string): boolean {
@@ -1770,21 +1831,10 @@ function restoreAreaHarvest(): void {
 }
 
 function renderAreaHarvestProgressDock(): void {
-  const dock = element<HTMLButtonElement>("area-harvest-progress-dock");
-  const visible = areaHarvestSelection.active && areaHarvestSelection.minimized &&
-    (areaHarvestSelection.pending || areaHarvestSelection.lastResult === null || areaHarvestSelection.lastResult.skipped > 0);
-  dock.hidden = !visible;
-  if (!visible) return;
-  const progress = areaHarvestSelection.progress;
-  const label = areaHarvestSelection.operation === "PLANT" ? t("areaHarvest.actionPlant") : t("areaHarvest.actionHarvest");
-  const body = progress === null
-    ? t("areaHarvest.progressCells", { completed: 0, total: 0, percent: 0 })
-    : t("areaHarvest.progressCells", { completed: progress.completedCells, total: progress.totalCells, percent: areaProgressPercent(progress) });
-  dock.replaceChildren(make("span", "area-harvest-dock-text", areaHarvestSelection.syncing ? t("areaHarvest.syncing") : `${label} ${body}`));
-  if (progress !== null) dock.appendChild(areaProgressBar());
-  dock.classList.toggle("is-error", !areaHarvestSelection.pending && areaHarvestSelection.lastResult !== null && areaHarvestSelection.lastResult.skipped > 0);
-  dock.title = t("areaHarvest.restoreProgress");
-  dock.setAttribute("aria-label", t("areaHarvest.restoreProgress"));
+  // The activity tray at the side of the screen follows a minimised task now; the old bottom dock
+  // would only cover the selection panel, so it stays hidden.
+  element<HTMLButtonElement>("area-harvest-progress-dock").hidden = true;
+  refreshActivityTray();
 }
 
 function renderAreaHarvestLauncher(): void {
@@ -2062,7 +2112,7 @@ function renderAreaHarvestPanel(): void {
   actions.appendChild(cancel);
   const progress = areaHarvestSelection.progress;
   if (areaHarvestSelection.pending) {
-    actions.appendChild(areaProgressBar());
+    actions.appendChild(make("span", "area-harvest-running-hint", t("areaHarvest.runningHint")));
   } else {
     const confirm = make("button", "primary", plantingMode
       ? t("areaHarvest.plantConfirm", { count: planting.plannedCount })
@@ -2095,7 +2145,6 @@ function renderAreaHarvestPanel(): void {
   previewBody.appendChild(productCards);
   previewBody.appendChild(selector);
   for (const node of progressNodes) previewBody.appendChild(node);
-  if (areaHarvestSelection.lastResult !== null && progress !== null) previewBody.appendChild(areaProgressBar());
   if (areaHarvestSelection.lastResult !== null) {
     const result = areaHarvestSelection.lastResult;
     const reasons = result.reasons.length === 0 ? "" : ` ${t("areaHarvest.reasons")}: ${[...new Set(result.reasons)].map(areaHarvestReason).join(", ")}`;
@@ -2185,7 +2234,6 @@ async function runAreaTask(): Promise<void> {
   // next group is already on its way, so the field fills in as it goes. Each catch-up is awaited
   // before the next starts (and before the final refresh), so an older read never lands last.
   let catchUp: Promise<void> | null = null;
-  startAreaProgressTicker();
   try {
     for (let groupIndex = progress.completedGroups; groupIndex < groups.length; groupIndex += 1) {
       const group = groups[groupIndex];
@@ -2231,7 +2279,20 @@ async function runAreaTask(): Promise<void> {
     if (finalProgress === null) return;
     const finalResult = { succeeded: finalProgress.succeeded, skipped: finalProgress.skipped, reasons: finalProgress.reasons };
     bootPerfInteractionDiagnostic("area_refresh_finished", { operation: planting ? "PLANT" : "HARVEST", elapsedMs: Math.round((performance.now() - refreshStartedAt) * 100) / 100 });
-    areaHarvestSelection = { ...areaHarvestSelection, pending: false, syncing: false, minimized: finalResult.skipped > 0 ? areaHarvestSelection.minimized : false, requestId: null, taskFarmId: null, taskGroups: null, lastResult: finalResult };
+    areaTrayDone = {
+      operation: planting ? "PLANT" : "HARVEST",
+      succeeded: finalResult.succeeded,
+      skipped: finalResult.skipped,
+      totalCells: finalProgress.totalCells,
+      untilMs: Date.now() + (finalResult.skipped > 0 ? 12_000 : 6_000)
+    };
+    if (areaHarvestSelection.minimized) {
+      // The player closed the panel to do something else: the task ends here, and the tray says how
+      // it went, instead of the panel springing back open over whatever they are doing.
+      endAreaTaskQuietly();
+    } else {
+      areaHarvestSelection = { ...areaHarvestSelection, pending: false, syncing: false, requestId: null, taskFarmId: null, taskGroups: null, lastResult: finalResult };
+    }
     setStatus((translate) => translate(planting ? "areaHarvest.plantResult" : "areaHarvest.result", { planted: finalResult.succeeded, harvested: finalResult.succeeded, skipped: finalResult.skipped }));
   } catch (error: unknown) {
     if (areaTaskIsCurrent(baseRequestId, taskFarmId)) {
@@ -2241,7 +2302,8 @@ async function runAreaTask(): Promise<void> {
     }
     throw error;
   } finally {
-    stopAreaProgressTicker();
+    areaGroupClock = null;
+    refreshActivityTray();
     renderAreaHarvestPanel();
     renderAreaHarvestLauncher();
     renderActionControls(currentSelection());
@@ -9980,6 +10042,7 @@ function setLanguage(language: Language): void {
 }
 
 function wire(): void {
+  ensureActivityTicker();
   element<HTMLButtonElement>("language").addEventListener("click", () => {
     setLanguage(otherLanguage(state.language));
   });

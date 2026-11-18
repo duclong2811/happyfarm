@@ -505,16 +505,29 @@ button.go { background: transparent; border-color: rgba(255, 255, 255, .22); fon
 .area-harvest-progress-dock { position: absolute; z-index: 9; left: 50%; bottom: max(var(--space-3), env(safe-area-inset-bottom)); transform: translateX(-50%); min-width: 13rem; max-width: min(24rem, calc(100% - 2rem)); padding: .55rem .85rem; border: 1px solid rgba(242, 190, 72, .62); border-radius: var(--ui-radius-control); background: rgba(38, 20, 10, .95); color: var(--cream); box-shadow: var(--shadow-panel); font-family: var(--ui-font-body); font-size: .78rem; font-weight: 900; white-space: nowrap; pointer-events: auto; touch-action: manipulation; }
 .area-harvest-progress-dock.is-error { border-color: rgba(217, 138, 138, .9); color: #ffd9d1; }
 .area-harvest-progress-dock[hidden] { display: none; }
-/* The area task's progress bar: a moving fill with its own label, repainted in place while it runs. */
-.area-progress { position: relative; display: flex; flex: 1 1 14rem; align-items: center; justify-content: space-between; gap: .6rem; min-width: 12rem; height: 1.9rem; padding: 0 .75rem; overflow: hidden; border: 1px solid rgba(242, 190, 72, .55); border-radius: 999px; background: rgba(0, 0, 0, .28); }
-.area-progress-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: linear-gradient(90deg, #f6b25a, #ef7f35); transition: width .2s linear; }
-.area-progress.is-done .area-progress-fill { background: linear-gradient(90deg, #8fdc6a, #4caf50); }
-.area-progress-label, .area-progress-cells { position: relative; z-index: 1; color: #fff; font-size: .78rem; font-weight: 800; text-shadow: 0 1px 2px rgba(0, 0, 0, .65); white-space: nowrap; }
-.area-progress-cells { font-size: .7rem; opacity: .92; }
-.area-harvest-preview > .area-progress { margin-top: .5rem; }
-.area-harvest-progress-dock .area-progress { min-width: 0; margin-top: .4rem; }
-.area-harvest-dock-text { display: block; }
-@media (prefers-reduced-motion: reduce) { .area-progress-fill { transition: none; } }
+.area-harvest-running-hint { flex: 1 1 12rem; color: var(--cream-dim); font-size: .74rem; font-weight: 700; }
+/* The activity tray: the work in progress, at the right edge, below the top HUD. */
+.activity-tray { position: absolute; z-index: 6; top: 6.6rem; right: max(.9rem, env(safe-area-inset-right)); display: flex; flex-direction: column; gap: .45rem; width: 15.5rem; pointer-events: none; }
+.activity-tray[hidden] { display: none; }
+.activity-card { display: flex; align-items: center; gap: .55rem; width: 100%; padding: .45rem .6rem; border: 1px solid rgba(242, 190, 72, .55); border-radius: 14px; background: rgba(38, 20, 10, .9); color: var(--cream); text-align: left; cursor: pointer; pointer-events: auto; }
+.activity-icon { flex: 0 0 auto; font-size: 1.35rem; line-height: 1; }
+.activity-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: .15rem; min-width: 0; }
+.activity-title { overflow: hidden; font-size: .8rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.activity-detail { overflow: hidden; color: var(--cream-dim); font-size: .7rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.activity-bar { display: block; height: .42rem; margin-top: .15rem; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .18); }
+.activity-bar[hidden] { display: none; }
+.activity-fill { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f6b25a, #ef7f35); transition: width .25s linear; }
+.activity-card[data-tone="done"] .activity-fill { background: linear-gradient(90deg, #8fdc6a, #4caf50); }
+.activity-card[data-tone="ready"] .activity-fill { background: linear-gradient(90deg, #ffe07a, #f3b72e); }
+.activity-card[data-tone="warn"] .activity-fill { background: linear-gradient(90deg, #f0a37a, #d9472f); }
+@media (max-width: 760px) {
+  .activity-tray { top: 7rem; right: .5rem; width: 10.5rem; gap: .3rem; }
+  .activity-title { font-size: .72rem; }
+  .activity-detail { font-size: .64rem; }
+  .activity-card { padding: .35rem .45rem; }
+  .activity-icon { font-size: 1.1rem; }
+}
+@media (prefers-reduced-motion: reduce) { .activity-fill { transition: none; } }
 .area-harvest-launcher { flex: 0 0 auto; }
 
 @media (max-width: 760px) {
