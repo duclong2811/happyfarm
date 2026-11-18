@@ -21,13 +21,35 @@ custom domain is the one to hand to testers: it is easier to type, and it is ver
 is scoped to the hostname it was created on (the cookie carries no `Domain`), so pick one URL per
 playtest - see the last section.
 
-Current deployment: Worker `happy-farm-staging`, version `1d703a89-f496-4ed6-ac84-328db7e9361c`,
-deployed 2026-10-04T06:26Z for **V16.2.2D2 (the rice/replanting-crop Auto vertical slice)**. Migrations
-`0025_assignment_auto_purchase.sql` and `0026_auto_execution.sql` were applied in the same pass, and the
-remote smoke ran the whole lifecycle on staging - load, walk, plant, authoritative growth, harvest into
-cargo, return and replant - recorded in `docs/qa/V16_2_2D2_RICE_AUTO_VERTICAL.md`. The version it
-replaced, `7a4f41c6-a2e8-456d-8c6b-1eb1737050ab` (V16.2.2D1), is the rollback target. (Earlier: V16.2.1
-baseline `879a109b-abea-4e81-9fe8-ceceb7871eed`, V14.2 `67678bb7-7dbd-4896-a343-34841cde3180`, V14.1
+Current deployment: Worker `happy-farm-staging`, version `39388480-6aa5-476c-a73d-316fde4db836`,
+deployed 2026-11-18T03:27Z from `world/island-generator` (`b142ccc`): **Home Island choice, island
+mines, the character roster and the upgraded models**, with `ISLAND_CHOICE_ENABLED = "true"` (new
+players pick an island; existing farms keep theirs). Migrations `0037` ... `0044` were applied in the same
+pass (the database was at `0036`), after a rehearsal that applied them to a fresh export of the staging
+data and found no row lost, `foreign_key_check` empty and `integrity_check` ok.
+
+Restore points taken before the migrations:
+
+- D1 Time Travel bookmark `00000155-00000000-00005127-b422060078e9d3c4c37465a8c8618e22`
+  (`npx wrangler d1 time-travel restore happy-farm-staging --bookmark=<it> --config workers/api/wrangler.staging.toml`).
+- A full `wrangler d1 export` of that state (`staging-20261118T030910Z.sql`, 12.8 MB), kept by the owner.
+
+Remote smoke (2026-11-18): `/`, an SPA route and `/api/health` 200, `/api/shop` 401 without a session; a
+guest session reads shop, inventory, warehouse and progression; a new guest creates a farm on a KIM island,
+reads its island and its mines (slot 0 open, five slots locked at 10/20/35/50/70), is refused a dig of an
+empty mine (`MINE_EMPTY`) and an upgrade below level 8 (`MINE_LEVEL_REQUIRED`), and saves a character.
+
+Rollback targets: `fe47ccda-b4f0-49c4-8cd5-58bce817e9b1` (same code, island choice off) and
+`fc559d8c-901a-4e93-b19e-f17b5b36b016` (the build before this pass, 2026-10-17; it was checked to keep
+serving guests on the migrated database). Migrations stay forward-only.
+
+**Deploying from a cloud session:** an account API token saved as a network secret works for reads, D1
+exports and migrations, but `wrangler deploy` cannot upload new assets through the session proxy (the
+proxy replaces the asset-upload JWT with the token: `workers/assets/upload -> 401`). Run the deploy
+itself from a workstation (`npx wrangler login`), or only when no asset changed.
+
+(Earlier: V16.2.2D2 `1d703a89-f496-4ed6-ac84-328db7e9361c`, V16.2.2D1 `7a4f41c6-a2e8-456d-8c6b-1eb1737050ab`,
+V16.2.1 baseline `879a109b-abea-4e81-9fe8-ceceb7871eed`, V14.2 `67678bb7-7dbd-4896-a343-34841cde3180`, V14.1
 `6d8b7e83-0b60-43ec-ac61-2ffd6d1a7031`, V13.6.3 `784f4e7f-607f-4106-92e9-34126df471d2`, V13.6.2
 `174b4e39-f0dd-46e6-84e3-de0b97c9ed01`, V13.6.1 `7df79218-2a86-4435-9cd9-a399f9415c93`.)
 
