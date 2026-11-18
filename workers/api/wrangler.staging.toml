@@ -34,6 +34,10 @@ STARTER_GRANT_POLICY = "ALL_UNRECEIPTED"
 # application from the staging hostname (docs/deployment/STAGING.md), the guest path is what testers
 # land on.
 GUEST_AUTH_ENABLED = "true"
+# Home Island choice: a new staging player picks one of the five generated islands. Existing farms
+# keep the island they were created on. Opted in deliberately (the Worker treats anything other than
+# exactly "true" as off); fish bays, pastures and Auto anchors on chosen islands are still to come.
+ISLAND_CHOICE_ENABLED = "true"
 
 [assets]
 # The built web app: SPA shell, hashed JS/CSS, and the generated GLB models. The path is relative to
