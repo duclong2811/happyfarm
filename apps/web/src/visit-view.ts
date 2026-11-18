@@ -15,6 +15,9 @@ import { archipelagoName } from "./sea-chart-view";
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
+/** How far out a visit's camera starts, in world metres; the island's zoom range has the last word. */
+const VISIT_CAMERA_DISTANCE = 118;
+
 /** The built things on the visited island, already resolved to models by the caller. */
 export type VisitSceneConstructions = Parameters<FarmSceneHandle["setConstructions"]>[0];
 
@@ -105,7 +108,9 @@ export function openVisitView(options: VisitViewOptions): VisitView {
   window.addEventListener("keydown", onKey);
   try {
     // No callbacks: a click on the visited island selects nothing and asks nothing of the server.
-    scene = createFarmScene(canvas, { quality: options.quality });
+    // The estate camera from well out: a visitor sails up to the whole island, not to whatever stands
+    // at its middle (often its mountain). The scene clamps this to the island's own zoom range.
+    scene = createFarmScene(canvas, { quality: options.quality, initialCamera: { distance: VISIT_CAMERA_DISTANCE } });
     scene.setPlayer(null);
     scene.setState(options.input);
     scene.setConstructions(options.constructions);
