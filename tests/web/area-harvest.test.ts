@@ -108,10 +108,12 @@ describe("area fruit-tree harvest preview", () => {
     expect(preview.products).toEqual([{ itemDefinitionId: "item_apple", quantity: count * 3 }]);
   });
 
-  it("splits a hundred candidates into four retryable server groups", () => {
+  it("splits a hundred candidates into retryable server groups, small ones first", () => {
     const candidates = Array.from({ length: 100 }, (_, index) => ({ id: index }));
     const groups = areaHarvestGroups(candidates);
-    expect(groups.map((group) => group.length)).toEqual([25, 25, 25, 25]);
+    // 5 and 10 first, so the first cells land at once; then the server's 25-cell bound.
+    expect(groups.map((group) => group.length)).toEqual([5, 10, 25, 25, 25, 10]);
+    expect(groups.every((group) => group.length <= 25)).toBe(true);
     expect(groups.flat()).toEqual(candidates);
   });
 
@@ -142,8 +144,8 @@ describe("area fruit-tree harvest preview", () => {
       Array.from({ length: 100 }, (_, index) => crop(index)),
       [cropDefinition]
     );
-    expect(areaHarvestGroups(preview.cropCandidates)).toHaveLength(4);
-    expect(areaHarvestGroups(preview.cropCandidates).map((group) => group.length)).toEqual([25, 25, 25, 25]);
+    expect(areaHarvestGroups(preview.cropCandidates)).toHaveLength(6);
+    expect(areaHarvestGroups(preview.cropCandidates).map((group) => group.length)).toEqual([5, 10, 25, 25, 25, 10]);
   });
 });
 
@@ -208,7 +210,7 @@ describe("area planting preview", () => {
     const preview = previewAreaPlanting(plantingMap(cells), [], [], [], carrotOption, [{ x: 0, y: 0 }, { x: count - 1, y: 0 }]);
     expect(preview.validCells).toHaveLength(count);
     expect(areaHarvestGroups(preview.validCells).map((group) => group.length)).toEqual(
-      count === 100 ? [25, 25, 25, 25] : [count]
+      count === 100 ? [5, 10, 25, 25, 25, 10] : count === 25 ? [5, 10, 10] : [count]
     );
   });
 
@@ -234,7 +236,7 @@ describe("area planting preview", () => {
     expect(preview.plannedCells).toHaveLength(50);
     expect(preview.shortageCount).toBe(2);
     expect(preview.shortageCells).toEqual([{ x: 50, y: 0 }, { x: 51, y: 0 }]);
-    expect(areaHarvestGroups(preview.plannedCells).map((group) => group.length)).toEqual([25, 25]);
+    expect(areaHarvestGroups(preview.plannedCells).map((group) => group.length)).toEqual([5, 10, 25, 10]);
   });
 
   it("keeps all valid cells planned when stock covers the area", () => {
@@ -248,7 +250,7 @@ describe("area planting preview", () => {
     expect(preview.plannedCount).toBe(42);
     expect(preview.shortageCount).toBe(0);
     expect(preview.plannedCells).toEqual(cells);
-    expect(areaHarvestGroups(preview.plannedCells).map((group) => group.length)).toEqual([25, 17]);
+    expect(areaHarvestGroups(preview.plannedCells).map((group) => group.length)).toEqual([5, 10, 25, 2]);
   });
 
   it("uses stable y/x ordering when inventory changes after preview", () => {

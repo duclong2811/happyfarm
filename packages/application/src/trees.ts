@@ -26,7 +26,7 @@ import {
   type XpAward
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
-import { terrainForFarm } from "./farm-ground";
+import { terrainForFarm, type HarvestAreaContext, type PlantAreaContext } from "./farm-ground";
 import type { InventoryService } from "./inventory";
 import {
   assertStoredXpAward,
@@ -177,7 +177,38 @@ export interface PlantTreeDependencies {
 export class PlantTree {
   constructor(private readonly dependencies: PlantTreeDependencies) {}
 
-  async execute(actor: ActorContext | null, farmId: FarmId, command: PlantTreeCommand): Promise<TreeState> {
+  execute(actor: ActorContext | null, farmId: FarmId, command: PlantTreeCommand): Promise<TreeState> {
+    return this.plant(actor, farmId, command);
+  }
+
+  /**
+   * The shared part of an area planting, read once per group instead of once per cell: the farm, the
+   * owner's membership, the farm's ground and the planter's level.
+   */
+  async prepareArea(actor: ActorContext | null, farmId: FarmId): Promise<PlantAreaContext> {
+    const { farms, members, terrain, progression, progressionDefinition } = this.dependencies;
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if ((await farms.findById(farmId)) === null) {
+      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    }
+    const membership = await members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") {
+      throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+    }
+    return {
+      actorPlayerId: actor.playerId,
+      farmId,
+      terrain: await terrainForFarm(terrain, farmId),
+      level: storedLevel(progressionDefinition, await progression.find(actor.playerId))
+    };
+  }
+
+  /** One cell of an area planting, against a context from `prepareArea`. */
+  executeInArea(actor: ActorContext | null, farmId: FarmId, command: PlantTreeCommand, area: PlantAreaContext): Promise<TreeState> {
+    return this.plant(actor, farmId, command, area);
+  }
+
+  private async plant(actor: ActorContext | null, farmId: FarmId, command: PlantTreeCommand, area?: PlantAreaContext): Promise<TreeState> {
     const {
       farms,
       members,
@@ -196,6 +227,9 @@ export class PlantTree {
       clock
     } = this.dependencies;
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if (area !== undefined && (area.actorPlayerId !== actor.playerId || area.farmId !== farmId)) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+    }
 
     const fingerprint = await fingerprints.hash(
       JSON.stringify([
@@ -206,12 +240,15 @@ export class PlantTree {
         command.expectedTileVersion
       ])
     );
-    if ((await farms.findById(farmId)) === null) {
-      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
-    }
-    const membership = await members.findByFarmAndPlayer(farmId, actor.playerId);
-    if (membership?.role !== "OWNER") {
-      throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+    // An area cell was authorized by `prepareArea`, for this actor and farm, in this same request.
+    if (area === undefined) {
+      if ((await farms.findById(farmId)) === null) {
+        throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+      }
+      const membership = await members.findByFarmAndPlayer(farmId, actor.playerId);
+      if (membership?.role !== "OWNER") {
+        throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+      }
     }
 
     const existingRequest = await idempotency.find(actor.playerId, PLANT_TREE_OPERATION, command.requestId);
@@ -228,7 +265,7 @@ export class PlantTree {
     // V14.5.2: valid natural Home Island land is free to use, with no ownership row required. The
     // island's classifier says whether the ground is usable; a fresh cell gets its tile row created
     // with the planting.
-    const ground = (await terrainForFarm(terrain, farmId)).classify({ x: command.x, y: command.y });
+    const ground = (area?.terrain ?? (await terrainForFarm(terrain, farmId))).classify({ x: command.x, y: command.y });
     if (!isUsableLand(landOriginFor(ground))) {
       throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot be planted");
     }
@@ -267,7 +304,7 @@ export class PlantTree {
     // Game data is a module constant for the life of a deployment, so the requirement read here is
     // the one this Worker enforces. The level comes from the same authoritative row the harvest
     // writes, derived from experience rather than from the cached column.
-    const level = storedLevel(progressionDefinition, await progression.find(actor.playerId));
+    const level = area?.level ?? storedLevel(progressionDefinition, await progression.find(actor.playerId));
     if (!isTreeUnlocked(definition, level)) {
       throw new ApplicationError(
         "TREE_LEVEL_REQUIRED",
@@ -411,18 +448,19 @@ export class PlantTreeAreaGroup {
     const existing = await this.receipts.find(actor.playerId, command.requestId);
     if (existing !== null) return this.replay(existing, fingerprint);
 
+    const area = await this.plantTree.prepareArea(actor, farmId);
     const results: PlantTreeAreaCellResult[] = [];
     for (let index = 0; index < command.cells.length; index += 1) {
       const cell = command.cells[index];
       if (cell === undefined) continue;
       try {
-        const planted = await this.plantTree.execute(actor, farmId, {
+        const planted = await this.plantTree.executeInArea(actor, farmId, {
           treeDefinitionId: command.treeDefinitionId,
           x: cell.x,
           y: cell.y,
           ...(cell.expectedTileVersion === undefined ? {} : { expectedTileVersion: cell.expectedTileVersion }),
           requestId: await this.derivedRequestId(command.requestId, index)
-        });
+        }, area);
         results.push({ x: cell.x, y: cell.y, status: "PLANTED", treeInstanceId: planted.treeInstanceId, reason: null });
       } catch (error: unknown) {
         const reason = plantingTreeSkipReason(error);
@@ -526,12 +564,42 @@ export class HarvestTree {
     private readonly clock: Clock
   ) {}
 
-  async execute(
+  execute(actor: ActorContext | null, farmId: FarmId, command: HarvestTreeCommand): Promise<HarvestTreeResult> {
+    return this.harvest(actor, farmId, command);
+  }
+
+  /**
+   * The checks an area harvest makes once per group instead of once per tree: the farm and the
+   * owner's membership. Experience is not shared - every tree re-reads progression, because every
+   * tree writes it.
+   */
+  async prepareArea(actor: ActorContext | null, farmId: FarmId): Promise<HarvestAreaContext> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if ((await this.farms.findById(farmId)) === null) {
+      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    }
+    const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") {
+      throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+    }
+    return { actorPlayerId: actor.playerId, farmId };
+  }
+
+  /** One tree of an area harvest, against a context from `prepareArea`. */
+  executeInArea(actor: ActorContext | null, farmId: FarmId, command: HarvestTreeCommand, area: HarvestAreaContext): Promise<HarvestTreeResult> {
+    return this.harvest(actor, farmId, command, area);
+  }
+
+  private async harvest(
     actor: ActorContext | null,
     farmId: FarmId,
-    command: HarvestTreeCommand
+    command: HarvestTreeCommand,
+    area?: HarvestAreaContext
   ): Promise<HarvestTreeResult> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    if (area !== undefined && (area.actorPlayerId !== actor.playerId || area.farmId !== farmId)) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+    }
     let treeId;
     try {
       treeId = parseTreeInstanceId(command.treeInstanceId);
@@ -542,12 +610,15 @@ export class HarvestTree {
       JSON.stringify([farmId, treeId, command.expectedTreeVersion])
     );
 
-    if ((await this.farms.findById(farmId)) === null) {
-      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
-    }
-    const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
-    if (membership?.role !== "OWNER") {
-      throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+    // An area tree was authorized by `prepareArea`, for this actor and farm, in this same request.
+    if (area === undefined) {
+      if ((await this.farms.findById(farmId)) === null) {
+        throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+      }
+      const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
+      if (membership?.role !== "OWNER") {
+        throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+      }
     }
 
     const existing = await this.idempotency.find(actor.playerId, HARVEST_TREE_OPERATION, command.requestId);
@@ -767,6 +838,7 @@ export class HarvestTreeAreaGroup {
     const existing = await this.receipts.find(actor.playerId, command.requestId);
     if (existing !== null) return this.replay(existing, fingerprint);
 
+    const area = await this.harvestTree.prepareArea(actor, farmId);
     const results: HarvestTreeAreaTreeResult[] = [];
     for (let index = 0; index < parsedCandidates.length; index += 1) {
       const candidate = parsedCandidates[index];
@@ -789,11 +861,11 @@ export class HarvestTreeAreaGroup {
       }
 
       try {
-        const result = await this.harvestTree.execute(actor, farmId, {
+        const result = await this.harvestTree.executeInArea(actor, farmId, {
           treeInstanceId: candidate.treeInstanceId,
           expectedTreeVersion: candidate.expectedTreeVersion,
           requestId: await this.derivedRequestId(command.requestId, index)
-        });
+        }, area);
         results.push({
           treeInstanceId: result.harvest.treeInstanceId,
           status: "HARVESTED",

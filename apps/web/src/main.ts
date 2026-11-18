@@ -2106,6 +2106,10 @@ async function runAreaTask(): Promise<void> {
   areaHarvestSelection = { ...areaHarvestSelection, pending: true, syncing: false, requestId: baseRequestId, taskFarmId, taskGroups: groups, progress, lastResult: null };
   renderAreaHarvestPanel();
   renderAreaHarvestLauncher();
+  // The view catches up after each group - its crops or trees and the warehouse counts - while the
+  // next group is already on its way, so the field fills in as it goes. Each catch-up is awaited
+  // before the next starts (and before the final refresh), so an older read never lands last.
+  let catchUp: Promise<void> | null = null;
   try {
     for (let groupIndex = progress.completedGroups; groupIndex < groups.length; groupIndex += 1) {
       const group = groups[groupIndex];
@@ -2118,6 +2122,8 @@ async function runAreaTask(): Promise<void> {
           : group.kind === "PLANT_CROP"
             ? await api().plantCropArea(taskFarmId, { requestId: `${baseRequestId}_crop_${String(groupIndex)}`, cropDefinitionId: group.definitionId, cells: group.items })
             : await api().plantTreeArea(taskFarmId, { requestId: `${baseRequestId}_tree_${String(groupIndex)}`, treeDefinitionId: group.definitionId, cells: group.items });
+      if (catchUp !== null) await catchUp;
+      catchUp = null;
       if (!areaTaskIsCurrent(baseRequestId, taskFarmId)) return;
       const succeeded = "harvestedCount" in result ? result.harvestedCount : result.plantedCount;
       const skipped = result.skippedCount;
@@ -2130,7 +2136,10 @@ async function runAreaTask(): Promise<void> {
       };
       bootPerfInteractionDiagnostic("area_group_finished", { operation: planting ? "PLANT" : "HARVEST", group: groupIndex + 1, totalGroups: groups.length, submitted: group.items.length, succeeded, skipped, elapsedMs: Math.round((performance.now() - groupStartedAt) * 100) / 100 });
       renderAreaHarvestPanel();
+      if (groupIndex < groups.length - 1 && succeeded > 0) catchUp = catchUpAfterAreaGroup(group.kind);
     }
+    if (catchUp !== null) await catchUp;
+    catchUp = null;
     if (!areaTaskIsCurrent(baseRequestId, taskFarmId)) return;
     areaHarvestSelection = { ...areaHarvestSelection, syncing: true };
     renderAreaHarvestPanel();
@@ -2155,6 +2164,20 @@ async function runAreaTask(): Promise<void> {
     renderAreaHarvestLauncher();
     renderActionControls(currentSelection());
   }
+}
+
+/**
+ * Re-reads what one finished area group changed: the crops or the trees (and, after a planting, the
+ * tiles it created), plus the account for the warehouse counts. A failure here is not the task's
+ * failure - the final refresh reconciles everything - so it is swallowed.
+ */
+function catchUpAfterAreaGroup(kind: AreaRunnerGroup["kind"]): Promise<void> {
+  const planting = kind === "PLANT_CROP" || kind === "PLANT_TREE";
+  const crops = kind === "PLANT_CROP" || kind === "CROP";
+  return Promise.all([
+    refreshFarm({ tiles: planting, crops, trees: !crops, constructions: false }),
+    refreshAccount()
+  ]).then(() => undefined, () => undefined);
 }
 
 async function confirmAreaHarvest(): Promise<void> {

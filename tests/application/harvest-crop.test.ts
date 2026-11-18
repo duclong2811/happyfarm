@@ -28,6 +28,7 @@ import {
   CROP_ONE_ID,
   CROP_TWO_ID,
   FARM_ONE_ID,
+  FARM_TWO_ID,
   NOW,
   PLAYER_ONE_ID,
   PLAYER_TWO_ID
@@ -186,6 +187,21 @@ describe("HarvestCrop", () => {
     await expect(service().execute({ playerId: PLAYER_TWO_ID }, FARM_ONE_ID, command)).rejects.toMatchObject({ code: "NOT_AUTHORIZED" });
     await expect(service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { ...command, expectedCropVersion: 2 })).rejects.toMatchObject({ code: "CONFLICT_STALE_STATE" });
     await expect(service().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { ...command, cropInstanceId: "cropinst_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" })).rejects.toMatchObject({ code: "CROP_NOT_FOUND" });
+  });
+
+  it("refuses an area context prepared for another player or another farm, and pays nothing", async () => {
+    seedCrop();
+    const harvest = service();
+    const area = await harvest.prepareArea({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID);
+    await expect(harvest.executeInArea({ playerId: PLAYER_TWO_ID }, FARM_ONE_ID, command, area)).rejects.toMatchObject({ code: "NOT_AUTHORIZED" });
+    await expect(harvest.executeInArea({ playerId: PLAYER_ONE_ID }, FARM_TWO_ID, command, area)).rejects.toMatchObject({ code: "NOT_AUTHORIZED" });
+    await expect(harvest.prepareArea({ playerId: PLAYER_TWO_ID }, FARM_ONE_ID)).rejects.toMatchObject({ code: "NOT_AUTHORIZED" });
+    expect(await crops.findById(CROP_ONE_ID)).not.toBeNull();
+    expect(await inventory.listByPlayer(PLAYER_ONE_ID)).toEqual([]);
+    // The context it was prepared for still harvests.
+    await expect(harvest.executeInArea({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command, area)).resolves.toMatchObject({
+      harvest: { itemDefinitionId: "item_carrot", quantityAdded: 2 }
+    });
   });
 
   it("replays the same request once and rejects a mismatched payload", async () => {

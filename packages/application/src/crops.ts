@@ -22,7 +22,7 @@ import {
   type TileCoordinate
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
-import { terrainForFarm } from "./farm-ground";
+import { terrainForFarm, type PlantAreaContext } from "./farm-ground";
 import { requireMainCharacterPlayerControl } from "./jobs";
 import { autoTransitionId } from "./auto-plant";
 import type { InventoryService } from "./inventory";
@@ -190,6 +190,34 @@ export class PlantCrop {
   }
 
   /**
+   * The shared part of an area planting, read once per group instead of once per cell (on D1 each read
+   * is a round trip, and a group of 25 cells used to make about 250 of them).
+   */
+  async prepareArea(actor: ActorContext | null, farmId: FarmId): Promise<PlantAreaContext> {
+    const { farms, members, actors, terrain, progression, progressionDefinition } = this.dependencies;
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    await requireMainCharacterPlayerControl(actors, actor.playerId);
+    if ((await farms.findById(farmId)) === null) {
+      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    }
+    const membership = await members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") {
+      throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+    }
+    return {
+      actorPlayerId: actor.playerId,
+      farmId,
+      terrain: await terrainForFarm(terrain, farmId),
+      level: storedLevel(progressionDefinition, await progression.find(actor.playerId))
+    };
+  }
+
+  /** One cell of an area planting, from the Home Warehouse, against a context from `prepareArea`. */
+  executeInArea(actor: ActorContext | null, farmId: FarmId, command: PlantCropCommand, area: PlantAreaContext): Promise<CropState> {
+    return this.plant(actor, farmId, command, "WAREHOUSE", undefined, area);
+  }
+
+  /**
    * Plants with a seed the actor is physically carrying: what Auto does.
    *
    * The same class, the same validation and the same settlement - only the container the seed leaves
@@ -222,7 +250,8 @@ export class PlantCrop {
     farmId: FarmId,
     command: PlantCropCommand,
     source: PlantSeedSource,
-    autoContext?: AutoPlantSettlementContext
+    autoContext?: AutoPlantSettlementContext,
+    area?: PlantAreaContext
   ): Promise<CropState> {
     const {
       farms,
@@ -243,7 +272,13 @@ export class PlantCrop {
       clock
     } = this.dependencies;
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    if (autoContext === undefined) await requireMainCharacterPlayerControl(actors, actor.playerId);
+    if (area !== undefined) {
+      if (area.actorPlayerId !== actor.playerId || area.farmId !== farmId) {
+        throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+      }
+    } else if (autoContext === undefined) {
+      await requireMainCharacterPlayerControl(actors, actor.playerId);
+    }
 
     const operation = source === "CARGO" ? AUTO_PLANT_OPERATION : PLANT_OPERATION;
     const settlementRequestId =
@@ -260,12 +295,15 @@ export class PlantCrop {
         source
       ])
     );
-    if ((await farms.findById(farmId)) === null) {
-      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
-    }
-    const membership = await members.findByFarmAndPlayer(farmId, actor.playerId);
-    if (membership?.role !== "OWNER") {
-      throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+    // An area cell was authorized by `prepareArea`, for this actor and farm, in this same request.
+    if (area === undefined) {
+      if ((await farms.findById(farmId)) === null) {
+        throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+      }
+      const membership = await members.findByFarmAndPlayer(farmId, actor.playerId);
+      if (membership?.role !== "OWNER") {
+        throw new ApplicationError("NOT_AUTHORIZED", "Planting is not allowed");
+      }
     }
 
     const existingRequest = await idempotency.find(actor.playerId, operation, settlementRequestId);
@@ -282,7 +320,7 @@ export class PlantCrop {
     // V14.5.2: the natural Home Island is the player's land, so a cell needs no ownership row to be
     // planted. What it needs is to *be* usable natural land, which the island's own classifier
     // answers; a cell with no tile row yet gets one written with the planting, for free.
-    const ground = (await terrainForFarm(terrain, farmId)).classify(command);
+    const ground = (area?.terrain ?? (await terrainForFarm(terrain, farmId))).classify(command);
     if (!isUsableLand(landOriginFor(ground))) {
       throw new ApplicationError("TILE_NOT_PLANTABLE", "That ground cannot be planted");
     }
@@ -318,7 +356,7 @@ export class PlantCrop {
     // the one this Worker enforces and there is no version to guard. The level comes from the same
     // authoritative row the harvest writes, derived from experience rather than from the cached
     // column, and a player with no row is level 1 exactly as `GET /progression` reports.
-    const level = storedLevel(progressionDefinition, await progression.find(actor.playerId));
+    const level = area?.level ?? storedLevel(progressionDefinition, await progression.find(actor.playerId));
     if (!isCropUnlocked(definition, level)) {
       throw new ApplicationError(
         "CROP_LEVEL_REQUIRED",
@@ -546,18 +584,19 @@ export class PlantCropAreaGroup {
     const existing = await this.receipts.find(actor.playerId, command.requestId);
     if (existing !== null) return this.replay(existing, fingerprint);
 
+    const area = await this.plantCrop.prepareArea(actor, farmId);
     const results: PlantCropAreaCellResult[] = [];
     for (let index = 0; index < command.cells.length; index += 1) {
       const cell = command.cells[index];
       if (cell === undefined) continue;
       try {
-        const planted = await this.plantCrop.execute(actor, farmId, {
+        const planted = await this.plantCrop.executeInArea(actor, farmId, {
           cropDefinitionId: command.cropDefinitionId,
           x: cell.x,
           y: cell.y,
           ...(cell.expectedTileVersion === undefined ? {} : { expectedTileVersion: cell.expectedTileVersion }),
           requestId: await this.derivedRequestId(command.requestId, index)
-        });
+        }, area);
         results.push({ x: cell.x, y: cell.y, status: "PLANTED", cropInstanceId: planted.cropInstanceId, reason: null });
       } catch (error: unknown) {
         const reason = plantingSkipReason(error);

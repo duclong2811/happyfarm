@@ -187,6 +187,39 @@ describe("PlantCrop", () => {
     expect(db.sqlite.prepare("SELECT COUNT(*) AS count FROM crop_instances").get()).toEqual({ count: 2 });
   });
 
+  it("reads the farm, the owner, the ground and the level once per area group, not once per cell", async () => {
+    giveSeeds(db, "item_carrot_seed", 25);
+    const ids = new SequenceCropIds(Array.from({ length: 25 }, (_, index) => `cropinst_cccccccc-cccc-4ccc-8ccc-${String(index + 1).padStart(12, "0")}` as CropInstanceId));
+    const batch = new PlantCropAreaGroup(farms, members, useCase(true, ids), new MemoryPlantReceipt(), new Sha256Fingerprint(), clock);
+    const reads = new Map<string, number>();
+    const prepare = db.prepare.bind(db);
+    db.prepare = (query: string) => {
+      const table = /FROM (\w+)/.exec(query)?.[1] ?? "write";
+      reads.set(table, (reads.get(table) ?? 0) + 1);
+      return prepare(query);
+    };
+    const cells = Array.from({ length: 25 }, (_, index) => ({ x: index, y: 2 }));
+    const result = await batch.execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, { requestId: "request_crop_area_cost", cropDefinitionId: "crop_carrot", cells });
+    db.prepare = prepare;
+    expect(result.plantedCount).toBe(25);
+    // The group checks the farm and the owner, then prepares the area (which checks them again and
+    // reads the level): a fixed handful, whatever the group's size.
+    expect(reads.get("farms")).toBe(2);
+    expect(reads.get("farm_members")).toBe(2);
+    expect(reads.get("player_progression")).toBe(1);
+  });
+
+  it("refuses an area context prepared for another player or another farm, and spends nothing", async () => {
+    giveSeeds(db, "item_carrot_seed", 5);
+    const plant = useCase();
+    const area = await plant.prepareArea({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID);
+    await expect(plant.executeInArea({ playerId: PLAYER_TWO_ID }, FARM_ONE_ID, command, area)).rejects.toMatchObject({ code: "NOT_AUTHORIZED" });
+    await expect(plant.executeInArea({ playerId: PLAYER_ONE_ID }, FARM_TWO_ID, command, area)).rejects.toMatchObject({ code: "NOT_AUTHORIZED" });
+    await expect(plant.prepareArea({ playerId: PLAYER_TWO_ID }, FARM_ONE_ID)).rejects.toMatchObject({ code: "NOT_AUTHORIZED" });
+    expect(seedQuantity()).toEqual({ quantity: 5, version: 1 });
+    expect(await crops.findAtTile(FARM_ONE_ID, 0, 0)).toBeNull();
+  });
+
   it("leaves an empty seed stack at zero rather than negative", async () => {
     giveSeeds(db, "item_carrot_seed", 1);
     await useCase().execute({ playerId: PLAYER_ONE_ID }, FARM_ONE_ID, command);

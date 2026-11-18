@@ -71,10 +71,20 @@ export interface AreaHarvestPreview {
 /** The server's bounded management unit for an area harvest. */
 export const AREA_HARVEST_GROUP_SIZE = 25;
 
+/**
+ * The first groups are smaller, so the player sees the first cells planted or harvested within a
+ * moment of pressing the button, not after a whole 25-cell group's round trips to the database.
+ * The rest go at the server's full group size.
+ */
+export const AREA_LEADING_GROUP_SIZES: readonly number[] = [5, 10];
+
 export function areaHarvestGroups<T>(items: readonly T[]): readonly (readonly T[])[] {
   const groups: (readonly T[])[] = [];
-  for (let offset = 0; offset < items.length; offset += AREA_HARVEST_GROUP_SIZE) {
-    groups.push(items.slice(offset, offset + AREA_HARVEST_GROUP_SIZE));
+  let offset = 0;
+  for (let index = 0; offset < items.length; index += 1) {
+    const size = AREA_LEADING_GROUP_SIZES[index] ?? AREA_HARVEST_GROUP_SIZE;
+    groups.push(items.slice(offset, offset + size));
+    offset += size;
   }
   return groups;
 }

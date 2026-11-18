@@ -16,6 +16,7 @@ import {
 import type { CargoService } from "./cargo";
 import { ApplicationError } from "./errors";
 import { requireMainCharacterPlayerControl } from "./jobs";
+import type { HarvestAreaContext } from "./farm-ground";
 import type { InventoryService } from "./inventory";
 import { autoTransitionId } from "./auto-plant";
 import {
@@ -172,6 +173,29 @@ export class HarvestCrop {
   }
 
   /**
+   * The checks an area harvest makes once per group instead of once per crop: the actor controls
+   * their character and owns the farm. Experience is *not* shared - every crop re-reads progression,
+   * because every crop writes it.
+   */
+  async prepareArea(actor: ActorContext | null, farmId: FarmId): Promise<HarvestAreaContext> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    await requireMainCharacterPlayerControl(this.cargoDestination?.actors, actor.playerId);
+    if ((await this.farms.findById(farmId)) === null) {
+      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+    }
+    const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
+    if (membership?.role !== "OWNER") {
+      throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+    }
+    return { actorPlayerId: actor.playerId, farmId };
+  }
+
+  /** One crop of an area harvest, into the Home Warehouse, against a context from `prepareArea`. */
+  executeInArea(actor: ActorContext | null, farmId: FarmId, command: HarvestCropCommand, area: HarvestAreaContext): Promise<HarvestCropResult> {
+    return this.harvest(actor, farmId, command, "WAREHOUSE", undefined, area);
+  }
+
+  /**
    * Harvests into the actor's cargo: what an Auto-driven character does in the field.
    *
    * The same class, the same reward amount, the same XP rule, the same crop-state guard, the same
@@ -211,10 +235,17 @@ export class HarvestCrop {
     farmId: FarmId,
     command: HarvestCropCommand,
     destination: "WAREHOUSE" | "CARGO",
-    autoContext?: AutoHarvestSettlementContext
+    autoContext?: AutoHarvestSettlementContext,
+    area?: HarvestAreaContext
   ): Promise<HarvestCropResult> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    if (autoContext === undefined) await requireMainCharacterPlayerControl(this.cargoDestination?.actors, actor.playerId);
+    if (area !== undefined) {
+      if (area.actorPlayerId !== actor.playerId || area.farmId !== farmId) {
+        throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+      }
+    } else if (autoContext === undefined) {
+      await requireMainCharacterPlayerControl(this.cargoDestination?.actors, actor.playerId);
+    }
     let cropId: CropInstanceId;
     try {
       cropId = parseCropInstanceId(command.cropInstanceId);
@@ -227,12 +258,15 @@ export class HarvestCrop {
       JSON.stringify([farmId, cropId, command.expectedCropVersion, destination])
     );
 
-    if ((await this.farms.findById(farmId)) === null) {
-      throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
-    }
-    const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
-    if (membership?.role !== "OWNER") {
-      throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+    // An area crop was authorized by `prepareArea`, for this actor and farm, in this same request.
+    if (area === undefined) {
+      if ((await this.farms.findById(farmId)) === null) {
+        throw new ApplicationError("RESOURCE_NOT_FOUND", "Farm was not found");
+      }
+      const membership = await this.members.findByFarmAndPlayer(farmId, actor.playerId);
+      if (membership?.role !== "OWNER") {
+        throw new ApplicationError("NOT_AUTHORIZED", "Harvesting is not allowed");
+      }
     }
 
     // The economic identity is the Auto transition's, not the HTTP request's: a retry of the same
@@ -502,16 +536,17 @@ export class HarvestCropAreaGroup {
     const existing = await this.receipts.find(actor.playerId, command.requestId);
     if (existing !== null) return this.replay(existing, fingerprint);
 
+    const area = await this.harvestCrop.prepareArea(actor, farmId);
     const results: HarvestCropAreaCropResult[] = [];
     for (let index = 0; index < parsedCandidates.length; index += 1) {
       const candidate = parsedCandidates[index];
       if (candidate === undefined) continue;
       try {
-        const result = await this.harvestCrop.execute(actor, farmId, {
+        const result = await this.harvestCrop.executeInArea(actor, farmId, {
           cropInstanceId: candidate.cropInstanceId,
           expectedCropVersion: candidate.expectedCropVersion,
           requestId: await this.derivedRequestId(command.requestId, index)
-        });
+        }, area);
         results.push({
           cropInstanceId: result.harvest.cropInstanceId,
           status: "HARVESTED",
