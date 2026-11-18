@@ -7460,7 +7460,7 @@ function neighborStatusText(npc: NeighborSnapshotDTO["npc"]): string {
  * are; this switch keeps them out of the game: no "Đảo" button, no islands around home, no ferry
  * from the dock. A player already on a visit still sees the visit, so nobody is stranded.
  */
-const NEIGHBOR_ISLANDS_ENABLED = false;
+const NEIGHBOR_ISLANDS_ENABLED: boolean = false;
 
 function neighborIslandsShown(): boolean {
   return NEIGHBOR_ISLANDS_ENABLED || state.neighbor?.visit.currentPlace === "NEIGHBOR_ISLAND";
