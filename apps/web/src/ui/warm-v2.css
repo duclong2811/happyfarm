@@ -779,7 +779,7 @@ html.ui-b.ui-warm .island-picker.is-busy .ip-preview canvas { animation: ip-puls
   html.ui-b.ui-warm .island-picker .ip-confirm { position: sticky; bottom: 10px; z-index: 1; }
 }
 /* The sea step: a small chart beside one button per sea. */
-html.ui-b.ui-warm .island-picker .ip-regions { display: grid; grid-template-columns: minmax(0, 150px) minmax(0, 1fr); gap: 10px; align-items: center; }
+html.ui-b.ui-warm .island-picker .ip-regions { display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr); gap: 10px; align-items: center; }
 html.ui-b.ui-warm .island-picker .ip-region-chart {
   width: 100%;
   aspect-ratio: 1;

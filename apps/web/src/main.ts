@@ -7469,8 +7469,9 @@ function neighborStatusText(npc: NeighborSnapshotDTO["npc"]): string {
 const NEIGHBOR_ISLANDS_ENABLED: boolean = false;
 
 /**
- * Whether this server has the world map on (docs/design/WORLD_MAP.md). Learned from the chart route
- * itself after boot, so a server without it simply never shows the Chart button.
+ * Whether this server has the world map on (docs/design/WORLD_MAP.md). Learned after boot from the
+ * caller's own farm summary, a cheap read, rather than the chart itself, which is read only when the
+ * player opens it. A server without the flag simply never shows the Chart button.
  */
 let worldMapAvailable = false;
 let seaChartModal: SeaChartModal | null = null;
@@ -7478,8 +7479,7 @@ let seaChartModal: SeaChartModal | null = null;
 /** Asks once, off the critical path, whether the world map is on; shows the Chart button if so. */
 async function refreshWorldMapAvailability(): Promise<void> {
   try {
-    await api().getWorldChart();
-    worldMapAvailable = true;
+    worldMapAvailable = (await api().getMyFarm()).worldMap?.enabled === true;
   } catch {
     worldMapAvailable = false;
   }

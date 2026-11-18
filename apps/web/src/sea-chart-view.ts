@@ -224,7 +224,7 @@ function drawWindRose(context: CanvasRenderingContext2D, cx: number, cy: number,
   context.arc(0, 0, size * 0.05, 0, Math.PI * 2);
   context.fill();
   context.fillStyle = INK;
-  context.font = `italic bold ${String(Math.round(size * 0.22))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+  context.font = `italic bold ${String(Math.round(Math.max(10, size * 0.3)))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
   context.textAlign = "center";
   context.textBaseline = "bottom";
   context.fillText(north, 0, -size * 1.12);
@@ -409,21 +409,21 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
   const selected = chart.regions.find((entry) => entry.region === options.selectedRegion);
   for (const archipelago of selected?.archipelagos ?? []) {
     const at = toCanvas(frame, archipelago.centreX, archipelago.centreZ);
-    const r = 420 * frame.scale;
+    const r = (compact ? 560 : 420) * frame.scale;
     const glow = context.createRadialGradient(at.x, at.y, r * 0.2, at.x, at.y, r);
-    glow.addColorStop(0, "rgba(255, 236, 170, 0.55)");
+    glow.addColorStop(0, compact ? "rgba(255, 226, 140, 0.85)" : "rgba(255, 236, 170, 0.55)");
     glow.addColorStop(1, "rgba(255, 236, 170, 0)");
     context.fillStyle = glow;
     context.fillRect(at.x - r, at.y - r, r * 2, r * 2);
   }
 
   // Islands, archipelago by archipelago.
-  const islandPixels = Math.max(compact ? 10 : 16, 150 * frame.scale);
+  const islandPixels = Math.max(compact ? 20 : 16, 150 * frame.scale);
   for (const entry of chart.regions) {
     const dim = options.selectedRegion !== undefined && options.selectedRegion !== null && options.selectedRegion !== entry.region;
     for (const archipelago of entry.archipelagos) {
       const centre = toCanvas(frame, archipelago.centreX, archipelago.centreZ);
-      context.globalAlpha = dim ? 0.45 : 1;
+      context.globalAlpha = dim ? (compact ? 0.35 : 0.45) : 1;
       context.strokeStyle = INK_SOFT;
       context.setLineDash([3, 4]);
       context.lineWidth = 1;
@@ -475,7 +475,7 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
     const direction = directions[region];
     const lit = options.selectedRegion === region;
     context.fillStyle = lit ? "#7a2414" : INK;
-    context.font = `italic ${lit ? "bold " : ""}${String(Math.round((compact ? 15 : 26) * scaleText))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+    context.font = `italic ${lit ? "bold " : ""}${String(Math.round(compact ? Math.min(width, height) * 0.075 : 26 * scaleText))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.save();
@@ -487,7 +487,8 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
   }
 
   // The Centre: the wind rose, and the hub's name under it.
-  const roseSize = Math.max(compact ? 22 : 40, 260 * frame.scale);
+  // The rose sits in the Centre's open water: big enough to read, never over the first archipelagos.
+  const roseSize = compact ? Math.max(12, 200 * frame.scale) : Math.max(24, Math.min(260 * frame.scale, Math.min(width, height) * 0.09));
   drawWindRose(context, frame.offsetX, frame.offsetY, roseSize, t("chart.northMark"));
   if (!compact) {
     context.fillStyle = INK;
@@ -506,8 +507,8 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
       return Math.hypot(x - frame.offsetX, y - frame.offsetY) < roseSize * 1.5;
     };
     drawWaves(context, width, height, near);
-    drawGalleon(context, width * 0.78, height * 0.22, 18 * scaleText);
-    drawSerpent(context, width * 0.2, height * 0.8, 16 * scaleText);
+    drawGalleon(context, width * 0.78, height * 0.22, 24 * scaleText);
+    drawSerpent(context, width * 0.2, height * 0.8, 30 * scaleText);
   }
 
   // Fog over the uncharted waters, thickest at the edges, with the old warning lettered in it.
@@ -530,19 +531,5 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
   context.strokeRect(6, 6, width - 12, height - 12);
   context.lineWidth = 0.8;
   context.strokeRect(11, 11, width - 22, height - 22);
-  if (!compact) {
-    const title = t("chart.title");
-    context.font = `bold italic ${String(Math.round(20 * scaleText))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
-    const boxWidth = context.measureText(title).width + 36 * scaleText;
-    context.fillStyle = "rgba(241, 226, 189, 0.92)";
-    context.fillRect(22, 22, boxWidth, 38 * scaleText);
-    context.strokeStyle = INK;
-    context.lineWidth = 1.2;
-    context.strokeRect(22, 22, boxWidth, 38 * scaleText);
-    context.fillStyle = INK;
-    context.textAlign = "left";
-    context.textBaseline = "middle";
-    context.fillText(title, 22 + 18 * scaleText, 22 + 19 * scaleText);
-  }
   return frame;
 }
