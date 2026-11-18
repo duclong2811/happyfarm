@@ -76,6 +76,8 @@ export interface IslandField {
   readonly walk?: Float32Array;
   /** Water surface colour per cell (r, g, b in 0..1): depth gradient and the foam line. Presentation only. */
   readonly waterColors?: Float32Array;
+  /** A volcano's crater, when the island has one (see island-relief.ts). Presentation only. */
+  readonly volcano?: { readonly worldX: number; readonly worldZ: number; readonly craterRadiusWorld: number };
 }
 
 /** How deep a walker wades at the deepest of the shallows, in world metres: about knee height. */

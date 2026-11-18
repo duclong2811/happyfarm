@@ -1,8 +1,11 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  CircleGeometry,
   Color,
+  IcosahedronGeometry,
   Group,
+  MeshBasicMaterial,
   InstancedMesh,
   Matrix4,
   Mesh,
@@ -1042,7 +1045,46 @@ function addChosenIsland(group: Group, assets: SharedAssets, world: FarmWorld, f
   surface.name = "island-water";
   surface.renderOrder = 1;
   group.add(surface);
+  if (field.volcano !== undefined) addVolcanoCrater(group, world, field.volcano);
   return ground;
+}
+
+/** Shared pieces of a volcano's crater: made once, reused by every island drawn. */
+let volcanoParts: { readonly lava: CircleGeometry; readonly puff: IcosahedronGeometry; readonly glow: MeshBasicMaterial; readonly smoke: MeshStandardMaterial } | null = null;
+
+/**
+ * A glowing pool of lava in the crater and a column of smoke above it. Static: the scene renders on
+ * demand, so nothing here asks for frames of its own.
+ */
+function addVolcanoCrater(group: Group, world: FarmWorld, volcano: NonNullable<IslandField["volcano"]>): void {
+  const parts = volcanoParts ??= {
+    lava: new CircleGeometry(1, 20).rotateX(-Math.PI / 2),
+    puff: new IcosahedronGeometry(1, 1),
+    glow: new MeshBasicMaterial({ color: 0xff6a1a }),
+    smoke: new MeshStandardMaterial({ color: 0xe4e0db, roughness: 1, transparent: true, opacity: 0.38, depthWrite: false })
+  };
+  const floorY = ISLAND_TOP_Y + terrainHeightAt(volcano.worldX, volcano.worldZ, world.terrain);
+  const lava = new Mesh(parts.lava, parts.glow);
+  lava.position.set(volcano.worldX, floorY + 0.06, volcano.worldZ);
+  lava.scale.setScalar(Math.max(0.5, volcano.craterRadiusWorld * 0.6));
+  lava.name = "volcano-lava";
+  group.add(lava);
+  const puffs = [
+    { up: 1.4, drift: 0, size: 0.7 },
+    { up: 2.6, drift: 0.5, size: 1 },
+    { up: 4, drift: 1.2, size: 1.35 },
+    { up: 5.6, drift: 2.1, size: 1.7 },
+    { up: 7.4, drift: 3.2, size: 2.1 }
+  ];
+  for (const [index, puff] of puffs.entries()) {
+    const mesh = new Mesh(parts.puff, parts.smoke);
+    mesh.position.set(volcano.worldX + puff.drift, floorY + puff.up, volcano.worldZ - puff.drift * 0.4);
+    mesh.scale.setScalar(puff.size);
+    mesh.rotation.set(index * 0.7, index * 1.3, index * 0.4);
+    mesh.renderOrder = 3;
+    mesh.name = "volcano-smoke";
+    group.add(mesh);
+  }
 }
 
 /** A square grid of `side` x `side` vertices, wound so its normals point up. */

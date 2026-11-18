@@ -13,6 +13,7 @@
 
 import type { FarmIslandDTO } from "@happy-farm/contracts";
 import { islandCellKindAt, ISLAND_DOCK_CLEARANCE_TILES, type IslandCellKind } from "@happy-farm/game-data";
+import { distanceToOutside, islandRelief, RELIEF_BASE_WORLD, RELIEF_TAG, RELIEF_WALKABLE_MAX_WORLD } from "./island-relief";
 import { tileToWorld, worldFrame, type FarmLayout, type TileBounds, type TileCoordinate, type WorldFrame } from "./layout";
 import { GROUND_SURFACE_Y, terrainHeightAt, type IslandField, type TerrainShape } from "./terrain-height";
 import { EMPTY_WORLD, type FarmWorld, type SceneryInstance, type SceneryKind } from "./world";
@@ -37,10 +38,13 @@ export type IslandGroundView = FarmIslandDTO;
  * or an "inland enough for a tree" margin means the same distance on either kind of island.
  */
 export const ISLAND_SHORE_SCALE_CELLS = 55;
-/** The tallest a rock ridge rises, in world metres. Everything else a player can work stays level. */
-const ROCK_PEAK_WORLD = 2.1;
-/** How many cells a ridge takes to rise from its foot to its full height. */
-const ROCK_RISE_CELLS = 5;
+/** The tallest the relief rises, in world metres, for the terrain shape's bookkeeping. */
+const ROCK_PEAK_WORLD = 10;
+/** Mountain surfaces (sRGB): snow on Kim's peaks, the volcano's basalt and its crater's lava. */
+const SNOW_COLOR = [0.93, 0.95, 0.98] as const;
+const BASALT_COLOR = [0.3, 0.25, 0.23] as const;
+const LAVA_COLOR = [1, 0.42, 0.12] as const;
+const HIGH_ROCK_COLOR = [0.64, 0.62, 0.6] as const;
 
 /** The ground's own colour per cell kind; water cells colour the sea floor under the surface. */
 const GROUND_COLORS: Readonly<Record<IslandCellKind, readonly [number, number, number]>> = {
@@ -58,45 +62,6 @@ function isWater(kind: IslandCellKind): boolean {
   return kind === "DEEP" || kind === "SHALLOW";
 }
 
-/**
- * Distance from every cell to the nearest cell outside `inside`, in cells (two-pass chamfer, 1 / √2).
- * Cells outside the set are 0; a cell inside touching the boundary is 1.
- */
-function distanceToOutside(size: number, inside: (index: number) => boolean): Float32Array {
-  const far = size * 4;
-  const distance = new Float32Array(size * size);
-  for (let index = 0; index < distance.length; index += 1) distance[index] = inside(index) ? far : 0;
-  const diagonal = Math.SQRT2;
-  const relax = (index: number, neighbour: number, cost: number): void => {
-    const candidate = (distance[neighbour] ?? far) + cost;
-    if (candidate < (distance[index] ?? far)) distance[index] = candidate;
-  };
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const index = y * size + x;
-      if ((distance[index] ?? 0) === 0) continue;
-      if (x > 0) relax(index, index - 1, 1);
-      if (y > 0) {
-        relax(index, index - size, 1);
-        if (x > 0) relax(index, index - size - 1, diagonal);
-        if (x < size - 1) relax(index, index - size + 1, diagonal);
-      }
-    }
-  }
-  for (let y = size - 1; y >= 0; y -= 1) {
-    for (let x = size - 1; x >= 0; x -= 1) {
-      const index = y * size + x;
-      if ((distance[index] ?? 0) === 0) continue;
-      if (x < size - 1) relax(index, index + 1, 1);
-      if (y < size - 1) {
-        relax(index, index + size, 1);
-        if (x < size - 1) relax(index, index + size + 1, diagonal);
-        if (x > 0) relax(index, index + size - 1, diagonal);
-      }
-    }
-  }
-  return distance;
-}
 
 /** A stable 0..1 value per cell and salt, so the same island always grows the same scatter. */
 function cellRoll(x: number, y: number, salt: number): number {
@@ -105,10 +70,6 @@ function cellRoll(x: number, y: number, salt: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-function smoothstep(t: number): number {
-  const clamped = Math.min(1, Math.max(0, t));
-  return clamped * clamped * (3 - 2 * clamped);
-}
 
 function kindAt(ground: IslandGroundView, x: number, y: number): IslandCellKind {
   return islandCellKindAt(ground, { x: x + ground.originX, y: y + ground.originY });
@@ -149,7 +110,14 @@ export function islandFieldFor(ground: IslandGroundView, frame: WorldFrame): Isl
   for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) kinds.push(kindAt(ground, x, y));
   const toWater = distanceToOutside(size, (index) => !isWater(kinds[index] ?? "DEEP"));
   const toLand = distanceToOutside(size, (index) => isWater(kinds[index] ?? "DEEP"));
-  const toOpenGround = distanceToOutside(size, (index) => kinds[index] === "ROCK");
+  // Mountains rise from the rock alone (see island-relief.ts); every mine keeps a level yard and a pass.
+  const relief = islandRelief({
+    size,
+    element: ground.element,
+    seed: ground.seed,
+    isRock: (index) => kinds[index] === "ROCK",
+    ore: ground.sites.filter((site) => site.kind === "ORE").map((site) => ({ x: site.x - ground.originX, y: site.y - ground.originY }))
+  });
   // The walker's edge is deep water, not the beach: shallows are wadeable.
   const toDeep = distanceToOutside(size, (index) => kinds[index] !== "DEEP");
   const toWalkable = distanceToOutside(size, (index) => kinds[index] === "DEEP");
@@ -183,10 +151,24 @@ export function islandFieldFor(ground: IslandGroundView, frame: WorldFrame): Isl
     const signed = isWater(kind) ? (toLand[index] ?? 0) - 0.5 : -((toWater[index] ?? 0) - 0.5);
     shore[index] = 1 + signed / ISLAND_SHORE_SCALE_CELLS;
     if (kind === "ROCK") {
-      const x = index % size;
-      const y = Math.floor(index / size);
-      const rise = smoothstep(((toOpenGround[index] ?? 1) - 1) / ROCK_RISE_CELLS);
-      height[index] = 0.16 + ROCK_PEAK_WORLD * rise * (0.75 + 0.5 * cellRoll(x, y, 7));
+      const rise = relief.height[index] ?? RELIEF_BASE_WORLD;
+      height[index] = rise;
+      const tagged = relief.tag[index] ?? RELIEF_TAG.NONE;
+      const tint = tagged === RELIEF_TAG.SNOW
+        ? SNOW_COLOR
+        : tagged === RELIEF_TAG.LAVA
+          ? LAVA_COLOR
+          : tagged === RELIEF_TAG.BASALT
+            ? BASALT_COLOR
+            : null;
+      if (tint !== null) {
+        mixInto(colors, index * 3, tint, tint, 0);
+        for (let channel = 0; channel < 3; channel += 1) colors[index * 3 + channel] = (colors[index * 3 + channel] ?? 0) + grain;
+      } else if (rise > RELIEF_BASE_WORLD + 1) {
+        // Bare rock pales as it climbs, so a range reads as stone rather than as a grey carpet.
+        const own = [colors[index * 3] ?? 0, colors[index * 3 + 1] ?? 0, colors[index * 3 + 2] ?? 0];
+        mixInto(colors, index * 3, own, HIGH_ROCK_COLOR, (rise - RELIEF_BASE_WORLD - 1) / 7);
+      }
     }
   }
   const origin = tileToWorld({ x: ground.originX, y: ground.originY }, frame);
@@ -204,7 +186,16 @@ export function islandFieldFor(ground: IslandGroundView, frame: WorldFrame): Isl
     colors: linearised(soften(colors, size, 3)),
     water,
     walk: soften(walk, size, 1),
-    waterColors: linearised(soften(waterColors, size, 3))
+    waterColors: linearised(soften(waterColors, size, 3)),
+    ...(relief.volcano === null
+      ? {}
+      : {
+          volcano: {
+            worldX: origin.worldX + relief.volcano.x * frame.pitch,
+            worldZ: origin.worldZ + relief.volcano.y * frame.pitch,
+            craterRadiusWorld: relief.volcano.craterRadius * frame.pitch
+          }
+        })
   };
 }
 
@@ -458,7 +449,9 @@ export function buildIslandCellMap(input: WorldCellMapInput, ground: IslandGroun
               : "SCENERY";
       const capabilities = cellCapabilitiesFor(terrainKind, zone);
       // The shelf is wadeable on a chosen island: a walker may cross it, nothing may be built on it.
-      const walkable = capabilities.includes("WALK") || kind === "SHALLOW";
+      // A mountainside is not: rock that has risen past a step is left to the slope (island-relief.ts).
+      const risen = kind === "ROCK" && (terrain.field?.height[(z - ground.originY) * ground.size + (x - ground.originX)] ?? 0) > RELIEF_WALKABLE_MAX_WORLD;
+      const walkable = (capabilities.includes("WALK") || kind === "SHALLOW") && !risen;
       const capability = protectedGround ? "NONE" : productionCapabilityFor(terrainKind, zone);
       const cell: WorldCell = {
         x,

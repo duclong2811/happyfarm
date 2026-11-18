@@ -18,6 +18,7 @@ import {
   type IslandSiteKind
 } from "@happy-farm/game-data";
 import type { MessageKey } from "./i18n";
+import { islandRelief, RELIEF_BASE_WORLD, RELIEF_TAG } from "./render/island-relief";
 
 export interface IslandPick {
   readonly name: string;
@@ -128,6 +129,10 @@ const SHALLOW_FAR: readonly [number, number, number] = [62, 176, 206];
 const DEEP_NEAR: readonly [number, number, number] = [36, 118, 176];
 const DEEP_FAR: readonly [number, number, number] = [20, 62, 116];
 const WET_SAND: readonly [number, number, number] = [214, 190, 132];
+const PREVIEW_SNOW: readonly [number, number, number] = [238, 242, 248];
+const PREVIEW_BASALT: readonly [number, number, number] = [86, 70, 64];
+const PREVIEW_LAVA: readonly [number, number, number] = [255, 112, 34];
+const PREVIEW_HIGH_ROCK: readonly [number, number, number] = [204, 198, 190];
 
 /**
  * RGBA pixels for an island, one per cell. Pure, so it is testable without a canvas.
@@ -144,8 +149,21 @@ export function islandPreviewPixels(island: GeneratedIsland): Uint8ClampedArray<
   const toLand = cellDistance(size, (index) => !isWaterKind(cells[index]));
   const toWater = cellDistance(size, (index) => isWaterKind(cells[index]));
   const toShallowEdge = cellDistance(size, (index) => cells[index] !== "DEEP");
+  // The same mountains the 3D island raises: a range on Kim, a volcano on Hỏa (island-relief.ts).
+  const relief = islandRelief({
+    size,
+    element: island.element,
+    seed: island.seed,
+    isRock: (index) => cells[index] === "ROCK",
+    ore: island.sites.filter((site) => site.kind === "ORE")
+  });
   const height = new Float32Array(size * size);
-  for (let index = 0; index < height.length; index += 1) height[index] = previewHeight(cells[index] ?? "DEEP", toWater[index] ?? 0);
+  for (let index = 0; index < height.length; index += 1) {
+    const kind = cells[index] ?? "DEEP";
+    height[index] = kind === "ROCK"
+      ? 0.6 + ((relief.height[index] ?? RELIEF_BASE_WORLD) - RELIEF_BASE_WORLD) * 0.25
+      : previewHeight(kind, toWater[index] ?? 0);
+  }
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const index = y * size + x;
@@ -160,7 +178,12 @@ export function islandPreviewPixels(island: GeneratedIsland): Uint8ClampedArray<
         if ((toLand[index] ?? 9) <= 1.01) color = mix(color, FOAM, 0.4);
       } else {
         const base = PREVIEW_CELL_COLORS[kind];
+        const tag = relief.tag[index] ?? RELIEF_TAG.NONE;
         color = kind === "SAND" && (toWater[index] ?? 9) <= 1.01 ? [...WET_SAND] : [base[0], base[1], base[2]];
+        if (tag === RELIEF_TAG.SNOW) color = [...PREVIEW_SNOW];
+        else if (tag === RELIEF_TAG.LAVA) color = [...PREVIEW_LAVA];
+        else if (tag === RELIEF_TAG.BASALT) color = [...PREVIEW_BASALT];
+        else if (kind === "ROCK") color = mix(color, PREVIEW_HIGH_ROCK, ((relief.height[index] ?? 0) - RELIEF_BASE_WORLD - 1) / 5);
         // Light from the top-left: a cell lower than its upper-left neighbour is in its shade.
         const upLeft = height[Math.max(0, y - 1) * size + Math.max(0, x - 1)] ?? 0;
         const downRight = height[Math.min(size - 1, y + 1) * size + Math.min(size - 1, x + 1)] ?? 0;
