@@ -1,12 +1,15 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  CircleGeometry,
   Color,
   ConeGeometry,
   CylinderGeometry,
   Group,
   Mesh,
+  MeshBasicMaterial,
   MeshLambertMaterial,
+  type Material,
   type Object3D
 } from "three";
 import {
@@ -50,9 +53,11 @@ export const HORIZON_ISLAND_SCALE = 0.42;
 const CHART_NEAR_TILES = 160;
 const CHART_FAR_TILES = 560;
 /** How far colours lean toward the horizon. */
-const HAZE = 0.36;
-/** Heights are exaggerated a little so a range or a volcano still reads at this distance. */
-const VERTICAL_EXAGGERATION = 1.8;
+const HAZE = 0.3;
+/** Heights are exaggerated so a forest, a range or a volcano still reads at this distance. */
+const VERTICAL_EXAGGERATION = 2.6;
+/** The open sea round a distant island, before the haze. */
+const SEA_COLOUR = 0x2f8fc4;
 
 export interface HorizonTemplate {
   readonly element: string;
@@ -273,12 +278,12 @@ export function buildHorizonIsland(placement: HorizonPlacement, haze: number, st
   const geometry = horizonIslandGeometry(island, placement.footprint, haze, step);
   const ground = new Mesh(geometry, new MeshLambertMaterial({ vertexColors: true, fog: false }));
   ground.raycast = noRaycast;
-  root.add(ground);
+  root.add(seaPatch(placement.footprint * 0.68, haze), ground);
   if (placement.claimed) {
     const camp = island.sites.find((site) => site.kind === "CAMP");
     const cellWorld = placement.footprint / island.size;
     const at = camp ?? { x: island.size / 2, y: island.size / 2 };
-    const poleHeight = placement.footprint * 0.16;
+    const poleHeight = placement.footprint * 0.13;
     const base = SEA_SURFACE_Y + 0.75 * cellWorld * VERTICAL_EXAGGERATION;
     const hazeColour = new Color(haze);
     const pole = new Mesh(
@@ -301,12 +306,37 @@ export function buildHorizonIsland(placement: HorizonPlacement, haze: number, st
   return root;
 }
 
+/**
+ * A patch of blue sea under a distant island, fading out at its rim. The fog turns the ocean pale
+ * at this range; without its own water an unfogged island would seem to float on the haze.
+ */
+function seaPatch(radius: number, haze: number): Mesh {
+  const geometry = new CircleGeometry(radius, 40);
+  geometry.rotateX(-Math.PI / 2);
+  const position = geometry.getAttribute("position");
+  const colours = new Float32Array(position.count * 4);
+  const centre = new Color(SEA_COLOUR).lerp(new Color(haze), 0.42);
+  for (let i = 0; i < position.count; i += 1) {
+    const r = Math.hypot(position.getX(i), position.getZ(i)) / radius;
+    colours[i * 4] = centre.r;
+    colours[i * 4 + 1] = centre.g;
+    colours[i * 4 + 2] = centre.b;
+    colours[i * 4 + 3] = 0.85 * (1 - r * r);
+  }
+  geometry.setAttribute("color", new BufferAttribute(colours, 4));
+  const patch = new Mesh(geometry, new MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, fog: false }));
+  patch.position.y = SEA_SURFACE_Y + 0.005;
+  patch.renderOrder = -1;
+  patch.raycast = noRaycast;
+  return patch;
+}
+
 /** Frees what a horizon group holds. */
 export function disposeHorizon(group: Group): void {
   group.traverse((object) => {
     if (object instanceof Mesh) {
       (object.geometry as BufferGeometry).dispose();
-      const material = object.material as MeshLambertMaterial | MeshLambertMaterial[];
+      const material = object.material as Material | Material[];
       if (Array.isArray(material)) for (const entry of material) entry.dispose();
       else material.dispose();
     }

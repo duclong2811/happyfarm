@@ -113,8 +113,9 @@ describe("the horizon islands", () => {
     if (settled === undefined || wild === undefined) throw new Error("expected both kinds");
     const settledGroup = buildHorizonIsland(settled, 0xcfe9f7, 3);
     const wildGroup = buildHorizonIsland(wild, 0xcfe9f7, 3);
-    expect(settledGroup?.children).toHaveLength(3);
-    expect(wildGroup?.children).toHaveLength(1);
+    // Its patch of sea and its ground, and on a settled island a flagpole and its pennant.
+    expect(settledGroup?.children).toHaveLength(4);
+    expect(wildGroup?.children).toHaveLength(2);
     if (settledGroup === null) return;
     settledGroup.updateMatrixWorld(true);
     const ray = new Raycaster(new Vector3(settled.worldX, 100, settled.worldZ), new Vector3(0, -1, 0));
