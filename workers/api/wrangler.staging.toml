@@ -50,8 +50,10 @@ not_found_handling = "single-page-application"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "happy-farm-staging"
-# USER ACTION REQUIRED: replace with the id printed by `wrangler d1 create happy-farm-staging`.
-# The sentinel is deliberately not a UUID, so a deploy fails loudly instead of binding elsewhere.
-database_id = "acc598c9-e726-46c8-b1a3-23e5b6a42d52"
+# The fresh staging database from the 2026-11-18 reset (island v2: everyone starts over). The old one,
+# `happy-farm-staging` (acc598c9-e726-46c8-b1a3-23e5b6a42d52), is kept untouched as an archive; see
+# docs/deployment/STAGING.md. If this database is ever recreated, paste the id printed by
+# `wrangler d1 create happy-farm-staging-v2` here.
+database_name = "happy-farm-staging-v2"
+database_id = "bb047f96-1745-463f-a432-1b9b30477b91"
 migrations_dir = "../../database/migrations"

@@ -21,7 +21,24 @@ custom domain is the one to hand to testers: it is easier to type, and it is ver
 is scoped to the hostname it was created on (the cookie carries no `Domain`), so pick one URL per
 playtest - see the last section.
 
-Current deployment: Worker `happy-farm-staging`, version `39388480-6aa5-476c-a73d-316fde4db836`,
+**Staging reset (2026-11-18): island v2 and a fresh database.** The owner chose to start over once
+island generator v2 was live (islands are fixed at creation, so a reset before v2 would have left
+everyone on v1).
+
+- Island v2 went out as version `31b1986b-1e43-4819-8bb2-46b7eaa501f9`, deployed by the owner from
+  `world/island-generator` (`19209b7`), still on the old database.
+- The reset switches the `DB` binding to a fresh database, `happy-farm-staging-v2`
+  (`bb047f96-1745-463f-a432-1b9b30477b91`, APAC). All 44 migrations were applied to it from a cloud
+  session. It held 0 players, 0 farms and 0 islands before the first deploy against it.
+- The old database, `happy-farm-staging` (`acc598c9-e726-46c8-b1a3-23e5b6a42d52`), is kept untouched as
+  an archive: 14.5 MB, every player and farm up to the reset. Its last bookmark is
+  `0000015e-00000000-00005127-81f94dcb031e0a1f75b6c5bd070c6840`. To bring it back, point
+  `wrangler.staging.toml` at it again and redeploy. Do not restore the old bookmark into the new
+  database.
+- The reset takes effect with the first deploy of the commit that changes the binding. Anything played
+  on staging between the v2 deploy and that one stays in the archive.
+
+Previous deployment: version `39388480-6aa5-476c-a73d-316fde4db836`,
 deployed 2026-11-18T03:27Z from `world/island-generator` (`b142ccc`): **Home Island choice, island
 mines, the character roster and the upgraded models**, with `ISLAND_CHOICE_ENABLED = "true"` (new
 players pick an island; existing farms keep theirs). Migrations `0037` ... `0044` were applied in the same
@@ -140,10 +157,10 @@ section stays as the record of what was needed and how it was checked.
 | | |
 | --- | --- |
 | Binding | `DB` |
-| Database | `happy-farm-staging` |
-| Id | `acc598c9-e726-46c8-b1a3-23e5b6a42d52` (committed in `wrangler.staging.toml`; not a secret) |
-| Migrations | **0001 - 0020 applied** (0016 - 0020 applied 2026-10-04, the V16.2.1 baseline) |
-| Data after the V16.2.1 baseline deploy | 22 players, 22 identities, 12 farms, 22 warehouses, 33 inventory rows - nothing reset |
+| Database | `happy-farm-staging-v2` (since the 2026-11-18 reset; the archive is `happy-farm-staging`) |
+| Id | `bb047f96-1745-463f-a432-1b9b30477b91` (committed in `wrangler.staging.toml`; not a secret) |
+| Migrations | **0001 - 0044 applied** to the fresh database on 2026-11-18 (the archive is also at 0044) |
+| Data at the 2026-11-18 reset | none: 0 players, 0 farms, 0 islands (the archive keeps everything before) |
 
 V13.6.1 added `0014_one_farm_per_player.sql`: a unique index on `farms(owner_player_id)`, so a phone
 that retries "create my farm" cannot end up with two farms - and with its gold and crops on the one it
@@ -187,8 +204,8 @@ npm run build                     # writes apps/web/dist, which the Worker serve
 npm run build:worker:staging      # dry run of the Worker bundle
 
 # 2. Migrations, if any are pending
-npx wrangler d1 migrations list happy-farm-staging --remote --config workers/api/wrangler.staging.toml
-npx wrangler d1 migrations apply happy-farm-staging --remote --config workers/api/wrangler.staging.toml
+npx wrangler d1 migrations list happy-farm-staging-v2 --remote --config workers/api/wrangler.staging.toml
+npx wrangler d1 migrations apply happy-farm-staging-v2 --remote --config workers/api/wrangler.staging.toml
 
 # 3. Deploy staging only - never the production config
 npx wrangler deploy --config workers/api/wrangler.staging.toml
@@ -203,8 +220,10 @@ not authorized"` from the D1 endpoint has been seen and cleared by simply retryi
 authenticated request answering `NOT_AUTHENTICATED` (the identity write fails, and the authenticator
 fails closed) until the migration lands. Apply migrations, then deploy.
 
-Prerequisites that already exist in this account: the `happy-farm-staging` Worker and D1 database.
-`npx wrangler d1 create happy-farm-staging` is only needed if the database is ever deleted.
+Prerequisites that already exist in this account: the `happy-farm-staging` Worker and the
+`happy-farm-staging-v2` D1 database (the old `happy-farm-staging` database is the pre-reset archive).
+`npx wrangler d1 create happy-farm-staging-v2 --location apac` is only needed if the database is ever
+deleted.
 
 ## Rolling back
 

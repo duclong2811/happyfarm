@@ -145,7 +145,9 @@ describe("staging configuration", () => {
   });
 
   it("binds the staging database and never the local or an invented one", () => {
-    expect(effective).toMatch(/^database_name = "happy-farm-staging"$/m);
+    // Staging was reset onto a fresh database on 2026-11-18; the old `happy-farm-staging` is an archive.
+    expect(effective).toMatch(/^database_name = "happy-farm-staging-v2"$/m);
+    expect(effective).not.toMatch(/^database_name = "happy-farm-staging"$/m);
     expect(effective).not.toContain("happy-farm-local");
     expect(effective).not.toMatch(/database_id = "00000000/);
     expect(effective).not.toMatch(/database_name = "happy-farm"$/m);
