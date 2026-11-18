@@ -6,6 +6,7 @@
   BufferAttribute,
   CanvasTexture,
   Color,
+  CylinderGeometry,
   DirectionalLight,
   DoubleSide,
   EdgesGeometry,
@@ -25,6 +26,7 @@
   PlaneGeometry,
   Quaternion,
   Raycaster,
+  RingGeometry,
   Scene,
   Sprite,
   SpriteMaterial,
@@ -280,6 +282,63 @@ export interface SceneFishingSpot {
   readonly worldX: number;
   readonly worldZ: number;
   readonly pickRadiusWorld: number;
+  /**
+   * The spot is out on open water, with nothing else there to show it: the scene floats a buoy and a
+   * ripple ring on it. A spot on a pond bank or a quay already has its landmark and gets no marker.
+   */
+  readonly afloat?: boolean;
+}
+
+/** Shared geometry and materials for the deep-water fishing buoys: made once, reused by every marker. */
+interface FishingMarkerParts {
+  readonly ring: RingGeometry;
+  readonly outerRing: RingGeometry;
+  readonly body: SphereGeometry;
+  readonly band: CylinderGeometry;
+  readonly pole: CylinderGeometry;
+  readonly ripple: MeshBasicMaterial;
+  readonly faintRipple: MeshBasicMaterial;
+  readonly red: MeshStandardMaterial;
+  readonly white: MeshStandardMaterial;
+}
+
+function createFishingMarkerParts(): FishingMarkerParts {
+  return {
+    ring: new RingGeometry(0.52, 0.64, 28).rotateX(-Math.PI / 2),
+    outerRing: new RingGeometry(0.98, 1.06, 32).rotateX(-Math.PI / 2),
+    body: new SphereGeometry(0.17, 14, 10),
+    band: new CylinderGeometry(0.172, 0.172, 0.07, 14),
+    pole: new CylinderGeometry(0.022, 0.022, 0.34, 6),
+    ripple: new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }),
+    faintRipple: new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.28, depthWrite: false }),
+    red: new MeshStandardMaterial({ color: 0xd9472f, roughness: 0.55 }),
+    white: new MeshStandardMaterial({ color: 0xf4efe4, roughness: 0.6 })
+  };
+}
+
+/** A red-and-white buoy riding the sea surface, with two ripple rings around it. */
+function fishingMarker(parts: FishingMarkerParts, spot: SceneFishingSpot): Group {
+  const marker = new Group();
+  marker.position.set(spot.worldX, SEA_SURFACE_Y, spot.worldZ);
+  const ring = new Mesh(parts.ring, parts.ripple);
+  ring.position.y = 0.025;
+  ring.renderOrder = 2;
+  const outer = new Mesh(parts.outerRing, parts.faintRipple);
+  outer.position.y = 0.02;
+  outer.renderOrder = 2;
+  const body = new Mesh(parts.body, parts.red);
+  body.position.y = 0.07;
+  body.scale.set(1, 0.85, 1);
+  body.castShadow = true;
+  const band = new Mesh(parts.band, parts.white);
+  band.position.y = 0.09;
+  const pole = new Mesh(parts.pole, parts.white);
+  pole.position.y = 0.3;
+  const top = new Mesh(parts.body, parts.red);
+  top.position.y = 0.47;
+  top.scale.setScalar(0.32);
+  marker.add(ring, outer, body, band, pole, top);
+  return marker;
 }
 
 export type SceneWorldTarget =
@@ -1242,6 +1301,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // The island's resource nodes: a handful of deposits drawn from their own models, rebuilt when the
   // server reports a depletion or a regeneration rather than every frame.
   const resourceGroup = new Group();
+  // Buoys over the deep-water fishing spots of a chosen island, rebuilt only when the spots change.
+  const fishingMarkerGroup = new Group();
   const neighborGroup = new Group();
   const neighborGeometries: BufferGeometry[] = [];
   const neighborCollisionDebugGroup = new Group();
@@ -1484,6 +1545,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     cropGroup,
     treeGroup,
     resourceGroup,
+    fishingMarkerGroup,
     neighborPreviewGroup,
     neighborGroup,
     neighborCollisionDebugGroup,
@@ -2550,6 +2612,8 @@ let interactionGeometry: BufferGeometry | null = null;
   let resourceNodes: readonly SceneResourceNode[] = [];
   let islandMines: readonly SceneIslandMine[] = [];
   let fishingSpots: readonly SceneFishingSpot[] = [];
+  let fishingMarkerSignature = "";
+  let fishingMarkerParts: FishingMarkerParts | null = null;
   let resourceNodeSignature: string | null = null;
   let constructionSignature = "";
   /** Per-kind model overrides from the host (`setBuildingLooks`), part of the construction signature. */
@@ -2679,6 +2743,15 @@ let interactionGeometry: BufferGeometry | null = null;
 
   function setFishingSpotMetadata(spots: readonly SceneFishingSpot[]): void {
     fishingSpots = spots;
+    const afloat = spots.filter((spot) => spot.afloat === true);
+    const signature = afloat.map((spot) => `${spot.id}:${String(spot.worldX)}:${String(spot.worldZ)}`).join("|");
+    if (signature === fishingMarkerSignature) return;
+    fishingMarkerSignature = signature;
+    fishingMarkerGroup.clear();
+    if (afloat.length === 0) return;
+    const parts = fishingMarkerParts ??= createFishingMarkerParts();
+    for (const spot of afloat) fishingMarkerGroup.add(fishingMarker(parts, spot));
+    scheduleDraw();
   }
 
   const NEIGHBOR_DOCK_ID = "neighbor-dock";
@@ -4817,7 +4890,7 @@ let interactionGeometry: BufferGeometry | null = null;
       };
       const homeVisible = next === null;
       for (const group of [
-        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup,
+        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup, fishingMarkerGroup,
         overlayGroup, overlayDetailGroup, interactionGroup, cellOverlayGroup,
         workAreaGridGroup, workAreaMarkGroup, areaHarvestMarkGroup, previewGroup,
         constructionGroup

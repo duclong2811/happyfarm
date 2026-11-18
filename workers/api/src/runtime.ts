@@ -23,6 +23,7 @@ import {
   type ConstructionDefinition,
   type ConstructionId,
   type FarmId,
+  type PlayerId,
   type FishingActionId,
   type ResourceActionId,
   type CurrencyDefinition,
@@ -99,6 +100,7 @@ import {
   FISHING_ACTION_SECONDS,
   fishRegistry,
   fishingSpotRegistry,
+  islandFishingSpots,
   fishingTableRegistry,
   gameplayFor,
   itemRegistry,
@@ -619,6 +621,43 @@ export class GameDataResourceCatalogue implements ResourceCataloguePort {
  * constants for the life of a deployment, which is what lets the client draw the water and the server
  * settle a catch without either of them reading a row.
  */
+/**
+ * The fishing catalogue, aware of each player's own island: a farm on a chosen Home Island fishes the
+ * deep water its stored ground marks (`islandFishingSpots`), and only that; every other farm fishes the
+ * static list. The spots come from the actor's own farm, never from the request, so a client cannot
+ * fish water it does not have or invent a spot to dodge depletion.
+ */
+export function islandFishingCatalogue(
+  base: FishingCataloguePort,
+  farms: { findByOwner(playerId: PlayerId): Promise<{ readonly id: FarmId } | null> },
+  islands: FarmIslandRepository
+): FishingCataloguePort {
+  return {
+    actionSeconds: base.actionSeconds,
+    listSpots: () => base.listSpots(),
+    findSpot: (spotId) => base.findSpot(spotId),
+    findTable: (tableId) => base.findTable(tableId),
+    findFish: (fishId) => base.findFish(fishId),
+    async spotsForPlayer(playerId) {
+      const farm = await farms.findByOwner(playerId);
+      const island = farm === null ? null : await islands.findByFarm(farm.id);
+      if (island === null) return null;
+      return islandFishingSpots(island.sites).map((spot) => ({
+        id: spot.id,
+        displayNameKey: spot.displayNameKey,
+        zoneKind: spot.zoneKind,
+        position: { x: spot.position.x, y: spot.position.y },
+        interactionRadiusTiles: spot.interactionRadiusTiles,
+        tableId: spot.tableId,
+        enabled: spot.enabled,
+        maxStock: spot.maxStock ?? 8,
+        regenerationSeconds: spot.regenerationSeconds ?? 90,
+        productionUnitsPerHour: spot.productionUnitsPerHour ?? 1
+      }));
+    }
+  };
+}
+
 export class GameDataFishingCatalogue implements FishingCataloguePort {
   readonly actionSeconds = FISHING_ACTION_SECONDS;
 

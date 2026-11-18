@@ -137,6 +137,28 @@ export const fish = [...fishRegistry.values()];
 export const fishingTables = [...fishingTableRegistry.values()];
 export const fishingSpots = [...fishingSpotRegistry.values()];
 
+/**
+ * A chosen Home Island's fishing places, from its stored `FISHING` sites (generator v2): deep water just
+ * off the shallow shelf, fished from the shelf's edge, with the coastal catch. Ids are the site's order
+ * on the island (`spot_isle_1`, ...), so a stored island always names the same spots.
+ */
+export function islandFishingSpots(sites: readonly { readonly kind: string; readonly x: number; readonly y: number }[]): FishingSpotData[] {
+  return sites
+    .filter((site) => site.kind === "FISHING")
+    .map((site, index) => ({
+      id: `spot_isle_${String(index + 1)}`,
+      displayNameKey: "spot.island_sea.name",
+      zoneKind: "HOME_ISLAND" as const,
+      position: { x: site.x, y: site.y },
+      interactionRadiusTiles: 3.2,
+      tableId: "fishtable_coastal",
+      enabled: true,
+      maxStock: 8,
+      regenerationSeconds: 90,
+      productionUnitsPerHour: 1
+    }));
+}
+
 export function fishTableForSpot(spot: FishingSpotData): FishingTableData {
   const table = fishingTableRegistry.get(spot.tableId);
   if (table === undefined) throw new Error(`Fishing spot ${spot.id} names an unknown table: ${spot.tableId}`);

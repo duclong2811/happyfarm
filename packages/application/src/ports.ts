@@ -500,6 +500,12 @@ export interface FishDefinition {
 export interface FishingCataloguePort {
   listSpots(): readonly FishingSpotDefinition[];
   findSpot(spotId: string): FishingSpotDefinition | null;
+  /**
+   * The spots of one player's own Home Island, when it is a chosen island with its own water; null
+   * when the player fishes the static list (the composed island). Resolved from the player, never
+   * from the request, so a spot is only ever the actor's own.
+   */
+  spotsForPlayer?(playerId: PlayerId): Promise<readonly FishingSpotDefinition[] | null>;
   findTable(tableId: string): FishingTableDefinition | null;
   findFish(fishId: string): FishDefinition | null;
   readonly actionSeconds: number;

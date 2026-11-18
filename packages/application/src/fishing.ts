@@ -29,6 +29,7 @@ import type {
   FishDefinition,
   FishingActionRepository,
   FishingCataloguePort,
+  FishingSpotDefinition,
   FishingIdGenerator,
   FishingRandomPort,
   FishingSettlementRepository,
@@ -80,6 +81,16 @@ export interface FishView {
   readonly sellPrice: number;
   readonly xp: number;
   readonly requiredLevel: number;
+}
+
+/**
+ * One spot by id, among the spots this player may fish: a chosen island's own sea spots, or the
+ * static list for a farm on the composed island - never another island's.
+ */
+async function findSpotFor(catalogue: FishingCataloguePort, playerId: ActorContext["playerId"], spotId: string): Promise<FishingSpotDefinition | null> {
+  const own = catalogue.spotsForPlayer === undefined ? null : await catalogue.spotsForPlayer(playerId);
+  if (own === null) return catalogue.findSpot(spotId);
+  return own.find((spot) => spot.id === spotId) ?? null;
 }
 
 /** The whole catalogue the client draws from: where to fish, and what lives there. */
@@ -135,6 +146,9 @@ export class ListFishingCatalogue {
 
   execute(actor: ActorContext | null): FishingCatalogueView {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    // The static list, read from game data alone (no farm row - see catalogue-read-cost). A chosen
+    // island's sea spots are derived from its stored sites, which the client already holds, by the
+    // same function the server checks a start against (`islandFishingSpots`).
     return {
       // Only open spots are listed: a closed one would be a prompt the server refuses.
       spots: this.catalogue
@@ -233,7 +247,7 @@ export class StartFishing {
     const existing = await this.idempotency.find(actor.playerId, START_OPERATION, command.requestId);
     if (existing !== null) return this.replay(existing, fingerprint);
 
-    const spot = this.catalogue.findSpot(command.spotId);
+    const spot = await findSpotFor(this.catalogue, actor.playerId, command.spotId);
     if (spot === null) throw new ApplicationError("FISHING_SPOT_NOT_FOUND", "Fishing spot was not found");
     if (!spot.enabled) throw new ApplicationError("FISHING_SPOT_DISABLED", "Fishing spot is closed");
 
@@ -387,7 +401,7 @@ export class SettleFishing {
 
     const table = this.catalogue.findTable(action.tableId);
     if (table === null) throw new ApplicationError("INTERNAL_ERROR", "Fishing table was not found");
-    const spot = this.catalogue.findSpot(action.spotId);
+    const spot = await findSpotFor(this.catalogue, action.actorPlayerId, action.spotId);
     if (spot === null) throw new ApplicationError("INTERNAL_ERROR", "Fishing spot was not found");
     const stockState = this.states === undefined || this.states.isAvailable?.() === false
       ? null

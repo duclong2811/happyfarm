@@ -289,7 +289,7 @@ import {
   ,type NeighborSnapshotDTO
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
-import { farmIslandGeography, gameDataCharacterCatalogue, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
+import { farmIslandGeography, islandFishingCatalogue, gameDataCharacterCatalogue, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
 import { rejectsCrossOriginRequest } from "./origin-guard";
 import type { SessionPort } from "./session";
 import {
@@ -1786,8 +1786,11 @@ export function createHandler(host: HandlerDependencies) {
   const fishing = dependencies.fishing;
   const fishingActions = new D1FishingActionRepository(dependencies.db);
   const fishingSettlement = new D1FishingSettlementRepository(dependencies.db);
+  // A chosen island fishes its own deep water; the composed island, the static list. Only a start and
+  // a settle look the island up: the listing stays a pure projection of game data.
+  const islandFishing = fishing === undefined ? null : islandFishingCatalogue(fishing.catalogue, farms, farmIslands);
   const fishingCatalogue =
-    fishing === undefined
+    fishing === undefined || islandFishing === null
       ? null
       : {
           list: new ListFishingCatalogue(fishing.catalogue),
@@ -1796,7 +1799,7 @@ export function createHandler(host: HandlerDependencies) {
             new D1HomeIslandZoneResolver(farms),
             fishingActions,
             new D1IdempotencyRepository(dependencies.db),
-            fishing.catalogue,
+            islandFishing,
             fishing.ids,
             dependencies.fingerprints,
             dependencies.clock,
@@ -1806,7 +1809,7 @@ export function createHandler(host: HandlerDependencies) {
           settle: new SettleFishing(
             fishingActions,
             fishingSettlement,
-            fishing.catalogue,
+            islandFishing,
             inventory,
             new InventoryService(dependencies.itemDefinitions, dependencies.clock),
             progressions,

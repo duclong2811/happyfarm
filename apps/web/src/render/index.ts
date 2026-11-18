@@ -21,6 +21,7 @@ export {
   type FarmSceneHandle,
   type AreaHarvestEditState,
   type EstateCameraFocus,
+  type SceneFishingSpot,
   type SceneWorldTarget,
   type SceneNeighborIslandPreview
 } from "./scene";

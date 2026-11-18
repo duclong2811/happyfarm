@@ -149,6 +149,7 @@ import {
   type FarmSceneInput,
   type FarmScenePlayer,
   type FarmSceneHandle,
+  type SceneFishingSpot,
   type SceneNeighborIslandPreview,
   type SceneWorldTarget,
   type RenderQualityName
@@ -169,7 +170,7 @@ import {
 import { plantedForestryPanelState, resourcePanelState } from "./forestry/panel";
 import { miningPanelState } from "./mining/panel";
 import { minePanelView, mineOreAt, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
-import { mineFootprintTiles } from "@happy-farm/game-data";
+import { islandCellKindAt, islandFishingSpots, mineFootprintTiles } from "@happy-farm/game-data";
 import {
   createAquaculturePondLoader,
   selectedAquaculturePond,
@@ -389,6 +390,11 @@ interface AppState {
    * Static game data served with the catalogue: the client draws the spots and names the catch from
    * it, and the server decides everything else. Read once at load, never polled.
    */
+  fishingCatalogueSpots: readonly FishingSpotDTO[];
+  /**
+   * The spots this farm fishes: a chosen island's own sea spots (derived from its stored sites by the
+   * same function the server checks a start against), else the catalogue's. See `syncFishingSpots`.
+   */
   fishingSpots: readonly FishingSpotDTO[];
   fish: readonly FishDefinitionDTO[];
   /**
@@ -530,6 +536,7 @@ const state: AppState = {
   treeDefinitions: [],
   buildCatalog: [],
   worldObjects: indexWorldObjects([]),
+  fishingCatalogueSpots: [],
   fishingSpots: [],
   fish: [],
   fishingAction: null,
@@ -4766,18 +4773,18 @@ function toSceneResourceNode(node: ResourceNodeDTO): {
   };
 }
 
-function toSceneFishingSpot(spot: FishingSpotDTO): {
-  readonly id: string;
-  readonly worldX: number;
-  readonly worldZ: number;
-  readonly pickRadiusWorld: number;
-} {
+function toSceneFishingSpot(spot: FishingSpotDTO): SceneFishingSpot {
   const at = tileToWorld(spot.position, worldFrame());
+  // A chosen island's sea spots sit on deep water with nothing there to show them, so the scene floats
+  // a buoy on them. The composed island's spots are on a pond bank or the quay, which are their landmark.
+  const island = state.island;
+  const afloat = island !== null && islandCellKindAt(island, { x: Math.round(spot.position.x), y: Math.round(spot.position.y) }) === "DEEP";
   return {
     id: spot.spotId,
     worldX: at.worldX,
     worldZ: at.worldZ,
-    pickRadiusWorld: spot.interactionRadiusTiles * worldFrame().pitch
+    pickRadiusWorld: spot.interactionRadiusTiles * worldFrame().pitch,
+    afloat
   };
 }
 
@@ -8220,6 +8227,33 @@ const ISLAND_CACHE_PREFIX = "happyfarm.island.";
  * stale entry is simply fetched again.
  */
 async function loadIslandGround(farmId: string, summary: FarmIslandSummaryDTO | null | undefined): Promise<void> {
+  try {
+    await readIslandGround(farmId, summary);
+  } finally {
+    syncFishingSpots();
+  }
+}
+
+/**
+ * A chosen island fishes its own deep water: its spots come from the stored island's FISHING sites,
+ * through `islandFishingSpots`, which is also what the server checks a start against. A farm on the
+ * composed island keeps the catalogue's spots. The catalogue read stays static (no farm row).
+ */
+function syncFishingSpots(): void {
+  const island = state.island;
+  state.fishingSpots = island === null
+    ? state.fishingCatalogueSpots
+    : islandFishingSpots(island.sites).map((spot) => ({
+        spotId: spot.id,
+        displayNameKey: spot.displayNameKey,
+        zoneKind: spot.zoneKind,
+        position: { x: spot.position.x, y: spot.position.y },
+        interactionRadiusTiles: spot.interactionRadiusTiles,
+        tableId: spot.tableId
+      }));
+}
+
+async function readIslandGround(farmId: string, summary: FarmIslandSummaryDTO | null | undefined): Promise<void> {
   if (summary == null) {
     state.island = null;
     return;
@@ -9535,7 +9569,8 @@ async function cancelFishing(): Promise<void> {
 async function refreshFishing(): Promise<void> {
   const client = api();
   const [catalogue, active] = await Promise.all([client.getFishing(), client.getActiveFishing()]);
-  state.fishingSpots = catalogue.spots;
+  state.fishingCatalogueSpots = catalogue.spots;
+  syncFishingSpots();
   state.fish = catalogue.fish;
   state.fishingAction = active.action;
   if (active.action !== null) {
