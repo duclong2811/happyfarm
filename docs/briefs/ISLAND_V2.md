@@ -124,7 +124,7 @@ changes. Note anything they will need, but do not build them.
 ## After this ships
 
 The owner wants to **start over on staging**. Islands are fixed at creation, so the reset should come
-*after* v2 is deployed, or players would be left on v1 islands. Plan for it, but do not do it without the
-owner's go-ahead. The intended way is a fresh D1 database (all migrations applied) bound in
+*after* v2 is deployed, or players would be left on v1 islands. The owner confirmed this order on
+2026-11-18: reset staging once v2 is live, and confirm with the owner right before doing it. The intended way is a fresh D1 database (all migrations applied) bound in
 `workers/api/wrangler.staging.toml`, keeping the old database as an archive. The deploy itself runs from
 the owner's workstation (`npx wrangler login`), because the cloud proxy cannot upload Worker assets.
