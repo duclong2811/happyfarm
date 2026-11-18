@@ -4,11 +4,12 @@ import { createIcon } from "./icons";
 import { archipelagoName, drawSeaChart, freePlaces, SEA_REGION_ORDER, slotAt, type ChartFrame } from "./sea-chart-view";
 
 /**
- * The "Chart" window: the world's sea chart over the game, read-only.
+ * The "Chart" window: the world's sea chart over the game.
  *
- * It shows what the server says - which places are open, which are taken, which is the reader's -
- * and sends nothing but a sea name when an island without a place asks for one. Closing it returns
- * the screen to the farm; nothing in it changes the farm.
+ * It shows what the server says - the reader's own chart, which places are taken, which is the
+ * reader's - and sends nothing but a sea name when an island without a place asks for one, or a place
+ * when the reader sails to it. Closing it returns the screen to the farm; nothing in it changes the
+ * farm.
  */
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
@@ -19,6 +20,8 @@ export interface SeaChartModalOptions {
   readonly load: () => Promise<GetWorldChartResponse>;
   /** Asks the server for a place in `region`; offered only when the reader's island has none. */
   readonly claim: ((region: SeaRegionDTO) => Promise<void>) | null;
+  /** Sails to a tapped place (W4: look only); offered for any place but home. */
+  readonly visit: ((slotId: string) => void) | null;
   readonly describeError: (error: unknown) => string;
   readonly onClose?: () => void;
 }
@@ -50,8 +53,11 @@ export function describeSlot(chart: GetWorldChartResponse, slotId: string, trans
       const slot = archipelago.slots.find((candidate) => candidate.slotId === slotId);
       if (slot === undefined) continue;
       const name = translate("chart.archipelago", { name: archipelagoName(entry.region, archipelago.index) });
-      const key = slot.mine ? "chart.slot.mine" : slot.claimed ? "chart.slot.settled" : "chart.slot.wild";
-      return translate(key, { archipelago: name });
+      if (slot.mine) return translate("chart.slot.mine", { archipelago: name });
+      if (slot.claimed) {
+        return slot.name === null ? translate("chart.slot.settled", { archipelago: name }) : translate("chart.slot.named", { name: slot.name, archipelago: name });
+      }
+      return translate("chart.slot.wild", { archipelago: name });
     }
   }
   return null;
@@ -99,10 +105,26 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
   foot.className = "sc-foot";
   const where = document.createElement("p");
   where.className = "sc-where";
+  const pickRow = document.createElement("div");
+  pickRow.className = "sc-pick-row";
   const picked = document.createElement("p");
   picked.className = "sc-pick";
   picked.setAttribute("aria-live", "polite");
   picked.textContent = translate("chart.hint");
+  const visitButton = document.createElement("button");
+  visitButton.type = "button";
+  visitButton.className = "sc-visit";
+  visitButton.textContent = translate("chart.visit");
+  visitButton.hidden = true;
+  let pickedSlotId: string | null = null;
+  visitButton.addEventListener("click", () => {
+    const visit = options.visit;
+    if (visit === null || pickedSlotId === null) return;
+    const slotId = pickedSlotId;
+    close();
+    visit(slotId);
+  });
+  pickRow.replaceChildren(picked, visitButton);
   const claimRow = document.createElement("div");
   claimRow.className = "sc-claim";
   claimRow.hidden = true;
@@ -116,7 +138,7 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
     item.replaceChildren(swatch, document.createTextNode(translate(key)));
     legend.appendChild(item);
   }
-  foot.replaceChildren(where, claimRow, picked, legend);
+  foot.replaceChildren(where, claimRow, pickRow, legend);
   card.replaceChildren(head, stage, foot);
   root.replaceChildren(card);
 
@@ -200,6 +222,8 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
     const py = ((event.clientY - box.top) / box.height) * canvas.height;
     const hit = slotAt(chart, frame, px, py, Math.max(18 * (canvas.width / box.width), 90 * frame.scale));
     picked.textContent = hit === null ? translate("chart.hint") : (describeSlot(chart, hit.slotId, translate) ?? translate("chart.hint"));
+    pickedSlotId = hit?.slotId ?? null;
+    visitButton.hidden = options.visit === null || hit === null || hit.slotId === chart.mySlotId;
   });
 
   const onKey = (event: KeyboardEvent): void => {

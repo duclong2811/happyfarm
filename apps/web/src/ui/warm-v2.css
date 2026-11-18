@@ -1045,3 +1045,66 @@ html.ui-b.ui-warm .sea-chart .sc-swatch-wild { background: #d6ba88; }
   html.ui-b.ui-warm .sea-chart .sc-card { padding: 8px; border-width: 4px; border-radius: 16px; }
   html.ui-b.ui-warm .sea-chart .sc-legend { font-size: .76rem; }
 }
+html.ui-b.ui-warm .sea-chart .sc-pick-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; }
+html.ui-b.ui-warm .sea-chart .sc-visit {
+  flex: none;
+  min-height: 40px;
+  padding: 4px 18px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: 0 3px 0 var(--w-orange-edge);
+  color: #fff;
+  font: 800 1rem var(--w-display);
+  text-shadow: var(--w-outline);
+  cursor: pointer;
+}
+html.ui-b.ui-warm .sea-chart .sc-visit[hidden] { display: none; }
+
+/* ---------------------------------------------------------------------------------------------
+ * Visiting another island (W4): its own renderer over the game, a bar to say where, and the way home.
+ * ------------------------------------------------------------------------------------------- */
+html.ui-b.ui-warm .visit-view { position: fixed; inset: 0; z-index: 940; background: #cfe9f7; }
+html.ui-b.ui-warm .visit-view .vv-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+html.ui-b.ui-warm .visit-view .vv-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: calc(100% - 24px);
+  padding: 8px 10px 8px 18px;
+  border: 4px solid var(--w-wood);
+  border-radius: 18px;
+  background: var(--w-parchment);
+  box-shadow: 0 5px 0 var(--w-wood-deep), 0 12px 24px rgba(10, 40, 70, .3);
+  color: var(--w-ink);
+  font-family: var(--w-display);
+}
+html.ui-b.ui-warm .visit-view .vv-text { min-width: 0; }
+html.ui-b.ui-warm .visit-view .vv-text h2 { margin: 0; color: var(--w-wood-deep); font-size: 1.3rem; font-weight: 800; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.ui-b.ui-warm .visit-view .vv-text p { margin: 0; color: var(--w-ink-2); font: 700 .86rem/1.25 "Nunito Variable", system-ui, sans-serif; }
+html.ui-b.ui-warm .visit-view .vv-text .vv-note { font-size: .76rem; opacity: .85; }
+html.ui-b.ui-warm .visit-view .vv-home {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 4px 18px;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
+  box-shadow: 0 4px 0 var(--w-orange-edge);
+  color: #fff;
+  font: 800 1.1rem var(--w-display);
+  text-shadow: var(--w-outline);
+  cursor: pointer;
+}
+@media (max-width: 760px) {
+  html.ui-b.ui-warm .visit-view .vv-bar { top: 8px; gap: 10px; padding: 6px 8px 6px 12px; border-width: 3px; }
+  html.ui-b.ui-warm .visit-view .vv-text h2 { font-size: 1.05rem; }
+  html.ui-b.ui-warm .visit-view .vv-text .vv-note { display: none; }
+}

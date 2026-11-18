@@ -940,7 +940,9 @@ slot claiming, or the chart API.
   with `WORLD_MAP_ENABLED = "true"`, after 0045 is applied.
 - Client (W2):
   - `apps/web/src/sea-chart-view.ts`: the chart's geometry, archipelago names and the parchment drawing;
-  - `apps/web/src/sea-chart-modal.ts`: the in-game "Chart" window;
+  - `apps/web/src/sea-chart-modal.ts`: the in-game "Chart" window, with "Visit" on a tapped place;
+  - `apps/web/src/visit-view.ts`: the look-only visit view (W4), and `startVisit`/`visitViewState` in
+    `main.ts`;
   - the "choose a sea" step in `apps/web/src/island-picker.ts`;
   - in `main.ts`: `refreshWorldMapAvailability`, `refreshHorizon` and `showSeaChart`;
   - W3, the archipelago on the horizon: `apps/web/src/render/horizon-islands.ts`, and `setHorizon` in

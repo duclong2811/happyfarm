@@ -73,6 +73,7 @@ import {
   ,NeighborTalkResponseSchema
   ,GetWorldChartResponseSchema
   ,GetWorldArchipelagoResponseSchema
+  ,VisitWorldPlaceResponseSchema
   ,EnsureWorldSlotResponseSchema
 } from "@happy-farm/contracts";
 import type {
@@ -140,6 +141,7 @@ import type {
   ,PlayerAppearanceDTO
   ,GetWorldChartResponse
   ,GetWorldArchipelagoResponse
+  ,VisitWorldPlaceResponse
   ,EnsureWorldSlotResponse
   ,SeaRegionDTO
 } from "@happy-farm/contracts";
@@ -314,6 +316,15 @@ export class ApiClient {
   /** The world's sea chart: every open archipelago, which places are taken, and the caller's own. */
   getWorldChart(): Promise<GetWorldChartResponse> {
     return this.get("/world/chart", GetWorldChartResponseSchema);
+  }
+
+  /**
+   * Sails to a place on the caller's own chart and looks at it. Only the place is sent; the server
+   * checks it is on the caller's chart, records the visit (which grows the chart) and answers with
+   * what anyone sailing by would see.
+   */
+  visitWorldPlace(slotId: string): Promise<VisitWorldPlaceResponse> {
+    return this.post("/world/visit", { slotId }, VisitWorldPlaceResponseSchema);
   }
 
   /** The caller's own archipelago: the islands seen from home. One small read. */

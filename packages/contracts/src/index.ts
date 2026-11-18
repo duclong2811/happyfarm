@@ -2197,7 +2197,9 @@ export const PublicIslandConstructionDTOSchema = z
     anchorX: z.number().min(-1_000_000).max(1_000_000),
     anchorY: z.number().min(-1_000_000).max(1_000_000),
     rotation: ConstructionRotationSchema,
-    footprint: z.object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() }).strict()
+    footprint: z.object({ widthCells: z.number().int().positive(), depthCells: z.number().int().positive() }).strict(),
+    /** The island's own arrangement key for a starter object (which model it grew as), else null. */
+    placementKey: z.string().min(3).max(80).nullable()
   })
   .strict();
 export const PublicIslandDTOSchema = z

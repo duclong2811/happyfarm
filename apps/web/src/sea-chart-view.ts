@@ -50,27 +50,41 @@ export interface ChartFrame {
   readonly offsetY: number;
 }
 
-/** Fits every open archipelago and the Centre into a canvas, with room for lettering round the edge. */
-export function fitChart(chart: GetWorldChartResponse, width: number, height: number, margin = 0.16): ChartFrame {
-  let minX = -700;
-  let maxX = 700;
-  let minZ = -700;
-  let maxZ = 700;
+/** The least stretch of sea a chart shows, in tiles, so a lone archipelago is not drawn as a continent. */
+const MIN_CHART_SPAN_TILES = 1300;
+/** Room round each place for its island and its lettering. */
+const PLACE_ROOM_TILES = 220;
+
+/**
+ * Fits the chart's places into a canvas, with room for lettering round the edge.
+ *
+ * A player's chart holds only what they have seen, so the frame follows it: a newcomer's chart is
+ * their own archipelago, drawn large, and it widens as they travel. The harbour's chart (a reader
+ * without a place) keeps the Centre in view, since it is the whole open world round it.
+ */
+export function fitChart(chart: GetWorldChartResponse, width: number, height: number, margin = 0.12): ChartFrame {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  const include = (x: number, z: number, room: number): void => {
+    minX = Math.min(minX, x - room);
+    maxX = Math.max(maxX, x + room);
+    minZ = Math.min(minZ, z - room);
+    maxZ = Math.max(maxZ, z + room);
+  };
   for (const entry of chart.regions) {
     for (const archipelago of entry.archipelagos) {
-      for (const slot of archipelago.slots) {
-        minX = Math.min(minX, slot.x - 160);
-        maxX = Math.max(maxX, slot.x + 160);
-        minZ = Math.min(minZ, slot.z - 160);
-        maxZ = Math.max(maxZ, slot.z + 160);
-      }
+      for (const slot of archipelago.slots) include(slot.x, slot.z, PLACE_ROOM_TILES);
     }
   }
-  // Keep the Centre in the middle, so the wind rose sits where the chart's eye goes first.
-  const half = Math.max(Math.abs(minX), Math.abs(maxX), Math.abs(minZ), Math.abs(maxZ));
-  const usable = Math.min(width, height) * (1 - margin * 2);
-  const scale = usable / (half * 2);
-  return { scale, offsetX: width / 2, offsetY: height / 2 };
+  if (chart.mySlotId === null || !Number.isFinite(minX)) include(0, 0, 300);
+  const centreX = (minX + maxX) / 2;
+  const centreZ = (minZ + maxZ) / 2;
+  const spanX = Math.max(MIN_CHART_SPAN_TILES, maxX - minX);
+  const spanZ = Math.max(MIN_CHART_SPAN_TILES, maxZ - minZ);
+  const scale = Math.min((width * (1 - margin * 2)) / spanX, (height * (1 - margin * 2)) / spanZ);
+  return { scale, offsetX: width / 2 - centreX * scale, offsetY: height / 2 - centreZ * scale };
 }
 
 export function toCanvas(frame: ChartFrame, x: number, z: number): { readonly x: number; readonly y: number } {
@@ -394,16 +408,55 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
   const context = canvas.getContext("2d");
   const width = canvas.width;
   const height = canvas.height;
-  const frame = fitChart(chart, width, height, options.compact === true ? 0.1 : 0.16);
+  const compact = options.compact === true;
+  const frame = fitChart(chart, width, height, compact ? 0.08 : 0.12);
   if (context === null) return frame;
   const t = options.translate;
-  const compact = options.compact === true;
   const scaleText = Math.max(0.6, Math.min(width, height) / 900);
+  const serif = '"Palatino Linotype", "Book Antiqua", Georgia, serif';
+  const archipelagos = chart.regions.flatMap((entry) => entry.archipelagos.map((archipelago) => ({ region: entry.region, archipelago })));
+
+  // Where the wind rose stands: on the Centre when the chart reaches it, else in a corner, as a
+  // chart-maker would put it when the hub lies off the sheet.
+  const hub = toCanvas(frame, 0, 0);
+  const hubShown = hub.x > width * 0.08 && hub.x < width * 0.92 && hub.y > height * 0.08 && hub.y < height * 0.92;
+  const rose = hubShown ? hub : { x: width * 0.13, y: height * 0.84 };
+  const roseSize = compact
+    ? Math.max(12, 200 * frame.scale)
+    : hubShown
+      ? Math.max(24, Math.min(260 * frame.scale, Math.min(width, height) * 0.09))
+      : Math.min(width, height) * 0.07;
 
   drawParchment(context, width, height);
   context.fillStyle = SEA_TINT;
   context.fillRect(0, 0, width, height);
-  drawRhumbLines(context, frame.offsetX, frame.offsetY, Math.hypot(width, height));
+  drawRhumbLines(context, rose.x, rose.y, Math.hypot(width, height));
+
+  // The unknown sea, under a mist, with the waters the player has seen cleared out of it.
+  if (typeof document !== "undefined") {
+    const fog = document.createElement("canvas");
+    fog.width = width;
+    fog.height = height;
+    const mist = fog.getContext("2d");
+    if (mist !== null) {
+      mist.fillStyle = "rgba(242, 234, 214, 0.86)";
+      mist.fillRect(0, 0, width, height);
+      mist.globalCompositeOperation = "destination-out";
+      const clear = (x: number, y: number, r: number): void => {
+        const hole = mist.createRadialGradient(x, y, r * 0.55, x, y, r);
+        hole.addColorStop(0, "rgba(0, 0, 0, 1)");
+        hole.addColorStop(1, "rgba(0, 0, 0, 0)");
+        mist.fillStyle = hole;
+        mist.fillRect(x - r, y - r, r * 2, r * 2);
+      };
+      for (const { archipelago } of archipelagos) {
+        const at = toCanvas(frame, archipelago.centreX, archipelago.centreZ);
+        clear(at.x, at.y, 560 * frame.scale);
+      }
+      if (hubShown) clear(rose.x, rose.y, roseSize * 2.2);
+      context.drawImage(fog, 0, 0);
+    }
+  }
 
   // A soft light over the chosen sea's archipelagos, so a newcomer sees where they will land.
   const selected = chart.regions.find((entry) => entry.region === options.selectedRegion);
@@ -417,113 +470,128 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
     context.fillRect(at.x - r, at.y - r, r * 2, r * 2);
   }
 
-  // Islands, archipelago by archipelago.
+  // Islands, archipelago by archipelago, each settled one with its name.
   const islandPixels = Math.max(compact ? 20 : 16, 150 * frame.scale);
-  for (const entry of chart.regions) {
-    const dim = options.selectedRegion !== undefined && options.selectedRegion !== null && options.selectedRegion !== entry.region;
-    for (const archipelago of entry.archipelagos) {
-      const centre = toCanvas(frame, archipelago.centreX, archipelago.centreZ);
-      context.globalAlpha = dim ? (compact ? 0.35 : 0.45) : 1;
-      context.strokeStyle = INK_SOFT;
-      context.setLineDash([3, 4]);
-      context.lineWidth = 1;
-      context.beginPath();
-      context.arc(centre.x, centre.y, 330 * frame.scale, 0, Math.PI * 2);
-      context.stroke();
-      context.setLineDash([]);
-      for (const slot of archipelago.slots) {
-        const at = toCanvas(frame, slot.x, slot.z);
-        const sprite = islandSprite(slot.island, !slot.claimed);
-        if (sprite !== null) context.drawImage(sprite, at.x - islandPixels / 2, at.y - islandPixels / 2, islandPixels, islandPixels);
-        if (slot.mine) {
-          context.strokeStyle = "#a8402c";
-          context.lineWidth = 2;
-          context.beginPath();
-          context.arc(at.x, at.y, islandPixels * 0.62, 0, Math.PI * 2);
-          context.stroke();
-          // A little red pennant over the player's own island.
-          context.fillStyle = "#c0392b";
-          context.strokeStyle = INK;
-          context.lineWidth = 1;
-          context.beginPath();
-          context.moveTo(at.x, at.y - islandPixels * 0.2);
-          context.lineTo(at.x, at.y - islandPixels * 0.95);
-          context.stroke();
-          context.beginPath();
-          context.moveTo(at.x, at.y - islandPixels * 0.95);
-          context.lineTo(at.x + islandPixels * 0.42, at.y - islandPixels * 0.8);
-          context.lineTo(at.x, at.y - islandPixels * 0.65);
-          context.closePath();
-          context.fill();
-        }
+  const named = !compact && islandPixels >= 18;
+  for (const { region, archipelago } of archipelagos) {
+    const dim = options.selectedRegion !== undefined && options.selectedRegion !== null && options.selectedRegion !== region;
+    const centre = toCanvas(frame, archipelago.centreX, archipelago.centreZ);
+    context.globalAlpha = dim ? (compact ? 0.35 : 0.45) : 1;
+    context.strokeStyle = INK_SOFT;
+    context.setLineDash([3, 4]);
+    context.lineWidth = 1;
+    context.beginPath();
+    context.arc(centre.x, centre.y, 330 * frame.scale, 0, Math.PI * 2);
+    context.stroke();
+    context.setLineDash([]);
+    for (const slot of archipelago.slots) {
+      const at = toCanvas(frame, slot.x, slot.z);
+      const sprite = islandSprite(slot.island, !slot.claimed);
+      if (sprite !== null) context.drawImage(sprite, at.x - islandPixels / 2, at.y - islandPixels / 2, islandPixels, islandPixels);
+      if (slot.mine) {
+        context.strokeStyle = "#a8402c";
+        context.lineWidth = 2;
+        context.beginPath();
+        context.arc(at.x, at.y, islandPixels * 0.62, 0, Math.PI * 2);
+        context.stroke();
+        // A little red pennant over the player's own island.
+        context.fillStyle = "#c0392b";
+        context.strokeStyle = INK;
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(at.x, at.y - islandPixels * 0.2);
+        context.lineTo(at.x, at.y - islandPixels * 0.95);
+        context.stroke();
+        context.beginPath();
+        context.moveTo(at.x, at.y - islandPixels * 0.95);
+        context.lineTo(at.x + islandPixels * 0.42, at.y - islandPixels * 0.8);
+        context.lineTo(at.x, at.y - islandPixels * 0.65);
+        context.closePath();
+        context.fill();
       }
-      if (!compact) {
-        context.fillStyle = INK;
-        context.font = `italic ${String(Math.round(13 * scaleText))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+      if (named && slot.name !== null) {
+        context.fillStyle = slot.mine ? "#7a2414" : INK;
+        context.font = `italic ${slot.mine ? "bold " : ""}${String(Math.round(11 * scaleText))}px ${serif}`;
         context.textAlign = "center";
         context.textBaseline = "top";
-        context.fillText(t("chart.archipelago", { name: archipelagoName(entry.region, archipelago.index) }), centre.x, centre.y + 345 * frame.scale);
+        context.fillText(slot.name, at.x, at.y + islandPixels * 0.55, islandPixels * 2.6);
       }
-      context.globalAlpha = 1;
     }
+    if (!compact) {
+      context.fillStyle = INK;
+      context.font = `italic bold ${String(Math.round(14 * scaleText))}px ${serif}`;
+      context.textAlign = "center";
+      context.textBaseline = "top";
+      context.fillText(t("chart.archipelago", { name: archipelagoName(region, archipelago.index) }), centre.x, centre.y + 360 * frame.scale);
+    }
+    context.globalAlpha = 1;
   }
 
-  // The seas' names, out past their archipelagos.
-  const reach = Math.min(width, height) * 0.43;
-  const directions: Readonly<Record<SeaRegionDTO, { x: number; y: number }>> = { NORTH: { x: 0, y: -1 }, EAST: { x: 1, y: 0 }, SOUTH: { x: 0, y: 1 }, WEST: { x: -1, y: 0 } };
+  // Each sea's name, out beyond its archipelagos (away from the Centre), kept on the sheet.
   for (const region of SEA_REGION_ORDER) {
-    const direction = directions[region];
+    const entry = chart.regions.find((candidate) => candidate.region === region);
+    if (entry === undefined || entry.archipelagos.length === 0) continue;
+    const mean = entry.archipelagos.reduce((sum, archipelago) => ({ x: sum.x + archipelago.centreX, z: sum.z + archipelago.centreZ }), { x: 0, z: 0 });
+    const cx = mean.x / entry.archipelagos.length;
+    const cz = mean.z / entry.archipelagos.length;
+    const away = Math.hypot(cx, cz) || 1;
+    const at = toCanvas(frame, cx + (cx / away) * 470, cz + (cz / away) * 470);
     const lit = options.selectedRegion === region;
+    const size = compact ? Math.min(width, height) * 0.075 : 26 * scaleText;
     context.fillStyle = lit ? "#7a2414" : INK;
-    context.font = `italic ${lit ? "bold " : ""}${String(Math.round(compact ? Math.min(width, height) * 0.075 : 26 * scaleText))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+    context.font = `italic ${lit ? "bold " : ""}${String(Math.round(size))}px ${serif}`;
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.save();
-    context.translate(frame.offsetX + direction.x * reach, frame.offsetY + direction.y * reach);
-    if (region === "EAST") context.rotate(Math.PI / 2);
-    if (region === "WEST") context.rotate(-Math.PI / 2);
-    context.fillText(t(`chart.region.${region}`), 0, 0);
-    context.restore();
+    const label = t(`chart.region.${region}`);
+    const half = context.measureText(label).width / 2 + 14;
+    context.fillText(label, Math.min(width - half, Math.max(half, at.x)), Math.min(height - size, Math.max(size, at.y)));
   }
 
-  // The Centre: the wind rose, and the hub's name under it.
-  // The rose sits in the Centre's open water: big enough to read, never over the first archipelagos.
-  const roseSize = compact ? Math.max(12, 200 * frame.scale) : Math.max(24, Math.min(260 * frame.scale, Math.min(width, height) * 0.09));
-  drawWindRose(context, frame.offsetX, frame.offsetY, roseSize, t("chart.northMark"));
-  if (!compact) {
+  // The wind rose, and the hub's name under it when the hub is on the sheet.
+  drawWindRose(context, rose.x, rose.y, roseSize, t("chart.northMark"));
+  if (!compact && hubShown) {
     context.fillStyle = INK;
-    context.font = `bold ${String(Math.round(14 * scaleText))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+    context.font = `bold ${String(Math.round(14 * scaleText))}px ${serif}`;
     context.textAlign = "center";
     context.textBaseline = "top";
-    context.fillText(t("chart.centre"), frame.offsetX, frame.offsetY + roseSize * 1.18);
+    context.fillText(t("chart.centre"), rose.x, rose.y + roseSize * 1.18);
   }
 
   if (!compact) {
     const near = (x: number, y: number): boolean => {
-      for (const entry of chart.regions) for (const archipelago of entry.archipelagos) {
+      for (const { archipelago } of archipelagos) {
         const at = toCanvas(frame, archipelago.centreX, archipelago.centreZ);
-        if (Math.hypot(at.x - x, at.y - y) < 380 * frame.scale) return true;
+        if (Math.hypot(at.x - x, at.y - y) < 420 * frame.scale) return true;
       }
-      return Math.hypot(x - frame.offsetX, y - frame.offsetY) < roseSize * 1.5;
+      return Math.hypot(x - rose.x, y - rose.y) < roseSize * 1.6;
     };
     drawWaves(context, width, height, near);
-    drawGalleon(context, width * 0.78, height * 0.22, 24 * scaleText);
-    drawSerpent(context, width * 0.2, height * 0.8, 30 * scaleText);
+    // The doodles live out in the unknown water, where a chart-maker drew what they had not seen.
+    const corners = [
+      { x: width * 0.8, y: height * 0.2 },
+      { x: width * 0.2, y: height * 0.2 },
+      { x: width * 0.8, y: height * 0.8 },
+      { x: width * 0.2, y: height * 0.8 }
+    ].filter((corner) => !near(corner.x, corner.y) && Math.hypot(corner.x - rose.x, corner.y - rose.y) > roseSize * 2.5);
+    const ship = corners[0];
+    const serpent = corners[1];
+    if (ship !== undefined) drawGalleon(context, ship.x, ship.y, 24 * scaleText);
+    if (serpent !== undefined) drawSerpent(context, serpent.x, serpent.y, 30 * scaleText);
+    context.fillStyle = INK_SOFT;
+    context.font = `italic ${String(Math.round(13 * scaleText))}px ${serif}`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    for (const spot of [{ x: width * 0.84, y: height * 0.93 }, { x: width * 0.17, y: height * 0.07 }]) {
+      if (!near(spot.x, spot.y)) context.fillText(t("chart.unexplored"), spot.x, spot.y);
+    }
   }
 
-  // Fog over the uncharted waters, thickest at the edges, with the old warning lettered in it.
-  const fog = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.38, width / 2, height / 2, Math.max(width, height) * 0.62);
-  fog.addColorStop(0, "rgba(246, 240, 226, 0)");
-  fog.addColorStop(1, "rgba(246, 240, 226, 0.78)");
-  context.fillStyle = fog;
+  // The sheet's own edges darken a little, as old paper does.
+  const vignette = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.45, width / 2, height / 2, Math.max(width, height) * 0.75);
+  vignette.addColorStop(0, "rgba(120, 84, 40, 0)");
+  vignette.addColorStop(1, "rgba(120, 84, 40, 0.16)");
+  context.fillStyle = vignette;
   context.fillRect(0, 0, width, height);
-  if (!compact) {
-    context.fillStyle = INK_SOFT;
-    context.font = `italic ${String(Math.round(13 * scaleText))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
-    context.textAlign = "center";
-    context.fillText(t("chart.unexplored"), width * 0.82, height * 0.92);
-    context.fillText(t("chart.unexplored"), width * 0.16, height * 0.08);
-  }
 
   // The frame: a double rule, as a chart's border.
   context.strokeStyle = INK;

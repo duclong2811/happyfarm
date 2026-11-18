@@ -68,11 +68,9 @@ describe("the sea chart view", () => {
     expect(suggestedRegion(crowded)).not.toBe("NORTH");
   });
 
-  it("fits every open island inside the canvas with the Centre in the middle", () => {
-    const chart = chartWith([], null);
-    for (const [width, height] of [[900, 900], [1200, 700], [360, 640]] as const) {
+  it("fits the harbour's chart round the Centre, and a player's chart round what they have seen", () => {
+    const inside = (chart: GetWorldChartResponse, width: number, height: number): ReturnType<typeof fitChart> => {
       const frame = fitChart(chart, width, height);
-      expect(toCanvas(frame, 0, 0)).toEqual({ x: width / 2, y: height / 2 });
       for (const entry of chart.regions) {
         for (const archipelago of entry.archipelagos) {
           for (const slot of archipelago.slots) {
@@ -84,7 +82,24 @@ describe("the sea chart view", () => {
           }
         }
       }
+      return frame;
+    };
+    const harbour = chartWith([], null);
+    for (const [width, height] of [[900, 900], [1200, 700], [360, 640]] as const) {
+      const frame = inside(harbour, width, height);
+      const hub = toCanvas(frame, 0, 0);
+      expect(hub.x).toBeGreaterThan(0);
+      expect(hub.x).toBeLessThan(width);
+      expect(hub.y).toBeGreaterThan(0);
+      expect(hub.y).toBeLessThan(height);
     }
+    // A newcomer's chart is their own archipelago, drawn larger than the whole harbour's world.
+    const home = harbour.regions[0]?.archipelagos[0]?.slots[0]?.slotId ?? "";
+    const own: GetWorldChartResponse = {
+      mySlotId: home,
+      regions: harbour.regions.map((entry) => ({ region: entry.region, archipelagos: entry.region === "NORTH" ? entry.archipelagos : [] }))
+    };
+    expect(inside(own, 900, 900).scale).toBeGreaterThan(fitChart(harbour, 900, 900).scale);
   });
 
   it("finds the island under a tap, and none on open sea", () => {
@@ -100,10 +115,11 @@ describe("the sea chart view", () => {
 
   it("puts a tap in the sea of its bearing from the Centre", () => {
     const frame = fitChart(chartWith([], null), 800, 800);
-    expect(regionAt(frame, 400, 80)).toBe("NORTH");
-    expect(regionAt(frame, 720, 410)).toBe("EAST");
-    expect(regionAt(frame, 390, 760)).toBe("SOUTH");
-    expect(regionAt(frame, 40, 400)).toBe("WEST");
+    const hub = toCanvas(frame, 0, 0);
+    expect(regionAt(frame, hub.x, hub.y - 300)).toBe("NORTH");
+    expect(regionAt(frame, hub.x + 300, hub.y + 10)).toBe("EAST");
+    expect(regionAt(frame, hub.x - 10, hub.y + 300)).toBe("SOUTH");
+    expect(regionAt(frame, hub.x - 300, hub.y)).toBe("WEST");
   });
 
   it("says where the reader's island lies, and what a tapped place holds", () => {
@@ -115,9 +131,31 @@ describe("the sea chart view", () => {
     const isles = `chart.archipelago(name=${ARCHIPELAGO_NAMES.SOUTH[0] ?? ""})`;
     expect(describeMySlot(chart, translate)).toBe(`chart.you(archipelago=${isles},region=chart.region.SOUTH)`);
     expect(describeSlot(chart, mine, translate)).toBe(`chart.slot.mine(archipelago=${isles})`);
-    expect(describeSlot(chart, other, translate)).toBe(`chart.slot.settled(archipelago=${isles})`);
+    expect(describeSlot(chart, other, translate)).toBe(`chart.slot.named(name=Isle ${other},archipelago=${isles})`);
     expect(describeSlot(chart, wild, translate)).toBe(`chart.slot.wild(archipelago=${isles})`);
     expect(describeMySlot(chartWith([other], null), translate)).toBeNull();
     expect(describeSlot(chart, "slot_south_99_1", translate)).toBeNull();
+  });
+});
+
+describe("the visit heading", () => {
+  it("names a settled island by its own name, a free place as a wild island, and says where it lies", async () => {
+    const { visitHeading } = await import("../../apps/web/src/visit-view");
+    const place = {
+      slotId: "slot_east_1_2",
+      region: "EAST" as const,
+      archipelagoId: "sea_east_1",
+      archipelagoIndex: 1,
+      claimed: true,
+      mine: false,
+      name: "Đảo Ngọc",
+      island: { element: "HOA" as const, outline: "ROUND" as const, seed: 7, generatorVersion: 2 }
+    };
+    const isles = `chart.archipelago(name=${ARCHIPELAGO_NAMES.EAST[0] ?? ""})`;
+    expect(visitHeading({ place, farm: null }, translate)).toEqual({
+      title: "Đảo Ngọc",
+      subtitle: `visit.where(archipelago=${isles},region=chart.region.EAST)`
+    });
+    expect(visitHeading({ place: { ...place, claimed: false, name: null }, farm: null }, translate).title).toBe("visit.wild");
   });
 });

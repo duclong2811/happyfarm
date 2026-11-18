@@ -860,7 +860,8 @@ function toPublicIslandDTO(view: PublicIslandView): PublicIslandDTO {
         anchorX: dto.anchorX,
         anchorY: dto.anchorY,
         rotation: dto.rotation,
-        footprint: { ...dto.footprint }
+        footprint: { ...dto.footprint },
+        placementKey: dto.placementKey
       };
     })
   };

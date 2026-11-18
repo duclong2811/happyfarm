@@ -1,6 +1,8 @@
 import type {
   BuildCatalogEntryDTO,
   ConstructionDTO,
+  FarmIslandDTO,
+  VisitWorldPlaceResponse,
   CropDefinitionDTO,
   CropStateDTO,
   FarmTileDTO,
@@ -41,6 +43,7 @@ import { FarmIslandDTOSchema } from "@happy-farm/contracts";
 import { ApiClient, ApiError, type CreateFarmResult } from "./api";
 import { showIslandPicker } from "./island-picker";
 import { openSeaChart, type SeaChartModal } from "./sea-chart-modal";
+import { openVisitView, type VisitView } from "./visit-view";
 import { characterNameKey, showCharacterPicker } from "./character-picker";
 import { CHARACTER_PORTRAITS } from "./character-portraits";
 import { DEFAULT_PLAYER_CHARACTER_ID } from "@happy-farm/game-data";
@@ -173,7 +176,7 @@ import { plantedForestryPanelState, resourcePanelState } from "./forestry/panel"
 import { miningPanelState } from "./mining/panel";
 import { minePanelView, mineMilliAt, mineOreAt, mineSecondsUntilFull, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
 import { activityTrayItems, renderActivityTray, type ActivityKind, type ActivityTrayInput } from "./activity-tray";
-import { islandCellKindAt, islandFishingSpots, mineFootprintTiles } from "@happy-farm/game-data";
+import { buildIslandGround, islandCellKindAt, islandFishingSpots, mineFootprintTiles } from "@happy-farm/game-data";
 import {
   createAquaculturePondLoader,
   selectedAquaculturePond,
@@ -7529,12 +7532,124 @@ function showSeaChart(): void {
       await client.ensureWorldSlot(region);
       void refreshHorizon();
     },
+    visit: state.island === null ? null : (slotId) => {
+      void startVisit(slotId);
+    },
     describeError: (error) => describe(error)(t, state.language),
     onClose: () => {
       seaChartModal = null;
-      element<HTMLButtonElement>("chart-launcher").focus();
+      if (visitView === null && !visitInFlight) element<HTMLButtonElement>("chart-launcher").focus();
     }
   });
+}
+
+/** The place being visited (W4), drawn over the farm; null at home. */
+let visitView: VisitView | null = null;
+let visitInFlight = false;
+
+/**
+ * Sails to a place on the player's chart and shows it, look only.
+ *
+ * The server decides whether the place is on the player's chart and records the visit; the island is
+ * then drawn in a renderer of its own over the game, so the home farm's state is never touched and
+ * nothing done there reaches either island.
+ */
+async function startVisit(slotId: string): Promise<void> {
+  if (visitView !== null || visitInFlight) return;
+  visitInFlight = true;
+  setStatus(message("visit.sailing"));
+  try {
+    const visit = await api().visitWorldPlace(slotId);
+    if (visit.place.mine) return;
+    const viewState = visitViewState(visit);
+    visitView = openVisitView({
+      host: document.body,
+      translate: (key, params) => t(key, params),
+      quality: deviceQualityProfile(renderQualityRequested(), capability),
+      visit,
+      input: buildFarmSceneInput(viewState),
+      constructions: viewState.constructions.map(toSceneConstruction),
+      onClose: () => {
+        visitView = null;
+        element<HTMLButtonElement>("chart-launcher").focus();
+      },
+      onUnavailable: () => {
+        setStatus(message("scene.noWebgl"), true);
+      }
+    });
+    setStatus(message("visit.arrived", { name: visit.place.name ?? t(visit.place.claimed ? "visit.settled" : "visit.wild") }));
+  } catch (error: unknown) {
+    setStatus(describe(error), true);
+  } finally {
+    visitInFlight = false;
+  }
+}
+
+/**
+ * A visited place as the renderer's input. The server sends only what anyone sailing by would see,
+ * without ids; the renderer's row types want ids and versions, so stable stand-ins are filled in here.
+ * They name nothing on the server and are never sent anywhere.
+ */
+function visitViewState(visit: VisitWorldPlaceResponse): {
+  readonly tiles: FarmTileDTO[];
+  readonly crops: CropStateDTO[];
+  readonly trees: TreeStateDTO[];
+  readonly plots: PlotDTO[];
+  readonly constructions: ConstructionDTO[];
+  readonly selected: null;
+  readonly island: FarmIslandDTO;
+} {
+  const stamp = new Date(0).toISOString();
+  const farmId = "farm_00000000-0000-4000-8000-000000000000";
+  const farm = visit.farm;
+  const wild = (): FarmIslandDTO => {
+    // A free place's wild island, grown from its template exactly as the chart draws it.
+    const ground = buildIslandGround({
+      element: visit.place.island.element,
+      outline: visit.place.island.outline,
+      seed: visit.place.island.seed
+    });
+    return { ...ground, sites: ground.sites.map((site) => ({ ...site })), revision: 1 };
+  };
+  const island: FarmIslandDTO = farm?.island ?? wild();
+  return {
+    island,
+    selected: null,
+    plots: [],
+    tiles: (farm?.tiles ?? []).map((tile) => ({ ...tile, farmId, version: 1, updatedAt: stamp })),
+    crops: (farm?.crops ?? []).map((crop, index) => ({
+      ...crop,
+      cropInstanceId: `crop_visit_${String(index)}`,
+      plantedAt: stamp,
+      version: 1
+    })),
+    trees: (farm?.trees ?? []).map((tree, index) => ({
+      ...tree,
+      treeInstanceId: `tree_visit_${String(index)}`,
+      plantedAt: stamp,
+      lastHarvestedAt: null,
+      readyAt: null,
+      secondsUntilReady: 0,
+      version: 1,
+      storageState: "ACTIVE",
+      storedAt: null,
+      storedRemainingSeconds: null
+    })),
+    constructions: (farm?.constructions ?? []).map((construction, index) => ({
+      ...construction,
+      constructionId: `construction_visit_${String(index)}`,
+      farmId,
+      state: "ACTIVE",
+      source: construction.placementKey === null ? "PLAYER_PLACED" : "STARTER",
+      paidAmount: 0,
+      costAmount: 0,
+      costCurrencyDefinitionId: "currency_gold",
+      createdAt: stamp,
+      updatedAt: stamp,
+      storedAt: null,
+      version: 1
+    }))
+  };
 }
 
 function neighborIslandsShown(): boolean {
@@ -9016,7 +9131,7 @@ function enable3D(): void {
             repeat: event.repeat,
             cameraMode: state.cameraMode,
             hasCandidate: interactionCandidate !== null && economicStateReady(),
-            uiOpen: panels.active !== null || state.buildSelection !== null || moveSession !== null
+            uiOpen: panels.active !== null || state.buildSelection !== null || moveSession !== null || visitView !== null
           });
           if (requested) void run(runInteraction);
           else if (

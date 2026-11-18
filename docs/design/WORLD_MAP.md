@@ -49,7 +49,17 @@ Status: design agreed with the owner on 2026-11-19 (decisions below).
     the account's name.
   - Known limits: visits are not rate-limited beyond authentication, and a visit is instant. Travel
     time belongs with ships (W5).
-- W4b (the client's visit view) and W5 onward are not built yet. The constraints are the ones in `AGENTS.md`: the server is
+- **W4b is built** (client):
+  - The chart is drawn round what the player has seen. The frame follows the charted
+    archipelagos, the unknown sea lies under a mist with the seen waters cleared out of it, settled
+    islands carry their names, and the wind rose stands on the Centre when the chart reaches it
+    (else in a corner).
+  - Tapping a place on the chart says what it is and offers "Visit" (not for home). A visit opens
+    `apps/web/src/visit-view.ts`: the place drawn in a renderer of its own over the game, with the
+    estate camera, no character, no callbacks, and a "Home" button. The home farm's state is never
+    touched; the server's id-free view is given stand-in ids only for the renderer's row types.
+  - A free place shows its wild island, grown from its template with `buildIslandGround`.
+- W5 onward (ships, travel time, naval combat) is not started. The constraints are the ones in `AGENTS.md`: the server is
 authoritative, every mutation is validated, migrations are used for every schema change, and no
 proprietary game's map, names or art is copied.
 
