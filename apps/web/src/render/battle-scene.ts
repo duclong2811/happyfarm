@@ -18,9 +18,11 @@ import {
   SphereGeometry,
   WebGLRenderer,
   type BufferGeometry,
-  type Material
+  type Material,
+  type Object3D
 } from "three";
 import { SEA_BATTLE_ARENA_RADIUS, type SeaBattleState } from "@happy-farm/domain";
+import { fitShipModel, SHARED_SHIP_GEOMETRY } from "./ship-models";
 
 /**
  * The sea fight, drawn (docs/design/NAVAL.md, W5c).
@@ -28,11 +30,25 @@ import { SEA_BATTLE_ARENA_RADIUS, type SeaBattleState } from "@happy-farm/domain
  * Presentation only: it draws a `SeaBattleState` the battle view steps, and decides nothing. Ships
  * are placed between the last two simulation ticks (`alpha`) so a 20 Hz fight moves smoothly at the
  * screen's own rate. The camera rides behind the player's ship.
+ *
+ * Each ship draws with its class's model (`render/ship-models.ts`) once the model library has it; a
+ * plain block ship stands in until then, so a slow download never holds the fight up.
  */
 
 const SEA_BLUE = 0x2d86b8;
 const SKY = 0xcfe9f7;
 const MAX_BALLS = 160;
+
+/** Which model each ship draws with (index 0 is the player's), and how to get one. */
+export interface BattleShipModels {
+  readonly ids: readonly (string | null)[];
+  readonly load: (modelId: string) => Promise<Object3D | null>;
+}
+
+/** A ship's length on the water: a little longer than the circle a ball must enter to hit it. */
+function shipLength(radius: number): number {
+  return radius * 2.4;
+}
 
 export interface BattleScene {
   /** Draws the fight between `previous` positions and `state`'s, `alpha` of the way (0..1). */
@@ -67,7 +83,18 @@ function battleShip(length: number, pirate: boolean): Group {
   return ship;
 }
 
-export function createBattleScene(canvas: HTMLCanvasElement, state: SeaBattleState): BattleScene {
+/** Frees what this scene made; a ship model's geometry and materials stay with the model library. */
+function disposeOwned(root: Object3D): void {
+  root.traverse((object) => {
+    if (!(object instanceof Mesh) || object.userData[SHARED_SHIP_GEOMETRY] === true) return;
+    (object.geometry as BufferGeometry).dispose();
+    const material = object.material as Material | Material[];
+    if (Array.isArray(material)) for (const entry of material) entry.dispose();
+    else material.dispose();
+  });
+}
+
+export function createBattleScene(canvas: HTMLCanvasElement, state: SeaBattleState, models?: BattleShipModels): BattleScene {
   const renderer = new WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   const scene = new Scene();
@@ -92,9 +119,21 @@ export function createBattleScene(canvas: HTMLCanvasElement, state: SeaBattleSta
   }
   scene.add(buoys);
 
+  let disposed = false;
   const ships = state.ships.map((ship, index) => {
-    const node = battleShip(ship.spec.radius * 2.2, index > 0);
+    const node = new Group();
+    const standIn = battleShip(shipLength(ship.spec.radius) * 0.92, index > 0);
+    node.add(standIn);
     scene.add(node);
+    const modelId = models?.ids[index] ?? null;
+    if (models !== undefined && modelId !== null) {
+      void models.load(modelId).then((source) => {
+        if (source === null || disposed) return;
+        node.remove(standIn);
+        disposeOwned(standIn);
+        node.add(fitShipModel(source, shipLength(ship.spec.radius)));
+      });
+    }
     return node;
   });
   const balls = new InstancedMesh(new SphereGeometry(0.7, 8, 6), new MeshLambertMaterial({ color: 0x1c1c1c }), MAX_BALLS);
@@ -154,14 +193,8 @@ export function createBattleScene(canvas: HTMLCanvasElement, state: SeaBattleSta
     },
     resize,
     dispose() {
-      scene.traverse((object) => {
-        if (object instanceof Mesh) {
-          (object.geometry as BufferGeometry).dispose();
-          const material = object.material as Material | Material[];
-          if (Array.isArray(material)) for (const entry of material) entry.dispose();
-          else material.dispose();
-        }
-      });
+      disposed = true;
+      disposeOwned(scene);
       renderer.dispose();
     }
   };

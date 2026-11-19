@@ -125,6 +125,7 @@ import {
 } from "./character-camera";
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
+import { shipModelForTier } from "./ship-models";
 import { isTypingTarget } from "../player/input";
 import { createPlayerCharacterView, PLAYER_CHARACTER_ASSET, ROSTER_CHARACTER_SCALE } from "./player-character";
 import { cropStageFor, cropStageModelId, treeStageModelId } from "./model-urls";
@@ -2967,7 +2968,7 @@ let interactionGeometry: BufferGeometry | null = null;
         ? ""
         : `${String(centre.x)},${String(centre.z)},${String(horizonExtent)}|${String(input.home.x)},${String(input.home.z)}|${input.slots
             .map((slot) => `${slot.slotId}:${String(slot.claimed)}:${slot.island.element}:${slot.island.outline}:${String(slot.island.seed)}:${String(slot.island.generatorVersion)}`)
-            .join(";")}|${(input.voyages ?? []).map((voyage) => `${voyage.fromSlotId}>${voyage.toSlotId}@${voyage.departedAt}/${voyage.arrivesAt}:${String(voyage.mine)}`).join(";")}`;
+            .join(";")}|${(input.voyages ?? []).map((voyage) => `${voyage.fromSlotId}>${voyage.toSlotId}@${voyage.departedAt}/${voyage.arrivesAt}:${String(voyage.mine)}:${String(voyage.shipTier ?? 1)}`).join(";")}`;
     if (signature === horizonSignature) return;
     horizonSignature = signature;
     horizonBuildToken += 1;
@@ -2983,9 +2984,15 @@ let interactionGeometry: BufferGeometry | null = null;
     const voyages = input.voyages ?? [];
     if (input.homeSlotId !== undefined && voyages.length > 0) {
       const ships = voyages.map((voyage) => {
-        const node = buildHorizonShip(horizonExtent * 0.12, voyage.mine, HORIZON_COLOR);
+        // The node sails at once; its model joins it when the library has it (usually cached).
+        const node = new Group();
         node.userData = { horizonVoyage: true };
         horizonGroup.add(node);
+        void library.load(shipModelForTier(voyage.shipTier ?? 1)).then((source) => {
+          if (source === null || token !== horizonBuildToken || disposed) return;
+          node.add(buildHorizonShip(source, horizonExtent * 0.13, voyage.mine, HORIZON_COLOR));
+          draw();
+        });
         return { voyage, node };
       });
       horizonShips = {

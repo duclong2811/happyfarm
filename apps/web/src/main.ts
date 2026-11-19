@@ -139,6 +139,7 @@ import {
   type DeviceCapability
 } from "./mobile/capability";
 import { createHoldControl, createJoystickControl, type HoldControl, type JoystickControl } from "./mobile/joystick";
+import { sharedModelLibrary } from "./render/model-library";
 import { deviceQualityProfile } from "./render/render-quality";
 import { DEFAULT_CAMERA_MODE, otherCameraMode, type CameraMode } from "./render/camera-mode";
 import { GROUND_SURFACE_Y, islandWadeDepthAt, terrainHeightAt } from "./render/terrain-height";
@@ -7564,6 +7565,8 @@ function openAmbushFight(): void {
     translate: (key, params) => t(key, params),
     setup: ambush.setup,
     pirates: ambush.pirates,
+    playerShip: fleetState?.fleet.ship.classId ?? "ship_class_rowboat",
+    loadModel: (modelId) => sharedModelLibrary().load(modelId),
     submit: async (inputs) => {
       const answer = await api().fightAmbush(inputs);
       setFleet(answer.fleet);

@@ -1,5 +1,4 @@
 import {
-  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   CircleGeometry,
@@ -22,6 +21,7 @@ import {
   type IslandOutline
 } from "@happy-farm/game-data";
 import { islandRelief, RELIEF_BASE_WORLD, RELIEF_TAG, type IslandRelief } from "./island-relief";
+import { fitShipModel, SHARED_SHIP_GEOMETRY } from "./ship-models";
 import { SEA_SURFACE_Y } from "./world-cell-overlay";
 
 /**
@@ -336,7 +336,8 @@ function seaPatch(radius: number, haze: number): Mesh {
 export function disposeHorizon(group: Group): void {
   group.traverse((object) => {
     if (object instanceof Mesh) {
-      (object.geometry as BufferGeometry).dispose();
+      // A ship's geometry belongs to the model library; only its hazed materials are this group's.
+      if (object.userData[SHARED_SHIP_GEOMETRY] !== true) (object.geometry as BufferGeometry).dispose();
       const material = object.material as Material | Material[];
       if (Array.isArray(material)) for (const entry of material) entry.dispose();
       else material.dispose();
@@ -352,6 +353,8 @@ export interface HorizonVoyage {
   readonly departedAt: string;
   readonly arrivesAt: string;
   readonly mine: boolean;
+  /** The ship's class tier, which picks its model; a rowboat when absent. */
+  readonly shipTier?: number;
 }
 
 /**
@@ -389,21 +392,11 @@ export function horizonShipPose(
 }
 
 /**
- * A small sailing ship for the horizon: a hull, a mast and a sail, hazed like the islands and never
- * picked. The player's own flies a red sail. `size` is its length in world metres; it faces +x.
+ * A ship for the horizon: its class's model (`render/ship-models.ts`), `size` long overall, hazed
+ * like the islands and never picked. The player's own is hazed less, so it stands out. Faces +x.
  */
-export function buildHorizonShip(size: number, mine: boolean, haze: number): Group {
-  const hazeColour = new Color(haze);
-  const material = (hex: number, amount: number): MeshLambertMaterial => new MeshLambertMaterial({ color: new Color(hex).lerp(hazeColour, amount), fog: false });
-  const ship = new Group();
-  const hull = new Mesh(new BoxGeometry(size, size * 0.22, size * 0.34), material(0x6b4423, HAZE * 0.6));
-  hull.position.y = SEA_SURFACE_Y + size * 0.08;
-  const mast = new Mesh(new CylinderGeometry(size * 0.025, size * 0.03, size * 0.85, 5), material(0x4a2f18, HAZE * 0.6));
-  mast.position.set(0, SEA_SURFACE_Y + size * 0.55, 0);
-  const sail = new Mesh(new ConeGeometry(size * 0.32, size * 0.6, 3), material(mine ? 0xd23a2a : 0xf6f0e0, HAZE * 0.4));
-  sail.scale.set(1, 1, 0.12);
-  sail.position.set(size * 0.05, SEA_SURFACE_Y + size * 0.6, 0);
-  for (const part of [hull, mast, sail]) part.raycast = noRaycast;
-  ship.add(hull, mast, sail);
+export function buildHorizonShip(source: Object3D, size: number, mine: boolean, haze: number): Group {
+  const ship = fitShipModel(source, size, { haze, amount: mine ? HAZE * 0.15 : HAZE * 0.6 });
+  ship.position.y = SEA_SURFACE_Y;
   return ship;
 }

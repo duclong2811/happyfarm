@@ -177,6 +177,21 @@ places; this document gives it ships.
 - **Rewards.** Pirate loot is an economy decision for the owner. Until then a win gives experience and
   nothing else.
 
+## How ships look
+
+- Every class and every pirate has its own model, in the look of old Vietnamese boats and war junks:
+  - rowboat: a **ghe** with a bamboo mui and a sculling oar;
+  - sloop: a **ghe bầu** with one bat-wing sail;
+  - brig: a black war junk with two sails, oars and guns;
+  - frigate: a **lâu thuyền rồng** with a stern castle and a dragon prow.
+- Pirates sail the **tàu Ô**, black ships with dark ragged sails.
+- The models are generated (`tools/asset-pipeline/node/ships.mjs`, `docs/HAPPYFARM_ART_BIBLE.md`).
+  `apps/web/src/render/ship-models.ts` picks a model by class id, pirate id or tier, and fits it to a
+  scene.
+- The fight draws each ship with its model once loaded; a block ship stands in until then. The
+  horizon draws each voyage's ship by its tier, hazed like the islands, the player's own less so.
+- Presentation only: a model never changes a ship's numbers, which stay in game data.
+
 ## Security notes
 
 - The client never sends a class, a price, a time, a position (in W5a), a hit, or a hull value.

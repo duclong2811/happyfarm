@@ -12,7 +12,9 @@ import {
   type SeaBattleState
 } from "@happy-farm/domain";
 import type { MessageKey } from "./i18n";
+import type { Object3D } from "three";
 import { createBattleScene, type BattleScene } from "./render/battle-scene";
+import { shipModelId } from "./render/ship-models";
 
 /**
  * A pirate ambush, fought on the player's device (docs/design/NAVAL.md, W5c; ADR 0031).
@@ -62,8 +64,12 @@ export interface BattleViewOptions {
   readonly host: HTMLElement;
   readonly translate: Translate;
   readonly setup: SeaBattleSetup;
-  /** Pirate ids, for their names. */
+  /** Pirate ids, for their names and models. */
   readonly pirates: readonly string[];
+  /** The player's ship class id, for its model. */
+  readonly playerShip: string;
+  /** Loads a ship model (the shared model library); without it the fight draws block ships. */
+  readonly loadModel?: (modelId: string) => Promise<Object3D | null>;
   /** Sends the recorded orders; resolves with the server's own result (null if it was already decided). */
   readonly submit: (inputs: readonly [number, number][]) => Promise<SeaBattleResult | null>;
   readonly describeError: (error: unknown) => string;
@@ -224,7 +230,8 @@ export function openBattleView(options: BattleViewOptions): BattleView {
   host.appendChild(root);
   let scene: BattleScene | null = null;
   try {
-    scene = createBattleScene(canvas, state);
+    const models = [shipModelId(options.playerShip), ...options.pirates.map(shipModelId)];
+    scene = createBattleScene(canvas, state, options.loadModel === undefined ? undefined : { ids: models, load: options.loadModel });
   } catch {
     scene = null;
   }

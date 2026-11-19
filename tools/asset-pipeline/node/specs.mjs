@@ -22,6 +22,15 @@ import {
   taperedBox,
   taperedCylinder
 } from "./glb.mjs";
+import {
+  buildPirateCorsair,
+  buildPirateCutter,
+  buildPirateRaider,
+  buildShipBrig,
+  buildShipFrigate,
+  buildShipRowboat,
+  buildShipSloop
+} from "./ships.mjs";
 
 const PALETTE = {
   carrot: 0xe0803c,
@@ -251,6 +260,12 @@ function buildBarn() {
 }
 
 /**
+ * A ship is a hull, a rig and its fittings, seen close in a fight: the art bible's ship row
+ * (`docs/HAPPYFARM_ART_BIBLE.md`, section 9).
+ */
+const SHIP_BUDGET = { triangles: 1500, materials: 6, bytes: 110000 };
+
+/**
  * Every generated model.
  *
  * `envelope` is what the artifact test asserts: base on `y = 0`, height exactly as stated, nothing
@@ -339,5 +354,69 @@ export const MODEL_SPECS = [
     envelope: { height: 2.7, halfFootprint: 1.75 },
     budget: { triangles: 1500, materials: 6, bytes: 40000 },
     build: buildBarn
+  },
+  // Ships (docs/design/NAVAL.md): built in metres, bow toward +z, keel at y = 0. The envelope height is
+  // each ship's own built height, so the generator writes it at true size; the renderer scales it to the
+  // battle's numbers. See `ships.mjs` for the references and `SHIP_DRAFT_SHARE` for the waterline.
+  // Ghe: the free rowing boat every dock starts with.
+  {
+    id: "ship_rowboat",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 1.29, halfFootprint: 2.5 },
+    budget: SHIP_BUDGET,
+    build: buildShipRowboat
+  },
+  // Ghe bầu: one bat-wing sail.
+  {
+    id: "ship_sloop",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 9.27, halfFootprint: 5.5 },
+    budget: SHIP_BUDGET,
+    build: buildShipSloop
+  },
+  // Thuyền chiến: the two-masted war junk.
+  {
+    id: "ship_brig",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 11.35, halfFootprint: 7.1 },
+    budget: SHIP_BUDGET,
+    build: buildShipBrig
+  },
+  // Lâu thuyền rồng: castle, dragon prow, three sails.
+  {
+    id: "ship_frigate",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 13.71, halfFootprint: 9.6 },
+    budget: SHIP_BUDGET,
+    build: buildShipFrigate
+  },
+  // Tàu Ô: the pirates' black ships, smallest first.
+  {
+    id: "pirate_cutter",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 8.32, halfFootprint: 5.0 },
+    budget: SHIP_BUDGET,
+    build: buildPirateCutter
+  },
+  {
+    id: "pirate_raider",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 10.41, halfFootprint: 6.6 },
+    budget: SHIP_BUDGET,
+    build: buildPirateRaider
+  },
+  {
+    id: "pirate_corsair",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 12.78, halfFootprint: 8.2 },
+    budget: SHIP_BUDGET,
+    build: buildPirateCorsair
   }
 ];

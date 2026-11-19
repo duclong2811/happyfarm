@@ -125,7 +125,8 @@ Every generated model is written to this subset, which the repository's own vali
 ## 8. Naming
 
 Stable snake-like ids, matching the domain: `crop_<name>`, `tree_<name>`, `building_<name>`,
-`character_<name>`, `prop_<name>`. A file is `<id>.glb`, and an id is never reused for a different
+`character_<name>`, `prop_<name>`, `ship_<class>` (a player's ship class, `ship_class_<class>` in game
+data) and `pirate_<name>` (the pirate's own game-data id). A file is `<id>.glb`, and an id is never reused for a different
 object. Display names are not identifiers.
 
 ## 9. Budgets (web and mobile)
@@ -136,9 +137,32 @@ object. Display names are not identifiers.
 | Scenery prop (tree, bush, rock) | ≤ 700 | ≤ 4 | ≤ 25 kB |
 | Character | ≤ 1200 | ≤ 6 | ≤ 40 kB |
 | Building | ≤ 1500 | ≤ 6 | ≤ 40 kB |
+| Ship | ≤ 1500 | ≤ 6 | ≤ 110 kB |
+
+A ship is seen close and from every side in a sea fight, and a flat-shaded triangle soup costs 72
+bytes a triangle, so its file ceiling is above a building's. Ships load only when a fight or a ship at
+sea needs them.
 
 One model is loaded once and cloned or instanced per placement, never loaded per instance. Nothing
 in the renderer may fetch a model during a farm refresh.
+
+### Ships
+
+Ships take the look of old Vietnamese boats and war junks (`tools/asset-pipeline/node/ships.mjs`
+names the references):
+
+* a hull whose sheer sweeps up at both ends, a broad high stern and a narrow bow;
+* **mắt thuyền**, an eye on each side of the bow;
+* **buồm cánh dơi**, brown battened lug sails whose panels bulge between battens and whose yard rises
+  aft;
+* a **mui** of woven bamboo over the deck, and swallow-tailed pennants (**cờ đuôi nheo**) at the
+  mastheads;
+* on warships: a black lacquered hull with a vermilion band, oars and bronze guns; the flagship adds a
+  stern castle under a yellow swept roof and a gilded dragon at the prow.
+
+Pirates are the **tàu Ô**, the "black ships": near-black hulls, dark ragged sails, black pennants and
+eyes ringed in red, so friend and foe read apart at a glance. A ship is built in metres and faces +z;
+the renderer fits it to its scene's length and sinks it to its waterline (`render/ship-models.ts`).
 
 ## 10. Pipeline
 

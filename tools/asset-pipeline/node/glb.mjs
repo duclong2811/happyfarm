@@ -31,6 +31,71 @@ function quad(target, a, b, c, d) {
   triangle(target, a, c, d);
 }
 
+/**
+ * A triangle wound so its face normal points to the `outward` side.
+ *
+ * Curved, lofted shapes (a hull, a sail) are easier to review as points than as windings: the
+ * builder names which way a face looks and this picks the order, so no face can end up inside out.
+ */
+export function facingTriangle(target, a, b, c, outward) {
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const normal = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+  const along = normal[0] * outward[0] + normal[1] * outward[1] + normal[2] * outward[2];
+  if (along < 0) triangle(target, a, c, b);
+  else triangle(target, a, b, c);
+}
+
+/** A quad (two triangles) facing `outward`. */
+export function facingQuad(target, a, b, c, d, outward) {
+  facingTriangle(target, a, b, c, outward);
+  facingTriangle(target, a, c, d, outward);
+}
+
+/**
+ * A thin sheet seen from both sides: a sail, a flag, an open roof. The contract ships no
+ * `doubleSided` materials, so a sheet is two faces back to back; the renderer culls the far one.
+ */
+export function sheetTriangle(target, a, b, c) {
+  triangle(target, a, b, c);
+  triangle(target, a, c, b);
+}
+
+export function sheetQuad(target, a, b, c, d) {
+  sheetTriangle(target, a, b, c);
+  sheetTriangle(target, a, c, d);
+}
+
+/** A square-section beam between two points: an oar, a yard, a batten, a gun barrel. */
+export function beam(target, from, to, thickness, { caps = true } = {}) {
+  const direction = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+  const length = Math.hypot(direction[0], direction[1], direction[2]);
+  if (length < 1e-9) return;
+  const along = direction.map((value) => value / length);
+  // Any vector not parallel to the beam gives the cross-section its two axes.
+  const helper = Math.abs(along[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+  let side = [along[1] * helper[2] - along[2] * helper[1], along[2] * helper[0] - along[0] * helper[2], along[0] * helper[1] - along[1] * helper[0]];
+  const sideLength = Math.hypot(side[0], side[1], side[2]);
+  side = side.map((value) => value / sideLength);
+  const other = [along[1] * side[2] - along[2] * side[1], along[2] * side[0] - along[0] * side[2], along[0] * side[1] - along[1] * side[0]];
+  const half = thickness / 2;
+  const offsets = [
+    [half, half],
+    [-half, half],
+    [-half, -half],
+    [half, -half]
+  ].map(([a, b]) => [side[0] * a + other[0] * b, side[1] * a + other[1] * b, side[2] * a + other[2] * b]);
+  const at = (origin, offset) => [origin[0] + offset[0], origin[1] + offset[1], origin[2] + offset[2]];
+  for (let index = 0; index < 4; index += 1) {
+    const next = (index + 1) % 4;
+    const outward = [offsets[index][0] + offsets[next][0], offsets[index][1] + offsets[next][1], offsets[index][2] + offsets[next][2]];
+    facingQuad(target, at(from, offsets[index]), at(from, offsets[next]), at(to, offsets[next]), at(to, offsets[index]), outward);
+  }
+  if (!caps) return;
+  facingQuad(target, ...offsets.map((offset) => at(to, offset)), along);
+  facingQuad(target, ...offsets.map((offset) => at(from, offset)), along.map((value) => -value));
+}
+
 /** Deterministic pseudo-random source: the same seed always yields the same variation. */
 export function seededRandom(seed) {
   let state = seed >>> 0;
@@ -261,11 +326,12 @@ function buildAccessors(parts) {
   for (const current of parts) {
     // Degenerate triangles carry no area and therefore no usable normal; a model that ships one is
     // a model the renderer would light as black. Dropping them here makes that impossible.
-    current.triangles = current.triangles.filter((_, index, all) => {
-      if (index % 3 !== 0) return true;
-      const a = all[index];
-      const b = all[index + 1];
-      const c = all[index + 2];
+    // A triangle is kept or dropped whole: dropping single vertices would shift every later triangle.
+    const kept = [];
+    for (let index = 0; index < current.triangles.length; index += 3) {
+      const a = current.triangles[index];
+      const b = current.triangles[index + 1];
+      const c = current.triangles[index + 2];
       const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
       const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
       const cross = [
@@ -273,8 +339,9 @@ function buildAccessors(parts) {
         ab[2] * ac[0] - ab[0] * ac[2],
         ab[0] * ac[1] - ab[1] * ac[0]
       ];
-      return Math.hypot(cross[0], cross[1], cross[2]) > 1e-9;
-    });
+      if (Math.hypot(cross[0], cross[1], cross[2]) > 1e-9) kept.push(a, b, c);
+    }
+    current.triangles = kept;
     const vertexCount = current.triangles.length;
     const positions = new Float32Array(vertexCount * 3);
     const normals = new Float32Array(vertexCount * 3);
