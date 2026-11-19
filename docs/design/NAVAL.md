@@ -67,6 +67,39 @@ places; this document gives it ships.
   appear on the next chart or archipelago read the game already makes.
 - Migration 0048 adds two partial indexes on `ship_voyages` (from, to; where under way) for this read.
 
+## W5c: pirate ambushes (server built; client next)
+
+- **When pirates strike.**
+  - `planAmbush` (game data) decides, when a voyage starts, whether pirates strike and when, between
+    30% and 70% of the way. It also picks the seed and who attacks.
+  - The chance is the voyage's length × 1/2000, capped at 50%: about 12% to a neighbour, about 40% to
+    another archipelago.
+  - The roll is fixed by the player, the route and the day, so calling the ship home and setting out
+    again changes nothing.
+  - Rowboats carry no guns and are never ambushed.
+  - Parties grow with the ship's tier: cutters for a sloop; raiders or two cutters for a brig;
+    corsairs for a frigate.
+  - All of these numbers are a first proposal, in `packages/game-data/src/pirates`.
+- **The fight.**
+  - `GET /ships/fleet` and the voyage replies carry `voyage.ambush`: when it strikes, its status, and
+    the exact simulation setup (seed, the player's ship with its current hull, the pirates).
+  - The device plays it live and submits its inputs with `POST /voyages/ambush { inputs: [[tick,
+    action], …] }` (at most 3,600). The server refuses before the strike (`AMBUSH_NOT_READY`), replays
+    the fight, and writes the outcome and the ship's hull in one guarded batch.
+  - A second submission answers with the decided outcome and takes no inputs.
+  - The ambushed ship starts still with its sails struck, so a captain who gives no orders is sunk.
+    Ignoring a fight is never a way out.
+- **Before the fight is fought:**
+  - a visit (`AMBUSH_PENDING`) and an onward voyage are refused;
+  - calling the ship home plays the fight out with no orders, and its damage stands.
+- **Losing.**
+  - The ship is towed home with its hull at 0, and cannot sail (`SHIP_DAMAGED`) until it is repaired.
+  - `POST /ships/repair { requestId }` costs 2 gold and 0.25 wood per missing hull point (proposal).
+    It goes through the ledger as `SHIP_REPAIR`, in the same guarded batch as a build, and is
+    idempotent.
+- **Rewards for a win** are not given yet: that is an economy decision for the owner.
+- Migration 0049 adds the voyage's ambush columns.
+
 ## Phases
 
 | Phase | What ships | Server work |

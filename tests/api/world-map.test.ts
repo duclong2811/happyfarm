@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CreateFarm, type ActorContext, type AuthenticationPort, type Clock, type IdGenerator, type WorldChartPort } from "@happy-farm/application";
+import { CreateFarm, type ActorContext, type AuthenticationPort, type Clock, type IdGenerator, type ShipCatalogue, type WorldChartPort } from "@happy-farm/application";
 import {
   parseConstructionId,
   parseCropInstanceId,
@@ -15,16 +15,30 @@ import {
   type TreeInstanceId
 } from "@happy-farm/domain";
 import { chartedArchipelagos, findSeaSlot, seaChart, SHIP_CLASSES, voyageSeconds } from "@happy-farm/game-data";
-import { cumulativeXpForLevel } from "@happy-farm/domain";
+import {
+  createSeaBattle,
+  cumulativeXpForLevel,
+  runSeaBattle,
+  SEA_BATTLE_ACTIONS,
+  seaBattleResult,
+  seaCosine,
+  seaSine,
+  stepSeaBattle,
+  type SeaBattleAction,
+  type SeaBattleSetup,
+  type SeaBattleState
+} from "@happy-farm/domain";
 import {
   EnsureWorldSlotResponseSchema,
   GetMyFarmResponseSchema,
   GetWorldArchipelagoResponseSchema,
   GetWorldChartResponseSchema,
   VisitWorldPlaceResponseSchema,
-  FleetResponseSchema
+  FleetResponseSchema,
+  FightAmbushResponseSchema
 } from "@happy-farm/contracts";
 import { createHandler } from "../../workers/api/src/handler";
+import { gameDataShipCatalogue } from "../../workers/api/src/runtime";
 import { D1FarmMemberRepository, D1FarmRepository, D1PlayerRepository, D1WorldSlotRepository, D1WorldVisitRepository } from "../../workers/api/src/d1-repositories";
 import {
   GameDataConstructionDefinitions,
@@ -106,7 +120,7 @@ describe("the world map", () => {
   let ids: WorldIds;
   let handle: (request: Request) => Promise<Response>;
 
-  function build(world: WorldChartPort | null = gameDataWorldChart): void {
+  function build(world: WorldChartPort | null = gameDataWorldChart, ships?: ShipCatalogue): void {
     handle = createHandler({
       db,
       authenticator: auth,
@@ -124,7 +138,7 @@ describe("the world map", () => {
       terrain: gameDataTileTerrain,
       landSale: gameDataLandSale,
       islands: { choiceEnabled: true, builder: gameDataIslandGroundBuilder },
-      ...(world === null ? {} : { world: { chart: world } }),
+      ...(world === null ? {} : { world: { chart: world, ...(ships === undefined ? {} : { ships }) } }),
       clock
     });
   }
@@ -630,6 +644,155 @@ describe("the world map", () => {
     await request("/voyages/end", {});
     auth.setActor({ playerId: playerId(1) });
     expect(GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart"))).voyages).toEqual([]);
+  });
+
+  /** The game's own ship rules, with pirates on every voyage of a fighting ship: `party` decides who. */
+  function alwaysAmbushed(party: readonly string[]): ShipCatalogue {
+    return {
+      ...gameDataShipCatalogue,
+      planAmbush: (input) => (input.shipTier < 2 ? null : { atShare: 0.5, seed: 777, pirates: party })
+    };
+  }
+
+  /** A captain like a player's device: keeps the nearest pirate abeam and fires the side it is on. */
+  function captain(state: SeaBattleState): SeaBattleAction[] {
+    const me = state.ships[0];
+    const target = state.ships.slice(1).find((ship) => ship.alive);
+    if (me === undefined || target === undefined) return [];
+    const dx = target.x - me.x;
+    const dz = target.z - me.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+    const cross = seaCosine(me.heading) * dz - seaSine(me.heading) * dx;
+    const dot = seaCosine(me.heading) * dx + seaSine(me.heading) * dz;
+    const abeam = Math.abs(dot) / distance < 0.3;
+    const actions: SeaBattleAction[] = [];
+    const rudder: SeaBattleAction = abeam ? "RUDDER_CENTER" : dot > 0 ? (cross > 0 ? "RUDDER_LEFT" : "RUDDER_RIGHT") : cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT";
+    if (me.rudder !== (rudder === "RUDDER_LEFT" ? -1 : rudder === "RUDDER_RIGHT" ? 1 : 0)) actions.push(rudder);
+    if (me.sail !== 1) actions.push("SAIL_HALF");
+    // A device sends a broadside only when that side's guns are loaded.
+    if (distance < 55 && abeam && (cross > 0 ? me.reloadStarboard : me.reloadPort) === 0) actions.push(cross > 0 ? "FIRE_STARBOARD" : "FIRE_PORT");
+    return actions;
+  }
+
+  /** Plays a fight as a device does, and returns its inputs as the wire carries them, and its result. */
+  function playOnDevice(setup: SeaBattleSetup): { inputs: [number, number][]; result: ReturnType<typeof seaBattleResult> } {
+    const state = createSeaBattle(setup);
+    const inputs: [number, number][] = [];
+    while (state.outcome === null) {
+      const actions = captain(state);
+      for (const action of actions) inputs.push([state.tick, SEA_BATTLE_ACTIONS.indexOf(action)]);
+      stepSeaBattle(state, actions);
+    }
+    return { inputs, result: seaBattleResult(state) };
+  }
+
+  /** Player `n` with a sloop at its dock. */
+  async function withSloop(n: number): Promise<void> {
+    const sloop = SHIP_CLASSES[1];
+    if (sloop?.buildCost == null) throw new Error("no sloop");
+    equip(n, sloop.requiredPlayerLevel, 50_000, 400, 200);
+    expect((await request("/ships/build", { requestId: `build-sloop-${String(n)}` })).status).toBe(200);
+  }
+
+  it("plans pirates for a fighting ship, never a rowboat, and gives the device the exact fight", async () => {
+    build(gameDataWorldChart, alwaysAmbushed(["pirate_cutter"]));
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const rowing = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-rowboat-1" })));
+    expect(rowing.voyage?.ambush).toBeNull();
+    await request("/voyages/end", {});
+    await withSloop(1);
+    const sailing = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-sloop-1" })));
+    const ambush = sailing.voyage?.ambush;
+    if (ambush == null || sailing.voyage === null) throw new Error("no ambush");
+    expect(ambush.status).toBe("PENDING");
+    expect(ambush.pirates).toEqual(["pirate_cutter"]);
+    expect(ambush.setup.seed).toBe(777);
+    expect(ambush.setup.player).toMatchObject({ hull: SHIP_CLASSES[1]?.hull, cannons: SHIP_CLASSES[1]?.cannons });
+    expect(Date.parse(ambush.at)).toBeGreaterThan(Date.parse(sailing.voyage.departedAt));
+    expect(Date.parse(ambush.at)).toBeLessThan(Date.parse(sailing.voyage.arrivesAt));
+  });
+
+  it("replays the device's fight to decide it, once, and keeps the visit waiting until it is fought", async () => {
+    build(gameDataWorldChart, alwaysAmbushed(["pirate_cutter"]));
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    await withSloop(1);
+    const sailing = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-sloop-2" })));
+    const ambush = sailing.voyage?.ambush;
+    if (ambush == null || sailing.voyage === null) throw new Error("no ambush");
+    const played = playOnDevice(ambush.setup);
+    expect(await codeOf(await request("/voyages/ambush", { inputs: played.inputs }))).toBe("AMBUSH_NOT_READY");
+
+    advance((Date.parse(sailing.voyage.arrivesAt) - Date.parse(sailing.voyage.departedAt)) / 1000);
+    expect(await codeOf(await request("/world/visit", { slotId: "slot_north_1_2" }))).toBe("AMBUSH_PENDING");
+    expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_3", requestId: "voyage-sloop-3" }))).toBe("AMBUSH_PENDING");
+
+    const fought = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
+    // The server's replay of the device's inputs is the device's own fight.
+    expect(fought.battle).toEqual(played.result);
+    expect(fought.battle).toEqual(runSeaBattle(ambush.setup, played.inputs.map(([tick, action]) => ({ tick, action: SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER" }))));
+    expect(fought.fleet.voyage?.ambush?.status).toBe(played.result.outcome);
+    expect(fought.fleet.ship.hull).toBe(played.result.playerHull);
+    // Asked again, the outcome stands and new inputs are not taken.
+    const again = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: [] })));
+    expect(again.battle).toBeNull();
+    expect(again.fleet.ship.hull).toBe(played.result.playerHull);
+    if (played.result.outcome !== "LOST") expect((await request("/world/visit", { slotId: "slot_north_1_2" })).status).toBe(200);
+  });
+
+  it("plays out struck pirates without orders when the ship is called home, and the damage stands", async () => {
+    build(gameDataWorldChart, alwaysAmbushed(["pirate_corsair", "pirate_corsair", "pirate_raider"]));
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    await withSloop(1);
+    const sailing = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-sloop-4" })));
+    const ambush = sailing.voyage?.ambush;
+    if (ambush == null) throw new Error("no ambush");
+    advance((Date.parse(ambush.at) - Date.parse(NOW)) / 1000 + 1);
+    const home = FleetResponseSchema.parse(await dataOf(await request("/voyages/end", {})));
+    const passive = runSeaBattle(ambush.setup, []);
+    expect(home.location).toBe("HOME");
+    expect(home.ship.hull).toBe(passive.playerHull);
+    expect(home.ship.hull).toBeLessThan(home.ship.hullMax);
+  });
+
+  it("sends a sunk ship home to be repaired, for gold and wood through the ledger, once per request", async () => {
+    build(gameDataWorldChart, alwaysAmbushed(["pirate_corsair", "pirate_corsair", "pirate_corsair", "pirate_corsair"]));
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    await withSloop(1);
+    const sailing = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-sloop-5" })));
+    const ambush = sailing.voyage?.ambush;
+    if (ambush == null) throw new Error("no ambush");
+    advance((Date.parse(ambush.at) - Date.parse(NOW)) / 1000 + 1);
+    const lost = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: [] })));
+    expect(lost.battle?.outcome).toBe("LOST");
+    expect(lost.fleet.location).toBe("HOME");
+    expect(lost.fleet.ship.hull).toBe(0);
+    expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_3", requestId: "voyage-sloop-6" }))).toBe("SHIP_DAMAGED");
+
+    const before = holdings(1);
+    const hullMax = lost.fleet.ship.hullMax;
+    const repaired = FleetResponseSchema.parse(await dataOf(await request("/ships/repair", { requestId: "repair-request-1" })));
+    expect(repaired.ship.hull).toBe(hullMax);
+    expect(holdings(1)).toMatchObject({ gold: before.gold - hullMax * 2, wood: before.wood - Math.ceil(hullMax * 0.25) });
+    const ledger = db.sqlite.prepare("SELECT delta, reference_type FROM economy_ledger WHERE reason = 'SHIP_REPAIR'").all();
+    expect(ledger).toEqual([{ delta: -hullMax * 2, reference_type: "SHIP" }]);
+    // The same request again charges nothing; a ship that is whole needs no repair.
+    expect((await request("/ships/repair", { requestId: "repair-request-1" })).status).toBe(200);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'SHIP_REPAIR'").get()).toEqual({ n: 1 });
+    expect(await codeOf(await request("/ships/repair", { requestId: "repair-request-2" }))).toBe("SHIP_NOT_DAMAGED");
+  });
+
+  it("refuses a fight's inputs no device would send", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    for (const inputs of [[[3_600, 0]], [[0, 8]], [[0]], [[-1, 0]], [[0.5, 0]], Array.from({ length: 3_601 }, () => [0, 0])]) {
+      expect((await request("/voyages/ambush", { inputs })).status).toBe(400);
+    }
+    expect((await request("/voyages/ambush", { inputs: [], hull: 999 })).status).toBe(400);
+    expect(await codeOf(await request("/voyages/ambush", { inputs: [] }))).toBe("RESOURCE_NOT_FOUND");
   });
 
   it("validates what a client sends and who is asking", async () => {

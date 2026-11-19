@@ -48,7 +48,8 @@ function captain(state: SeaBattleState): SeaBattleAction[] {
   const rudder: SeaBattleAction = distance > 70 ? (cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT") : abeam ? "RUDDER_CENTER" : dot > 0 ? (cross > 0 ? "RUDDER_LEFT" : "RUDDER_RIGHT") : cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT";
   if (me.rudder !== (rudder === "RUDDER_LEFT" ? -1 : rudder === "RUDDER_RIGHT" ? 1 : 0)) actions.push(rudder);
   if (me.sail !== 1) actions.push("SAIL_HALF");
-  if (distance < 55 && abeam) actions.push(cross > 0 ? "FIRE_STARBOARD" : "FIRE_PORT");
+  // A device sends a broadside only when that side's guns are loaded.
+  if (distance < 55 && abeam && (cross > 0 ? me.reloadStarboard : me.reloadPort) === 0) actions.push(cross > 0 ? "FIRE_STARBOARD" : "FIRE_PORT");
   return actions;
 }
 

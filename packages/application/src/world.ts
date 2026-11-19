@@ -386,6 +386,8 @@ export class VisitWorldPlace {
       if (voyage === null || voyage.toSlotId !== slot.slotId || voyageLocation(voyage, now) !== "AT_PLACE") {
         throw new ApplicationError("VOYAGE_NOT_ARRIVED", "Sail there first: the ship has not arrived");
       }
+      // Pirates struck on the way and the fight has not been fought: it comes before the visit.
+      if (voyage.ambush?.status === "PENDING") throw new ApplicationError("AMBUSH_PENDING", "Pirates are waiting: the fight comes first");
       await this.world.visits.record(actor.playerId, slot.slotId, now);
     }
     const [owner] = await this.world.slots.listClaimedIn([slot.slotId]);

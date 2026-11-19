@@ -2082,6 +2082,10 @@ export const ErrorCodeSchema = z.enum([
   "SHIP_LEVEL_REQUIRED",
   "VOYAGE_UNDERWAY",
   "VOYAGE_NOT_ARRIVED",
+  "SHIP_DAMAGED",
+  "SHIP_NOT_DAMAGED",
+  "AMBUSH_PENDING",
+  "AMBUSH_NOT_READY",
   "CHARACTER_NOT_AVAILABLE",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
@@ -2291,13 +2295,43 @@ export const FleetNextShipDTOSchema = z
       .strict()
   })
   .strict();
+/** A ship's fighting numbers, as the sea-battle simulation takes them. */
+export const BattleShipSpecDTOSchema = z
+  .object({
+    hull: z.number().int().nonnegative(),
+    hullMax: z.number().int().positive(),
+    cannons: z.number().int().nonnegative().max(64),
+    speed: z.number().positive().max(100),
+    turn: z.number().int().positive().max(512),
+    radius: z.number().positive().max(50),
+    spread: z.number().int().nonnegative().max(1024)
+  })
+  .strict();
+export const AmbushStatusSchema = z.enum(["PENDING", "WON", "LOST", "FLED", "TIMEOUT"]);
+/** Pirates on a voyage (W5c): when they strike, and the fight exactly as the server will replay it. */
+export const AmbushDTOSchema = z
+  .object({
+    at: z.iso.datetime(),
+    status: AmbushStatusSchema,
+    pirates: z.array(z.string().min(1).max(60)).min(1).max(6),
+    setup: z
+      .object({
+        seed: z.number().int().min(0).max(4_294_967_295),
+        player: BattleShipSpecDTOSchema,
+        pirates: z.array(BattleShipSpecDTOSchema).min(1).max(6)
+      })
+      .strict()
+  })
+  .strict();
 export const VoyageDTOSchema = z
   .object({
     fromSlotId: WorldSlotIdSchema,
     toSlotId: WorldSlotIdSchema,
     departedAt: z.iso.datetime(),
     arrivesAt: z.iso.datetime(),
-    arrived: z.boolean()
+    arrived: z.boolean(),
+    /** Absent from servers before W5c; null on a voyage with no pirates. */
+    ambush: AmbushDTOSchema.nullable().optional()
   })
   .strict();
 export const FleetResponseSchema = z
@@ -2312,7 +2346,29 @@ export const FleetResponseSchema = z
 export const BuildShipRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
 export const StartVoyageRequestSchema = z.object({ slotId: WorldSlotIdSchema, requestId: RequestIdSchema }).strict();
 export const EndVoyageRequestSchema = z.object({}).strict();
+export const RepairShipRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+/**
+ * The player's orders in a fight, as [tick, action] pairs: the action is the index of one of the
+ * simulation's actions (rudder left, centre, right; sail down, half, full; fire port, starboard).
+ */
+export const FightAmbushRequestSchema = z
+  .object({ inputs: z.array(z.tuple([z.number().int().min(0).max(3_599), z.number().int().min(0).max(7)])).max(3_600) })
+  .strict();
+export const SeaBattleResultDTOSchema = z
+  .object({
+    outcome: z.enum(["WON", "LOST", "FLED", "TIMEOUT"]),
+    ticks: z.number().int().nonnegative(),
+    playerHull: z.number().int().nonnegative(),
+    pirateHulls: z.array(z.number().int().nonnegative()).max(6),
+    stats: z
+      .object({ shots: z.number().int().nonnegative(), hits: z.number().int().nonnegative(), damageDealt: z.number().int().nonnegative(), damageTaken: z.number().int().nonnegative() })
+      .strict()
+  })
+  .strict();
 export type FleetResponse = z.infer<typeof FleetResponseSchema>;
+export const FightAmbushResponseSchema = z.object({ fleet: FleetResponseSchema, battle: SeaBattleResultDTOSchema.nullable() }).strict();
+export type FightAmbushResponse = z.infer<typeof FightAmbushResponseSchema>;
+export type AmbushDTO = z.infer<typeof AmbushDTOSchema>;
 export type PublicIslandDTO = z.infer<typeof PublicIslandDTOSchema>;
 
 export type CreateFarmRequest = z.infer<typeof CreateFarmRequestSchema>;

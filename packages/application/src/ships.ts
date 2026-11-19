@@ -2,10 +2,15 @@ import {
   DomainError,
   parseCurrencyDefinitionId,
   parseItemDefinitionId,
+  runSeaBattle,
   shipIdFor,
   type InventoryItem,
   type PlayerId,
-  type ProgressionDefinition
+  type ProgressionDefinition,
+  type SeaBattleInput,
+  type SeaBattleResult,
+  type SeaBattleSetup,
+  type SeaBattleShipSpec
 } from "@happy-farm/domain";
 import type { EconomyService } from "./economy";
 import { ApplicationError } from "./errors";
@@ -24,6 +29,7 @@ import type {
   ShipCatalogue,
   ShipClass,
   ShipRepository,
+  VoyageAmbush,
   VoyageRecord,
   WalletRepository
 } from "./ports";
@@ -43,6 +49,7 @@ import type { WorldPlacement } from "./world";
  */
 
 export const SHIP_BUILD_OPERATION = "SHIP_BUILD";
+export const SHIP_REPAIR_OPERATION = "SHIP_REPAIR";
 const WRITE_ATTEMPTS = 8;
 
 export interface ShipDependencies {
@@ -85,12 +92,23 @@ export interface NextShipView {
   };
 }
 
+/** Pirates on a voyage, as the player's device needs them to play the fight the server will replay. */
+export interface AmbushView {
+  /** When they strike (server time). */
+  readonly at: string;
+  readonly status: VoyageAmbush["status"];
+  /** The fight exactly as the server will replay it: seed, the player's ship, the pirates. */
+  readonly setup: SeaBattleSetup;
+  readonly pirates: readonly string[];
+}
+
 export interface VoyageView {
   readonly fromSlotId: string;
   readonly toSlotId: string;
   readonly departedAt: string;
   readonly arrivesAt: string;
   readonly arrived: boolean;
+  readonly ambush: AmbushView | null;
 }
 
 export interface FleetView {
@@ -115,6 +133,35 @@ function classOf(catalogue: ShipCatalogue, ship: PlayerShipRecord | null): ShipC
   const found = ship === null ? classes[0] : classes.find((entry) => entry.tier === ship.tier);
   if (found === undefined) throw new ApplicationError("INTERNAL_ERROR", "A stored ship's class is not in the catalogue");
   return found;
+}
+
+/** The ship as it fights: its class's numbers and its hull as it stands. Null for a class that does not fight. */
+function playerSpec(catalogue: ShipCatalogue, ship: PlayerShipRecord | null): SeaBattleShipSpec | null {
+  const shipClass = classOf(catalogue, ship);
+  const battle = catalogue.battle(shipClass.id);
+  if (battle === null || shipClass.cannons <= 0) return null;
+  return {
+    hull: Math.min(shipClass.hull, ship?.hull ?? shipClass.hull),
+    hullMax: shipClass.hull,
+    cannons: shipClass.cannons,
+    speed: battle.speed,
+    turn: battle.turn,
+    radius: battle.radius,
+    spread: battle.spread
+  };
+}
+
+/** The fight an ambush is: built from game data and the ship's own hull, never from anything a client sent. */
+export function ambushSetup(catalogue: ShipCatalogue, ship: PlayerShipRecord | null, ambush: VoyageAmbush): SeaBattleSetup | null {
+  const player = playerSpec(catalogue, ship);
+  if (player === null) return null;
+  const pirates: SeaBattleShipSpec[] = [];
+  for (const id of ambush.pirates) {
+    const pirate = catalogue.pirate(id);
+    if (pirate === null) return null;
+    pirates.push({ hull: pirate.hull, hullMax: pirate.hull, cannons: pirate.cannons, ...pirate.battle });
+  }
+  return { seed: ambush.seed, player, pirates };
 }
 
 function fleetView(catalogue: ShipCatalogue, ship: PlayerShipRecord | null, voyage: VoyageRecord | null, now: string): FleetView {
@@ -158,9 +205,22 @@ function fleetView(catalogue: ShipCatalogue, ship: PlayerShipRecord | null, voya
             toSlotId: voyage.toSlotId,
             departedAt: voyage.departedAt,
             arrivesAt: voyage.arrivesAt,
-            arrived: location === "AT_PLACE"
+            arrived: location === "AT_PLACE",
+            ambush: ambushView(catalogue, ship, voyage.ambush ?? null)
           }
   };
+}
+
+function ambushView(catalogue: ShipCatalogue, ship: PlayerShipRecord | null, ambush: VoyageAmbush | null): AmbushView | null {
+  if (ambush === null) return null;
+  const setup = ambushSetup(catalogue, ship, ambush);
+  return setup === null ? null : { at: ambush.at, status: ambush.status, setup, pirates: ambush.pirates };
+}
+
+/** Whether an ambush has struck and is still waiting to be fought. */
+function ambushDue(voyage: VoyageRecord | null, now: string): boolean {
+  const ambush = voyage?.ambush ?? null;
+  return voyage !== null && voyage.status === "UNDERWAY" && ambush !== null && ambush.status === "PENDING" && Date.parse(ambush.at) <= Date.parse(now);
 }
 
 async function playerLevel(dependencies: ShipDependencies, playerId: PlayerId): Promise<number> {
@@ -345,12 +405,26 @@ export class StartVoyage {
       }
       const location = voyageLocation(voyage, now);
       if (location === "AT_SEA") throw new ApplicationError("VOYAGE_UNDERWAY", "The ship is still at sea");
+      if (ambushDue(voyage, now)) throw new ApplicationError("AMBUSH_PENDING", "Pirates are waiting: the fight comes first");
+      if (ship !== null && ship.hull <= 0) throw new ApplicationError("SHIP_DAMAGED", "The ship must be repaired before it sails");
       const fromSlotId = location === "AT_PLACE" && voyage !== null ? voyage.toSlotId : home.slotId;
       if (fromSlotId === target.slotId) throw new ApplicationError("INVALID_INPUT", "The ship is already there");
       const from = world.chart.findSlot(fromSlotId);
       if (from === null) throw new ApplicationError("INTERNAL_ERROR", "The ship's place is not on the chart");
       const shipClass = classOf(catalogue, ship);
-      const seconds = catalogue.voyageSeconds(Math.hypot(target.x - from.x, target.z - from.z), shipClass.speedTilesPerMinute);
+      const distance = Math.hypot(target.x - from.x, target.z - from.z);
+      const seconds = catalogue.voyageSeconds(distance, shipClass.speedTilesPerMinute);
+      // Pirates are planned here, from the route, the day and the player: the same route on the same
+      // day meets the same fate, so calling the ship home and setting out again gains nothing.
+      const plan = catalogue.planAmbush({
+        playerId: actor.playerId,
+        fromSlotId,
+        toSlotId: target.slotId,
+        day: now.slice(0, 10),
+        distanceTiles: distance,
+        shipTier: shipClass.tier
+      });
+      const departed = Date.parse(now);
       const next: VoyageRecord = {
         playerId: actor.playerId,
         fromSlotId,
@@ -361,7 +435,11 @@ export class StartVoyage {
         status: "UNDERWAY",
         requestId: command.requestId,
         version: (voyage?.version ?? 0) + 1,
-        updatedAt: now
+        updatedAt: now,
+        ambush:
+          plan === null
+            ? null
+            : { at: new Date(departed + Math.round(seconds * plan.atShare) * 1000).toISOString(), seed: plan.seed, pirates: plan.pirates, status: "PENDING" }
       };
       if (await ships.writeVoyage(next, voyage?.version ?? null)) return fleetView(catalogue, ship, next, now);
     }
@@ -383,9 +461,190 @@ export class EndVoyage {
       const now = clock.now();
       const [ship, voyage] = await Promise.all([ships.findShip(actor.playerId), ships.findVoyage(actor.playerId)]);
       if (voyage === null || voyage.status === "ENDED") return fleetView(catalogue, ship, voyage, now);
+      // Pirates that have already struck are not escaped by calling the ship home: the fight is played
+      // out with no orders from the captain, and its damage stands.
+      if (ambushDue(voyage, now) && voyage.ambush != null) {
+        const decided = await decideAmbush(this.dependencies, actor.playerId, ship, voyage, [], now, true);
+        if (decided !== null) return decided.view;
+        continue;
+      }
       const ended: VoyageRecord = { ...voyage, status: "ENDED", version: voyage.version + 1, updatedAt: now };
       if (await ships.writeVoyage(ended, voyage.version)) return fleetView(catalogue, ship, ended, now);
     }
     throw new ApplicationError("CONFLICT_STALE_STATE", "The voyage changed while coming home");
+  }
+}
+
+export interface AmbushOutcomeView {
+  readonly fleet: FleetView;
+  /** The fight this request decided; null when it had already been decided (its outcome is on the voyage). */
+  readonly battle: SeaBattleResult | null;
+}
+
+/**
+ * Decides a struck ambush by replaying the fight from its setup and `inputs`, and writes the outcome:
+ * the voyage's ambush status, and the ship's hull. A lost fight, or `goHome`, ends the voyage.
+ * Null when the voyage or the ship moved in between (the caller looks again).
+ */
+async function decideAmbush(
+  dependencies: ShipDependencies,
+  playerId: PlayerId,
+  ship: PlayerShipRecord | null,
+  voyage: VoyageRecord,
+  inputs: readonly SeaBattleInput[],
+  now: string,
+  goHome: boolean
+): Promise<{ readonly view: FleetView; readonly battle: SeaBattleResult } | null> {
+  const ambush = voyage.ambush;
+  if (ambush == null || ship === null) throw new ApplicationError("INTERNAL_ERROR", "An ambush needs a fighting ship");
+  const setup = ambushSetup(dependencies.catalogue, ship, ambush);
+  if (setup === null) throw new ApplicationError("INTERNAL_ERROR", "An ambush's ships are not in the catalogue");
+  let battle: SeaBattleResult;
+  try {
+    battle = runSeaBattle(setup, inputs);
+  } catch (error: unknown) {
+    if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
+    throw error;
+  }
+  const endVoyage = goHome || battle.outcome === "LOST";
+  const written = await dependencies.ships.resolveAmbush({
+    playerId,
+    expectedVoyageVersion: voyage.version,
+    expectedShipVersion: ship.version,
+    outcome: battle.outcome,
+    hull: battle.playerHull,
+    endVoyage,
+    at: now
+  });
+  if (!written) return null;
+  const nextShip: PlayerShipRecord = { ...ship, hull: battle.playerHull, version: ship.version + 1, updatedAt: now };
+  const nextVoyage: VoyageRecord = {
+    ...voyage,
+    status: endVoyage ? "ENDED" : voyage.status,
+    version: voyage.version + 1,
+    updatedAt: now,
+    ambush: { ...ambush, status: battle.outcome }
+  };
+  return { view: fleetView(dependencies.catalogue, nextShip, nextVoyage, now), battle };
+}
+
+/**
+ * Fights an ambush: the player's device played it and sends only the inputs it recorded; the server
+ * replays the fight from the setup it planned and the ship's own hull, and the result is the server's.
+ * A fight already decided answers with its outcome and takes no new inputs.
+ */
+export class FightAmbush {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly inputs: readonly SeaBattleInput[] }): Promise<AmbushOutcomeView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { ships, catalogue, clock } = this.dependencies;
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      const now = clock.now();
+      const [ship, voyage] = await Promise.all([ships.findShip(actor.playerId), ships.findVoyage(actor.playerId)]);
+      const ambush = voyage?.ambush ?? null;
+      if (voyage === null || ambush === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "No pirates are on this voyage");
+      // Already decided (a retried request, or the ship was called home): the outcome stands, and no
+      // new inputs are taken.
+      if (ambush.status !== "PENDING") return { fleet: fleetView(catalogue, ship, voyage, now), battle: null };
+      if (voyage.status !== "UNDERWAY") throw new ApplicationError("RESOURCE_NOT_FOUND", "No pirates are on this voyage");
+      if (Date.parse(ambush.at) > Date.parse(now)) throw new ApplicationError("AMBUSH_NOT_READY", "The pirates have not struck yet");
+      const decided = await decideAmbush(this.dependencies, actor.playerId, ship, voyage, command.inputs, now, false);
+      if (decided !== null) return { fleet: decided.view, battle: decided.battle };
+    }
+    throw new ApplicationError("CONFLICT_STALE_STATE", "The voyage changed while fighting");
+  }
+}
+
+/**
+ * Mends the ship at its dock: gold through the ledger (`SHIP_REPAIR`), wood through the inventory,
+ * the hull back to its class's full, in one batch with its receipt, exactly as a build is.
+ */
+export class RepairShip {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly requestId: string }): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { catalogue, ships } = this.dependencies;
+    const shipId = shipIdFor(actor.playerId);
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([shipId, SHIP_REPAIR_OPERATION]));
+    const existing = await this.dependencies.idempotency.find(actor.playerId, SHIP_REPAIR_OPERATION, command.requestId);
+    if (existing !== null) return replay(existing, fingerprint);
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      const now = this.dependencies.clock.now();
+      const ship = await ships.findShip(actor.playerId);
+      const current = classOf(catalogue, ship);
+      if (ship === null || ship.hull >= current.hull) throw new ApplicationError("SHIP_NOT_DAMAGED", "The ship needs no repair");
+      if (voyageLocation(await ships.findVoyage(actor.playerId), now) !== "HOME") {
+        throw new ApplicationError("SHIP_AT_SEA", "The ship must be at its dock to be repaired");
+      }
+      const cost = catalogue.repairCost(current.hull - ship.hull);
+      const currency = this.dependencies.currencies.findById(parseCurrencyDefinitionId(cost.currencyDefinitionId));
+      if (currency === null) throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
+      const materials = Object.entries(cost.materials).filter(([, quantity]) => quantity > 0);
+      const expectedInventory: InventoryItem[] = [];
+      for (const [itemDefinitionId, quantity] of materials) {
+        const row = await this.dependencies.inventory.find(actor.playerId, parseItemDefinitionId(itemDefinitionId));
+        if (row === null || row.quantity < quantity) throw new ApplicationError("INSUFFICIENT_ITEMS", "The repair needs materials the island does not have");
+        expectedInventory.push(row);
+      }
+      const wallet = (await this.dependencies.wallets.find(actor.playerId, currency.id)) ?? {
+        playerId: actor.playerId,
+        currencyDefinitionId: currency.id,
+        balance: 0,
+        version: 1,
+        updatedAt: now
+      };
+      let economy;
+      try {
+        economy = this.dependencies.economyService.prepareMutation(actor, wallet, currency, {
+          delta: -cost.gold,
+          reason: "SHIP_REPAIR",
+          referenceId: shipId,
+          requestId: command.requestId
+        });
+      } catch (error: unknown) {
+        if (error instanceof ApplicationError) throw error;
+        if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
+        throw error;
+      }
+      const mended: PlayerShipRecord = { ...ship, hull: current.hull, version: ship.version + 1, lastChangeId: economy.transactionId, updatedAt: economy.createdAt };
+      const result = fleetView(catalogue, mended, null, economy.createdAt);
+      const record: IdempotencyRecord = {
+        actorPlayerId: actor.playerId,
+        operation: SHIP_REPAIR_OPERATION,
+        requestId: command.requestId,
+        payloadFingerprint: fingerprint,
+        resourceId: economy.transactionId,
+        responseJson: JSON.stringify(result),
+        status: "COMPLETED",
+        createdAt: economy.createdAt
+      };
+      try {
+        await ships.buildAtomically(
+          {
+            playerId: actor.playerId,
+            shipId,
+            expectedFromTier: current.tier,
+            expectedVersion: ship.version,
+            toTier: current.tier,
+            classId: current.id,
+            hull: current.hull,
+            economy,
+            removals: materials.map(([itemDefinitionId, quantity]) => this.dependencies.inventoryService.prepareRemoval(actor.playerId, itemDefinitionId, quantity)),
+            expectedInventory,
+            createdAt: economy.createdAt
+          },
+          record
+        );
+        return result;
+      } catch (error: unknown) {
+        const raced = await this.dependencies.idempotency.find(actor.playerId, SHIP_REPAIR_OPERATION, command.requestId);
+        if (raced !== null) return replay(raced, fingerprint);
+        if (error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT") continue;
+        throw error;
+      }
+    }
+    throw new ApplicationError("ECONOMY_CONFLICT", "The ship or the economy changed while repairing");
   }
 }

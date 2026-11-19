@@ -1592,11 +1592,44 @@ export interface ShipClass {
   } | null;
 }
 
+/** A ship's fighting numbers in the sea-battle simulation. */
+export interface ShipBattleNumbers {
+  readonly speed: number;
+  readonly turn: number;
+  readonly radius: number;
+  readonly spread: number;
+}
+
+export interface PirateShip {
+  readonly id: string;
+  readonly hull: number;
+  readonly cannons: number;
+  readonly battle: ShipBattleNumbers;
+}
+
 export interface ShipCatalogue {
   /** Every class in tier order; the first is the dock's rowboat. */
   classes(): readonly ShipClass[];
   /** How long a voyage of `distanceTiles` takes at `speedTilesPerMinute`, in whole seconds. */
   voyageSeconds(distanceTiles: number, speedTilesPerMinute: number): number;
+  /** A class's fighting numbers, or null for a class that does not fight. */
+  battle(classId: string): ShipBattleNumbers | null;
+  pirate(id: string): PirateShip | null;
+  /** Whether pirates strike a voyage, decided by game data from the route, the day and the player. */
+  planAmbush(input: {
+    readonly playerId: string;
+    readonly fromSlotId: string;
+    readonly toSlotId: string;
+    readonly day: string;
+    readonly distanceTiles: number;
+    readonly shipTier: number;
+  }): { readonly atShare: number; readonly seed: number; readonly pirates: readonly string[] } | null;
+  /** What mending `missingHull` points costs. */
+  repairCost(missingHull: number): {
+    readonly currencyDefinitionId: string;
+    readonly gold: number;
+    readonly materials: Readonly<Record<string, number>>;
+  };
 }
 
 /** A player's ship as stored. No row means the dock's rowboat. */
@@ -1632,6 +1665,16 @@ export interface ShipBuild {
  * A player's one current passage. `UNDERWAY` until it is ended; whether it has *arrived* is read from
  * the clock against `arrivesAt`, never stored.
  */
+export type AmbushStatus = "PENDING" | "WON" | "LOST" | "FLED" | "TIMEOUT";
+
+/** Pirates planned for a voyage: when they strike, the fight's seed, who they are, and how it went. */
+export interface VoyageAmbush {
+  readonly at: string;
+  readonly seed: number;
+  readonly pirates: readonly string[];
+  readonly status: AmbushStatus;
+}
+
 export interface VoyageRecord {
   readonly playerId: PlayerId;
   readonly fromSlotId: string;
@@ -1643,6 +1686,20 @@ export interface VoyageRecord {
   readonly requestId: string;
   readonly version: number;
   readonly updatedAt: string;
+  /** Absent or null: no pirates on this voyage. */
+  readonly ambush?: VoyageAmbush | null;
+}
+
+/** Deciding an ambush: the voyage moves on one version with its outcome, the ship's hull with it. */
+export interface AmbushResolution {
+  readonly playerId: PlayerId;
+  readonly expectedVoyageVersion: number;
+  readonly expectedShipVersion: number;
+  readonly outcome: Exclude<AmbushStatus, "PENDING">;
+  readonly hull: number;
+  /** A lost fight, or a ship called home, ends the voyage: the ship is back at its dock. */
+  readonly endVoyage: boolean;
+  readonly at: string;
 }
 
 export interface ShipRepository {
@@ -1654,6 +1711,8 @@ export interface ShipRepository {
    * True when this call wrote it.
    */
   writeVoyage(next: VoyageRecord, expectedVersion: number | null): Promise<boolean>;
+  /** Writes an ambush's outcome and the ship's hull together; false when either moved. */
+  resolveAmbush(resolution: AmbushResolution): Promise<boolean>;
   /**
    * Voyages under way (arrived or not) that sail from or to any of `slotIds`, newest first, at most
    * `limit`, each with the voyager's island name. What the chart and the horizon draw at sea.

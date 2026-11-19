@@ -146,7 +146,7 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
-import { chartedArchipelagos, findSeaSlot, findSeaArchipelago, SHIP_CLASSES, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import { chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
 import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
@@ -837,7 +837,15 @@ export const gameDataShipCatalogue: ShipCatalogue = {
               materials: { [SHIP_WOOD_ITEM_ID]: entry.buildCost.wood, [SHIP_ORE_ITEM_ID]: entry.buildCost.ore }
             }
     })),
-  voyageSeconds: (distanceTiles, speedTilesPerMinute) => voyageSeconds(distanceTiles, speedTilesPerMinute)
+  voyageSeconds: (distanceTiles, speedTilesPerMinute) => voyageSeconds(distanceTiles, speedTilesPerMinute),
+  battle: (classId) => SHIP_BATTLE_NUMBERS[classId] ?? null,
+  pirate: (id) => pirateShip(id),
+  planAmbush: (input) => planAmbush(input),
+  repairCost: (missingHull) => ({
+    currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
+    gold: Math.ceil(Math.max(0, missingHull) * SHIP_REPAIR_GOLD_PER_HULL),
+    materials: { [SHIP_WOOD_ITEM_ID]: Math.ceil(Math.max(0, missingHull) * SHIP_REPAIR_WOOD_PER_HULL) }
+  })
 };
 
 export const gameDataMineCatalogue: MineCatalogue = {

@@ -509,6 +509,10 @@ chart is grown from it: their home archipelago, plus what can be seen from each 
 - A build writes the ledger row (`SHIP_BUILD`, reference `SHIP`), the material removals, the ship row
   (only over the tier and version read) and its receipt in one batch.
 - "Arrived" is never stored: it is `arrives_at <= server time` on an `UNDERWAY` row.
+- Migration 0049 adds a voyage's pirate ambush: `ambush_at`, `ambush_seed`, `ambush_pirates` (a JSON
+  list of pirate ids) and `ambush_status` (`PENDING`, then `WON`, `LOST`, `FLED` or `TIMEOUT`).
+  - The status moves from `PENDING` only when the server replays the fight.
+  - It moves in the same batch as the ship's hull, and only over the versions the server read.
 - The same migration rebuilt `economy_ledger` to admit `SHIP_BUILD` and `SHIP_REPAIR` (reference type
   `SHIP`, `ship_*`). Every trigger that reads the ledger was recreated with its exact prior SQL.
 

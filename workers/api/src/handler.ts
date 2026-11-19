@@ -7,6 +7,8 @@
   BuildShip,
   StartVoyage,
   EndVoyage,
+  FightAmbush,
+  RepairShip,
   type ShipDependencies,
   type FleetView,
   VisitWorldPlace,
@@ -21,6 +23,7 @@
   type FarmIslandSummary,
   type IslandGroundBuilder,
   type WorldChartPort,
+  type ShipCatalogue,
   GetPlayerAppearance,
   SetPlayerAppearance,
   type PlayerAppearanceView,
@@ -179,6 +182,9 @@ import {
   BuildShipRequestSchema,
   StartVoyageRequestSchema,
   EndVoyageRequestSchema,
+  RepairShipRequestSchema,
+  FightAmbushRequestSchema,
+  type FightAmbushResponse,
   type PublicIslandDTO,
   VisitWorldPlaceRequestSchema,
   type EnsureWorldSlotResponse,
@@ -319,6 +325,7 @@ import { farmIslandGeography, islandFishingCatalogue, gameDataCharacterCatalogue
 import { rejectsCrossOriginRequest } from "./origin-guard";
 import type { SessionPort } from "./session";
 import {
+  SEA_BATTLE_ACTIONS,
   parseCurrencyDefinitionId,
   parseFarmId,
   parseWorkAreaId,
@@ -437,7 +444,11 @@ export interface HandlerDependencies {
    * The world map (docs/design/WORLD_MAP.md). When present, a chosen island takes a slot on the sea
    * chart at creation, and `/world/chart` and `/world/slot` answer. Needs migration 0045.
    */
-  readonly world?: { readonly chart: WorldChartPort };
+  readonly world?: {
+    readonly chart: WorldChartPort;
+    /** Ships, voyages and pirates; the game data's own unless a test supplies another. */
+    readonly ships?: ShipCatalogue;
+  };
   /** The manual aquaculture definition; omitted hosts use the shipped game-data value. */
   readonly aquaculture?: AquacultureDefinition;
   /**
@@ -843,7 +854,29 @@ function toFleetDTO(view: FleetView): FleetResponse {
     ship: { ...view.ship },
     next: view.next === null ? null : { ...view.next, cost: { ...view.next.cost, materials: view.next.cost.materials.map((entry) => ({ ...entry })) } },
     location: view.location,
-    voyage: view.voyage === null ? null : { ...view.voyage }
+    voyage:
+      view.voyage === null
+        ? null
+        : {
+            fromSlotId: view.voyage.fromSlotId,
+            toSlotId: view.voyage.toSlotId,
+            departedAt: view.voyage.departedAt,
+            arrivesAt: view.voyage.arrivesAt,
+            arrived: view.voyage.arrived,
+            ambush:
+              view.voyage.ambush === null
+                ? null
+                : {
+                    at: view.voyage.ambush.at,
+                    status: view.voyage.ambush.status,
+                    pirates: [...view.voyage.ambush.pirates],
+                    setup: {
+                      seed: view.voyage.ambush.setup.seed,
+                      player: { ...view.voyage.ambush.setup.player },
+                      pirates: view.voyage.ambush.setup.pirates.map((pirate) => ({ ...pirate }))
+                    }
+                  }
+          }
   };
 }
 
@@ -1087,6 +1120,10 @@ function errorStatus(code: ErrorCode): number {
     case "SHIP_MAX_CLASS":
     case "VOYAGE_UNDERWAY":
     case "VOYAGE_NOT_ARRIVED":
+    case "SHIP_DAMAGED":
+    case "SHIP_NOT_DAMAGED":
+    case "AMBUSH_PENDING":
+    case "AMBUSH_NOT_READY":
     case "REQUEST_ALREADY_PROCESSED":
     case "TILE_OCCUPIED":
     case "TILE_NOT_PLANTABLE":
@@ -1681,7 +1718,7 @@ export function createHandler(host: HandlerDependencies) {
           farms,
           world: worldPlacement,
           ships: shipRepository,
-          catalogue: gameDataShipCatalogue,
+          catalogue: dependencies.world?.ships ?? gameDataShipCatalogue,
           progression: progressions,
           progressionDefinition: dependencies.progressionDefinition,
           inventory,
@@ -1697,6 +1734,8 @@ export function createHandler(host: HandlerDependencies) {
   const buildShip = shipDependencies === null ? null : new BuildShip(shipDependencies);
   const startVoyage = shipDependencies === null ? null : new StartVoyage(shipDependencies);
   const endVoyage = shipDependencies === null ? null : new EndVoyage(shipDependencies);
+  const fightAmbush = shipDependencies === null ? null : new FightAmbush(shipDependencies);
+  const repairShip = shipDependencies === null ? null : new RepairShip(shipDependencies);
   const treeIdempotency = new D1IdempotencyRepository(dependencies.db);
   const plantTree = new PlantTree({
     farms,
@@ -2291,6 +2330,28 @@ export function createHandler(host: HandlerDependencies) {
         const parsed = StartVoyageRequestSchema.safeParse(await parseJson(request));
         if (!parsed.success) return failure("INVALID_INPUT", requestId);
         const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await startVoyage.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (repairShip !== null && request.method === "POST" && url.pathname === "/ships/repair") {
+        const parsed = RepairShipRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await repairShip.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (fightAmbush !== null && request.method === "POST" && url.pathname === "/voyages/ambush") {
+        const parsed = FightAmbushRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const inputs = parsed.data.inputs.map(([tick, action]) => ({ tick, action: SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER" }));
+        const outcome = await fightAmbush.execute(actor, { inputs });
+        const body: ApiSuccess<FightAmbushResponse> = {
+          ok: true,
+          data: {
+            fleet: toFleetDTO(outcome.fleet),
+            battle: outcome.battle === null ? null : { ...outcome.battle, pirateHulls: [...outcome.battle.pirateHulls], stats: { ...outcome.battle.stats } }
+          }
+        };
         return jsonResponse(body);
       }
 

@@ -156,6 +156,8 @@ import type {
   ,PlayerShipRecord
   ,ShipBuild
   ,VoyageRecord
+  ,AmbushResolution
+  ,AmbushStatus
 } from "@happy-farm/application";
 import { ApplicationError, MAX_LAND_CELLS_PER_REQUEST } from "@happy-farm/application";
 import { reconcileNeighborNpc, reconcileRecurringNeighborNpc } from "@happy-farm/domain";
@@ -1102,6 +1104,40 @@ interface ShipVoyageRow {
   readonly request_id: string;
   readonly version: number;
   readonly updated_at: string;
+  readonly ambush_at: string | null;
+  readonly ambush_seed: number | null;
+  readonly ambush_pirates: string | null;
+  readonly ambush_status: AmbushStatus | null;
+}
+
+/** A stored voyage, its ambush read back only when every part of it is there and well formed. */
+function voyageFromRow(row: ShipVoyageRow): VoyageRecord {
+  let pirates: string[] | null = null;
+  try {
+    const parsed: unknown = row.ambush_pirates === null ? null : JSON.parse(row.ambush_pirates);
+    if (Array.isArray(parsed)) {
+      const names = parsed.filter((entry): entry is string => typeof entry === "string");
+      if (names.length === parsed.length) pirates = names;
+    }
+  } catch {
+    pirates = null;
+  }
+  return {
+    playerId: parsePlayerId(row.player_id),
+    fromSlotId: row.from_slot_id,
+    toSlotId: row.to_slot_id,
+    shipTier: row.ship_tier,
+    departedAt: row.departed_at,
+    arrivesAt: row.arrives_at,
+    status: row.status,
+    requestId: row.request_id,
+    version: row.version,
+    updatedAt: row.updated_at,
+    ambush:
+      row.ambush_at === null || row.ambush_seed === null || row.ambush_status === null || pirates === null
+        ? null
+        : { at: row.ambush_at, seed: row.ambush_seed, pirates, status: row.ambush_status }
+  };
 }
 
 /**
@@ -1134,39 +1170,54 @@ export class D1ShipRepository implements ShipRepository {
 
   async findVoyage(playerId: PlayerId): Promise<VoyageRecord | null> {
     const row = await this.db.prepare("SELECT * FROM ship_voyages WHERE player_id = ?").bind(playerId).first<ShipVoyageRow>();
-    return row === null
-      ? null
-      : {
-          playerId: parsePlayerId(row.player_id),
-          fromSlotId: row.from_slot_id,
-          toSlotId: row.to_slot_id,
-          shipTier: row.ship_tier,
-          departedAt: row.departed_at,
-          arrivesAt: row.arrives_at,
-          status: row.status,
-          requestId: row.request_id,
-          version: row.version,
-          updatedAt: row.updated_at
-        };
+    return row === null ? null : voyageFromRow(row);
   }
 
   async writeVoyage(next: VoyageRecord, expectedVersion: number | null): Promise<boolean> {
+    const ambush = next.ambush ?? null;
+    const ambushValues = [ambush?.at ?? null, ambush?.seed ?? null, ambush === null ? null : JSON.stringify(ambush.pirates), ambush?.status ?? null];
     if (expectedVersion === null) {
       const inserted = await this.db
         .prepare(
-          "INSERT OR IGNORE INTO ship_voyages (player_id, from_slot_id, to_slot_id, ship_tier, departed_at, arrives_at, status, request_id, version, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          "INSERT OR IGNORE INTO ship_voyages (player_id, from_slot_id, to_slot_id, ship_tier, departed_at, arrives_at, status, request_id, version, updated_at, ambush_at, ambush_seed, ambush_pirates, ambush_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        .bind(next.playerId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt)
+        .bind(next.playerId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues)
         .run();
       return (inserted.meta.changes ?? 0) === 1;
     }
     const updated = await this.db
       .prepare(
-        "UPDATE ship_voyages SET from_slot_id = ?, to_slot_id = ?, ship_tier = ?, departed_at = ?, arrives_at = ?, status = ?, request_id = ?, version = ?, updated_at = ? WHERE player_id = ? AND version = ?"
+        "UPDATE ship_voyages SET from_slot_id = ?, to_slot_id = ?, ship_tier = ?, departed_at = ?, arrives_at = ?, status = ?, request_id = ?, version = ?, updated_at = ?, ambush_at = ?, ambush_seed = ?, ambush_pirates = ?, ambush_status = ? WHERE player_id = ? AND version = ?"
       )
-      .bind(next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, next.playerId, expectedVersion)
+      .bind(next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues, next.playerId, expectedVersion)
       .run();
     return (updated.meta.changes ?? 0) === 1;
+  }
+
+  async resolveAmbush(resolution: AmbushResolution): Promise<boolean> {
+    // The voyage moves on only if both rows are where the caller read them; the ship's hull follows
+    // only if the voyage now carries this outcome at the next version. One batch: both or neither.
+    const results = await this.db.batch([
+      this.db
+        .prepare(
+          "UPDATE ship_voyages SET ambush_status = ?, status = CASE WHEN ? = 1 THEN 'ENDED' ELSE status END, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND ambush_status = 'PENDING' AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND version = ?)"
+        )
+        .bind(resolution.outcome, resolution.endVoyage ? 1 : 0, resolution.at, resolution.playerId, resolution.expectedVoyageVersion, resolution.playerId, resolution.expectedShipVersion),
+      this.db
+        .prepare(
+          "UPDATE player_ships SET hull = ?, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND EXISTS (SELECT 1 FROM ship_voyages WHERE player_id = ? AND version = ? AND ambush_status = ?)"
+        )
+        .bind(
+          Math.max(0, Math.floor(resolution.hull)),
+          resolution.at,
+          resolution.playerId,
+          resolution.expectedShipVersion,
+          resolution.playerId,
+          resolution.expectedVoyageVersion + 1,
+          resolution.outcome
+        )
+    ]);
+    return results.every((result) => (result.meta.changes ?? 0) === 1);
   }
 
   async listVoyagesTouching(
@@ -1185,23 +1236,7 @@ export class D1ShipRepository implements ShipRepository {
         )
         .bind(...batch, ...batch, limit)
         .all<ShipVoyageRow & { readonly island_name: string | null }>();
-      for (const row of rows.results) {
-        found.set(row.player_id, {
-          voyage: {
-            playerId: parsePlayerId(row.player_id),
-            fromSlotId: row.from_slot_id,
-            toSlotId: row.to_slot_id,
-            shipTier: row.ship_tier,
-            departedAt: row.departed_at,
-            arrivesAt: row.arrives_at,
-            status: row.status,
-            requestId: row.request_id,
-            version: row.version,
-            updatedAt: row.updated_at
-          },
-          islandName: row.island_name
-        });
-      }
+      for (const row of rows.results) found.set(row.player_id, { voyage: voyageFromRow(row), islandName: row.island_name });
     }
     return [...found.values()].sort((a, b) => b.voyage.departedAt.localeCompare(a.voyage.departedAt)).slice(0, limit);
   }
@@ -1210,7 +1245,7 @@ export class D1ShipRepository implements ShipRepository {
     if (
       build.playerId !== idempotency.actorPlayerId ||
       build.economy.playerId !== build.playerId ||
-      build.economy.reason !== "SHIP_BUILD" ||
+      (build.economy.reason !== "SHIP_BUILD" && build.economy.reason !== "SHIP_REPAIR") ||
       build.economy.referenceId !== build.shipId ||
       idempotency.resourceId !== build.economy.transactionId
     ) {

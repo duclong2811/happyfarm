@@ -26,8 +26,8 @@ export const SEA_BATTLE_TICK_HZ = 20;
 export const SEA_BATTLE_MAX_TICKS = 180 * SEA_BATTLE_TICK_HZ;
 /** A fight is in this circle round its start; a ship that sails out of it has fled. */
 export const SEA_BATTLE_ARENA_RADIUS = 260;
-/** Inputs one fight may carry: far more than a player can press, small enough to replay cheaply. */
-export const SEA_BATTLE_MAX_INPUTS = 2_400;
+/** Inputs one fight may carry: one a tick on average, more than any player presses, cheap to replay. */
+export const SEA_BATTLE_MAX_INPUTS = 3_600;
 /** Heading units in a full turn. */
 export const SEA_BATTLE_TURN_UNITS = 4096;
 
@@ -170,19 +170,21 @@ function assertSpec(spec: SeaBattleShipSpec): void {
   }
 }
 
-/** The fight as it starts: the player in the middle heading north, the pirates closing from the seed's bearings. */
+/** The fight as it starts: the player lying still in the middle heading north, the pirates closing from the seed's bearings. */
 export function createSeaBattle(setup: SeaBattleSetup): SeaBattleState {
   if (!Number.isInteger(setup.seed) || setup.seed < 0 || setup.seed > 0xffffffff) throw new DomainError("INVALID_SEA_BATTLE", "A sea battle's seed is a 32-bit whole number");
   if (setup.pirates.length < 1 || setup.pirates.length > 6) throw new DomainError("INVALID_SEA_BATTLE", "A sea battle has one to six pirate ships");
   assertSpec(setup.player);
   for (const pirate of setup.pirates) assertSpec(pirate);
-  const ship = (spec: SeaBattleShipSpec, x: number, z: number, heading: number): SeaBattleShip => ({
+  // The pirates come on under half sail; the ambushed ship is caught lying still with its sails struck,
+  // so a captain who gives no orders neither fights nor gets away.
+  const ship = (spec: SeaBattleShipSpec, x: number, z: number, heading: number, underway: boolean): SeaBattleShip => ({
     spec,
     x,
     z,
     heading: normaliseHeading(heading),
-    speed: spec.speed * 0.5,
-    sail: 1,
+    speed: underway ? spec.speed * 0.5 : 0,
+    sail: underway ? 1 : 0,
     rudder: 0,
     hull: Math.min(spec.hull, spec.hullMax),
     reloadPort: 0,
@@ -191,7 +193,7 @@ export function createSeaBattle(setup: SeaBattleSetup): SeaBattleState {
   });
   const state: SeaBattleState = {
     tick: 0,
-    ships: [ship(setup.player, 0, 0, 3 * QUARTER)],
+    ships: [ship(setup.player, 0, 0, 3 * QUARTER, false)],
     balls: [],
     rng: setup.seed >>> 0,
     outcome: null,
@@ -203,7 +205,7 @@ export function createSeaBattle(setup: SeaBattleSetup): SeaBattleState {
     const distance = 120 + random(state) * 40;
     const x = seaCosine(bearing) * distance;
     const z = seaSine(bearing) * distance;
-    state.ships.push(ship(spec, x, z, bearing + 2 * QUARTER));
+    state.ships.push(ship(spec, x, z, bearing + 2 * QUARTER, true));
   });
   if (!state.ships[0]?.alive) state.outcome = "LOST";
   return state;
@@ -237,7 +239,11 @@ function fire(state: SeaBattleState, index: number, side: "PORT" | "STARBOARD"):
   }
 }
 
-/** A pirate's choice for this tick: close in, then lie broadside on and fire when the player is abeam. */
+/**
+ * A pirate's choice for this tick. Far off, it closes at full sail. In range, it circles the player
+ * with the player on the side it already has, drawing in when too far and out when too close, so its
+ * broadside stays on; it fires that side whenever the player is abeam and in reach.
+ */
 function steerPirate(state: SeaBattleState, index: number): void {
   const pirate = state.ships[index];
   const player = state.ships[0];
@@ -245,19 +251,31 @@ function steerPirate(state: SeaBattleState, index: number): void {
   const dx = player.x - pirate.x;
   const dz = player.z - pirate.z;
   const distance = Math.sqrt(dx * dx + dz * dz);
+  if (distance <= 0) return;
   const fx = seaCosine(pirate.heading);
   const fz = seaSine(pirate.heading);
   const cross = fx * dz - fz * dx;
   const dot = fx * dx + fz * dz;
-  const abeam = distance > 0 && Math.abs(dot) / distance < 0.35;
-  if (distance > 75) {
+  const abeam = Math.abs(dot) / distance < 0.35;
+  let wantX = dx / distance;
+  let wantZ = dz / distance;
+  if (distance > 90) {
     pirate.sail = 2;
-    pirate.rudder = Math.abs(cross) < distance * 0.08 && dot > 0 ? 0 : cross > 0 ? 1 : -1;
   } else {
     pirate.sail = 1;
-    // Turn so the player falls abeam: away when the player is ahead, towards when astern.
-    pirate.rudder = abeam ? 0 : dot > 0 ? (cross > 0 ? -1 : 1) : cross > 0 ? 1 : -1;
+    // Keep the player on this side: turn a quarter away from it, less when too far, more when too close.
+    const inward = distance > 48 ? 280 : distance < 30 ? -280 : 0;
+    const turn = cross > 0 ? -(QUARTER - inward) : QUARTER - inward;
+    const c = seaCosine(turn);
+    const sn = seaSine(turn);
+    const rx = wantX * c - wantZ * sn;
+    const rz = wantX * sn + wantZ * c;
+    wantX = rx;
+    wantZ = rz;
   }
+  const steer = fx * wantZ - fz * wantX;
+  const ahead = fx * wantX + fz * wantZ;
+  pirate.rudder = ahead > 0.995 ? 0 : steer > 0 ? 1 : steer < 0 ? -1 : 1;
   if (player.alive && distance < 62 && abeam) fire(state, index, cross > 0 ? "STARBOARD" : "PORT");
 }
 

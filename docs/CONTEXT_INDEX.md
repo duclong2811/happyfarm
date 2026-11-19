@@ -957,16 +957,19 @@ slot claiming, or the chart API.
 Read `docs/design/NAVAL.md` (the owner's decisions, the phases, the proposed ship numbers) before
 changing ships, voyages or anything naval.
 
-- Game data: `packages/game-data/src/ships` (`SHIP_CLASSES`, `voyageSeconds`).
+- Game data: `packages/game-data/src/ships` (`SHIP_CLASSES`, `voyageSeconds`) and
+  `packages/game-data/src/pirates` (pirate ships, `planAmbush`, repair costs, ships' fighting numbers).
+- The fight: `packages/domain/src/sea-battle.ts` (deterministic, shared with the browser, ADR 0031).
 - Domain: `ShipId` / `shipIdFor`, ledger reasons `SHIP_BUILD` and `SHIP_REPAIR`.
 - Use cases: `packages/application/src/ships.ts` (`GetFleet`, `BuildShip`, `StartVoyage`,
-  `EndVoyage`, `voyageLocation`); `VisitWorldPlace` needs an arrived voyage.
+  `EndVoyage`, `FightAmbush`, `RepairShip`, `voyageLocation`, `ambushSetup`); `VisitWorldPlace` needs
+  an arrived voyage and no pending ambush.
 - Storage: `D1ShipRepository`, migration `0047_ships_and_voyages.sql` (`player_ships`,
   `ship_voyages`, the ledger rebuilt with the ship reasons).
-- API: `GET /ships/fleet`, `POST /ships/build`, `POST /voyages`, `POST /voyages/end` (on with the world
-  map).
+- API: `GET /ships/fleet`, `POST /ships/build`, `POST /ships/repair`, `POST /voyages`,
+  `POST /voyages/ambush`, `POST /voyages/end` (on with the world map).
 - Tests: `tests/api/world-map.test.ts`, `tests/integration/ships-migration.test.ts`,
-  `tests/game-data/ships.test.ts`.
+  `tests/game-data/ships.test.ts`, `tests/game-data/pirates.test.ts`, `tests/domain/sea-battle.test.ts`.
 
 ### Resource nodes, mining and forestry (V15.2 / V15.3)
 

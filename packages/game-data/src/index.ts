@@ -12,6 +12,7 @@ export * from "./forestry";
 export * from "./items";
 export * from "./mines";
 export * from "./ships";
+export * from "./pirates";
 export * from "./plots";
 export * from "./placement";
 export * from "./progression";
