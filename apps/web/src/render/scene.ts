@@ -79,7 +79,6 @@ import {
 } from "./object-picking";
 import { CELL_OVERLAY_LIFT_WORLD } from "./world-cell-overlay";
 import { CELL_OVERLAY_TILE_LIFT_WORLD } from "./world-cell-overlay";
-import { SEA_SURFACE_Y as DOCK_SEA_LEVEL_Y } from "./world-cell-overlay";
 import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
 import { islandDecorPlan } from "./island-decor";
@@ -561,6 +560,24 @@ export interface FarmSceneOptions {
   readonly onFirstFrame?: () => void;
 }
 
+/** The moored ship's place at the pier, in island tiles: its middle, its heading and its length. */
+export interface DockShipMooring {
+  readonly x: number;
+  readonly y: number;
+  /** The angle from +x toward +y (south) the bow points along. */
+  readonly heading: number;
+  readonly lengthTiles: number;
+}
+
+/** The ship under the player's hand: where it is, where it points, where the camera looks, its heel. */
+export interface HelmScenePose {
+  readonly x: number;
+  readonly y: number;
+  readonly heading: number;
+  readonly viewHeading: number;
+  readonly heel: number;
+}
+
 export interface FarmSceneHandle {
   readonly canvas: HTMLCanvasElement;
   /**
@@ -695,6 +712,14 @@ export interface FarmSceneHandle {
    * it is away at sea. Presentation only: the fleet read decides where the ship is.
    */
   setDockShip(ship: { readonly tier: number } | null): void;
+  /** Where the moored ship lies, in island tiles, or null while there is none at the pier. */
+  dockShipMooring(): DockShipMooring | null;
+  /**
+   * Takes the moored ship to the helm's pose and puts the camera behind it, or (null) brings it back
+   * to the pier and the camera back to the view it left. Presentation only: the helm is the player's
+   * own screen, and the fleet read still has the ship at home.
+   */
+  setHelmPose(pose: HelmScenePose | null): void;
   /** Moves the estate camera to a world-space place without inventing a cell coordinate. */
   focusWorld(worldX: number, worldZ: number, distance?: number, yaw?: number): void;
   /**
@@ -1349,6 +1374,11 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   let dockShip: { readonly tier: number } | null = null;
   let dockShipSignature = "";
   let dockShipToken = 0;
+  /** The moored ship's model and its place at the pier, once loaded. */
+  let dockShipNode: Object3D | null = null;
+  let dockShipMooringPlace: (DockShipMooring & { readonly lengthWorld: number }) | null = null;
+  /** The helm's pose while the player sails the ship, or null while it lies at the pier. */
+  let helmPose: HelmScenePose | null = null;
   const neighborGroup = new Group();
   const neighborGeometries: BufferGeometry[] = [];
   const neighborCollisionDebugGroup = new Group();
@@ -2151,8 +2181,34 @@ let interactionGeometry: BufferGeometry | null = null;
     };
   }
 
-  /** The pose the active mode wants right now. */
+  /**
+   * The helm's camera: behind and above the ship, looking past its bow along the eased heading, and
+   * never under the ground it passes over.
+   */
+  function helmCameraPose(pose: HelmScenePose, place: { readonly lengthWorld: number }): CameraPose {
+    const at = tileToWorld({ x: pose.x, y: pose.y }, worldFrame(state.layout.pitch));
+    const length = place.lengthWorld;
+    const forwardX = Math.cos(pose.viewHeading);
+    const forwardZ = Math.sin(pose.viewHeading);
+    const back = length * 2.2 + 7;
+    const eyeX = at.worldX - forwardX * back;
+    const eyeZ = at.worldZ - forwardZ * back;
+    const eyeY = Math.max(SEA_SURFACE_Y + length * 0.9 + 4.2, groundHeightAt(eyeX, eyeZ) + 2.5);
+    const ahead = length * 1.1 + 3;
+    return {
+      eyeX,
+      eyeY,
+      eyeZ,
+      targetX: at.worldX + forwardX * ahead,
+      targetY: SEA_SURFACE_Y + length * 0.3,
+      targetZ: at.worldZ + forwardZ * ahead,
+      fov: CHARACTER_FOV_DEGREES
+    };
+  }
+
+  /** The pose the active mode wants right now: the helm's while the player sails, else the mode's. */
   function activePose(): CameraPose {
+    if (helmPose !== null && dockShipMooringPlace !== null) return helmCameraPose(helmPose, dockShipMooringPlace);
     return cameraMode === "CHARACTER" ? characterPose() : estatePose();
   }
 
@@ -2591,6 +2647,8 @@ let interactionGeometry: BufferGeometry | null = null;
       }
     });
     dockShipGroup.clear();
+    dockShipNode = null;
+    dockShipMooringPlace = null;
     if (pier === null || dockShip === null) {
       draw();
       return;
@@ -2602,13 +2660,13 @@ let interactionGeometry: BufferGeometry | null = null;
     const endY = pier.y + pier.dirY * pier.lengthTiles;
     const across = 0.55 + (length / pitch) * 0.22;
     const along = (length / pitch) * 0.1;
-    const at = tileToWorld({ x: endX + pier.dirX * along + pier.dirY * across, y: endY + pier.dirY * along - pier.dirX * across }, worldFrame(pitch));
+    const mooring = { x: endX + pier.dirX * along + pier.dirY * across, y: endY + pier.dirY * along - pier.dirX * across };
+    const heading = Math.atan2(pier.dirY, pier.dirX);
     void library.load(shipModelForTier(dockShip.tier)).then((source) => {
       if (disposed || token !== dockShipToken || source === null) return;
       const ship = fitShipModel(source, length);
-      ship.position.set(at.worldX, DOCK_SEA_LEVEL_Y, at.worldZ);
-      // The model's bow is +x; turn it to the pier's heading, out to sea.
-      ship.rotation.y = -Math.atan2(pier.dirY, pier.dirX);
+      // The heel is a roll about the hull's own fore-and-aft line, so the yaw goes first.
+      ship.rotation.order = "YXZ";
       // The model itself is never picked (a mast is a thin target); an unseen box round the hull and
       // the lower rig is what a tap finds.
       const pick = new Mesh(new BoxGeometry(length, length * 0.55, length * 0.42), new MeshBasicMaterial({ visible: false }));
@@ -2616,8 +2674,23 @@ let interactionGeometry: BufferGeometry | null = null;
       pick.userData.dockShipPick = true;
       ship.add(pick);
       dockShipGroup.add(ship);
+      dockShipNode = ship;
+      dockShipMooringPlace = { ...mooring, heading, lengthTiles: length / pitch, lengthWorld: length };
+      placeDockShip();
       draw();
     });
+  }
+
+  /** Puts the ship's model where it belongs now: at the helm's pose while sailed, else at the pier. */
+  function placeDockShip(): void {
+    const node = dockShipNode;
+    const place = dockShipMooringPlace;
+    if (node === null || place === null) return;
+    const pose = helmPose ?? { x: place.x, y: place.y, heading: place.heading, heel: 0 };
+    const at = tileToWorld({ x: pose.x, y: pose.y }, worldFrame(state.layout.pitch));
+    node.position.set(at.worldX, SEA_SURFACE_Y, at.worldZ);
+    // The model's bow is +x; turn it to the heading (the pier's, at the mooring: out to sea).
+    node.rotation.set(pose.heel, -pose.heading, 0);
   }
 
   function applyState(next: FarmSceneInput): void {
@@ -4520,7 +4593,8 @@ let interactionGeometry: BufferGeometry | null = null;
    * suppressing input is honest rather than clever.
    */
   function cameraInputEnabled(): boolean {
-    return cameraTransition === null;
+    // At the helm the camera is the ship's: it follows the hull, and a drag would only fight it.
+    return cameraTransition === null && helmPose === null;
   }
 
   /** Orbits whichever camera is active. */
@@ -4706,7 +4780,7 @@ let interactionGeometry: BufferGeometry | null = null;
     }
     // Only a pointer that can hover gets a hover marker: a finger has no hover, and lighting the
     // tile up under it would read as a selection.
-    if (event.pointerType !== "touch") {
+    if (event.pointerType !== "touch" && helmPose === null) {
       scheduleHover(event.clientX, event.clientY);
     }
   }
@@ -4721,6 +4795,8 @@ let interactionGeometry: BufferGeometry | null = null;
     const tap = wasDragging ? false : gesture.up({ id: event.pointerId, x: event.clientX, y: event.clientY });
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!tap) return;
+    // At the helm the island is scenery going by: a tap there chooses nothing.
+    if (helmPose !== null) return;
     // Resolve direct mesh hits before ground fallbacks. A resource mesh is an explicit interaction
     // affordance and must not be swallowed by a nearby construction footprint; a direct construction
     // hit still keeps its management capability, and only the final construction branch uses
@@ -5213,6 +5289,26 @@ let interactionGeometry: BufferGeometry | null = null;
     setDockShip(next: { readonly tier: number } | null): void {
       dockShip = next === null ? null : { tier: next.tier };
       refreshDockShip(state);
+    },
+    dockShipMooring(): DockShipMooring | null {
+      const place = dockShipMooringPlace;
+      return place === null ? null : { x: place.x, y: place.y, heading: place.heading, lengthTiles: place.lengthTiles };
+    },
+    setHelmPose(pose: HelmScenePose | null): void {
+      if (disposed) return;
+      if (pose !== null && dockShipMooringPlace === null) return;
+      const wasAtHelm = helmPose !== null;
+      const from = cameraTransition === null ? activePose() : cameraTransition.pose();
+      helmPose = pose === null ? null : { x: pose.x, y: pose.y, heading: pose.heading, viewHeading: pose.viewHeading, heel: pose.heel };
+      placeDockShip();
+      // Taking the helm and leaving it are flights, like a change of view; sailing between is a follow.
+      if (wasAtHelm !== (pose !== null)) {
+        onPointerLeave();
+        cameraTransition = createCameraTransition(from, activePose(), CAMERA_TRANSITION_SECONDS);
+        scheduleCameraFrame();
+      }
+      updateCamera();
+      draw();
     },
     setNeighborIslandPreviews(next: readonly SceneNeighborIslandPreview[]): void {
       const inputIslandIds = next.map((item) => item.islandId);

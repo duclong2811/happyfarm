@@ -10,12 +10,13 @@ import { shipModelForTier } from "./render/ship-models";
  * It says what the fleet read says - the class, the hull, where the ship is - and offers what can be
  * done from there: set sail (the chart picks the place), call the ship home, look round the place it
  * reached, fight pirates that have struck, mend the hull, or build the next class. Every button is a
- * request the server decides again; the panel only chooses which to offer and words them.
+ * request the server decides again; the panel only chooses which to offer and words them. The one
+ * button that is not a request is the helm: sailing round home waters is the player's own screen.
  */
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
-export type ShipActionKind = "FIGHT" | "SAIL" | "VISIT" | "COME_HOME" | "REPAIR" | "BUILD";
+export type ShipActionKind = "FIGHT" | "SAIL" | "HELM" | "VISIT" | "COME_HOME" | "REPAIR" | "BUILD";
 
 export interface ShipActionModel {
   readonly kind: ShipActionKind;
@@ -48,6 +49,8 @@ export interface ShipPanelInput {
   readonly playerLevel: number | null;
   /** Whether pirates have struck this voyage and wait to be fought. */
   readonly ambushDue: boolean;
+  /** Whether the ship can be taken by hand round home waters: drawn at the pier, in the 3D view. */
+  readonly canHelm: boolean;
   readonly placeName: (slotId: string) => string;
   readonly translate: Translate;
 }
@@ -79,6 +82,9 @@ export function shipPanelModel(input: ShipPanelInput): ShipPanelModel {
       enabled: !sunk,
       primary: !input.ambushDue && !sunk
     });
+    if (input.canHelm && !sunk) {
+      actions.push({ kind: "HELM", label: translate("shipPanel.helm"), detail: translate("shipPanel.helmDetail"), enabled: true, primary: false });
+    }
     const missing = ship.hullMax - ship.hull;
     if (missing > 0) {
       actions.push({

@@ -255,6 +255,47 @@ places; this document gives it ships.
     with, and counts a voyage's minutes down without asking the server.
 - Presentation only: a model never changes a ship's numbers, which stay in game data.
 
+## Taking the helm (S1, built)
+
+The player can sail their own ship by hand round the home island's waters. It is the first of four
+steps toward an open sea (owner approval, 2026-11-19):
+
+| Step | What | Server |
+| --- | --- | --- |
+| **S1** | Sail round home waters; the edge offers the chart. | Nothing: it is the player's own screen. |
+| S2 | One set of controls and one camera for the helm and the sea battle. | Unchanged. |
+| S3 | A shared, realtime sea (a Durable Object): pirate lairs, sea monsters, other players. | New. |
+| S4 | A fleet of several ships, one at the helm at a time. | A migration. |
+
+How S1 works:
+
+- **Taking it.** The ship's panel offers "Cầm lái" while the ship is moored at home with hull above 0
+  and the 3D view is drawing it. The ship leaves the pier bow first and the camera flies in behind it.
+  - The camera switch shows a third pill, **"Tàu"**, while the player has the helm. Picking "Toàn
+    cảnh" or "Nhân vật", pressing F, Esc, or "Xuống tàu" steps ashore: the ship goes back to the pier
+    and the camera flies to that view.
+  - The character stays on the island, standing still; the movement keys sail the ship instead.
+    Taps on the island and the E interaction do nothing while at the helm.
+- **Controls.** The same as a sea battle, in the same wooden bar:
+  - A/D or ◀ ▶ held: the rudder;
+  - W/S or − +: the sails (struck, half, full);
+  - Space or "Chèo nhanh": a 4-second sprint at 1.6x, then a 10-second rest.
+- **Handling** (`apps/web/src/helm/helm.ts`, pure and tested):
+  - Top speed in tiles per second by tier: 3.5, 4.5, 5.2, 6. Turn rate falls as the hull grows
+    (1.3 down to 0.65 rad/s), and the rudder still bites a little with no way on.
+  - The hull (bow, middle and stern) must lie on open sea or shallows, and clear of the pier. A ship
+    that would run aground stops instead and says so ("Nước cạn phía trước"); it can turn away.
+  - **Home waters are a circle round the island**: its grid's half-width plus 20 tiles (68 tiles
+    for a 96-tile island), well short of the neighbours on the horizon. Past the grid everything is
+    open sea. At the edge the ship stops and offers the chart ("Mở Hải đồ"). The helm waits while the chart is open: it sails on if the chart is
+    closed, and ends if a voyage is begun, because the ship has then left for real.
+  - Frames are cut into steps of at most 0.05 s, and a pause longer than 0.5 s is not sailed, so a
+    stutter cannot carry the ship through a spit of land.
+- **Nothing is sent.** The server still has the ship at home, and the only way to another island is
+  still the chart's timed voyage. That is why the helm may live in the browser: it decides nothing
+  anyone else sees or is paid. When S3 makes the sea shared, the ship's position becomes the server's.
+- The loop sleeps once the ship lies still with its sails struck: an idle helm costs no frames.
+
 ## Security notes
 
 - The client never sends a class, a price, a time, a position (in W5a), a hit, or a hull value.

@@ -142,6 +142,9 @@ import {
 import { createHoldControl, createJoystickControl, type HoldControl, type JoystickControl } from "./mobile/joystick";
 import { sharedModelLibrary } from "./render/model-library";
 import { openShipPanel, shipPanelModel, type ShipPanel } from "./ship-panel";
+import { helmShipForTier, islandHelmWaters, startHelm } from "./helm/helm";
+import { openHelmView, type HelmView } from "./helm/helm-view";
+import { islandDecorPlan } from "./render/island-decor";
 import { deviceQualityProfile } from "./render/render-quality";
 import { DEFAULT_CAMERA_MODE, otherCameraMode, type CameraMode } from "./render/camera-mode";
 import { GROUND_SURFACE_Y, islandWadeDepthAt, terrainHeightAt } from "./render/terrain-height";
@@ -880,15 +883,24 @@ function renderCameraMode(): void {
   group.setAttribute("aria-label", t("camera.mode.aria"));
   const estate = element<HTMLButtonElement>("camera-estate");
   const character = element<HTMLButtonElement>("camera-character");
-  const inEstate = state.cameraMode === "ESTATE";
+  const ship = element<HTMLButtonElement>("camera-helm");
+  // At the helm a third pill says so; either of the other two steps ashore into that view.
+  const atHelm = helm !== null;
+  const inEstate = !atHelm && state.cameraMode === "ESTATE";
+  const inCharacter = !atHelm && state.cameraMode === "CHARACTER";
   estate.textContent = t("camera.mode.estate");
   character.textContent = t("camera.mode.character");
+  ship.textContent = t("camera.mode.helm");
+  ship.hidden = !atHelm;
   estate.classList.toggle("is-active", inEstate);
-  character.classList.toggle("is-active", !inEstate);
+  character.classList.toggle("is-active", inCharacter);
+  ship.classList.toggle("is-active", atHelm);
   estate.setAttribute("aria-pressed", String(inEstate));
-  character.setAttribute("aria-pressed", String(!inEstate));
+  character.setAttribute("aria-pressed", String(inCharacter));
+  ship.setAttribute("aria-pressed", String(atHelm));
   estate.title = t("camera.mode.estateHint");
   character.title = t("camera.mode.characterHint");
+  ship.title = t("camera.mode.helmHint");
   // The recenter control belongs to the estate view, which is the only view it can move, and it says
   // which of its two jobs it would do: bring the camera back, or nothing at all.
   const recenter = element<HTMLButtonElement>("camera-recenter");
@@ -7532,8 +7544,81 @@ function setFleet(fleet: FleetResponse): void {
   fleetState = { fleet, seenAtMs: Date.now() };
   refreshActivityTray();
   if (fleet.voyage !== null) ensureActivityTicker();
+  // The ship has sailed (from the chart the helm opened) or sunk: the helm ends before it leaves the
+  // pier, so the camera flies home from behind the hull rather than cutting.
+  if (helm !== null && (dockShipOf(fleetState) === null || fleet.ship.hull <= 0)) leaveHelm();
   scene?.setDockShip(dockShipOf(fleetState));
   shipPanel?.refresh();
+}
+
+/** The helm while the player sails the ship round home waters; null while it lies at the pier. */
+let helm: HelmView | null = null;
+
+/**
+ * Takes the ship from the pier and sails it by hand (docs/design/NAVAL.md, "Taking the helm").
+ *
+ * Nothing is sent: the server still has the ship at home, and the only way off the island is still the
+ * chart's timed voyage, which the edge of home waters offers to open.
+ */
+function takeHelm(): void {
+  if (helm !== null || scene === null || fleetState === null || state.island === null) return;
+  const fleet = fleetState.fleet;
+  const mooring = scene.dockShipMooring();
+  if (fleet.location !== "HOME" || fleet.ship.hull <= 0 || mooring === null) {
+    setStatus(message("helm.unavailable"));
+    return;
+  }
+  const island = state.island;
+  const pier = islandDecorPlan(island).pier;
+  const waters = islandHelmWaters({
+    size: island.size,
+    originX: island.originX,
+    originY: island.originY,
+    isSeaCell: (x, y) => {
+      const kind = islandCellKindAt(island, { x, y });
+      return kind === "DEEP" || kind === "SHALLOW";
+    },
+    pier: pier === null ? null : { x0: pier.x, y0: pier.y, x1: pier.x + pier.dirX * pier.lengthTiles, y1: pier.y + pier.dirY * pier.lengthTiles }
+  });
+  // The character stays on the island, standing still: no walk left queued, no key left held.
+  movement?.clear();
+  if (!autoIsDriving()) playerRuntime.clearDestination();
+  helm = openHelmView({
+    host: document.body,
+    translate: (key, params) => t(key, params),
+    ship: helmShipForTier(fleet.ship.tier, mooring.lengthTiles),
+    waters,
+    start: startHelm(mooring),
+    onPose: (pose) => {
+      scene?.setHelmPose(pose);
+    },
+    onOpenChart: () => {
+      // The helm waits at the edge while the chart is open; it sails on if the chart is closed
+      // without a voyage, and ends (setFleet) if one is begun.
+      helm?.setPaused(true);
+      showSeaChart(() => {
+        helm?.setPaused(false);
+      });
+    },
+    onLeave: () => {
+      leaveHelm();
+    }
+  });
+  renderCameraMode();
+  refreshInteractionCandidate();
+  syncTouchControls();
+  setStatus(message("helm.taken"));
+}
+
+/** Steps ashore: the ship goes back to the pier and the camera to the view the helm was taken from. */
+function leaveHelm(): void {
+  if (helm === null) return;
+  helm.close();
+  helm = null;
+  scene?.setHelmPose(null);
+  renderCameraMode();
+  refreshInteractionCandidate();
+  syncTouchControls();
 }
 
 /** The ship's own panel, opened by tapping the ship at the pier; null while closed. */
@@ -7557,6 +7642,7 @@ function showShipPanel(): void {
             serverNowMs: fleetServerNow(),
             playerLevel: state.progression?.level ?? null,
             ambushDue: ambushDue(),
+            canHelm: helm === null && scene?.dockShipMooring() != null,
             placeName,
             translate: (key, params) => t(key, params)
           }),
@@ -7574,6 +7660,10 @@ function showShipPanel(): void {
           // The chart is where a place is picked; it sails from there.
           shipPanel?.close();
           showSeaChart();
+          return;
+        case "HELM":
+          shipPanel?.close();
+          takeHelm();
           return;
         case "VISIT":
           shipPanel?.close();
@@ -7727,7 +7817,7 @@ async function refreshHorizon(): Promise<void> {
 }
 
 /** Opens the sea chart over the farm. It only reads, except to give a placeless island its place. */
-function showSeaChart(): void {
+function showSeaChart(onClosed?: () => void): void {
   if (seaChartModal !== null) return;
   const client = api();
   seaChartModal = openSeaChart({
@@ -7765,7 +7855,8 @@ function showSeaChart(): void {
     describeError: (error) => describe(error)(t, state.language),
     onClose: () => {
       seaChartModal = null;
-      if (visitView === null && !visitInFlight) element<HTMLButtonElement>("chart-launcher").focus();
+      onClosed?.();
+      if (helm === null && visitView === null && !visitInFlight) element<HTMLButtonElement>("chart-launcher").focus();
     }
   });
 }
@@ -7783,6 +7874,8 @@ let visitInFlight = false;
  */
 async function startVisit(slotId: string): Promise<void> {
   if (visitView !== null || visitInFlight) return;
+  // A visit is another screen: the helm (waiting at the edge while the chart was open) ends first.
+  leaveHelm();
   visitInFlight = true;
   try {
     const visit = await api().visitWorldPlace(slotId);
@@ -8148,6 +8241,8 @@ const playerRuntime = createPlayerRuntime({
     // A panel owns the keyboard and the stick while it is open. Movement is not a background activity:
     // walking while the market is up would move the character out from under the trade they are making.
     if (panels.active !== null) return NEUTRAL_INPUT;
+    // At the helm the same keys sail the ship; the character waits on the island.
+    if (helm !== null) return NEUTRAL_INPUT;
     const held = movement?.vector() ?? NEUTRAL_INPUT;
     // Auto is driving and the player has taken the controls: the design's rule is that the player's own
     // hand wins, so the movement is handed straight through and the mode change is asked for once.
@@ -8165,7 +8260,7 @@ const playerRuntime = createPlayerRuntime({
   // Running is the character view's: in the estate view the character is a marker being moved between
   // places, and a sprint there would be a silent behaviour change to shipped movement.
   readRun: () =>
-    panels.active === null && state.cameraMode === "CHARACTER" && ((movement?.isRunning() ?? false) || runHeld),
+    panels.active === null && state.cameraMode === "CHARACTER" && helm === null && ((movement?.isRunning() ?? false) || runHeld),
   onPose: (pose) => {
     characterPose = pose === null ? null : toScenePlayer(pose);
     scene?.setPlayer(characterPose);
@@ -8243,6 +8338,8 @@ let selectionCollision: CollisionWorld = createPlayerCollisionWorld([]);
  * queued in the estate view, and a key held down across the change.
  */
 function setCameraMode(mode: CameraMode, focus?: EstateCameraFocus): void {
+  // Choosing a view from the helm steps ashore into it, even into the view the helm was taken from.
+  if (helm !== null) leaveHelm();
   if (state.cameraMode === mode && focus === undefined) return;
   const changed = state.cameraMode !== mode;
   state.cameraMode = mode;
@@ -8309,6 +8406,11 @@ function beginPrecisionAction(kind: PrecisionActionKind): void {
 
 /** Estate to character and back, for the F key and the HUD control. */
 function toggleCameraMode(): void {
+  // F at the helm steps ashore into the view the helm was taken from.
+  if (helm !== null) {
+    leaveHelm();
+    return;
+  }
   setCameraMode(otherCameraMode(state.cameraMode));
 }
 
@@ -8442,7 +8544,8 @@ function syncTouchControls(): void {
   // No movement controls while a panel is open: the market, the inventory and the build shop are
   // places the player is *doing something else*, and a stick left live underneath one would walk the
   // character away while they shop.
-  const visible = showTouchControls(capability, state.cameraMode) && panels.active === null;
+  // Nor at the helm: the ship has its own rudder and sails, and the character stands still ashore.
+  const visible = showTouchControls(capability, state.cameraMode) && panels.active === null && helm === null;
   const controls = element<HTMLElement>("touch-controls");
   if (controls.hidden === visible) controls.hidden = !visible;
   document.body.classList.toggle("is-character-mode", state.cameraMode === "CHARACTER");
@@ -9039,7 +9142,7 @@ function refreshInteractionCandidate(): void {
   if (interactionFocusKey !== null && !interactionIndex.targets.some((target) => target.key === interactionFocusKey)) {
     interactionFocusKey = null;
   }
-  if (pose === null || context === null || state.cameraMode !== "CHARACTER") {
+  if (pose === null || context === null || state.cameraMode !== "CHARACTER" || helm !== null) {
     interactionCandidate = null;
   } else {
     const query = { worldX: pose.worldX, worldZ: pose.worldZ, facingYaw: pose.facingYaw };

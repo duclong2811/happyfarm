@@ -1291,3 +1291,51 @@ html.ui-b.ui-warm .ship-panel .sp-status { margin: 0; min-height: 1em; color: #a
   html.ui-b.ui-warm .ship-panel .sp-body { grid-template-columns: 92px 1fr; }
   html.ui-b.ui-warm .ship-panel .sp-picture { width: 92px; height: 92px; }
 }
+
+/* -------------------------------------------------------------------------------------------
+ * The helm: rudder, sails and oars over the island while the player sails the ship by hand.
+ * The same wooden bar as a sea battle's controls, so the two read as one way of sailing.
+ * ------------------------------------------------------------------------------------------- */
+.camera-mode-button[hidden] { display: none !important; }
+html.ui-b.ui-warm .helm-view {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 900; display: grid; justify-items: center; gap: 8px;
+  padding: 0 8px calc(14px + env(safe-area-inset-bottom, 0px)); font-family: var(--w-display); color: var(--w-ink); pointer-events: none;
+}
+html.ui-b.ui-warm .helm-view[hidden] { display: none; }
+html.ui-b.ui-warm .helm-view .helm-hint {
+  margin: 0; padding: 4px 12px; border-radius: 99px; background: rgba(250, 240, 220, .88);
+  color: var(--w-ink-2); font: 700 .74rem "Nunito Variable", system-ui, sans-serif; text-align: center;
+}
+/* Above the ship, under the top bar, so it never hides the hull it is talking about. */
+html.ui-b.ui-warm .helm-view .helm-notice {
+  position: fixed; top: 150px; left: 50%; transform: translateX(-50%); width: max-content;
+  display: grid; gap: 8px; justify-items: center; max-width: min(460px, calc(100% - 32px)); padding: 10px 16px;
+  border: 4px solid var(--w-wood); border-radius: 16px; background: var(--w-parchment); box-shadow: 0 5px 0 var(--w-wood-deep);
+  text-align: center; pointer-events: auto;
+}
+html.ui-b.ui-warm .helm-view .helm-notice[hidden],
+html.ui-b.ui-warm .helm-view .helm-chart[hidden] { display: none; }
+html.ui-b.ui-warm .helm-view .helm-notice p { margin: 0; color: var(--w-wood-deep); font-weight: 800; font-size: .9rem; }
+html.ui-b.ui-warm .helm-view .helm-controls {
+  display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 8px 10px;
+  border: 4px solid var(--w-wood); border-radius: 18px; background: var(--w-parchment); box-shadow: 0 5px 0 var(--w-wood-deep);
+  pointer-events: auto;
+}
+html.ui-b.ui-warm .helm-view .helm-controls button {
+  min-width: 48px; min-height: 48px; padding: 4px 10px; border: 3px solid var(--w-wood-deep); border-radius: 12px;
+  background: linear-gradient(#a8693a, var(--w-wood)); box-shadow: 0 3px 0 var(--w-wood-deep);
+  color: #fff3d6; font: 800 1rem var(--w-display); cursor: pointer; touch-action: none; user-select: none;
+}
+html.ui-b.ui-warm .helm-view .helm-controls button:disabled { cursor: default; }
+html.ui-b.ui-warm .helm-view .helm-sail { min-width: 6.5rem; text-align: center; font: 800 .9rem var(--w-display); color: var(--w-wood-deep); }
+html.ui-b.ui-warm .helm-view .helm-oars { position: relative; overflow: hidden; background: linear-gradient(#cfe7c2, #8fc27a) !important; border-color: #4f7f3a !important; color: #24451a !important; }
+html.ui-b.ui-warm .helm-view .helm-oars::after { content: ""; position: absolute; inset: auto 0 0 0; height: calc(var(--reload, 0) * 100%); background: rgba(40, 20, 10, .3); }
+html.ui-b.ui-warm .helm-view .helm-oars.is-rowing { filter: brightness(1.1); }
+html.ui-b.ui-warm .helm-view .helm-leave { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)) !important; border-color: var(--w-orange-edge) !important; color: #fff !important; }
+@media (max-width: 760px) {
+  html.ui-b.ui-warm .helm-view .helm-hint { display: none; }
+  html.ui-b.ui-warm .helm-view .helm-controls { flex-wrap: wrap; justify-content: center; gap: 4px; padding: 6px; }
+  html.ui-b.ui-warm .helm-view .helm-notice { top: 120px; }
+  html.ui-b.ui-warm .helm-view .helm-controls button { min-width: 42px; min-height: 44px; padding: 2px 6px; font-size: .78rem; }
+  html.ui-b.ui-warm .helm-view .helm-sail { min-width: 4.5rem; font-size: .74rem; }
+}

@@ -31,6 +31,8 @@
           <div id="camera-mode" class="camera-mode" role="group" aria-label="Camera">
             <button id="camera-estate" class="camera-mode-button is-active" type="button" aria-pressed="true">Estate</button>
             <button id="camera-character" class="camera-mode-button" type="button" aria-pressed="false">Character</button>
+            <!-- Shown only at the helm: says the camera is the ship's. Either other view steps ashore. -->
+            <button id="camera-helm" class="camera-mode-button" type="button" aria-pressed="false" hidden>Ship</button>
           </div>
           <!-- Estate view only: put the camera back on the player and follow again. Icon-sized. -->
           <button id="camera-recenter" class="ghost-button camera-recenter" type="button" hidden><span data-icon="target" data-icon-size="18"></span></button>

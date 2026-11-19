@@ -31,7 +31,7 @@ function fleet(overrides: Partial<FleetResponse> = {}): FleetResponse {
 }
 
 function model(input: Partial<ShipPanelInput> & { fleet: FleetResponse }): ReturnType<typeof shipPanelModel> {
-  return shipPanelModel({ serverNowMs: NOW, playerLevel: 30, ambushDue: false, placeName: (slotId) => `place(${slotId})`, translate, ...input });
+  return shipPanelModel({ serverNowMs: NOW, playerLevel: 30, ambushDue: false, canHelm: true, placeName: (slotId) => `place(${slotId})`, translate, ...input });
 }
 
 const voyage = (arrived: boolean, ambush: NonNullable<FleetResponse["voyage"]>["ambush"] = null): NonNullable<FleetResponse["voyage"]> => ({
@@ -44,16 +44,25 @@ const voyage = (arrived: boolean, ambush: NonNullable<FleetResponse["voyage"]>["
 });
 
 describe("the ship's panel", () => {
-  it("offers sailing, the build and its price at the pier, and leads with sailing", () => {
+  it("offers sailing, the helm, the build and its price at the pier, and leads with sailing", () => {
     const view = model({ fleet: fleet() });
     expect(view.modelId).toBe("ship_sloop");
     expect(view.where).toBe("shipPanel.atHome");
     expect(view.actions.map((action) => [action.kind, action.enabled, action.primary])).toEqual([
       ["SAIL", true, true],
+      ["HELM", true, false],
       ["BUILD", true, false]
     ]);
-    expect(view.actions[1]?.detail).toBe('shipPanel.buildCost:{"gold":3000,"wood":500,"ore":300}');
+    expect(view.actions[2]?.detail).toBe('shipPanel.buildCost:{"gold":3000,"wood":500,"ore":300}');
     expect(view.next).toContain("ship.class.ship_class_brig");
+  });
+
+  it("offers the helm only where the ship can be drawn and only while it floats", () => {
+    expect(model({ fleet: fleet(), canHelm: false }).actions.map((action) => action.kind)).not.toContain("HELM");
+    const sunk = fleet({ ship: { classId: "ship_class_sloop", tier: 2, hull: 0, hullMax: 150, speedTilesPerMinute: 70, cannons: 2 } });
+    expect(model({ fleet: sunk }).actions.map((action) => action.kind)).not.toContain("HELM");
+    // At sea or at a place there is no ship at the pier to take.
+    expect(model({ fleet: fleet({ location: "AT_SEA", voyage: voyage(false) }) }).actions.map((action) => action.kind)).not.toContain("HELM");
   });
 
   it("says when the build needs a higher level, and offers repair at its cost when the hull is down", () => {
