@@ -84,6 +84,16 @@ describe("Auto cost harness (real repositories, deterministic)", () => {
      * — B3 changed that column's persistence on purpose (a walk must not erase how far Auto has been
      * reconciled) and pins it in the reconciliation tests instead. The write counts and every
      * economic row are what the equivalence is about here.
+     *
+     * Re-pinned for the Main Character lease (docs/design/AUTOMATION_LOGISTICS.md section 19): while
+     * the field grows, the online client renews the 180-second lease with a WAITING step about once
+     * a minute, which adds steps and `actor_auto_state` writes (most visibly on the 1-cell field, which
+     * spends most of its cycle waiting). The settlements, the batches and the receipts are unchanged:
+     * the same work, paid the same way. The 1- and 30-cell digests are unchanged too; the 121-cell
+     * digest moved only because the extra steps renumber the harness's request ids and shift the last
+     * walk's arrival by a fraction of a second. With the lease lifted locally the old digest
+     * (`de57fe07…`, 762 steps) reproduces exactly, and crops, cargo, inventory, wallet, ledger,
+     * progression and every harvest row (request id aside) are identical either way.
      */
     const reference: Readonly<Record<number, {
       readonly digest: string;
@@ -96,30 +106,30 @@ describe("Auto cost harness (real repositories, deterministic)", () => {
     }>> = {
       1: {
         digest: "b7866289ea004ebf30810cd658ad417fb0979e84f8aaab48f4b672064de895e0",
-        steps: 91,
+        steps: 174,
         settlements: 46,
         batches: 46,
         receipts: 107,
-        autoState: 243,
-        writeRows: 323
+        autoState: 410,
+        writeRows: 407
       },
       30: {
         digest: "5b288440d39eda2ab7524921f7209454d636a1133fea34ed409e7cf674291e45",
-        steps: 126,
+        steps: 132,
         settlements: 63,
         batches: 63,
         receipts: 156,
-        autoState: 376,
-        writeRows: 531
+        autoState: 389,
+        writeRows: 538
       },
       121: {
-        digest: "de57fe0701042722c78cd9b3e37b182731f67816d6f86a6f3a3b02695636cd3b",
-        steps: 762,
+        digest: "4b11a2b3c92a79bfdca63b9cee5d4473006920fa9dbc1071b949f5998ef3c106",
+        steps: 772,
         settlements: 381,
         batches: 381,
         receipts: 887,
-        autoState: 2286,
-        writeRows: 3154
+        autoState: 2314,
+        writeRows: 3172
       }
     };
 

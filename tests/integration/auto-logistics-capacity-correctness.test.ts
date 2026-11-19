@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAIN_CHARACTER_AUTO_LEASE_SECONDS } from "@happy-farm/application";
 import { CARGO_CAPACITY_BY_ACTOR_KIND, STARTER_CARGO_CAPACITY } from "@happy-farm/game-data";
 import { gameDataCargoCapacities } from "../../workers/api/src/runtime";
 import {
@@ -27,6 +28,16 @@ function actorRow(world: CostWorld): { readonly id: string; readonly cargo_capac
 
 function harvests(world: CostWorld): number {
   return scalar(world, "SELECT COUNT(*) AS n FROM harvest_settlements");
+}
+
+/** What a window of Auto work leaves behind: the field, the seed store, the harvests and the cargo. */
+function workDone(world: CostWorld): { readonly planted: number; readonly seeds: number; readonly harvests: number; readonly carried: number } {
+  return {
+    planted: scalar(world, "SELECT COUNT(*) AS n FROM crop_instances"),
+    seeds: scalar(world, "SELECT COALESCE(SUM(quantity), 0) AS n FROM inventory_items WHERE item_definition_id = 'item_carrot_seed'"),
+    harvests: harvests(world),
+    carried: scalar(world, "SELECT COALESCE(SUM(quantity), 0) AS n FROM actor_cargo_items")
+  };
 }
 
 async function reconcileUntilCaughtUp(world: CostWorld, farmId: string, maxCalls = 80): Promise<void> {
@@ -100,20 +111,20 @@ describe("D2.4.1 cargo capacity correctness", () => {
   }, 600_000);
 
   it("keeps online Auto and B3 offline reconciliation equivalent at the same configured capacity", async () => {
+    // Offline work is bounded by the Main Character lease (180 seconds after the last online renewal;
+    // docs/design/AUTOMATION_LOGISTICS.md section 19), so the comparison is one lease of world time.
     const capacity = 60;
+    let onlineState: ReturnType<typeof workDone> | null = null;
     const online = createCostWorld(8, { cargoCapacity: capacity });
-    let elapsedSeconds = 0;
-    let onlineHarvests = 0;
     try {
-      const run = await driveCycle(online, {
+      await driveCycle(online, {
         cellCount: 8,
         seedQuantity: 60,
         maxSteps: 400,
-        targetHarvests: 8,
+        untilSeconds: MAIN_CHARACTER_AUTO_LEASE_SECONDS,
         gestureMs: 350
       });
-      elapsedSeconds = run.elapsedSeconds;
-      onlineHarvests = harvests(online);
+      onlineState = workDone(online);
     } finally {
       online.db.close();
     }
@@ -122,15 +133,19 @@ describe("D2.4.1 cargo capacity correctness", () => {
     try {
       const farmId = await setupAutoFarm(offline, { seedQuantity: 60 });
       expect(actorRow(offline)?.cargo_capacity).toBe(capacity);
-      offline.clock.advanceSeconds(elapsedSeconds);
+      // An absence far longer than the lease: the pass still stops at the lease.
+      offline.clock.advanceSeconds(60 * 60);
       await reconcileUntilCaughtUp(offline, farmId);
+      const offlineState = workDone(offline);
       process.stdout.write(
-        `capacity ${String(capacity)} equivalence: online harvests=${String(onlineHarvests)} offline harvests=${String(harvests(offline))}\n`
+        `capacity ${String(capacity)} equivalence (lease window): online ${JSON.stringify(onlineState)} offline ${JSON.stringify(offlineState)}\n`
       );
-      // Same elapsed authoritative time and same configured capacity: the offline pass reaches the
-      // same work, and never invents goods the online loop could not have made.
+      // Same window and same configured capacity: the offline pass reaches the same work, and never
+      // invents goods the online loop could not have made.
       expect(actorRow(offline)?.cargo_capacity).toBe(capacity);
-      expect(Math.abs(harvests(offline) - onlineHarvests)).toBeLessThanOrEqual(1);
+      expect(offlineState.planted).toBeGreaterThan(0);
+      expect(onlineState).not.toBeNull();
+      expect(offlineState).toEqual(onlineState);
     } finally {
       offline.db.close();
     }

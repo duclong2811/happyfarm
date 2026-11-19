@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MAIN_CHARACTER_AUTO_LEASE_SECONDS } from "@happy-farm/application";
 import {
   autoStateOf,
   createCostWorld,
@@ -17,9 +18,15 @@ function harvests(world: CostWorld): number {
   return scalar(world, "SELECT COUNT(*) AS n FROM harvest_settlements");
 }
 
-function shipped(world: CostWorld): number {
-  return scalar(world, "SELECT COALESCE(SUM(quantity), 0) AS n FROM actor_cargo_items")
-    + scalar(world, "SELECT COALESCE(SUM(quantity), 0) AS n FROM inventory_items");
+/** What a window of Auto work leaves behind: the field, the seed store, the harvests and the purse. */
+function economics(world: CostWorld): { readonly planted: number; readonly seeds: number; readonly harvests: number; readonly carried: number; readonly gold: number } {
+  return {
+    planted: scalar(world, "SELECT COUNT(*) AS n FROM crop_instances"),
+    seeds: scalar(world, "SELECT COALESCE(SUM(quantity), 0) AS n FROM inventory_items WHERE item_definition_id = 'item_carrot_seed'"),
+    harvests: harvests(world),
+    carried: scalar(world, "SELECT COALESCE(SUM(quantity), 0) AS n FROM actor_cargo_items"),
+    gold: scalar(world, "SELECT COALESCE(SUM(balance), 0) AS n FROM wallets WHERE currency_id = 'currency_gold'")
+  };
 }
 
 function xp(world: CostWorld): number {
@@ -116,34 +123,40 @@ describe("B3 cost and equivalence (real repositories, deterministic)", () => {
     }
   }, 600_000);
 
-  it("reaches the same economics online and offline for the same elapsed time", async () => {
-    // Online: the browser-driven loop, one request per transition, until the field has cycled.
+  it("reaches the same economics online and offline within the Main Character lease", async () => {
+    // Offline Auto runs only through the Main Character lease (`lease_until`, 180 seconds after the
+    // last online renewal; docs/design/AUTOMATION_LOGISTICS.md section 19), so a returning player is
+    // credited exactly the work the online loop would have done in that window, and nothing after it.
+    // Online: the browser-driven loop, one request per transition, for one lease of world time.
+    let onlineState: ReturnType<typeof economics> | null = null;
     const online = createCostWorld(4);
-    let elapsedSeconds = 0;
-    let onlineHarvests = 0;
     try {
       // `driveCycle` sets the world up itself (farm, area, assignment, seeds, Auto on).
-      const run = await driveCycle(online, { cellCount: 4, seedQuantity: 20, maxSteps: 200, targetHarvests: 4 });
-      elapsedSeconds = run.elapsedSeconds;
-      onlineHarvests = harvests(online);
+      await driveCycle(online, { cellCount: 4, seedQuantity: 20, maxSteps: 200, untilSeconds: MAIN_CHARACTER_AUTO_LEASE_SECONDS, gestureMs: 350 });
+      onlineState = economics(online);
     } finally {
       online.db.close();
     }
 
-    // Offline: the same elapsed server time, no browser steps at all.
+    // Offline: no browser steps at all, and an absence far longer than the lease.
     const offline = createCostWorld(4);
     try {
       const farmId = await setupAutoFarm(offline, { seedQuantity: 20 });
-      offline.clock.advanceSeconds(elapsedSeconds);
-      await reconcileUntilCaughtUp(offline, farmId);
-      process.stdout.write(
-        `equivalence: online harvests=${String(onlineHarvests)} offline harvests=${String(harvests(offline))} shipped online=${String(0)} offline=${String(shipped(offline))}\n`
-      );
-      // Same elapsed time, same settlement authority: the offline pass can only ever reach the work
-      // the online loop reached, and it never invents goods.
-      expect(harvests(offline)).toBeGreaterThanOrEqual(0);
+      const startedAt = autoStateOf(offline)?.simulation_at ?? null;
+      offline.clock.advanceSeconds(HOUR_SECONDS);
+      const view = await reconcileOnce(offline, farmId);
+      const offlineState = economics(offline);
+      process.stdout.write(`equivalence (lease window): online ${JSON.stringify(onlineState)} offline ${JSON.stringify(offlineState)}\n`);
+      // The pass stops at the lease, never at the present: the rest of the hour is paused, not owed.
+      expect(startedAt).not.toBeNull();
+      expect(Date.parse(view.reconciledThrough) - Date.parse(startedAt ?? "")).toBe(MAIN_CHARACTER_AUTO_LEASE_SECONDS * 1000);
+      expect(view.stopReason).toBe("CAUGHT_UP");
+      // Same window, same settlement authority: the same field, the same seeds spent, the same gold,
+      // and no goods the online loop could not have made.
+      expect(offlineState.planted).toBeGreaterThan(0);
+      expect(onlineState).not.toBeNull();
+      expect(offlineState).toEqual(onlineState);
       expect(xp(offline)).toBe(harvests(offline) * 4);
-      expect(Math.abs(harvests(offline) - onlineHarvests)).toBeLessThanOrEqual(1);
     } finally {
       offline.db.close();
     }

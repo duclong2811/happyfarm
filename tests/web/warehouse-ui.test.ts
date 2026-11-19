@@ -41,9 +41,12 @@ describe("the warehouse strip", () => {
   });
 
   it("refreshes with the account and adds no polling of its own", () => {
-    // One fetch site, inside the account refresh: load and post-mutation, never a timer.
+    // Two event-driven fetch sites, never a timer: the account refresh (load and post-mutation), and
+    // an Auto unload, the one Auto step that moves goods into the warehouse.
     const fetches = MAIN.match(/\.getWarehouse\(\)/g) ?? [];
-    expect(fetches).toHaveLength(1);
+    expect(fetches).toHaveLength(2);
+    expect(MAIN).toMatch(/getWarehouse: client\.getWarehouse\(\)/);
+    expect(MAIN).toMatch(/if \(step\.step === "UNLOAD"\) \{\s*state\.warehouse = \(await client\.getWarehouse\(\)\)\.warehouse;/);
     const warehouseIntervals = MAIN.match(/setInterval\([^)]{0,200}warehouse/i) ?? [];
     expect(warehouseIntervals).toHaveLength(0);
   });
