@@ -141,6 +141,7 @@ import {
 } from "./mobile/capability";
 import { createHoldControl, createJoystickControl, type HoldControl, type JoystickControl } from "./mobile/joystick";
 import { sharedModelLibrary } from "./render/model-library";
+import { openShipPanel, shipPanelModel, type ShipPanel } from "./ship-panel";
 import { deviceQualityProfile } from "./render/render-quality";
 import { DEFAULT_CAMERA_MODE, otherCameraMode, type CameraMode } from "./render/camera-mode";
 import { GROUND_SURFACE_Y, islandWadeDepthAt, terrainHeightAt } from "./render/terrain-height";
@@ -7532,6 +7533,75 @@ function setFleet(fleet: FleetResponse): void {
   refreshActivityTray();
   if (fleet.voyage !== null) ensureActivityTicker();
   scene?.setDockShip(dockShipOf(fleetState));
+  shipPanel?.refresh();
+}
+
+/** The ship's own panel, opened by tapping the ship at the pier; null while closed. */
+let shipPanel: ShipPanel | null = null;
+
+/**
+ * Opens the ship's panel: what the fleet read says, and the requests the ship can make from where it
+ * lies. Every request is the server's to decide; the panel refreshes from the fleet it answers with.
+ */
+function showShipPanel(): void {
+  if (shipPanel !== null || fleetState === null || state.island === null) return;
+  const client = api();
+  shipPanel = openShipPanel({
+    host: document.body,
+    translate: (key, params) => t(key, params),
+    model: () =>
+      fleetState === null
+        ? null
+        : shipPanelModel({
+            fleet: fleetState.fleet,
+            serverNowMs: fleetServerNow(),
+            playerLevel: state.progression?.level ?? null,
+            ambushDue: ambushDue(),
+            placeName,
+            translate: (key, params) => t(key, params)
+          }),
+    picture: (modelId, image) => {
+      itemThumbnails.apply({ modelId, roadTierId: null }, image);
+    },
+    act: async (kind) => {
+      const voyage = fleetState?.fleet.voyage ?? null;
+      switch (kind) {
+        case "FIGHT":
+          shipPanel?.close();
+          openAmbushFight();
+          return;
+        case "SAIL":
+          // The chart is where a place is picked; it sails from there.
+          shipPanel?.close();
+          showSeaChart();
+          return;
+        case "VISIT":
+          shipPanel?.close();
+          if (voyage !== null) void startVisit(voyage.toSlotId);
+          return;
+        case "COME_HOME":
+          setFleet(await client.endVoyage());
+          setStatus(message("shipPanel.cameHome"));
+          void refreshHorizon();
+          return;
+        case "REPAIR":
+          setFleet(await client.repairShip(newRequestId("repair")));
+          void refreshAccount();
+          return;
+        case "BUILD": {
+          const fleet = await client.buildShip(newRequestId("ship"));
+          setFleet(fleet);
+          setStatus(message("chart.shipBuilt", { name: t(`ship.class.${fleet.ship.classId}` as MessageKey) }));
+          void refreshAccount();
+          return;
+        }
+      }
+    },
+    describeError: (error) => describe(error)(t, state.language),
+    onClose: () => {
+      shipPanel = null;
+    }
+  });
 }
 
 /** The ship moored at the pier: the fleet's own class while it is at its dock, nothing while away. */
@@ -9281,6 +9351,9 @@ function enable3D(): void {
           if (!onObjectSelectedForCharacter(constructionId, effectiveTraceId)) selectObject(constructionId);
         },
         onWorldTargetSelected: onWorldTargetSelected,
+        onDockShipSelected: () => {
+          showShipPanel();
+        },
         onGroundPositionSelected: onGroundPositionSelected,
         onCameraModeToggle: () => {
           // The renderer reports the shortcut and decides nothing: which mode is active, and what

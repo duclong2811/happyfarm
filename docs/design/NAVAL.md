@@ -240,6 +240,19 @@ places; this document gives it ships.
 - **At home, the ship is moored at the island's pier** (a chosen island's dock), on the far side of the
   pier from the little fishing boat, sized by tier (2.6 m rowboat to 7.2 m frigate). It shows while
   the fleet read says `HOME` and is gone while the ship is at sea or at another place.
+- **The ship's panel.** Tapping the moored ship opens "Tàu của bạn" (`apps/web/src/ship-panel.ts`):
+  - the class and its picture, the hull, speed and cannons, and where it is (at the pier, at sea
+    with the minutes left, or arrived at a place);
+  - what it can do from there, led by the likeliest:
+    - at the pier: set sail (the chart picks the place), repair (with its price) and build the next
+      class (with its price, or the level it needs);
+    - at sea: call it home;
+    - at a place: look around, sail on, or come home;
+    - pirates that have struck come first ("Đánh cướp biển!"), and calling the ship home warns that
+      the crew then fights without orders.
+  - Every button is one of the existing requests (`POST /voyages`, `/voyages/end`, `/ships/repair`,
+    `/ships/build`, the visit and the fight). The panel refreshes from the fleet each one answers
+    with, and counts a voyage's minutes down without asking the server.
 - Presentation only: a model never changes a ship's numbers, which stay in game data.
 
 ## Security notes

@@ -3,6 +3,7 @@
   AmbientLight,
   BackSide,
   Box3,
+  BoxGeometry,
   BufferAttribute,
   CanvasTexture,
   Color,
@@ -516,6 +517,8 @@ export interface FarmSceneOptions {
   readonly onObjectSelected?: (constructionId: string, traceId?: string | null) => void;
   /** Called for a direct tap on a resource mesh or authoritative fishing-spot water region. */
   readonly onWorldTargetSelected?: (target: SceneWorldTarget) => void;
+  /** Called when the player tapped their own ship moored at the pier (it opens the ship's panel). */
+  readonly onDockShipSelected?: () => void;
   /** Called with an exact open-ground hit while an active neighbour island is being visited. */
   readonly onGroundPositionSelected?: (position: { readonly worldX: number; readonly worldZ: number }) => void;
   /**
@@ -2580,7 +2583,13 @@ let interactionGeometry: BufferGeometry | null = null;
     dockShipSignature = signature;
     const token = ++dockShipToken;
     // The moored ship's geometry and materials are the model library's, shared with every other
-    // ship drawn: it is only taken off the scene, never disposed.
+    // ship drawn: it is only taken off the scene, never disposed. Its pick box is its own.
+    dockShipGroup.traverse((node) => {
+      if (node instanceof Mesh && node.userData.dockShipPick === true) {
+        (node.geometry as BufferGeometry).dispose();
+        (node.material as Material).dispose();
+      }
+    });
     dockShipGroup.clear();
     if (pier === null || dockShip === null) {
       draw();
@@ -2600,6 +2609,12 @@ let interactionGeometry: BufferGeometry | null = null;
       ship.position.set(at.worldX, DOCK_SEA_LEVEL_Y, at.worldZ);
       // The model's bow is +x; turn it to the pier's heading, out to sea.
       ship.rotation.y = -Math.atan2(pier.dirY, pier.dirX);
+      // The model itself is never picked (a mast is a thin target); an unseen box round the hull and
+      // the lower rig is what a tap finds.
+      const pick = new Mesh(new BoxGeometry(length, length * 0.55, length * 0.42), new MeshBasicMaterial({ visible: false }));
+      pick.position.y = length * 0.2;
+      pick.userData.dockShipPick = true;
+      ship.add(pick);
       dockShipGroup.add(ship);
       draw();
     });
@@ -4298,6 +4313,16 @@ let interactionGeometry: BufferGeometry | null = null;
     return null;
   }
 
+  /** Whether the pointer is over the player's ship moored at the pier. */
+  function raycastDockShipAt(clientX: number, clientY: number): boolean {
+    if (dockShipGroup.children.length === 0 || !dockShipGroup.visible) return false;
+    const bounds = canvas.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) return false;
+    pointer.set(((clientX - bounds.left) / bounds.width) * 2 - 1, -((clientY - bounds.top) / bounds.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    return raycaster.intersectObjects(dockShipGroup.children, true).some((hit) => hit.object.userData.dockShipPick === true);
+  }
+
   /**
    * The id of the built thing under the pointer, or null.
    *
@@ -4714,6 +4739,11 @@ let interactionGeometry: BufferGeometry | null = null;
     if (neighborIsland !== null) {
       const ground = raycastGroundPositionAt(event.clientX, event.clientY);
       if (ground !== null) options.onGroundPositionSelected?.(ground);
+      return;
+    }
+    // The player's own ship at the pier opens its panel, ahead of the water and ground behind it.
+    if (raycastDockShipAt(event.clientX, event.clientY)) {
+      options.onDockShipSelected?.();
       return;
     }
     const directWorldTarget = raycastWorldTargetAt(event.clientX, event.clientY, false);
