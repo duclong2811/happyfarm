@@ -237,6 +237,9 @@ places; this document gives it ships.
   scene.
 - The fight draws each ship with its model once loaded; a block ship stands in until then. The
   horizon draws each voyage's ship by its tier, hazed like the islands, the player's own less so.
+- **At home, the ship is moored at the island's pier** (a chosen island's dock), on the far side of the
+  pier from the little fishing boat, sized by tier (2.6 m rowboat to 7.2 m frigate). It shows while
+  the fleet read says `HOME` and is gone while the ship is at sea or at another place.
 - Presentation only: a model never changes a ship's numbers, which stay in game data.
 
 ## Security notes

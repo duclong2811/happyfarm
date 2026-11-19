@@ -7531,6 +7531,13 @@ function setFleet(fleet: FleetResponse): void {
   fleetState = { fleet, seenAtMs: Date.now() };
   refreshActivityTray();
   if (fleet.voyage !== null) ensureActivityTicker();
+  scene?.setDockShip(dockShipOf(fleetState));
+}
+
+/** The ship moored at the pier: the fleet's own class while it is at its dock, nothing while away. */
+function dockShipOf(current: { readonly fleet: FleetResponse } | null): { readonly tier: number } | null {
+  if (current === null || current.fleet.location !== "HOME") return null;
+  return { tier: current.fleet.ship.tier };
 }
 
 /** Reads the ship and its voyage (W5a), so a voyage under way shows in the activity tray. */
@@ -9350,6 +9357,7 @@ function enable3D(): void {
     scene.setPlayerCharacter(state.characterId);
     scene.setBuildingLooks({ STORAGE_SHED: warehouseLookFor(state.warehouse?.tier ?? null) });
     scene.setHorizon(state.island === null ? null : horizonView);
+    scene.setDockShip(dockShipOf(fleetState));
     mineSceneSignature = "";
     pushMinesToScene();
   }

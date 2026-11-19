@@ -78,6 +78,7 @@ import {
 } from "./object-picking";
 import { CELL_OVERLAY_LIFT_WORLD } from "./world-cell-overlay";
 import { CELL_OVERLAY_TILE_LIFT_WORLD } from "./world-cell-overlay";
+import { SEA_SURFACE_Y as DOCK_SEA_LEVEL_Y } from "./world-cell-overlay";
 import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
 import { islandDecorPlan } from "./island-decor";
@@ -125,7 +126,10 @@ import {
 } from "./character-camera";
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
-import { shipModelForTier } from "./ship-models";
+import { fitShipModel, shipModelForTier } from "./ship-models";
+
+/** A moored ship's length at the pier, in world metres, by tier (rowboat, sloop, brig, frigate). */
+const DOCK_SHIP_LENGTH_BY_TIER = [2.6, 4.6, 5.8, 7.2] as const;
 import { isTypingTarget } from "../player/input";
 import { createPlayerCharacterView, PLAYER_CHARACTER_ASSET, ROSTER_CHARACTER_SCALE } from "./player-character";
 import { cropStageFor, cropStageModelId, treeStageModelId } from "./model-urls";
@@ -683,6 +687,11 @@ export interface FarmSceneHandle {
   setNeighborIslandPreviews(islands: readonly SceneNeighborIslandPreview[]): void;
   /** Stands the other islands of the player's archipelago on the horizon, or clears them (null). */
   setHorizon(horizon: SceneHorizon | null): void;
+  /**
+   * The player's own ship moored at the island's pier, by its class's tier, or nothing (null) while
+   * it is away at sea. Presentation only: the fleet read decides where the ship is.
+   */
+  setDockShip(ship: { readonly tier: number } | null): void;
   /** Moves the estate camera to a world-space place without inventing a cell coordinate. */
   focusWorld(worldX: number, worldZ: number, distance?: number, yaw?: number): void;
   /**
@@ -1330,6 +1339,13 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   const islandDecorGroup = new Group();
   let islandDecorSignature = "";
   let islandDecorToken = 0;
+  // The player's ship at the pier (W5): the fleet's own class, moored on the far side of the pier
+  // from the island's little fishing boat.
+  const dockShipGroup = new Group();
+  dockShipGroup.name = "dock-ship";
+  let dockShip: { readonly tier: number } | null = null;
+  let dockShipSignature = "";
+  let dockShipToken = 0;
   const neighborGroup = new Group();
   const neighborGeometries: BufferGeometry[] = [];
   const neighborCollisionDebugGroup = new Group();
@@ -1574,6 +1590,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     resourceGroup,
     fishingMarkerGroup,
     islandDecorGroup,
+    dockShipGroup,
     neighborPreviewGroup,
     neighborGroup,
     neighborCollisionDebugGroup,
@@ -2548,9 +2565,50 @@ let interactionGeometry: BufferGeometry | null = null;
     }
   }
 
+  /**
+   * Moors the player's ship alongside the pier head: bow out to sea, on the far side of the pier from
+   * the decor boat, sized by its tier so a frigate dwarfs a rowboat but never the island. Rebuilt only
+   * when the ship, the pier or the pitch changes.
+   */
+  function refreshDockShip(next: FarmSceneInput): void {
+    const ground = next.world.islandGround;
+    const pier = ground === undefined || dockShip === null ? null : islandDecorPlan(ground).pier;
+    const signature = pier === null || dockShip === null
+      ? ""
+      : `${String(dockShip.tier)}@${pier.x.toFixed(2)},${pier.y.toFixed(2)},${pier.dirX.toFixed(3)},${pier.dirY.toFixed(3)},${pier.lengthTiles.toFixed(2)}#${String(next.layout.pitch)}`;
+    if (signature === dockShipSignature) return;
+    dockShipSignature = signature;
+    const token = ++dockShipToken;
+    // The moored ship's geometry and materials are the model library's, shared with every other
+    // ship drawn: it is only taken off the scene, never disposed.
+    dockShipGroup.clear();
+    if (pier === null || dockShip === null) {
+      draw();
+      return;
+    }
+    const length = DOCK_SHIP_LENGTH_BY_TIER[Math.min(DOCK_SHIP_LENGTH_BY_TIER.length, Math.max(1, dockShip.tier)) - 1] ?? 2.6;
+    const pitch = next.layout.pitch;
+    // In tiles: the pier head, then out along the pier a little and across to the far side.
+    const endX = pier.x + pier.dirX * pier.lengthTiles;
+    const endY = pier.y + pier.dirY * pier.lengthTiles;
+    const across = 0.55 + (length / pitch) * 0.22;
+    const along = (length / pitch) * 0.1;
+    const at = tileToWorld({ x: endX + pier.dirX * along + pier.dirY * across, y: endY + pier.dirY * along - pier.dirX * across }, worldFrame(pitch));
+    void library.load(shipModelForTier(dockShip.tier)).then((source) => {
+      if (disposed || token !== dockShipToken || source === null) return;
+      const ship = fitShipModel(source, length);
+      ship.position.set(at.worldX, DOCK_SEA_LEVEL_Y, at.worldZ);
+      // The model's bow is +x; turn it to the pier's heading, out to sea.
+      ship.rotation.y = -Math.atan2(pier.dirY, pier.dirX);
+      dockShipGroup.add(ship);
+      draw();
+    });
+  }
+
   function applyState(next: FarmSceneInput): void {
     state = next;
     refreshIslandDecor(next);
+    refreshDockShip(next);
     const signature = signatureOf(next);
     const dynamicSignature = dynamicSignatureOf(next);
     /**
@@ -5108,7 +5166,7 @@ let interactionGeometry: BufferGeometry | null = null;
       };
       const homeVisible = next === null;
       for (const group of [
-        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup, fishingMarkerGroup, islandDecorGroup,
+        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup, fishingMarkerGroup, islandDecorGroup, dockShipGroup,
         overlayGroup, overlayDetailGroup, interactionGroup, cellOverlayGroup,
         workAreaGridGroup, workAreaMarkGroup, areaHarvestMarkGroup, previewGroup,
         constructionGroup
@@ -5121,6 +5179,10 @@ let interactionGeometry: BufferGeometry | null = null;
     setHorizon(next: SceneHorizon | null): void {
       horizonInput = next;
       rebuildHorizon();
+    },
+    setDockShip(next: { readonly tier: number } | null): void {
+      dockShip = next === null ? null : { tier: next.tier };
+      refreshDockShip(state);
     },
     setNeighborIslandPreviews(next: readonly SceneNeighborIslandPreview[]): void {
       const inputIslandIds = next.map((item) => item.islandId);
