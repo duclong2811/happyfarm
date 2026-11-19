@@ -1125,3 +1125,103 @@ html.ui-b.ui-warm .sea-chart .sc-ship-build {
 html.ui-b.ui-warm .sea-chart .sc-ship-build[hidden] { display: none; }
 html.ui-b.ui-warm .sea-chart .sc-ship-build:disabled,
 html.ui-b.ui-warm .sea-chart .sc-visit:disabled { opacity: .6; cursor: default; }
+
+/* ---------------------------------------------------------------------------------------------
+ * A pirate ambush (W5c): the fight in its own renderer, hull bars above, the helm below.
+ * ------------------------------------------------------------------------------------------- */
+html.ui-b.ui-warm .battle-view { position: fixed; inset: 0; z-index: 960; background: #cfe9f7; font-family: var(--w-display); color: var(--w-ink); }
+html.ui-b.ui-warm .battle-view .bv-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+html.ui-b.ui-warm .battle-view .bv-top {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 24px));
+  padding: 8px 14px 10px;
+  border: 4px solid var(--w-wood);
+  border-radius: 16px;
+  background: var(--w-parchment);
+  box-shadow: 0 5px 0 var(--w-wood-deep);
+}
+html.ui-b.ui-warm .battle-view .bv-top h2 { margin: 0 0 4px; color: #a8402c; font-size: 1.2rem; font-weight: 800; text-align: center; }
+html.ui-b.ui-warm .battle-view .bv-hulls { display: grid; gap: 4px; }
+html.ui-b.ui-warm .battle-view .bv-hull { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: 8px; font: 700 .82rem "Nunito Variable", system-ui, sans-serif; }
+html.ui-b.ui-warm .battle-view .bv-track { height: 10px; border: 2px solid var(--w-wood-deep); border-radius: 99px; background: rgba(0, 0, 0, .12); overflow: hidden; }
+html.ui-b.ui-warm .battle-view .bv-fill { display: block; height: 100%; background: linear-gradient(#e5533d, #a8402c); transition: width .15s linear; }
+html.ui-b.ui-warm .battle-view .bv-hull-mine .bv-fill { background: linear-gradient(#7ed36b, #3f8f3a); }
+html.ui-b.ui-warm .battle-view .bv-hull.is-sunk { opacity: .45; text-decoration: line-through; }
+html.ui-b.ui-warm .battle-view .bv-hull-text { text-align: right; }
+html.ui-b.ui-warm .battle-view .bv-hint { margin: 6px 0 0; color: var(--w-ink-2); font: 700 .72rem "Nunito Variable", system-ui, sans-serif; text-align: center; }
+html.ui-b.ui-warm .battle-view .bv-controls {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 16px);
+  padding: 8px 10px;
+  border: 4px solid var(--w-wood);
+  border-radius: 18px;
+  background: var(--w-parchment);
+  box-shadow: 0 5px 0 var(--w-wood-deep);
+}
+html.ui-b.ui-warm .battle-view .bv-controls.is-done { opacity: .5; pointer-events: none; }
+html.ui-b.ui-warm .battle-view .bv-controls button {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 4px 10px;
+  border: 3px solid var(--w-wood-deep);
+  border-radius: 12px;
+  background: linear-gradient(#a8693a, var(--w-wood));
+  box-shadow: 0 3px 0 var(--w-wood-deep);
+  color: #fff3d6;
+  font: 800 1rem var(--w-display);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+html.ui-b.ui-warm .battle-view .bv-fire { position: relative; overflow: hidden; background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)) !important; border-color: var(--w-orange-edge) !important; }
+html.ui-b.ui-warm .battle-view .bv-fire::after { content: ""; position: absolute; inset: auto 0 0 0; height: calc(var(--reload, 0) * 100%); background: rgba(40, 20, 10, .35); }
+html.ui-b.ui-warm .battle-view .bv-fire:disabled { cursor: default; }
+html.ui-b.ui-warm .battle-view .bv-sail { min-width: 6.5rem; text-align: center; font: 800 .9rem var(--w-display); color: var(--w-wood-deep); }
+html.ui-b.ui-warm .battle-view .bv-crew {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 6px 12px;
+  border: 3px solid var(--w-wood-deep);
+  border-radius: 12px;
+  background: rgba(255, 248, 230, .9);
+  color: var(--w-wood-deep);
+  font: 800 .85rem var(--w-display);
+  cursor: pointer;
+}
+html.ui-b.ui-warm .battle-view .bv-crew[hidden] { display: none; }
+html.ui-b.ui-warm .battle-view .bv-end {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-width: min(360px, calc(100% - 32px));
+  padding: 18px 22px;
+  border: 5px solid var(--w-wood);
+  border-radius: 20px;
+  background: var(--w-parchment);
+  box-shadow: 0 8px 0 var(--w-wood-deep), 0 20px 40px rgba(10, 40, 70, .35);
+  text-align: center;
+}
+html.ui-b.ui-warm .battle-view .bv-end[hidden] { display: none; }
+html.ui-b.ui-warm .battle-view .bv-end h3 { margin: 0; color: var(--w-wood-deep); font-size: 1.3rem; font-weight: 800; }
+html.ui-b.ui-warm .battle-view .bv-end p { margin: 0; color: var(--w-ink-2); font-weight: 700; }
+@media (max-width: 760px) {
+  html.ui-b.ui-warm .battle-view .bv-hull { grid-template-columns: 6.5rem 1fr 3.6rem; font-size: .74rem; }
+  html.ui-b.ui-warm .battle-view .bv-hint { display: none; }
+  html.ui-b.ui-warm .battle-view .bv-controls { gap: 4px; padding: 6px; }
+  html.ui-b.ui-warm .battle-view .bv-controls button { min-width: 42px; min-height: 44px; padding: 2px 6px; font-size: .78rem; }
+  html.ui-b.ui-warm .battle-view .bv-sail { min-width: 4.5rem; font-size: .74rem; }
+}

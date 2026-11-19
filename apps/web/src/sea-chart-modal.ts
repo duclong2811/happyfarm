@@ -1,4 +1,5 @@
 import type { FleetResponse, GetWorldChartResponse, SeaRegionDTO } from "@happy-farm/contracts";
+import { SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL } from "@happy-farm/game-data";
 import type { MessageKey } from "./i18n";
 import { createIcon } from "./icons";
 import { archipelagoName, chartShips, drawChartShips, drawSeaChart, freePlaces, SEA_REGION_ORDER, slotAt, type ChartFrame } from "./sea-chart-view";
@@ -28,6 +29,8 @@ export interface SeaChartModalOptions {
   readonly sail: ((slotId: string) => Promise<void>) | null;
   /** Builds the next class of ship at the dock, answering with the fleet as it now stands. */
   readonly buildShip: (() => Promise<FleetResponse>) | null;
+  /** Mends the ship at its dock. */
+  readonly repairShip: (() => Promise<FleetResponse>) | null;
   readonly describeError: (error: unknown) => string;
   readonly onClose?: () => void;
 }
@@ -97,6 +100,16 @@ export function placeAction(chart: GetWorldChartResponse, fleet: FleetResponse |
   // The same rule as the server's (at least a minute), shown rounded up; the server's time is the one kept.
   const minutes = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.z - from.z) / fleet.ship.speedTilesPerMinute));
   return { kind: "SAIL", minutes };
+}
+
+/** What mending the ship costs, shown before the player asks: the same rule the server charges by. */
+export function describeRepair(fleet: FleetResponse, translate: Translate): string | null {
+  const missing = fleet.ship.hullMax - fleet.ship.hull;
+  if (missing <= 0) return null;
+  return translate("chart.repair", {
+    gold: Math.ceil(missing * SHIP_REPAIR_GOLD_PER_HULL),
+    wood: Math.ceil(missing * SHIP_REPAIR_WOOD_PER_HULL)
+  });
 }
 
 /** The ship in one line, and the next class's price. */
@@ -235,7 +248,25 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
       }
     );
   });
-  shipRow.replaceChildren(shipText, buildButton);
+  const repairButton = document.createElement("button");
+  repairButton.type = "button";
+  repairButton.className = "sc-ship-build sc-ship-repair";
+  repairButton.addEventListener("click", () => {
+    const repair = options.repairShip;
+    if (repair === null) return;
+    repairButton.disabled = true;
+    repair().then(
+      (next) => {
+        fleet = next;
+        renderShip();
+      },
+      (error: unknown) => {
+        repairButton.disabled = false;
+        picked.textContent = options.describeError(error);
+      }
+    );
+  });
+  shipRow.replaceChildren(shipText, repairButton, buildButton);
   const legend = document.createElement("ul");
   legend.className = "sc-legend";
   for (const [kind, key] of [["mine", "chart.legend.mine"], ["settled", "chart.legend.settled"], ["wild", "chart.legend.wild"]] as const) {
@@ -283,6 +314,10 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
     buildButton.textContent = text.next ?? "";
     buildButton.disabled = fleet.location !== "HOME";
     buildButton.title = fleet.location === "HOME" ? "" : translate("chart.shipAway");
+    const repair = describeRepair(fleet, translate);
+    repairButton.hidden = repair === null || options.repairShip === null;
+    repairButton.textContent = repair ?? "";
+    repairButton.disabled = fleet.location !== "HOME";
   }
 
   function renderFoot(): void {

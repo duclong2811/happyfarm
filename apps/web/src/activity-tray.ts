@@ -61,6 +61,8 @@ export interface ActivityTrayInput {
   readonly mines: MinesActivity | null;
   /** The ship's voyage (W5a): `name` is where it is bound. Optional for older callers. */
   readonly voyage?: TimedActivity | null;
+  /** Pirates have struck the voyage and wait to be fought (W5c). */
+  readonly ambushDue?: boolean;
 }
 
 /** Minutes and seconds, for a wait longer than a minute or two. */
@@ -132,7 +134,9 @@ export function activityTrayItems(input: ActivityTrayInput, t: Translate): reado
     });
   }
   const voyage = input.voyage ?? null;
-  if (voyage !== null) {
+  if (voyage !== null && input.ambushDue === true) {
+    items.push({ id: "voyage", kind: "VOYAGE", icon: "⚔️", title: t("activity.ambush"), detail: t("activity.ambushFight"), fraction: null, tone: "warn" });
+  } else if (voyage !== null) {
     const { fraction, secondsLeft } = timedFraction(voyage, input.nowMs);
     const sailing = secondsLeft > 0;
     items.push({

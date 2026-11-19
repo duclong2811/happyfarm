@@ -46,6 +46,7 @@ import { showIslandPicker } from "./island-picker";
 import { openSeaChart, type SeaChartModal } from "./sea-chart-modal";
 import { archipelagoName } from "./sea-chart-view";
 import { openVisitView, type VisitView } from "./visit-view";
+import { openBattleView, type BattleView } from "./battle-view";
 import { characterNameKey, showCharacterPicker } from "./character-picker";
 import { CHARACTER_PORTRAITS } from "./character-portraits";
 import { DEFAULT_PLAYER_CHARACTER_ID } from "@happy-farm/game-data";
@@ -1764,7 +1765,8 @@ function activityTrayInput(nowMs: number): ActivityTrayInput {
         }
       : null,
     mines,
-    voyage: voyageActivity()
+    voyage: voyageActivity(),
+    ambushDue: ambushDue()
   };
 }
 
@@ -1772,6 +1774,12 @@ function activityTrayInput(nowMs: number): ActivityTrayInput {
 function refreshActivityTray(): void {
   const tray = document.getElementById("activity-tray");
   if (tray === null) return;
+  // Pirates striking is said once, aloud, as well as on the tray.
+  const ambush = fleetState?.fleet.voyage?.ambush ?? null;
+  if (ambush !== null && ambushDue() && ambushAnnounced !== ambush.at) {
+    ambushAnnounced = ambush.at;
+    setStatus(message("activity.ambush"), true);
+  }
   const items = state.farmId === null ? [] : activityTrayItems(activityTrayInput(Date.now()), (key, params) => t(key as MessageKey, params));
   renderActivityTray(tray, items, activateActivity);
 }
@@ -1779,6 +1787,10 @@ function refreshActivityTray(): void {
 function activateActivity(kind: ActivityKind): void {
   if ((kind === "AREA_PLANT" || kind === "AREA_HARVEST") && areaHarvestSelection.active && areaHarvestSelection.minimized) {
     restoreAreaHarvest();
+    return;
+  }
+  if (kind === "VOYAGE" && ambushDue()) {
+    openAmbushFight();
     return;
   }
   if (kind === "VOYAGE") {
@@ -7526,6 +7538,45 @@ async function refreshFleet(): Promise<void> {
   }
 }
 
+/** The server's time now, from the fleet's read: an ambush strikes by the server's clock. */
+function fleetServerNow(): number {
+  return fleetState === null ? Date.now() : Date.now() + (Date.parse(fleetState.fleet.readAt) - fleetState.seenAtMs);
+}
+
+/** Whether pirates have struck the voyage under way and wait to be fought. */
+function ambushDue(): boolean {
+  const ambush = fleetState?.fleet.voyage?.ambush ?? null;
+  return ambush !== null && ambush.status === "PENDING" && Date.parse(ambush.at) <= fleetServerNow();
+}
+
+let battleView: BattleView | null = null;
+let ambushAnnounced: string | null = null;
+
+/**
+ * Opens the fight with the pirates that struck the voyage. The device plays it; the orders go to the
+ * server in one request, and the server's result is the one shown and kept.
+ */
+function openAmbushFight(): void {
+  const ambush = fleetState?.fleet.voyage?.ambush ?? null;
+  if (battleView !== null || ambush === null || ambush.status !== "PENDING") return;
+  battleView = openBattleView({
+    host: document.body,
+    translate: (key, params) => t(key, params),
+    setup: ambush.setup,
+    pirates: ambush.pirates,
+    submit: async (inputs) => {
+      const answer = await api().fightAmbush(inputs);
+      setFleet(answer.fleet);
+      return answer.battle;
+    },
+    describeError: (error) => describe(error)(t, state.language),
+    onClose: () => {
+      battleView = null;
+      void refreshHorizon();
+    }
+  });
+}
+
 /** A place's name as the chart letters it: its archipelago, from the place's own id. */
 function placeName(slotId: string): string {
   const match = /^slot_([a-z]+)_(\d+)_\d+$/.exec(slotId);
@@ -7607,6 +7658,12 @@ function showSeaChart(): void {
       void refreshAccount();
       return fleet;
     },
+    repairShip: state.island === null ? null : async () => {
+      const fleet = await client.repairShip(newRequestId("repair"));
+      setFleet(fleet);
+      void refreshAccount();
+      return fleet;
+    },
     describeError: (error) => describe(error)(t, state.language),
     onClose: () => {
       seaChartModal = null;
@@ -7654,6 +7711,12 @@ async function startVisit(slotId: string): Promise<void> {
     });
     setStatus(message("visit.arrived", { name: visit.place.name ?? t(visit.place.claimed ? "visit.settled" : "visit.wild") }));
   } catch (error: unknown) {
+    // Pirates struck on the way: the fight comes first.
+    if (error instanceof ApiError && error.code === "AMBUSH_PENDING") {
+      await refreshFleet();
+      openAmbushFight();
+      return;
+    }
     setStatus(describe(error), true);
   } finally {
     visitInFlight = false;

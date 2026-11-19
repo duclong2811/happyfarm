@@ -75,6 +75,7 @@ import {
   ,GetWorldArchipelagoResponseSchema
   ,VisitWorldPlaceResponseSchema
   ,FleetResponseSchema
+  ,FightAmbushResponseSchema
   ,EnsureWorldSlotResponseSchema
 } from "@happy-farm/contracts";
 import type {
@@ -144,6 +145,7 @@ import type {
   ,GetWorldArchipelagoResponse
   ,VisitWorldPlaceResponse
   ,FleetResponse
+  ,FightAmbushResponse
   ,EnsureWorldSlotResponse
   ,SeaRegionDTO
 } from "@happy-farm/contracts";
@@ -342,6 +344,19 @@ export class ApiClient {
   /** Sets sail for a place on the caller's chart. Only the place is sent; the time is the server's. */
   startVoyage(slotId: string, requestId: string): Promise<FleetResponse> {
     return this.post("/voyages", { slotId, requestId }, FleetResponseSchema);
+  }
+
+  /** Mends the ship at its dock. Only a request id is sent; the cost is the server's. */
+  repairShip(requestId: string): Promise<FleetResponse> {
+    return this.post("/ships/repair", { requestId }, FleetResponseSchema);
+  }
+
+  /**
+   * Submits a fought ambush: only the player's orders, as [tick, action] pairs. The server replays the
+   * fight and answers with its own result.
+   */
+  fightAmbush(inputs: readonly (readonly [number, number])[]): Promise<FightAmbushResponse> {
+    return this.post("/voyages/ambush", { inputs }, FightAmbushResponseSchema);
   }
 
   /** Brings the ship home, ending its voyage. */
