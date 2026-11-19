@@ -1,6 +1,8 @@
 import {
   AmbientLight,
   BoxGeometry,
+  BufferAttribute,
+  BufferGeometry as LineGeometry,
   CircleGeometry,
   Color,
   ConeGeometry,
@@ -10,10 +12,14 @@ import {
   Group,
   HemisphereLight,
   InstancedMesh,
+  Line,
+  LineDashedMaterial,
   Matrix4,
   Mesh,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   PerspectiveCamera,
+  RingGeometry,
   Scene,
   SphereGeometry,
   WebGLRenderer,
@@ -21,7 +27,7 @@ import {
   type Material,
   type Object3D
 } from "three";
-import { SEA_BATTLE_ARENA_RADIUS, type SeaBattleState } from "@happy-farm/domain";
+import { SEA_BATTLE_ARENA_RADIUS, SEA_BATTLE_TICK_HZ, type SeaBattleSide, type SeaBattleState } from "@happy-farm/domain";
 import { fitShipModel, SHARED_SHIP_GEOMETRY } from "./ship-models";
 
 /**
@@ -29,7 +35,12 @@ import { fitShipModel, SHARED_SHIP_GEOMETRY } from "./ship-models";
  *
  * Presentation only: it draws a `SeaBattleState` the battle view steps, and decides nothing. Ships
  * are placed between the last two simulation ticks (`alpha`) so a 20 Hz fight moves smoothly at the
- * screen's own rate. The camera rides behind the player's ship.
+ * screen's own rate. The camera rides behind the player's ship, and swings out over the other beam
+ * while a broadside is being aimed, so the whole reach of the shot is in view.
+ *
+ * Balls fly the simulation's own arc. Where one comes down the sea throws up a splash (a hit throws
+ * up a bigger one), and a ramming blow throws up spray between the two hulls: all of it read from
+ * the tick's `impacts` and `rams`, drawn once per tick.
  *
  * Each ship draws with its class's model (`render/ship-models.ts`) once the model library has it; a
  * plain block ship stands in until then, so a slow download never holds the fight up.
@@ -38,6 +49,16 @@ import { fitShipModel, SHARED_SHIP_GEOMETRY } from "./ship-models";
 const SEA_BLUE = 0x2d86b8;
 const SKY = 0xcfe9f7;
 const MAX_BALLS = 160;
+const MAX_SPLASHES = 48;
+/** How long a splash stands, in seconds. */
+const SPLASH_SECONDS = 0.7;
+
+/** What the player is aiming, for the camera and the preview: the side and the predicted path. */
+export interface BattleAim {
+  readonly side: SeaBattleSide;
+  readonly path: readonly { readonly x: number; readonly y: number; readonly z: number }[];
+  readonly landing: { readonly x: number; readonly z: number };
+}
 
 /** Which model each ship draws with (index 0 is the player's), and how to get one. */
 export interface BattleShipModels {
@@ -53,6 +74,8 @@ function shipLength(radius: number): number {
 export interface BattleScene {
   /** Draws the fight between `previous` positions and `state`'s, `alpha` of the way (0..1). */
   render(state: SeaBattleState, previous: readonly { readonly x: number; readonly z: number; readonly heading: number }[], alpha: number): void;
+  /** The broadside being aimed (null when none): drawn as a dashed arc and a ring where it lands. */
+  setAim(aim: BattleAim | null): void;
   resize(): void;
   dispose(): void;
 }
@@ -136,12 +159,50 @@ export function createBattleScene(canvas: HTMLCanvasElement, state: SeaBattleSta
     }
     return node;
   });
-  const balls = new InstancedMesh(new SphereGeometry(0.7, 8, 6), new MeshLambertMaterial({ color: 0x1c1c1c }), MAX_BALLS);
+  const balls = new InstancedMesh(new SphereGeometry(1.05, 8, 6), new MeshLambertMaterial({ color: 0x3d3833 }), MAX_BALLS);
   balls.count = 0;
   scene.add(balls);
 
+  // Splashes: a column of white water, grown and faded over SPLASH_SECONDS. A pool, reused.
+  const splashGeometry = new CylinderGeometry(0.25, 0.9, 1, 8, 1, true);
+  const splashes = Array.from({ length: MAX_SPLASHES }, () => {
+    const material = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false });
+    const mesh = new Mesh(splashGeometry, material);
+    mesh.visible = false;
+    scene.add(mesh);
+    return { mesh, material, born: -1, size: 1 };
+  });
+  let nextSplash = 0;
+  let clock = 0;
+  let lastTick = -1;
+  const splash = (x: number, z: number, size: number): void => {
+    const entry = splashes[nextSplash];
+    nextSplash = (nextSplash + 1) % MAX_SPLASHES;
+    if (entry === undefined) return;
+    entry.mesh.position.set(x, 0, z);
+    entry.born = clock;
+    entry.size = size;
+    entry.mesh.visible = true;
+  };
+
+  // The aim: a dashed arc along the predicted flight, and a ring where it lands.
+  const aimMaterial = new LineDashedMaterial({ color: 0xffe08a, dashSize: 1.6, gapSize: 1.1, transparent: true, opacity: 0.9, depthTest: false });
+  const aimGeometry = new LineGeometry();
+  aimGeometry.setAttribute("position", new BufferAttribute(new Float32Array(3 * 128), 3));
+  const aimLine = new Line(aimGeometry, aimMaterial);
+  aimLine.visible = false;
+  aimLine.renderOrder = 5;
+  const aimRing = new Mesh(new RingGeometry(2.2, 3, 24), new MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.85, depthTest: false }));
+  aimRing.rotation.x = -Math.PI / 2;
+  aimRing.visible = false;
+  aimRing.renderOrder = 5;
+  scene.add(aimLine, aimRing);
+  let aiming: BattleAim | null = null;
+  let shake = 0;
+
   let cameraX = 0;
   let cameraZ = 60;
+  let cameraY = 44;
 
   function resize(): void {
     const width = Math.max(1, canvas.clientWidth);
@@ -169,27 +230,98 @@ export function createBattleScene(canvas: HTMLCanvasElement, state: SeaBattleSta
         node.rotation.set(0, -heading, ship.alive ? 0 : 0.5);
         node.visible = ship.alive || current.tick % 40 < 30;
       });
+      // A ball is drawn where its flight puts it between the two ticks: back along its velocity.
+      const back = (1 - alpha) / SEA_BATTLE_TICK_HZ;
       balls.count = Math.min(MAX_BALLS, current.balls.length);
       for (let index = 0; index < balls.count; index += 1) {
         const ball = current.balls[index];
         if (ball === undefined) continue;
-        // A ball's arc: up and down over its flight, for the eye only.
-        const height = 1.5 + Math.sin((ball.ticksLeft / 30) * Math.PI) * 4;
-        matrix.makeTranslation(ball.x, height, ball.z);
+        matrix.makeTranslation(ball.x - ball.vx * back, Math.max(0.3, ball.y - ball.vy * back), ball.z - ball.vz * back);
         balls.setMatrixAt(index, matrix);
       }
       balls.instanceMatrix.needsUpdate = true;
+
+      // This tick's splashes and blows, once.
+      const now = performance.now() / 1000;
+      clock = now;
+      if (current.tick !== lastTick) {
+        lastTick = current.tick;
+        for (const impact of current.impacts) splash(impact.x, impact.z, impact.ship >= 0 ? 1.8 : 1);
+        for (const ram of current.rams) {
+          splash(ram.x, ram.z, 2.6);
+          if (ram.a === 0 || ram.b === 0) shake = 0.45;
+        }
+      }
+      for (const entry of splashes) {
+        if (entry.born < 0) continue;
+        const age = (now - entry.born) / SPLASH_SECONDS;
+        if (age >= 1) {
+          entry.born = -1;
+          entry.mesh.visible = false;
+          continue;
+        }
+        const rise = Math.sin(age * Math.PI);
+        entry.mesh.scale.set(entry.size * (0.7 + age * 0.8), Math.max(0.05, rise * 3.6 * entry.size), entry.size * (0.7 + age * 0.8));
+        entry.mesh.position.y = (rise * 3.6 * entry.size) / 2;
+        entry.material.opacity = 0.75 * (1 - age);
+      }
+
       const player = ships[0];
       if (player !== undefined) {
-        const heading = player.rotation.y;
-        const targetX = player.position.x - Math.cos(-heading) * 55;
-        const targetZ = player.position.z - Math.sin(-heading) * 55;
+        const heading = -player.rotation.y;
+        const fx = Math.cos(heading);
+        const fz = Math.sin(heading);
+        // Port is a quarter turn anticlockwise of the heading: (fz, -fx); starboard the other way.
+        let targetX: number;
+        let targetZ: number;
+        let lookX = player.position.x;
+        let lookZ = player.position.z;
+        let height = 44;
+        if (aiming === null) {
+          targetX = player.position.x - fx * 58;
+          targetZ = player.position.z - fz * 58;
+        } else {
+          const sign = aiming.side === "PORT" ? 1 : -1;
+          const sideX = fz * sign;
+          const sideZ = -fx * sign;
+          // Out over the other beam and a little astern, looking across to where the shot will fall.
+          targetX = player.position.x - sideX * 46 - fx * 22;
+          targetZ = player.position.z - sideZ * 46 - fz * 22;
+          lookX = player.position.x + sideX * 34;
+          lookZ = player.position.z + sideZ * 34;
+          height = 52;
+        }
         cameraX += (targetX - cameraX) * 0.08;
         cameraZ += (targetZ - cameraZ) * 0.08;
-        camera.position.set(cameraX, 42, cameraZ);
-        camera.lookAt(player.position.x, 0, player.position.z);
+        cameraY += (height - cameraY) * 0.08;
+        const jolt = shake > 0 ? (Math.random() - 0.5) * shake * 2 : 0;
+        shake = Math.max(0, shake - 0.02);
+        camera.position.set(cameraX + jolt, cameraY + jolt, cameraZ);
+        camera.lookAt(lookX, 0, lookZ);
       }
       renderer.render(scene, camera);
+    },
+    setAim(aim) {
+      aiming = aim;
+      if (aim === null || aim.path.length < 2) {
+        aimLine.visible = false;
+        aimRing.visible = false;
+        return;
+      }
+      const positions = aimGeometry.getAttribute("position") as BufferAttribute;
+      const count = Math.min(128, aim.path.length);
+      for (let index = 0; index < count; index += 1) {
+        const point = aim.path[Math.floor((index * (aim.path.length - 1)) / Math.max(1, count - 1))];
+        if (point === undefined) continue;
+        positions.setXYZ(index, point.x, Math.max(0.2, point.y), point.z);
+      }
+      positions.needsUpdate = true;
+      aimGeometry.setDrawRange(0, count);
+      aimGeometry.computeBoundingSphere();
+      aimLine.computeLineDistances();
+      aimLine.visible = true;
+      aimRing.position.set(aim.landing.x, 0.25, aim.landing.z);
+      aimRing.visible = true;
     },
     resize,
     dispose() {

@@ -84,11 +84,38 @@ places; this document gives it ships.
   - `GET /ships/fleet` and the voyage replies carry `voyage.ambush`: when it strikes, its status, and
     the exact simulation setup (seed, the player's ship with its current hull, the pirates).
   - The device plays it live and submits its inputs with `POST /voyages/ambush { inputs: [[tick,
-    action], …] }` (at most 3,600). The server refuses before the strike (`AMBUSH_NOT_READY`), replays
-    the fight, and writes the outcome and the ship's hull in one guarded batch.
+    action], [tick, action, aim], …] }` (at most 3,600). The server refuses before the strike
+    (`AMBUSH_NOT_READY`), replays the fight, and writes the outcome and the ship's hull in one guarded
+    batch.
   - A second submission answers with the decided outcome and takes no inputs.
   - The ambushed ship starts still with its sails struck, so a captain who gives no orders is sunk.
-    Ignoring a fight is never a way out.
+    Ignoring a fight is never a way out. Pirates also ram a ship that lies still.
+- **How a fight plays (owner decisions 2026-11-19: realtime, "open-world Gunny").**
+  - **Steering:** A/D (or ◀ ▶) rudder; W/S (or − +) three sail settings; Space (or "Chèo nhanh") rows
+    a 2-second burst at 1.6× top speed, then the crew rests 10 seconds.
+  - **Aiming, Gunny-style:** hold a side's fire (Q/E, or the button) to charge it: the longer the
+    hold, the farther the shot, from 20 to 95 units, full after 1.5 s. While holding, Z/C (or sliding
+    the finger) swings the aim up to about 35° either side of the beam, and a dashed arc shows where it
+    will fall. Letting go fires. The camera swings over the other beam while aiming, and stays a moment
+    after, so the whole reach is in view.
+  - **The charge is the server's.** The device sends only when it began to charge and when it fired
+    (and the aim); the simulation measures the power from the ticks between. Nothing about a shot's
+    reach is taken from the device.
+  - **Stone balls fly an arc** under gravity, from a fixed 30° elevation, each gun scattering a few
+    degrees and a few percent of reach. A ball that comes down onto a hull strikes it (8 damage).
+  - **Wind, partly.** Each fight has a wind fixed by its seed, light to strong. It pushes a ball in
+    flight (at most about a tenth of its reach) and helps or slows sailing by up to 10%. The fight
+    shows it as an arrow turned to the ship's heading, and a word.
+  - **Ramming.** Ships collide and are pushed apart. A ship driving into another deals its closing
+    speed × 3 × its weight (its hull over 150, between 0.6 and 2.5) and takes a quarter of what it
+    deals. So the ship rammed takes the blow, and a head-on meeting hurts both alike. Pirates never
+    hurt one another.
+  - **Pirates** close at full sail, circle broadside-on between 40 and 70 units, and fire whenever the
+    player is inside a broadside's arc and reach, leading the player's motion but not allowing for the
+    wind. A player lying still or crawling is rammed.
+  - Measured with a test captain that leads its shots but ignores the wind (20 seeds each): a sloop
+    beats a cutter 16 times in 20, hitting about 38% and losing about 70 of 150 hull; a brig beats a
+    raider 19 times in 20. A captain who gives no orders always loses.
 - **Before the fight is fought:**
   - a visit (`AMBUSH_PENDING`) and an onward voyage are refused;
   - calling the ship home plays the fight out with no orders, and its damage stands.
@@ -187,7 +214,7 @@ places; this document gives it ships.
   a fixed rate, owns every position, and broadcasts validated state. The client draws and predicts,
   but decides nothing.
 - **Combat (W5c).**
-  - A broadside is fired by the server along the ship's side, with its class's cannons.
+  - Broadsides are aimed and charged as in the solo fight (W5c), stepped by the server.
   - Hits are computed by the server from its own positions, never reported by a client.
   - Hull falls to zero and the ship is towed home damaged: no loss of goods.
   - Repair costs gold (the `SHIP_REPAIR` ledger reason, already in the ledger) and materials, scaled

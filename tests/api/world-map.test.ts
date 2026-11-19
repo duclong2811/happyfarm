@@ -21,12 +21,9 @@ import {
   runSeaBattle,
   SEA_BATTLE_ACTIONS,
   seaBattleResult,
-  seaCosine,
-  seaSine,
   stepSeaBattle,
-  type SeaBattleAction,
-  type SeaBattleSetup,
-  type SeaBattleState
+  type SeaBattleInput,
+  type SeaBattleSetup
 } from "@happy-farm/domain";
 import {
   EnsureWorldSlotResponseSchema,
@@ -59,6 +56,7 @@ import {
 import { schemaSql } from "../support/migrations";
 import { NodeD1Database } from "../support/node-d1";
 import { NOW } from "../support/fixtures";
+import { gunner } from "../support/sea-captain";
 
 /**
  * The world map's places (docs/design/WORLD_MAP.md) through the real Worker handler.
@@ -654,62 +652,28 @@ describe("the world map", () => {
     };
   }
 
-  /** A captain like a player's device: keeps the nearest pirate abeam and fires the side it is on. */
-  function captain(state: SeaBattleState): SeaBattleAction[] {
-    const me = state.ships[0];
-    const target = state.ships.slice(1).find((ship) => ship.alive);
-    if (me === undefined || target === undefined) return [];
-    const dx = target.x - me.x;
-    const dz = target.z - me.z;
-    const distance = Math.sqrt(dx * dx + dz * dz);
-    const cross = seaCosine(me.heading) * dz - seaSine(me.heading) * dx;
-    const dot = seaCosine(me.heading) * dx + seaSine(me.heading) * dz;
-    const abeam = Math.abs(dot) / distance < 0.3;
-    const actions: SeaBattleAction[] = [];
-    const rudder: SeaBattleAction = abeam ? "RUDDER_CENTER" : dot > 0 ? (cross > 0 ? "RUDDER_LEFT" : "RUDDER_RIGHT") : cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT";
-    if (me.rudder !== (rudder === "RUDDER_LEFT" ? -1 : rudder === "RUDDER_RIGHT" ? 1 : 0)) actions.push(rudder);
-    if (me.sail !== 1) actions.push("SAIL_HALF");
-    // A device sends a broadside only when that side's guns are loaded.
-    if (distance < 55 && abeam && (cross > 0 ? me.reloadStarboard : me.reloadPort) === 0) actions.push(cross > 0 ? "FIRE_STARBOARD" : "FIRE_PORT");
-    return actions;
-  }
-
-  /**
-   * A captain who closes in first: bow on the nearest pirate at full sail until within 40, then abeam
-   * at half sail, firing the loaded side. It wins against brittle pirates in a few seconds.
-   */
-  function hunter(state: SeaBattleState): SeaBattleAction[] {
-    const me = state.ships[0];
-    const target = state.ships.slice(1).find((ship) => ship.alive);
-    if (me === undefined || target === undefined) return [];
-    const dx = target.x - me.x;
-    const dz = target.z - me.z;
-    const distance = Math.sqrt(dx * dx + dz * dz);
-    const cross = seaCosine(me.heading) * dz - seaSine(me.heading) * dx;
-    const dot = seaCosine(me.heading) * dx + seaSine(me.heading) * dz;
-    const close = distance < 40;
-    const abeam = Math.abs(dot) / distance < 0.3;
-    const ahead = dot > 0 && Math.abs(cross) / distance < 0.15;
-    const rudder: SeaBattleAction = close
-      ? abeam ? "RUDDER_CENTER" : dot > 0 ? (cross > 0 ? "RUDDER_LEFT" : "RUDDER_RIGHT") : cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT"
-      : ahead ? "RUDDER_CENTER" : cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT";
-    const actions: SeaBattleAction[] = [];
-    if (me.rudder !== (rudder === "RUDDER_LEFT" ? -1 : rudder === "RUDDER_RIGHT" ? 1 : 0)) actions.push(rudder);
-    if (me.sail !== (close ? 1 : 2)) actions.push(close ? "SAIL_HALF" : "SAIL_FULL");
-    if (distance < 55 && abeam && (cross > 0 ? me.reloadStarboard : me.reloadPort) === 0) actions.push(cross > 0 ? "FIRE_STARBOARD" : "FIRE_PORT");
-    return actions;
-  }
-
-  /** Plays a fight as a device does, and returns its inputs as the wire carries them, and its result. */
-  function playOnDevice(setup: SeaBattleSetup, orders: (state: SeaBattleState) => SeaBattleAction[] = captain): { inputs: [number, number][]; result: ReturnType<typeof seaBattleResult> } {
+  /** Plays a fight as a device does (an attentive captain), and returns its inputs as the wire carries them. */
+  function playOnDevice(setup: SeaBattleSetup): { inputs: ([number, number] | [number, number, number])[]; result: ReturnType<typeof seaBattleResult> } {
     const state = createSeaBattle(setup);
-    const inputs: [number, number][] = [];
+    const decide = gunner();
+    const inputs: ([number, number] | [number, number, number])[] = [];
     while (state.outcome === null) {
-      const actions = orders(state);
-      for (const action of actions) inputs.push([state.tick, SEA_BATTLE_ACTIONS.indexOf(action)]);
-      stepSeaBattle(state, actions);
+      const orders = decide(state);
+      for (const order of orders) {
+        const index = SEA_BATTLE_ACTIONS.indexOf(order.action);
+        inputs.push(order.aim === undefined ? [state.tick, index] : [state.tick, index, order.aim]);
+      }
+      stepSeaBattle(state, orders);
     }
     return { inputs, result: seaBattleResult(state) };
+  }
+
+  /** The wire's inputs as the simulation takes them. */
+  function asInputs(inputs: readonly ([number, number] | [number, number, number])[]): SeaBattleInput[] {
+    return inputs.map(([tick, action, aim]) => {
+      const name = SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER";
+      return aim === undefined ? { tick, action: name } : { tick, action: name, aim };
+    });
   }
 
   /** Player `n` with a sloop at its dock. */
@@ -757,7 +721,7 @@ describe("the world map", () => {
     const fought = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
     // The server's replay of the device's inputs is the device's own fight.
     expect(fought.battle).toEqual(played.result);
-    expect(fought.battle).toEqual(runSeaBattle(ambush.setup, played.inputs.map(([tick, action]) => ({ tick, action: SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER" }))));
+    expect(fought.battle).toEqual(runSeaBattle(ambush.setup, asInputs(played.inputs)));
     expect(fought.fleet.voyage?.ambush?.status).toBe(played.result.outcome);
     expect(fought.fleet.ship.hull).toBe(played.result.playerHull);
     // Asked again, the outcome stands and new inputs are not taken.
@@ -852,7 +816,7 @@ describe("the world map", () => {
 
   it("pays a won fight's bounty once: gold through the ledger, wood and experience with the outcome", async () => {
     const setup = await struckBy(["pirate_cutter"], "voyage-bounty-1", true);
-    const played = playOnDevice(setup, hunter);
+    const played = playOnDevice(setup);
     expect(played.result.outcome).toBe("WON");
     const before = holdings(1);
     const xpBefore = experience(1);
@@ -878,7 +842,7 @@ describe("the world map", () => {
 
   it("pays a route's bounty once a day, however often the same fight is won again", async () => {
     const setup = await struckBy(["pirate_cutter"], "voyage-bounty-4", true);
-    const played = playOnDevice(setup, hunter);
+    const played = playOnDevice(setup);
     const first = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
     expect(first.bounty?.gold).toBe(160);
     const afterFirst = holdings(1);
@@ -889,9 +853,11 @@ describe("the world map", () => {
     const again = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-bounty-5" })));
     const ambush = again.voyage?.ambush;
     if (ambush == null) throw new Error("no ambush");
-    expect(ambush.setup).toEqual(setup);
+    // The same encounter: the same seed and the same pirates (the ship's hull is what the last fight left).
+    expect(ambush.setup.seed).toBe(setup.seed);
+    expect(ambush.setup.pirates).toEqual(setup.pirates);
     advance((Date.parse(ambush.at) - clockMs) / 1000 + 1);
-    const second = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
+    const second = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: playOnDevice(ambush.setup).inputs })));
     expect(second.battle?.outcome).toBe("WON");
     expect(second.fleet.voyage?.ambush?.status).toBe("WON");
     expect(second.bounty).toBeNull();
@@ -908,7 +874,7 @@ describe("the world map", () => {
     const next = tomorrow.voyage?.ambush;
     if (next == null) throw new Error("no ambush");
     advance((Date.parse(next.at) - clockMs) / 1000 + 1);
-    const won = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: playOnDevice(next.setup, hunter).inputs })));
+    const won = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: playOnDevice(next.setup).inputs })));
     expect(won.battle?.outcome).toBe("WON");
     expect(won.bounty?.gold).toBe(160);
     expect(bounties(1)).toHaveLength(2);
@@ -916,7 +882,7 @@ describe("the world map", () => {
 
   it("keeps out what the warehouse has no room for, in the bounty's order, and still pays the gold", async () => {
     const setup = await struckBy(["pirate_raider"], "voyage-bounty-2", true);
-    const played = playOnDevice(setup, hunter);
+    const played = playOnDevice(setup);
     expect(played.result.outcome).toBe("WON");
     // Fill the island to ten short of its starter capacity: a raider's 120 wood and 40 ore will not fit.
     const used = (db.sqlite.prepare("SELECT COALESCE(SUM(quantity), 0) AS n FROM inventory_items WHERE player_id = ?").get(playerId(1)) as { n: number }).n;
@@ -951,7 +917,17 @@ describe("the world map", () => {
   it("refuses a fight's inputs no device would send", async () => {
     await settle(1, "NORTH");
     auth.setActor({ playerId: playerId(1) });
-    for (const inputs of [[[3_600, 0]], [[0, 8]], [[0]], [[-1, 0]], [[0.5, 0]], Array.from({ length: 3_601 }, () => [0, 0])]) {
+    for (const inputs of [
+      [[3_600, 0]],
+      [[0, 11]],
+      [[0]],
+      [[-1, 0]],
+      [[0.5, 0]],
+      [[0, 6, 401]],
+      [[0, 6, 1.5]],
+      [[0, 6, 0, 0]],
+      Array.from({ length: 3_601 }, () => [0, 0])
+    ]) {
       expect((await request("/voyages/ambush", { inputs })).status).toBe(400);
     }
     expect((await request("/voyages/ambush", { inputs: [], hull: 999 })).status).toBe(400);

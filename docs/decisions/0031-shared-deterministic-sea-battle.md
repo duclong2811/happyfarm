@@ -27,6 +27,13 @@ need one.
   new workspace package, would make every deployment re-run `npm install` for no other gain.
 - The future Durable Object for many-player fights steps this same simulation. The solo version is
   not throwaway work.
+- **Second version (2026-11-19).** Aimed, arcing broadsides, wind and ramming keep every rule above:
+  - gravity, wind and collisions are `+ - * /` and `Math.sqrt`;
+  - the wind comes from the seeded generator;
+  - collisions are resolved pair by pair in index order.
+  An input may now carry an aim (`[tick, action, aim]`, `FIRE_*` only, a whole number inside the
+  arc). A broadside's power is never an input: it is measured from the ticks between `CHARGE_*` and
+  `FIRE_*`, so a device cannot send a shot farther than its hold allows.
 
 ## Consequences
 

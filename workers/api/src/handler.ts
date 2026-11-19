@@ -2346,7 +2346,10 @@ export function createHandler(host: HandlerDependencies) {
       if (fightAmbush !== null && request.method === "POST" && url.pathname === "/voyages/ambush") {
         const parsed = FightAmbushRequestSchema.safeParse(await parseJson(request));
         if (!parsed.success) return failure("INVALID_INPUT", requestId);
-        const inputs = parsed.data.inputs.map(([tick, action]) => ({ tick, action: SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER" }));
+        const inputs = parsed.data.inputs.map(([tick, action, aim]) => {
+          const name = SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER";
+          return aim === undefined ? { tick, action: name } : { tick, action: name, aim };
+        });
         const outcome = await fightAmbush.execute(actor, { inputs });
         const body: ApiSuccess<FightAmbushResponse> = {
           ok: true,

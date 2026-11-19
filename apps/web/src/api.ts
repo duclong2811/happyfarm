@@ -355,7 +355,7 @@ export class ApiClient {
    * Submits a fought ambush: only the player's orders, as [tick, action] pairs. The server replays the
    * fight and answers with its own result.
    */
-  fightAmbush(inputs: readonly (readonly [number, number])[]): Promise<FightAmbushResponse> {
+  fightAmbush(inputs: readonly (readonly [number, number] | readonly [number, number, number])[]): Promise<FightAmbushResponse> {
     return this.post("/voyages/ambush", { inputs }, FightAmbushResponseSchema);
   }
 

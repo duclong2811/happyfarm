@@ -2348,11 +2348,20 @@ export const StartVoyageRequestSchema = z.object({ slotId: WorldSlotIdSchema, re
 export const EndVoyageRequestSchema = z.object({}).strict();
 export const RepairShipRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
 /**
- * The player's orders in a fight, as [tick, action] pairs: the action is the index of one of the
- * simulation's actions (rudder left, centre, right; sail down, half, full; fire port, starboard).
+ * The player's orders in a fight, as [tick, action] pairs, or [tick, action, aim] for a broadside: the
+ * action is the index of one of the simulation's actions (rudder left, centre, right; sail down, half,
+ * full; fire port, starboard; charge port, starboard; oars), and the aim is how far off the beam the
+ * broadside is laid, in heading units. A broadside's power is never sent: the server measures it from
+ * the ticks between the charge and the fire.
  */
+const FightTickSchema = z.number().int().min(0).max(3_599);
+const FightActionSchema = z.number().int().min(0).max(10);
 export const FightAmbushRequestSchema = z
-  .object({ inputs: z.array(z.tuple([z.number().int().min(0).max(3_599), z.number().int().min(0).max(7)])).max(3_600) })
+  .object({
+    inputs: z
+      .array(z.union([z.tuple([FightTickSchema, FightActionSchema]), z.tuple([FightTickSchema, FightActionSchema, z.number().int().min(-400).max(400)])]))
+      .max(3_600)
+  })
   .strict();
 export const SeaBattleResultDTOSchema = z
   .object({

@@ -1185,6 +1185,19 @@ html.ui-b.ui-warm .battle-view .bv-controls button {
 html.ui-b.ui-warm .battle-view .bv-fire { position: relative; overflow: hidden; background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)) !important; border-color: var(--w-orange-edge) !important; }
 html.ui-b.ui-warm .battle-view .bv-fire::after { content: ""; position: absolute; inset: auto 0 0 0; height: calc(var(--reload, 0) * 100%); background: rgba(40, 20, 10, .35); }
 html.ui-b.ui-warm .battle-view .bv-fire:disabled { cursor: default; }
+html.ui-b.ui-warm .battle-view .bv-fire { touch-action: none; }
+html.ui-b.ui-warm .battle-view .bv-fire.is-loading { filter: saturate(.55); }
+/* The charge: a power bar across the foot of the button, Gunny-style, filling while the side is held. */
+html.ui-b.ui-warm .battle-view .bv-power { position: absolute; left: 6px; right: 6px; bottom: 4px; height: 6px; border-radius: 99px; background: rgba(40, 20, 10, .25); overflow: hidden; pointer-events: none; }
+html.ui-b.ui-warm .battle-view .bv-power::before { content: ""; position: absolute; inset: 0 auto 0 0; width: calc(var(--charge, 0) * 100%); background: linear-gradient(90deg, #ffe08a, #ff9a3c 60%, #e5533d); }
+html.ui-b.ui-warm .battle-view .bv-oars { position: relative; overflow: hidden; background: linear-gradient(#cfe7c2, #8fc27a) !important; border-color: #4f7f3a !important; }
+html.ui-b.ui-warm .battle-view .bv-oars::after { content: ""; position: absolute; inset: auto 0 0 0; height: calc(var(--reload, 0) * 100%); background: rgba(40, 20, 10, .3); }
+html.ui-b.ui-warm .battle-view .bv-wind {
+  position: absolute; top: 150px; left: 16px; z-index: 2; display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border: 2px solid var(--w-wood-deep); border-radius: 99px; background: rgba(250, 240, 220, .92);
+  font: 800 .82rem var(--w-display); color: var(--w-wood-deep); pointer-events: none;
+}
+html.ui-b.ui-warm .battle-view .bv-wind-arrow { display: inline-block; font-size: 1.1rem; color: #2d86b8; transition: transform .2s linear; }
 html.ui-b.ui-warm .battle-view .bv-sail { min-width: 6.5rem; text-align: center; font: 800 .9rem var(--w-display); color: var(--w-wood-deep); }
 html.ui-b.ui-warm .battle-view .bv-crew {
   position: absolute;
@@ -1226,4 +1239,5 @@ html.ui-b.ui-warm .battle-view .bv-end .bv-spoils[hidden] { display: none; }
   html.ui-b.ui-warm .battle-view .bv-controls { gap: 4px; padding: 6px; }
   html.ui-b.ui-warm .battle-view .bv-controls button { min-width: 42px; min-height: 44px; padding: 2px 6px; font-size: .78rem; }
   html.ui-b.ui-warm .battle-view .bv-sail { min-width: 4.5rem; font-size: .74rem; }
+  html.ui-b.ui-warm .battle-view .bv-wind { top: 128px; left: 8px; padding: 4px 9px; font-size: .72rem; }
 }
