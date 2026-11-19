@@ -85,12 +85,31 @@ export const WorldChartArchipelagoDTOSchema = z
   })
   .strict();
 
+/**
+ * A ship at sea, as anyone can see it (W5b-lite): where it sails from and to, and when. A viewer
+ * places it from these times; nothing more is asked of the server. Never carries a player id.
+ */
+export const SeaVoyageDTOSchema = z
+  .object({
+    fromSlotId: z.string().max(40),
+    toSlotId: z.string().max(40),
+    shipTier: z.number().int().min(1).max(16),
+    departedAt: z.iso.datetime(),
+    arrivesAt: z.iso.datetime(),
+    name: z.string().min(1).max(80).nullable(),
+    mine: z.boolean()
+  })
+  .strict();
+
 export const GetWorldChartResponseSchema = z
   .object({
     regions: z
       .array(z.object({ region: SeaRegionSchema, archipelagos: z.array(WorldChartArchipelagoDTOSchema).max(64) }).strict())
       .max(4),
-    mySlotId: z.string().nullable()
+    mySlotId: z.string().nullable(),
+    /** Server time of the read; absent from servers before W5b-lite. */
+    readAt: z.iso.datetime().optional(),
+    voyages: z.array(SeaVoyageDTOSchema).max(500).optional()
   })
   .strict();
 
@@ -99,7 +118,9 @@ export const GetWorldArchipelagoResponseSchema = z
   .object({
     mySlotId: z.string().nullable(),
     region: SeaRegionSchema.nullable(),
-    archipelago: WorldChartArchipelagoDTOSchema.nullable()
+    archipelago: WorldChartArchipelagoDTOSchema.nullable(),
+    readAt: z.iso.datetime().optional(),
+    voyages: z.array(SeaVoyageDTOSchema).max(500).optional()
   })
   .strict();
 

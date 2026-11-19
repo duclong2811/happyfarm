@@ -1169,6 +1169,43 @@ export class D1ShipRepository implements ShipRepository {
     return (updated.meta.changes ?? 0) === 1;
   }
 
+  async listVoyagesTouching(
+    slotIds: readonly string[],
+    limit: number
+  ): Promise<readonly { readonly voyage: VoyageRecord; readonly islandName: string | null }[]> {
+    const unique = [...new Set(slotIds)];
+    const found = new Map<string, { voyage: VoyageRecord; islandName: string | null }>();
+    // Each batch names its places twice (from, to), so it stays inside D1's parameter limit.
+    for (let start = 0; start < unique.length; start += VOYAGE_PLACE_BATCH) {
+      const batch = unique.slice(start, start + VOYAGE_PLACE_BATCH);
+      const marks = batch.map(() => "?").join(", ");
+      const rows = await this.db
+        .prepare(
+          `SELECT v.*, f.name AS island_name FROM ship_voyages v LEFT JOIN farms f ON f.owner_player_id = v.player_id WHERE v.status = 'UNDERWAY' AND (v.to_slot_id IN (${marks}) OR v.from_slot_id IN (${marks})) ORDER BY v.departed_at DESC LIMIT ?`
+        )
+        .bind(...batch, ...batch, limit)
+        .all<ShipVoyageRow & { readonly island_name: string | null }>();
+      for (const row of rows.results) {
+        found.set(row.player_id, {
+          voyage: {
+            playerId: parsePlayerId(row.player_id),
+            fromSlotId: row.from_slot_id,
+            toSlotId: row.to_slot_id,
+            shipTier: row.ship_tier,
+            departedAt: row.departed_at,
+            arrivesAt: row.arrives_at,
+            status: row.status,
+            requestId: row.request_id,
+            version: row.version,
+            updatedAt: row.updated_at
+          },
+          islandName: row.island_name
+        });
+      }
+    }
+    return [...found.values()].sort((a, b) => b.voyage.departedAt.localeCompare(a.voyage.departedAt)).slice(0, limit);
+  }
+
   async buildAtomically(build: ShipBuild, idempotency: IdempotencyRecord): Promise<void> {
     if (
       build.playerId !== idempotency.actorPlayerId ||
@@ -1286,6 +1323,7 @@ export class D1ShipRepository implements ShipRepository {
 const CLAIMED_WORLD_SLOT_SELECT =
   "SELECT ws.slot_id, ws.region, ws.farm_id, ws.claimed_at, fi.element, fi.outline, fi.seed, fi.generator_version, f.name FROM world_slots ws LEFT JOIN farm_islands fi ON fi.farm_id = ws.farm_id LEFT JOIN farms f ON f.id = ws.farm_id";
 const WORLD_SLOT_BATCH = 90;
+const VOYAGE_PLACE_BATCH = 45;
 
 export class D1WorldVisitRepository implements WorldVisitRepository {
   constructor(private readonly db: D1DatabaseLike) {}

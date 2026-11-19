@@ -7563,9 +7563,13 @@ async function refreshHorizon(): Promise<void> {
         ? null
         : {
             home: { x: mine.x, z: mine.z },
+            homeSlotId: mine.slotId,
             slots: view.archipelago.slots
               .filter((slot) => slot.slotId !== mine.slotId)
-              .map((slot) => ({ slotId: slot.slotId, x: slot.x, z: slot.z, claimed: slot.claimed, island: slot.island }))
+              .map((slot) => ({ slotId: slot.slotId, x: slot.x, z: slot.z, claimed: slot.claimed, island: slot.island })),
+            // Ships sail by the server's clock, from the times this one read gave: no polling.
+            voyages: (view.voyages ?? []).map((voyage) => ({ ...voyage })),
+            serverOffsetMs: view.readAt === undefined ? 0 : Date.parse(view.readAt) - Date.now()
           };
   } catch {
     horizonView = null;
@@ -7593,6 +7597,8 @@ function showSeaChart(): void {
     sail: state.island === null ? null : async (slotId) => {
       setFleet(await client.startVoyage(slotId, newRequestId("voyage")));
       setStatus(message("voyage.setSail", { name: placeName(slotId) }));
+      // The horizon shows the ship leaving: the archipelago is read once more, then it sails by itself.
+      void refreshHorizon();
     },
     buildShip: state.island === null ? null : async () => {
       const fleet = await client.buildShip(newRequestId("ship"));

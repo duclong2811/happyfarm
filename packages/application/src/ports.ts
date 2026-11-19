@@ -1654,6 +1654,11 @@ export interface ShipRepository {
    * True when this call wrote it.
    */
   writeVoyage(next: VoyageRecord, expectedVersion: number | null): Promise<boolean>;
+  /**
+   * Voyages under way (arrived or not) that sail from or to any of `slotIds`, newest first, at most
+   * `limit`, each with the voyager's island name. What the chart and the horizon draw at sea.
+   */
+  listVoyagesTouching(slotIds: readonly string[], limit: number): Promise<readonly { readonly voyage: VoyageRecord; readonly islandName: string | null }[]>;
 }
 
 /** The places a player has visited on the world map: what their chart is grown from. */

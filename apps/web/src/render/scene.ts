@@ -82,7 +82,7 @@ import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
 import { islandDecorPlan } from "./island-decor";
 import { createClouds, createSun, driftClouds, placeSun } from "./sky-life";
-import { buildHorizonIsland, disposeHorizon, horizonPlacements, type HorizonSlot } from "./horizon-islands";
+import { buildHorizonIsland, buildHorizonShip, disposeHorizon, horizonPlacements, horizonShipPose, type HorizonSlot, type HorizonVoyage } from "./horizon-islands";
 import { worldFrame } from "./layout";
 import { buildLockedPlotOverlay, buildTerrain, TILE_SURFACE_Y, TILE_THICKNESS } from "./terrain";
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt } from "./terrain-height";
@@ -375,6 +375,12 @@ export interface SceneNeighborIsland {
 export interface SceneHorizon {
   readonly home: { readonly x: number; readonly z: number };
   readonly slots: readonly HorizonSlot[];
+  /** The home place's id, so a voyage from or to home sails from the home island's shore. */
+  readonly homeSlotId?: string;
+  /** Ships under way in the archipelago (W5b-lite); each moves by its own times, no request. */
+  readonly voyages?: readonly HorizonVoyage[];
+  /** Server time minus this device's time, from the read the voyages came with. */
+  readonly serverOffsetMs?: number;
 }
 
 /** HOME-only low-detail preview: presentation only, never a walkable or selectable island. */
@@ -1606,6 +1612,15 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   let horizonExtent = 0;
   let horizonBuildToken = 0;
   let horizonSignature = "";
+  /** What the horizon's ships need to find their place each tick. */
+  let horizonShips: {
+    readonly places: ReadonlyMap<string, { readonly x: number; readonly z: number }>;
+    readonly homeSlotId: string;
+    readonly centre: { readonly x: number; readonly z: number };
+    readonly extent: number;
+    readonly offsetMs: number;
+    readonly ships: readonly { readonly voyage: HorizonVoyage; readonly node: Group }[];
+  } | null = null;
 
   // Sky light, ground bounce, and one warm sun. The hemisphere carries the colour that makes shade
   // read as shade rather than as darkness: cool from above, green from the ground.
@@ -1943,6 +1958,7 @@ let interactionGeometry: BufferGeometry | null = null;
     lastAmbientMs = now;
     ambientSeconds += seconds;
     driftClouds(clouds, seconds);
+    updateHorizonShips();
     for (const animate of ambientAnimators) animate(ambientSeconds);
     // Another loop (walking, the camera) may already be drawing every frame; then this adds nothing.
     if (now - lastDrawMs >= ambientIntervalMs * 0.9) draw();
@@ -2951,17 +2967,37 @@ let interactionGeometry: BufferGeometry | null = null;
         ? ""
         : `${String(centre.x)},${String(centre.z)},${String(horizonExtent)}|${String(input.home.x)},${String(input.home.z)}|${input.slots
             .map((slot) => `${slot.slotId}:${String(slot.claimed)}:${slot.island.element}:${slot.island.outline}:${String(slot.island.seed)}:${String(slot.island.generatorVersion)}`)
-            .join(";")}`;
+            .join(";")}|${(input.voyages ?? []).map((voyage) => `${voyage.fromSlotId}>${voyage.toSlotId}@${voyage.departedAt}/${voyage.arrivesAt}:${String(voyage.mine)}`).join(";")}`;
     if (signature === horizonSignature) return;
     horizonSignature = signature;
     horizonBuildToken += 1;
     disposeHorizon(horizonGroup);
+    horizonShips = null;
     if (input === null || centre === null || disposed) {
       draw();
       return;
     }
     const token = horizonBuildToken;
     const queue = horizonPlacements(input.home, input.slots, centre, horizonExtent);
+    // The ships are cheap and built at once; they sail between the placements just computed.
+    const voyages = input.voyages ?? [];
+    if (input.homeSlotId !== undefined && voyages.length > 0) {
+      const ships = voyages.map((voyage) => {
+        const node = buildHorizonShip(horizonExtent * 0.12, voyage.mine, HORIZON_COLOR);
+        node.userData = { horizonVoyage: true };
+        horizonGroup.add(node);
+        return { voyage, node };
+      });
+      horizonShips = {
+        places: new Map(queue.map((placement) => [placement.slotId, { x: placement.worldX, z: placement.worldZ }])),
+        homeSlotId: input.homeSlotId,
+        centre,
+        extent: horizonExtent,
+        offsetMs: input.serverOffsetMs ?? 0,
+        ships
+      };
+      updateHorizonShips();
+    }
     const step = quality.name === "LOW" ? 3 : 2;
     const buildNext = (): void => {
       if (token !== horizonBuildToken || disposed) return;
@@ -2975,6 +3011,20 @@ let interactionGeometry: BufferGeometry | null = null;
       window.setTimeout(buildNext, 0);
     };
     window.setTimeout(buildNext, 0);
+  }
+
+  /** Puts each horizon ship where its voyage has it now; a ship whose ends are not on this horizon hides. */
+  function updateHorizonShips(): void {
+    const state = horizonShips;
+    if (state === null) return;
+    const now = Date.now() + state.offsetMs;
+    for (const { voyage, node } of state.ships) {
+      const pose = horizonShipPose(voyage, now, state.places, state.homeSlotId, state.centre, state.extent);
+      node.visible = pose !== null;
+      if (pose === null) continue;
+      node.position.set(pose.x, 0, pose.z);
+      node.rotation.y = -pose.heading;
+    }
   }
 
   function rebuildNeighborIsland(): void {

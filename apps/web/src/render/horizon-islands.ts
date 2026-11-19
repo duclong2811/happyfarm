@@ -1,4 +1,5 @@
 import {
+  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   CircleGeometry,
@@ -342,4 +343,67 @@ export function disposeHorizon(group: Group): void {
     }
   });
   group.clear();
+}
+
+/** A voyage the horizon shows: where a ship sails from and to, and when (server times). */
+export interface HorizonVoyage {
+  readonly fromSlotId: string;
+  readonly toSlotId: string;
+  readonly departedAt: string;
+  readonly arrivesAt: string;
+  readonly mine: boolean;
+}
+
+/**
+ * Where a ship of `voyage` is on the horizon at `serverNowMs`, and which way it faces: between the
+ * horizon islands it sails from and to. Home is the home island's own shore on the side the ship sails.
+ * Null when an end is not on this horizon (a voyage to a farther archipelago).
+ */
+export function horizonShipPose(
+  voyage: HorizonVoyage,
+  serverNowMs: number,
+  places: ReadonlyMap<string, { readonly x: number; readonly z: number }>,
+  homeSlotId: string,
+  centre: { readonly x: number; readonly z: number },
+  halfExtent: number
+): { readonly x: number; readonly z: number; readonly heading: number } | null {
+  const far = (slotId: string): { x: number; z: number } | null => {
+    const place = places.get(slotId);
+    return place === undefined ? null : { x: place.x, z: place.z };
+  };
+  let from = voyage.fromSlotId === homeSlotId ? null : far(voyage.fromSlotId);
+  let to = voyage.toSlotId === homeSlotId ? null : far(voyage.toSlotId);
+  const shore = (towards: { x: number; z: number }): { x: number; z: number } => {
+    const dx = towards.x - centre.x;
+    const dz = towards.z - centre.z;
+    const length = Math.sqrt(dx * dx + dz * dz) || 1;
+    return { x: centre.x + (dx / length) * halfExtent * 1.15, z: centre.z + (dz / length) * halfExtent * 1.15 };
+  };
+  if (voyage.fromSlotId === homeSlotId && to !== null) from = shore(to);
+  if (voyage.toSlotId === homeSlotId && from !== null) to = shore(from);
+  if (from === null || to === null) return null;
+  const start = Date.parse(voyage.departedAt);
+  const end = Date.parse(voyage.arrivesAt);
+  const share = end <= start ? 1 : Math.min(1, Math.max(0, (serverNowMs - start) / (end - start)));
+  return { x: from.x + (to.x - from.x) * share, z: from.z + (to.z - from.z) * share, heading: Math.atan2(to.z - from.z, to.x - from.x) };
+}
+
+/**
+ * A small sailing ship for the horizon: a hull, a mast and a sail, hazed like the islands and never
+ * picked. The player's own flies a red sail. `size` is its length in world metres; it faces +x.
+ */
+export function buildHorizonShip(size: number, mine: boolean, haze: number): Group {
+  const hazeColour = new Color(haze);
+  const material = (hex: number, amount: number): MeshLambertMaterial => new MeshLambertMaterial({ color: new Color(hex).lerp(hazeColour, amount), fog: false });
+  const ship = new Group();
+  const hull = new Mesh(new BoxGeometry(size, size * 0.22, size * 0.34), material(0x6b4423, HAZE * 0.6));
+  hull.position.y = SEA_SURFACE_Y + size * 0.08;
+  const mast = new Mesh(new CylinderGeometry(size * 0.025, size * 0.03, size * 0.85, 5), material(0x4a2f18, HAZE * 0.6));
+  mast.position.set(0, SEA_SURFACE_Y + size * 0.55, 0);
+  const sail = new Mesh(new ConeGeometry(size * 0.32, size * 0.6, 3), material(mine ? 0xd23a2a : 0xf6f0e0, HAZE * 0.4));
+  sail.scale.set(1, 1, 0.12);
+  sail.position.set(size * 0.05, SEA_SURFACE_Y + size * 0.6, 0);
+  for (const part of [hull, mast, sail]) part.raycast = noRaycast;
+  ship.add(hull, mast, sail);
+  return ship;
 }

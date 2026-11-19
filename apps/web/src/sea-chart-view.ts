@@ -601,3 +601,103 @@ export function drawSeaChart(canvas: HTMLCanvasElement, chart: GetWorldChartResp
   context.strokeRect(11, 11, width - 22, height - 22);
   return frame;
 }
+
+/** A ship on the chart at one moment: where it is, which way it sails, and whose it is. */
+export interface ChartShip {
+  readonly x: number;
+  readonly z: number;
+  /** Radians, chart axes (+x east, +z south). */
+  readonly heading: number;
+  readonly mine: boolean;
+  readonly name: string | null;
+  readonly arrived: boolean;
+  readonly fromX: number;
+  readonly fromZ: number;
+  readonly toX: number;
+  readonly toZ: number;
+}
+
+function chartPosition(chart: GetWorldChartResponse, slotId: string): { readonly x: number; readonly z: number } | null {
+  for (const entry of chart.regions) {
+    for (const archipelago of entry.archipelagos) {
+      const slot = archipelago.slots.find((candidate) => candidate.slotId === slotId);
+      if (slot !== undefined) return { x: slot.x, z: slot.z };
+    }
+  }
+  return null;
+}
+
+/**
+ * Where every ship at sea is at `serverNowMs`: along the line from its port to its destination, by
+ * the share of its voyage's time gone. Computed here, never asked of the server. A ship whose ends
+ * are not both on the reader's chart is left out.
+ */
+export function chartShips(chart: GetWorldChartResponse, serverNowMs: number): ChartShip[] {
+  const ships: ChartShip[] = [];
+  for (const voyage of chart.voyages ?? []) {
+    const from = chartPosition(chart, voyage.fromSlotId);
+    const to = chartPosition(chart, voyage.toSlotId);
+    if (from === null || to === null) continue;
+    const start = Date.parse(voyage.departedAt);
+    const end = Date.parse(voyage.arrivesAt);
+    const share = end <= start ? 1 : Math.min(1, Math.max(0, (serverNowMs - start) / (end - start)));
+    ships.push({
+      x: from.x + (to.x - from.x) * share,
+      z: from.z + (to.z - from.z) * share,
+      heading: Math.atan2(to.z - from.z, to.x - from.x),
+      mine: voyage.mine,
+      name: voyage.name,
+      arrived: share >= 1,
+      fromX: from.x,
+      fromZ: from.z,
+      toX: to.x,
+      toZ: to.z
+    });
+  }
+  return ships;
+}
+
+/** Draws the ships at sea over a drawn chart: a dotted course to each destination, and the ship on it. */
+export function drawChartShips(canvas: HTMLCanvasElement, frame: ChartFrame, ships: readonly ChartShip[]): void {
+  const context = canvas.getContext("2d");
+  if (context === null) return;
+  const size = Math.max(7, Math.min(16, 90 * frame.scale));
+  for (const ship of ships) {
+    const at = toCanvas(frame, ship.x, ship.z);
+    const to = toCanvas(frame, ship.toX, ship.toZ);
+    if (!ship.arrived) {
+      context.save();
+      context.strokeStyle = ship.mine ? "rgba(168, 64, 44, 0.7)" : "rgba(59, 42, 26, 0.45)";
+      context.lineWidth = ship.mine ? 1.6 : 1;
+      context.setLineDash([2, 4]);
+      context.beginPath();
+      context.moveTo(at.x, at.y);
+      context.lineTo(to.x, to.y);
+      context.stroke();
+      context.restore();
+    }
+    context.save();
+    context.translate(at.x, at.y);
+    // The galleon is drawn facing east; it turns to its course, and never sails upside down.
+    const facingWest = Math.cos(ship.heading) < 0;
+    context.scale(facingWest ? -1 : 1, 1);
+    drawGalleon(context, 0, size * 0.25, size);
+    if (ship.mine) {
+      context.fillStyle = "#c0392b";
+      context.beginPath();
+      context.moveTo(size * 0.05, -size * 1.25);
+      context.lineTo(size * 0.55, -size * 1.12);
+      context.lineTo(size * 0.05, -size * 0.98);
+      context.closePath();
+      context.fill();
+    }
+    context.restore();
+    if (ship.name !== null && size >= 10) {
+      context.fillStyle = ship.mine ? "#7a2414" : INK;
+      context.font = `italic ${String(Math.round(size * 0.85))}px "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+      context.textAlign = "center";
+      context.textBaseline = "top";
+      context.fillText(ship.name, at.x, at.y + size * 0.55);
+    }
+  }
+}

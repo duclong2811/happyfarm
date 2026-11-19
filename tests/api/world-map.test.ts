@@ -281,7 +281,9 @@ describe("the world map", () => {
     expect(GetWorldArchipelagoResponseSchema.parse(await dataOf(await request("/world/archipelago")))).toEqual({
       mySlotId: null,
       region: null,
-      archipelago: null
+      archipelago: null,
+      readAt: NOW,
+      voyages: []
     });
     for (const n of [1, 2, 3]) await settle(n, "NORTH");
     await settle(4, "EAST");
@@ -597,6 +599,37 @@ describe("the world map", () => {
     auth.setActor(null);
     expect((await request("/ships/fleet")).status).toBe(401);
     expect((await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-request-q" })).status).toBe(401);
+  });
+
+  it("shows the ships at sea in the reader's charted world, by island name and never by player", async () => {
+    await settle(1, "NORTH");
+    await settle(2, "NORTH");
+    await settle(3, "EAST");
+    auth.setActor({ playerId: playerId(2) });
+    expect((await request("/voyages", { slotId: "slot_north_1_3", requestId: "voyage-request-sea" })).status).toBe(200);
+
+    auth.setActor({ playerId: playerId(1) });
+    const chartResponse = await request("/world/chart");
+    const text = await chartResponse.text();
+    expect(text).not.toContain(playerId(2));
+    const body: { readonly data?: unknown } = JSON.parse(text) as { readonly data?: unknown };
+    const chart = GetWorldChartResponseSchema.parse(body.data);
+    expect(chart.readAt).toBe(NOW);
+    expect(chart.voyages).toHaveLength(1);
+    expect(chart.voyages?.[0]).toMatchObject({ fromSlotId: "slot_north_1_2", toSlotId: "slot_north_1_3", shipTier: 1, departedAt: NOW, name: "Isle 2", mine: false });
+    expect(Date.parse(chart.voyages?.[0]?.arrivesAt ?? "")).toBeGreaterThan(Date.parse(NOW));
+    const archipelago = GetWorldArchipelagoResponseSchema.parse(await dataOf(await request("/world/archipelago")));
+    expect(archipelago.voyages?.map((voyage) => voyage.toSlotId)).toEqual(["slot_north_1_3"]);
+    // The voyager sees their own ship as theirs; a reader whose chart does not reach it sees nothing.
+    auth.setActor({ playerId: playerId(2) });
+    expect(GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart"))).voyages?.[0]?.mine).toBe(true);
+    auth.setActor({ playerId: playerId(3) });
+    expect(GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart"))).voyages).toEqual([]);
+    // A voyage that has ended is no longer at sea.
+    auth.setActor({ playerId: playerId(2) });
+    await request("/voyages/end", {});
+    auth.setActor({ playerId: playerId(1) });
+    expect(GetWorldChartResponseSchema.parse(await dataOf(await request("/world/chart"))).voyages).toEqual([]);
   });
 
   it("validates what a client sends and who is asking", async () => {

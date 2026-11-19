@@ -104,3 +104,32 @@ describe("the voyage's card", () => {
     expect(clockText(3)).toBe("0:03");
   });
 });
+
+describe("ships at sea on the chart", () => {
+  it("sail along the line from port to destination by the share of their time gone, by the server's clock", async () => {
+    const { chartShips } = await import("../../apps/web/src/sea-chart-view");
+    const chart = northChart("slot_north_1_1");
+    const slots = chart.regions[0]?.archipelagos[0]?.slots ?? [];
+    const from = slots[1];
+    const to = slots[2];
+    if (from === undefined || to === undefined) throw new Error("no chart");
+    const withVoyages: GetWorldChartResponse = {
+      ...chart,
+      voyages: [
+        { fromSlotId: from.slotId, toSlotId: to.slotId, shipTier: 1, departedAt: "2026-11-20T00:00:00.000Z", arrivesAt: "2026-11-20T00:10:00.000Z", name: "Isle", mine: false },
+        { fromSlotId: from.slotId, toSlotId: "slot_east_9_9", shipTier: 1, departedAt: "2026-11-20T00:00:00.000Z", arrivesAt: "2026-11-20T00:10:00.000Z", name: null, mine: false }
+      ]
+    };
+    const halfway = chartShips(withVoyages, Date.parse("2026-11-20T00:05:00.000Z"));
+    // The voyage whose end is off the reader's chart is not drawn.
+    expect(halfway).toHaveLength(1);
+    expect(halfway[0]?.x).toBeCloseTo((from.x + to.x) / 2);
+    expect(halfway[0]?.z).toBeCloseTo((from.z + to.z) / 2);
+    expect(halfway[0]?.arrived).toBe(false);
+    const before = chartShips(withVoyages, Date.parse("2026-11-19T23:00:00.000Z"))[0];
+    expect([before?.x, before?.z]).toEqual([from.x, from.z]);
+    const after = chartShips(withVoyages, Date.parse("2026-11-20T01:00:00.000Z"))[0];
+    expect([after?.x, after?.z, after?.arrived]).toEqual([to.x, to.z, true]);
+    expect(chartShips(chart, 0)).toEqual([]);
+  });
+});

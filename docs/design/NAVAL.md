@@ -15,6 +15,58 @@ places; this document gives it ships.
 | What losing costs | **The ship is damaged** and costs materials to repair. Nothing is taken from the warehouse or the island |
 | Ships and travel | **Ships are built at the dock**, and going far takes time |
 
+## Owner decisions (2026-11-19, second round)
+
+- **Seeing the sea:** other players' ships are shown sailing on the chart and the horizon.
+- **Pirates:**
+  - They ambush a player's voyage at random places.
+  - There are also a few **pirate lairs**: dungeon-like places where several players fight pirates
+    together.
+  - Later, **sea monster** grounds are fought the same way, together.
+- **PvP is open world.** Everyone may fire on everyone. The brake is **PK points**: a player who
+  sinks many ships gains PK points, and a player with PK points loses more when sunk. The exact
+  mechanism is to be worked out with the owner before it is built.
+- **Cloudflare requests are kept low**: no polling, nothing a client can compute itself is asked of
+  the server, and new data rides on reads the game already makes.
+
+## The plan that follows from it
+
+1. **Ships at sea, seen (W5b-lite).**
+   - The chart's and the archipelago's existing reads also carry the voyages in the reader's charted
+     world.
+   - Each client computes where every ship is from its departure and arrival times, and animates it
+     locally. No new request.
+2. **Pirate ambushes (W5c).**
+   - The server decides, when a voyage starts, whether and where on the way pirates strike. This rides
+     on the request that starts the voyage.
+   - The fight is played in realtime on the player's device with a **deterministic simulation shared
+     by client and server** (`packages/domain`). The device records only the player's inputs.
+   - One request submits them, and the server replays the fight from the same seed to decide hull
+     damage and the result. The client never reports a hit or a winner.
+3. **Pirate lairs, sea monsters, open-world PvP with PK (later).** These need several players in one
+   fight at the same moment, so they run in a Durable Object per lair or sea area. The object steps
+   the same simulation the solo fights use.
+
+## W5b-lite: ships at sea, seen (built)
+
+- `GET /world/chart` (for an island with a place) and `GET /world/archipelago` now also carry
+  `voyages`: every voyage under way (arrived or not) from or to a place in the reader's charted world,
+  at most 200, newest first. Each carries:
+  - from and to;
+  - the ship's tier;
+  - departure and arrival time;
+  - the voyager's island name, never a player id;
+  - whether it is the reader's own.
+  Both reads also carry `readAt`, the server time.
+- The client works out where each ship is (`chartShips`, `horizonShipPose`), by the server's clock,
+  and moves it itself:
+  - on the chart, once a second while the chart is open, laid over a cached drawing of the chart;
+  - on the horizon, on the scene's ambient tick.
+  No request is made for movement, and no polling.
+- A voyage the player starts is shown by reading the archipelago once more; everyone else's ships
+  appear on the next chart or archipelago read the game already makes.
+- Migration 0048 adds two partial indexes on `ship_voyages` (from, to; where under way) for this read.
+
 ## Phases
 
 | Phase | What ships | Server work |

@@ -123,3 +123,19 @@ describe("the horizon islands", () => {
     for (const child of settledGroup.children) expect((child as Mesh).castShadow).toBe(false);
   });
 });
+
+describe("ships on the horizon", () => {
+  it("sail from the home island's shore to a neighbour, and hide when an end is beyond the horizon", async () => {
+    const { horizonShipPose } = await import("../../apps/web/src/render/horizon-islands");
+    const places = new Map([["slot_north_1_2", { x: 200, z: 0 }]]);
+    const voyage = { fromSlotId: "slot_north_1_1", toSlotId: "slot_north_1_2", departedAt: "2026-11-20T00:00:00.000Z", arrivesAt: "2026-11-20T00:10:00.000Z", mine: true };
+    const start = horizonShipPose(voyage, Date.parse("2026-11-20T00:00:00.000Z"), places, "slot_north_1_1", { x: 0, z: 0 }, 40);
+    expect(start).toEqual({ x: 46, z: 0, heading: 0 });
+    const half = horizonShipPose(voyage, Date.parse("2026-11-20T00:05:00.000Z"), places, "slot_north_1_1", { x: 0, z: 0 }, 40);
+    expect(half?.x).toBeCloseTo(123);
+    const back = horizonShipPose({ ...voyage, fromSlotId: "slot_north_1_2", toSlotId: "slot_north_1_1" }, Date.parse("2026-11-20T01:00:00.000Z"), places, "slot_north_1_1", { x: 0, z: 0 }, 40);
+    expect(back?.x).toBeCloseTo(46);
+    expect(back?.heading).toBeCloseTo(Math.PI);
+    expect(horizonShipPose({ ...voyage, toSlotId: "slot_east_1_1" }, 0, places, "slot_north_1_1", { x: 0, z: 0 }, 40)).toBeNull();
+  });
+});

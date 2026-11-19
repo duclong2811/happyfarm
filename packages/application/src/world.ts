@@ -87,12 +87,48 @@ export interface WorldArchipelagoView {
   readonly slots: readonly WorldChartSlotView[];
 }
 
+/**
+ * A ship at sea as anyone can see it: where it sails from and to, and when. Where it is now is
+ * computed by the viewer from these times; the server is never asked again.
+ */
+export interface SeaVoyageView {
+  readonly fromSlotId: string;
+  readonly toSlotId: string;
+  readonly shipTier: number;
+  readonly departedAt: string;
+  readonly arrivesAt: string;
+  /** The voyager's island name; never the account. */
+  readonly name: string | null;
+  readonly mine: boolean;
+}
+
+/** At most this many ships are drawn at sea from one read. */
+export const SEA_VOYAGES_LIMIT = 200;
+
+async function seaVoyages(ships: ShipRepository | undefined, slotIds: readonly string[], reader: string): Promise<readonly SeaVoyageView[]> {
+  if (ships === undefined || slotIds.length === 0) return [];
+  const listed = await ships.listVoyagesTouching(slotIds, SEA_VOYAGES_LIMIT);
+  return listed.map(({ voyage, islandName }) => ({
+    fromSlotId: voyage.fromSlotId,
+    toSlotId: voyage.toSlotId,
+    shipTier: voyage.shipTier,
+    departedAt: voyage.departedAt,
+    arrivesAt: voyage.arrivesAt,
+    name: islandName,
+    mine: voyage.playerId === reader
+  }));
+}
+
 export interface WorldChartView {
   readonly regions: readonly {
     readonly region: SeaRegionName;
     readonly archipelagos: readonly WorldArchipelagoView[];
   }[];
   readonly mySlotId: string | null;
+  /** Server time of the read, so a viewer places the ships at sea against the server's clock. */
+  readonly readAt: string;
+  /** Ships under way in the reader's charted world (none on the harbour's chart). */
+  readonly voyages: readonly SeaVoyageView[];
 }
 
 /** One archipelago as a chart shows it: each place with its owner's island, or its wild one. */
@@ -133,7 +169,9 @@ function archipelagoView(
 export class GetWorldChart {
   constructor(
     private readonly farms: FarmRepository,
-    private readonly world: WorldPlacement
+    private readonly world: WorldPlacement,
+    private readonly ships?: ShipRepository,
+    private readonly clock?: Clock
   ) {}
 
   async execute(actor: ActorContext | null): Promise<WorldChartView> {
@@ -146,6 +184,8 @@ export class GetWorldChart {
       const isClaimed = (slotId: string): boolean => bySlot.has(slotId);
       return {
         mySlotId: null,
+        readAt: this.now(),
+        voyages: [],
         regions: this.world.chart.regions.map((region) => ({
           region,
           archipelagos: this.world.chart
@@ -158,8 +198,11 @@ export class GetWorldChart {
     const charted = this.world.chart.chartedArchipelagos(mine.slotId, visited);
     const claimed = await this.world.slots.listClaimedIn(charted.flatMap((archipelago) => archipelago.slots.map((slot) => slot.slotId)));
     const bySlot = new Map(claimed.map((entry) => [entry.slotId, entry]));
+    const slotIds = charted.flatMap((archipelago) => archipelago.slots.map((slot) => slot.slotId));
     return {
       mySlotId: mine.slotId,
+      readAt: this.now(),
+      voyages: await seaVoyages(this.ships, slotIds, actor.playerId),
       regions: this.world.chart.regions.map((region) => ({
         region,
         archipelagos: charted
@@ -168,6 +211,10 @@ export class GetWorldChart {
       }))
     };
   }
+
+  private now(): string {
+    return this.clock?.now() ?? new Date().toISOString();
+  }
 }
 
 export interface MyArchipelagoView {
@@ -175,6 +222,9 @@ export interface MyArchipelagoView {
   readonly region: SeaRegionName | null;
   /** The reader's archipelago, or null while their island has no place on the chart. */
   readonly archipelago: WorldArchipelagoView | null;
+  readonly readAt: string;
+  /** Ships under way to or from the reader's archipelago: what the horizon shows sailing. */
+  readonly voyages: readonly SeaVoyageView[];
 }
 
 /**
@@ -184,23 +234,30 @@ export interface MyArchipelagoView {
 export class GetMyArchipelago {
   constructor(
     private readonly farms: FarmRepository,
-    private readonly world: WorldPlacement
+    private readonly world: WorldPlacement,
+    private readonly ships?: ShipRepository,
+    private readonly clock?: Clock
   ) {}
 
   async execute(actor: ActorContext | null): Promise<MyArchipelagoView> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const readAt = this.clock?.now() ?? new Date().toISOString();
+    const nothing: MyArchipelagoView = { mySlotId: null, region: null, archipelago: null, readAt, voyages: [] };
     const farm = await this.farms.findByOwner(actor.playerId);
-    if (farm === null) return { mySlotId: null, region: null, archipelago: null };
+    if (farm === null) return nothing;
     const mine = await this.world.slots.findByFarm(farm.id);
     const slot = mine === null ? null : this.world.chart.findSlot(mine.slotId);
     const archipelago = slot === null ? null : this.world.chart.findArchipelago(slot.archipelagoId);
-    if (mine === null || slot === null || archipelago === null) return { mySlotId: null, region: null, archipelago: null };
-    const claimed = await this.world.slots.listClaimedIn(archipelago.slots.map((entry) => entry.slotId));
+    if (mine === null || slot === null || archipelago === null) return nothing;
+    const slotIds = archipelago.slots.map((entry) => entry.slotId);
+    const [claimed, voyages] = await Promise.all([this.world.slots.listClaimedIn(slotIds), seaVoyages(this.ships, slotIds, actor.playerId)]);
     const bySlot = new Map(claimed.map((entry) => [entry.slotId, entry]));
     return {
       mySlotId: mine.slotId,
       region: slot.region,
-      archipelago: archipelagoView(this.world.chart, archipelago, bySlot, mine.slotId)
+      archipelago: archipelagoView(this.world.chart, archipelago, bySlot, mine.slotId),
+      readAt,
+      voyages
     };
   }
 }

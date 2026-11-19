@@ -1257,8 +1257,8 @@ export function createHandler(host: HandlerDependencies) {
     dependencies.islands === undefined ? undefined : { enabled: islandChoiceEnabled, builder: dependencies.islands.builder },
     worldPlacement
   );
-  const getWorldChart = worldPlacement === undefined ? null : new GetWorldChart(farms, worldPlacement);
-  const getMyArchipelago = worldPlacement === undefined ? null : new GetMyArchipelago(farms, worldPlacement);
+  const getWorldChart = worldPlacement === undefined ? null : new GetWorldChart(farms, worldPlacement, shipRepository, dependencies.clock);
+  const getMyArchipelago = worldPlacement === undefined ? null : new GetMyArchipelago(farms, worldPlacement, shipRepository, dependencies.clock);
   const ensureWorldSlot = worldPlacement === undefined ? null : new EnsureWorldSlot(farms, farmIslands, worldPlacement, dependencies.clock);
   const getFarm = new GetFarm(farms, members, farmIslands);
   const getMyFarm = new GetMyFarm(farms, farmIslands, islandChoiceEnabled);
@@ -2264,6 +2264,8 @@ export function createHandler(host: HandlerDependencies) {
           ok: true,
           data: {
             mySlotId: chart.mySlotId,
+            readAt: chart.readAt,
+            voyages: chart.voyages.map((voyage) => ({ ...voyage })),
             regions: chart.regions.map((entry) => ({
               region: entry.region,
               archipelagos: entry.archipelagos.map((archipelago) => toWorldArchipelagoDTO(archipelago))
@@ -2334,7 +2336,9 @@ export function createHandler(host: HandlerDependencies) {
           data: {
             mySlotId: view.mySlotId,
             region: view.region,
-            archipelago: view.archipelago === null ? null : toWorldArchipelagoDTO(view.archipelago)
+            archipelago: view.archipelago === null ? null : toWorldArchipelagoDTO(view.archipelago),
+            readAt: view.readAt,
+            voyages: view.voyages.map((voyage) => ({ ...voyage }))
           }
         };
         return jsonResponse(body);

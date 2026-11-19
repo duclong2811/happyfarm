@@ -1,7 +1,7 @@
 import type { FleetResponse, GetWorldChartResponse, SeaRegionDTO } from "@happy-farm/contracts";
 import type { MessageKey } from "./i18n";
 import { createIcon } from "./icons";
-import { archipelagoName, drawSeaChart, freePlaces, SEA_REGION_ORDER, slotAt, type ChartFrame } from "./sea-chart-view";
+import { archipelagoName, chartShips, drawChartShips, drawSeaChart, freePlaces, SEA_REGION_ORDER, slotAt, type ChartFrame } from "./sea-chart-view";
 
 /**
  * The "Chart" window: the world's sea chart over the game.
@@ -127,6 +127,11 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
   const { host, translate } = options;
   let chart: GetWorldChartResponse | null = null;
   let fleet: FleetResponse | null = null;
+  /** The chart without its ships, drawn once per size; the ships are laid over it every second. */
+  let base: HTMLCanvasElement | null = null;
+  /** Server time minus this device's, from the read: ships sail by the server's clock. */
+  let clockOffsetMs = 0;
+  let shipTimer: number | null = null;
   let frame: ChartFrame | null = null;
   let closed = false;
 
@@ -252,7 +257,21 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
     const height = Math.max(1, Math.round(stage.clientHeight * ratio));
     if (canvas.width !== width) canvas.width = width;
     if (canvas.height !== height) canvas.height = height;
-    frame = drawSeaChart(canvas, chart, { translate: (key, params) => translate(key as MessageKey, params === undefined ? undefined : { ...params }) });
+    base ??= document.createElement("canvas");
+    base.width = width;
+    base.height = height;
+    frame = drawSeaChart(base, chart, { translate: (key, params) => translate(key as MessageKey, params === undefined ? undefined : { ...params }) });
+    drawShips();
+  }
+
+  /** Lays the ships at sea, where they are now, over the drawn chart. Cheap: one copy and a few ships. */
+  function drawShips(): void {
+    if (chart === null || frame === null || base === null || closed) return;
+    const context = canvas.getContext("2d");
+    if (context === null) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(base, 0, 0);
+    drawChartShips(canvas, frame, chartShips(chart, Date.now() + clockOffsetMs));
   }
 
   function renderShip(): void {
@@ -312,6 +331,7 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
       const [loadedChart, loadedFleet] = await Promise.all([options.load(), options.loadFleet === null ? Promise.resolve(null) : options.loadFleet().catch(() => null)]);
       chart = loadedChart;
       fleet = loadedFleet;
+      clockOffsetMs = loadedChart.readAt === undefined ? 0 : Date.parse(loadedChart.readAt) - Date.now();
     } catch (error: unknown) {
       if (closed) return;
       const retry = document.createElement("button");
@@ -329,6 +349,8 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
     status.hidden = true;
     draw();
     renderFoot();
+    // Ships move by themselves, from the times the read gave: no further request while the chart is open.
+    if (shipTimer === null && (chart.voyages?.length ?? 0) > 0) shipTimer = window.setInterval(drawShips, 1000);
   }
 
   canvas.addEventListener("click", (event) => {
@@ -369,6 +391,8 @@ export function openSeaChart(options: SeaChartModalOptions): SeaChartModal {
     closed = true;
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("resize", onResize);
+    if (shipTimer !== null) window.clearInterval(shipTimer);
+    shipTimer = null;
     root.remove();
     options.onClose?.();
   }
