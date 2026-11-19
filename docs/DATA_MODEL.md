@@ -515,4 +515,9 @@ chart is grown from it: their home archipelago, plus what can be seen from each 
   - It moves in the same batch as the ship's hull, and only over the versions the server read.
 - The same migration rebuilt `economy_ledger` to admit `SHIP_BUILD` and `SHIP_REPAIR` (reference type
   `SHIP`, `ship_*`). Every trigger that reads the ledger was recreated with its exact prior SQL.
+- Migration 0050 rebuilt `economy_ledger` again to admit `PIRATE_BOUNTY` (reference type `SHIP`), the
+  gold a won pirate fight pays. Every trigger was recreated with its exact prior SQL, and
+  `idempotency_pirate_bounty_requires_ledger` was added: a `PIRATE_BOUNTY` receipt exists only beside
+  its ledger row. The receipt's request id is derived from the player, the route and the day, so a
+  route pays its bounty once a day.
 

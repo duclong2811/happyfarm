@@ -2366,7 +2366,34 @@ export const SeaBattleResultDTOSchema = z
   })
   .strict();
 export type FleetResponse = z.infer<typeof FleetResponseSchema>;
-export const FightAmbushResponseSchema = z.object({ fleet: FleetResponseSchema, battle: SeaBattleResultDTOSchema.nullable() }).strict();
+/**
+ * What a won fight paid (W5c), decided and written by the server. Materials the warehouse had no
+ * room for are `lost`: they are not owed later.
+ */
+export const AmbushBountyDTOSchema = z
+  .object({
+    currencyDefinitionId: CurrencyDefinitionIdSchema,
+    gold: z.number().int().positive().max(1_000_000),
+    materials: z
+      .array(
+        z
+          .object({
+            itemDefinitionId: ItemDefinitionIdSchema,
+            quantity: z.number().int().nonnegative().max(1_000_000),
+            lost: z.number().int().nonnegative().max(1_000_000)
+          })
+          .strict()
+      )
+      .max(8),
+    xpAwarded: z.number().int().nonnegative().max(1_000_000),
+    leveledUp: z.boolean(),
+    progression: PlayerProgressionDTOSchema
+  })
+  .strict();
+export type AmbushBountyDTO = z.infer<typeof AmbushBountyDTOSchema>;
+export const FightAmbushResponseSchema = z
+  .object({ fleet: FleetResponseSchema, battle: SeaBattleResultDTOSchema.nullable(), bounty: AmbushBountyDTOSchema.nullable() })
+  .strict();
 export type FightAmbushResponse = z.infer<typeof FightAmbushResponseSchema>;
 export type AmbushDTO = z.infer<typeof AmbushDTOSchema>;
 export type PublicIslandDTO = z.infer<typeof PublicIslandDTOSchema>;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AMBUSH_CHANCE_MAX, AMBUSH_EARLIEST, AMBUSH_LATEST, AMBUSH_PARTIES, PIRATE_SHIPS, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_CLASSES, stableHash } from "@happy-farm/game-data";
+import { ambushBounty, AMBUSH_CHANCE_MAX, AMBUSH_EARLIEST, AMBUSH_LATEST, AMBUSH_PARTIES, PIRATE_SHIPS, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_CLASSES, stableHash } from "@happy-farm/game-data";
 
 /** Pirate ambushes (game data): a fixed fate per route and day, never a rowboat, parties that exist. */
 describe("pirate ambushes", () => {
@@ -35,5 +35,23 @@ describe("pirate ambushes", () => {
       Array.from({ length: 400 }, (_, n) => planAmbush({ ...base, playerId: `player_${String(n)}`, distanceTiles })).filter((plan) => plan !== null).length;
     expect(count(200)).toBeLessThan(count(900));
     for (const shipClass of SHIP_CLASSES) expect(SHIP_BATTLE_NUMBERS[shipClass.id]).toBeDefined();
+  });
+
+  it("pays the owner's bounties (the generous scale, 2026-11-19), summed over a party", () => {
+    expect(Object.fromEntries(PIRATE_SHIPS.map((ship) => [ship.id, ship.bounty]))).toEqual({
+      pirate_cutter: { gold: 160, wood: 40, ore: 0, xp: 60 },
+      pirate_raider: { gold: 500, wood: 120, ore: 40, xp: 180 },
+      pirate_corsair: { gold: 1200, wood: 240, ore: 120, xp: 400 }
+    });
+    expect(ambushBounty(["pirate_raider", "pirate_cutter"])).toEqual({ gold: 660, wood: 160, ore: 40, xp: 240 });
+    expect(ambushBounty([])).toEqual({ gold: 0, wood: 0, ore: 0, xp: 0 });
+    expect(() => ambushBounty(["pirate_unknown"])).toThrow();
+    // A bigger pirate always pays more, so a harder fight is never the worse deal.
+    for (let index = 1; index < PIRATE_SHIPS.length; index += 1) {
+      const smaller = PIRATE_SHIPS[index - 1]?.bounty;
+      const bigger = PIRATE_SHIPS[index]?.bounty;
+      expect(bigger?.gold ?? 0).toBeGreaterThan(smaller?.gold ?? 0);
+      expect(bigger?.xp ?? 0).toBeGreaterThan(smaller?.xp ?? 0);
+    }
   });
 });

@@ -74,7 +74,9 @@ export type EconomyReason =
   /** Building the next class of ship at the dock: gold out, a faster, sturdier ship from then on. */
   | "SHIP_BUILD"
   /** Mending a ship's hull after a fight (W5c): gold out, the hull restored. */
-  | "SHIP_REPAIR";
+  | "SHIP_REPAIR"
+  /** A won pirate fight's bounty (W5c): gold in, decided by the server's replay of the fight. */
+  | "PIRATE_BOUNTY";
 export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION" | "WAREHOUSE" | "MINE" | "SHIP";
 
 /**
@@ -105,7 +107,9 @@ const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   MINE_UPGRADE: "MINE",
   // Building and mending both point at the player's one ship.
   SHIP_BUILD: "SHIP",
-  SHIP_REPAIR: "SHIP"
+  SHIP_REPAIR: "SHIP",
+  // A bounty points at the ship that won it.
+  PIRATE_BOUNTY: "SHIP"
 };
 
 /** The one reference kind a reason may carry. The mapping is total, or the reason is not one. */

@@ -674,12 +674,38 @@ describe("the world map", () => {
     return actions;
   }
 
+  /**
+   * A captain who closes in first: bow on the nearest pirate at full sail until within 40, then abeam
+   * at half sail, firing the loaded side. It wins against brittle pirates in a few seconds.
+   */
+  function hunter(state: SeaBattleState): SeaBattleAction[] {
+    const me = state.ships[0];
+    const target = state.ships.slice(1).find((ship) => ship.alive);
+    if (me === undefined || target === undefined) return [];
+    const dx = target.x - me.x;
+    const dz = target.z - me.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+    const cross = seaCosine(me.heading) * dz - seaSine(me.heading) * dx;
+    const dot = seaCosine(me.heading) * dx + seaSine(me.heading) * dz;
+    const close = distance < 40;
+    const abeam = Math.abs(dot) / distance < 0.3;
+    const ahead = dot > 0 && Math.abs(cross) / distance < 0.15;
+    const rudder: SeaBattleAction = close
+      ? abeam ? "RUDDER_CENTER" : dot > 0 ? (cross > 0 ? "RUDDER_LEFT" : "RUDDER_RIGHT") : cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT"
+      : ahead ? "RUDDER_CENTER" : cross > 0 ? "RUDDER_RIGHT" : "RUDDER_LEFT";
+    const actions: SeaBattleAction[] = [];
+    if (me.rudder !== (rudder === "RUDDER_LEFT" ? -1 : rudder === "RUDDER_RIGHT" ? 1 : 0)) actions.push(rudder);
+    if (me.sail !== (close ? 1 : 2)) actions.push(close ? "SAIL_HALF" : "SAIL_FULL");
+    if (distance < 55 && abeam && (cross > 0 ? me.reloadStarboard : me.reloadPort) === 0) actions.push(cross > 0 ? "FIRE_STARBOARD" : "FIRE_PORT");
+    return actions;
+  }
+
   /** Plays a fight as a device does, and returns its inputs as the wire carries them, and its result. */
-  function playOnDevice(setup: SeaBattleSetup): { inputs: [number, number][]; result: ReturnType<typeof seaBattleResult> } {
+  function playOnDevice(setup: SeaBattleSetup, orders: (state: SeaBattleState) => SeaBattleAction[] = captain): { inputs: [number, number][]; result: ReturnType<typeof seaBattleResult> } {
     const state = createSeaBattle(setup);
     const inputs: [number, number][] = [];
     while (state.outcome === null) {
-      const actions = captain(state);
+      const actions = orders(state);
       for (const action of actions) inputs.push([state.tick, SEA_BATTLE_ACTIONS.indexOf(action)]);
       stepSeaBattle(state, actions);
     }
@@ -783,6 +809,143 @@ describe("the world map", () => {
     expect((await request("/ships/repair", { requestId: "repair-request-1" })).status).toBe(200);
     expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'SHIP_REPAIR'").get()).toEqual({ n: 1 });
     expect(await codeOf(await request("/ships/repair", { requestId: "repair-request-2" }))).toBe("SHIP_NOT_DAMAGED");
+  });
+
+  /**
+   * Sails player 1's sloop into `party` and brings the clock to the strike; the setup to fight. With
+   * `brittle`, the pirates keep their bounty but sink at a touch: these tests are about what a win
+   * pays, not about how hard one is to get.
+   */
+  async function struckBy(party: readonly string[], voyageRequestId: string, brittle = false): Promise<SeaBattleSetup> {
+    const catalogue = alwaysAmbushed(party);
+    build(
+      gameDataWorldChart,
+      brittle
+        ? {
+            ...catalogue,
+            pirate: (id) => {
+              const ship = gameDataShipCatalogue.pirate(id);
+              return ship === null ? null : { ...ship, hull: 1 };
+            }
+          }
+        : catalogue
+    );
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    await withSloop(1);
+    const sailing = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: voyageRequestId })));
+    const ambush = sailing.voyage?.ambush;
+    if (ambush == null) throw new Error("no ambush");
+    advance((Date.parse(ambush.at) - clockMs) / 1000 + 1);
+    return ambush.setup;
+  }
+
+  function experience(n: number): number {
+    return (db.sqlite.prepare("SELECT xp FROM player_progression WHERE player_id = ?").get(playerId(n)) as { xp: number }).xp;
+  }
+
+  function bounties(n: number): { delta: number; reference_type: string; reference_id: string }[] {
+    return db.sqlite
+      .prepare("SELECT delta, reference_type, reference_id FROM economy_ledger WHERE player_id = ? AND reason = 'PIRATE_BOUNTY'")
+      .all(playerId(n)) as { delta: number; reference_type: string; reference_id: string }[];
+  }
+
+  it("pays a won fight's bounty once: gold through the ledger, wood and experience with the outcome", async () => {
+    const setup = await struckBy(["pirate_cutter"], "voyage-bounty-1", true);
+    const played = playOnDevice(setup, hunter);
+    expect(played.result.outcome).toBe("WON");
+    const before = holdings(1);
+    const xpBefore = experience(1);
+
+    const won = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
+    expect(won.battle?.outcome).toBe("WON");
+    // A cutter's bounty, from game data: never a number the client sent.
+    expect(won.bounty).toMatchObject({ currencyDefinitionId: "currency_gold", gold: 160, materials: [{ itemDefinitionId: "item_wood", quantity: 40, lost: 0 }], xpAwarded: 60 });
+    expect(holdings(1)).toMatchObject({ gold: before.gold + 160, wood: before.wood + 40, ore: before.ore });
+    expect(experience(1)).toBe(xpBefore + 60);
+    expect(won.bounty?.progression.xp).toBe(xpBefore + 60);
+    const shipId = `ship_${playerId(1).slice("player_".length)}`;
+    expect(bounties(1)).toEqual([{ delta: 160, reference_type: "SHIP", reference_id: shipId }]);
+
+    // Asked again, the same bounty is reported and nothing is paid twice.
+    const again = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
+    expect(again.battle).toBeNull();
+    expect(again.bounty).toEqual(won.bounty);
+    expect(bounties(1)).toHaveLength(1);
+    expect(holdings(1)).toMatchObject({ gold: before.gold + 160, wood: before.wood + 40 });
+    expect(experience(1)).toBe(xpBefore + 60);
+  });
+
+  it("pays a route's bounty once a day, however often the same fight is won again", async () => {
+    const setup = await struckBy(["pirate_cutter"], "voyage-bounty-4", true);
+    const played = playOnDevice(setup, hunter);
+    const first = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
+    expect(first.bounty?.gold).toBe(160);
+    const afterFirst = holdings(1);
+
+    // Home, and out again on the same route the same day: the same pirates, the same seed, so the
+    // same recorded orders win the same fight. It is decided, and it pays nothing more.
+    await request("/voyages/end", {});
+    const again = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-bounty-5" })));
+    const ambush = again.voyage?.ambush;
+    if (ambush == null) throw new Error("no ambush");
+    expect(ambush.setup).toEqual(setup);
+    advance((Date.parse(ambush.at) - clockMs) / 1000 + 1);
+    const second = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
+    expect(second.battle?.outcome).toBe("WON");
+    expect(second.fleet.voyage?.ambush?.status).toBe("WON");
+    expect(second.bounty).toBeNull();
+    expect(bounties(1)).toHaveLength(1);
+    expect(holdings(1)).toMatchObject({ gold: afterFirst.gold, wood: afterFirst.wood });
+    // Asked again, this voyage still reports no bounty: the one paid today was the first voyage's.
+    const replayed = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: [] })));
+    expect(replayed.bounty).toBeNull();
+
+    // A new day is a new encounter on the route, and pays again.
+    await request("/voyages/end", {});
+    advance(24 * 60 * 60);
+    const tomorrow = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-bounty-6" })));
+    const next = tomorrow.voyage?.ambush;
+    if (next == null) throw new Error("no ambush");
+    advance((Date.parse(next.at) - clockMs) / 1000 + 1);
+    const won = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: playOnDevice(next.setup, hunter).inputs })));
+    expect(won.battle?.outcome).toBe("WON");
+    expect(won.bounty?.gold).toBe(160);
+    expect(bounties(1)).toHaveLength(2);
+  });
+
+  it("keeps out what the warehouse has no room for, in the bounty's order, and still pays the gold", async () => {
+    const setup = await struckBy(["pirate_raider"], "voyage-bounty-2", true);
+    const played = playOnDevice(setup, hunter);
+    expect(played.result.outcome).toBe("WON");
+    // Fill the island to ten short of its starter capacity: a raider's 120 wood and 40 ore will not fit.
+    const used = (db.sqlite.prepare("SELECT COALESCE(SUM(quantity), 0) AS n FROM inventory_items WHERE player_id = ?").get(playerId(1)) as { n: number }).n;
+    db.sqlite
+      .prepare("INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, 'item_carrot', ?, ?, 1)")
+      .run(playerId(1), 1000 - used - 10, NOW);
+    const before = holdings(1);
+
+    const won = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: played.inputs })));
+    expect(won.bounty).toMatchObject({
+      gold: 500,
+      materials: [
+        { itemDefinitionId: "item_wood", quantity: 10, lost: 110 },
+        { itemDefinitionId: "item_ore", quantity: 0, lost: 40 }
+      ],
+      xpAwarded: 180
+    });
+    expect(holdings(1)).toMatchObject({ gold: before.gold + 500, wood: before.wood + 10, ore: before.ore });
+    expect(bounties(1)).toHaveLength(1);
+  });
+
+  it("pays nothing for a fight that is lost", async () => {
+    await struckBy(["pirate_corsair", "pirate_corsair", "pirate_corsair", "pirate_corsair"], "voyage-bounty-3");
+    const before = holdings(1);
+    const lost = FightAmbushResponseSchema.parse(await dataOf(await request("/voyages/ambush", { inputs: [] })));
+    expect(lost.battle?.outcome).toBe("LOST");
+    expect(lost.bounty).toBeNull();
+    expect(bounties(1)).toEqual([]);
+    expect(holdings(1)).toMatchObject({ gold: before.gold, wood: before.wood, ore: before.ore });
   });
 
   it("refuses a fight's inputs no device would send", async () => {

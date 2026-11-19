@@ -1,5 +1,7 @@
 import {
   DomainError,
+  MAX_TOTAL_XP,
+  createXpAward,
   parseCurrencyDefinitionId,
   parseItemDefinitionId,
   runSeaBattle,
@@ -10,13 +12,15 @@ import {
   type SeaBattleInput,
   type SeaBattleResult,
   type SeaBattleSetup,
-  type SeaBattleShipSpec
+  type SeaBattleShipSpec,
+  type XpAward
 } from "@happy-farm/domain";
 import type { EconomyService } from "./economy";
 import { ApplicationError } from "./errors";
 import type { InventoryService } from "./inventory";
 import type {
   ActorContext,
+  AmbushBountyWrite,
   Clock,
   CurrencyDefinitionRepository,
   FarmRepository,
@@ -31,9 +35,11 @@ import type {
   ShipRepository,
   VoyageAmbush,
   VoyageRecord,
-  WalletRepository
+  WalletRepository,
+  WarehouseRepository,
+  WarehouseTierRepository
 } from "./ports";
-import { storedLevel } from "./progression";
+import { emptyProgression, progressionView, storedLevel, type ProgressionView } from "./progression";
 import type { WorldPlacement } from "./world";
 
 /**
@@ -50,6 +56,10 @@ import type { WorldPlacement } from "./world";
 
 export const SHIP_BUILD_OPERATION = "SHIP_BUILD";
 export const SHIP_REPAIR_OPERATION = "SHIP_REPAIR";
+/** One receipt per route and day: what makes a bounty payable once (see `bountyRequest`). */
+export const PIRATE_BOUNTY_OPERATION = "PIRATE_BOUNTY";
+/** A player with no warehouse row is held to this by the database's own guard. */
+const STARTER_WAREHOUSE_CAPACITY = 1000;
 const WRITE_ATTEMPTS = 8;
 
 export interface ShipDependencies {
@@ -67,6 +77,10 @@ export interface ShipDependencies {
   readonly idempotency: IdempotencyRepository;
   readonly fingerprints: PayloadFingerprint;
   readonly clock: Clock;
+  /** Where a bounty's materials land: only what the island's warehouse has room for. */
+  readonly warehouse: WarehouseRepository;
+  /** The starter capacity for a player with no warehouse row; the database holds such a player to 1000. */
+  readonly warehouseTiers?: WarehouseTierRepository;
 }
 
 export interface ShipView {
@@ -464,7 +478,7 @@ export class EndVoyage {
       // Pirates that have already struck are not escaped by calling the ship home: the fight is played
       // out with no orders from the captain, and its damage stands.
       if (ambushDue(voyage, now) && voyage.ambush != null) {
-        const decided = await decideAmbush(this.dependencies, actor.playerId, ship, voyage, [], now, true);
+        const decided = await decideAmbush(this.dependencies, actor, ship, voyage, [], now, true);
         if (decided !== null) return decided.view;
         continue;
       }
@@ -475,26 +489,38 @@ export class EndVoyage {
   }
 }
 
+/** What a won fight paid. Materials the warehouse had no room for are `lost`, never owed later. */
+export interface AmbushBountyView {
+  readonly currencyDefinitionId: string;
+  readonly gold: number;
+  readonly materials: readonly { readonly itemDefinitionId: string; readonly quantity: number; readonly lost: number }[];
+  readonly xpAwarded: number;
+  readonly leveledUp: boolean;
+  readonly progression: ProgressionView;
+}
+
 export interface AmbushOutcomeView {
   readonly fleet: FleetView;
   /** The fight this request decided; null when it had already been decided (its outcome is on the voyage). */
   readonly battle: SeaBattleResult | null;
+  /** A won fight's bounty (also on a retried request); null when the fight was not won. */
+  readonly bounty: AmbushBountyView | null;
 }
 
 /**
  * Decides a struck ambush by replaying the fight from its setup and `inputs`, and writes the outcome:
- * the voyage's ambush status, and the ship's hull. A lost fight, or `goHome`, ends the voyage.
- * Null when the voyage or the ship moved in between (the caller looks again).
+ * the voyage's ambush status, and the ship's hull. A lost fight, or `goHome`, ends the voyage. A won
+ * fight pays its bounty in the same batch. Null when anything moved in between (the caller looks again).
  */
 async function decideAmbush(
   dependencies: ShipDependencies,
-  playerId: PlayerId,
+  actor: ActorContext,
   ship: PlayerShipRecord | null,
   voyage: VoyageRecord,
   inputs: readonly SeaBattleInput[],
   now: string,
   goHome: boolean
-): Promise<{ readonly view: FleetView; readonly battle: SeaBattleResult } | null> {
+): Promise<{ readonly view: FleetView; readonly battle: SeaBattleResult; readonly bounty: AmbushBountyView | null } | null> {
   const ambush = voyage.ambush;
   if (ambush == null || ship === null) throw new ApplicationError("INTERNAL_ERROR", "An ambush needs a fighting ship");
   const setup = ambushSetup(dependencies.catalogue, ship, ambush);
@@ -507,14 +533,22 @@ async function decideAmbush(
     throw error;
   }
   const endVoyage = goHome || battle.outcome === "LOST";
+  // A win pays once per route and day: a route already paid today is fought, and decided, for nothing.
+  let prepared: { readonly write: AmbushBountyWrite; readonly view: AmbushBountyView } | null = null;
+  if (battle.outcome === "WON") {
+    const request = await bountyRequest(dependencies, actor.playerId, voyage);
+    const paid = await dependencies.idempotency.find(actor.playerId, PIRATE_BOUNTY_OPERATION, request.requestId);
+    if (paid === null) prepared = await prepareBounty(dependencies, actor, voyage, ambush.pirates, request, now);
+  }
   const written = await dependencies.ships.resolveAmbush({
-    playerId,
+    playerId: actor.playerId,
     expectedVoyageVersion: voyage.version,
     expectedShipVersion: ship.version,
     outcome: battle.outcome,
     hull: battle.playerHull,
     endVoyage,
-    at: now
+    at: now,
+    bounty: prepared?.write ?? null
   });
   if (!written) return null;
   const nextShip: PlayerShipRecord = { ...ship, hull: battle.playerHull, version: ship.version + 1, updatedAt: now };
@@ -525,7 +559,130 @@ async function decideAmbush(
     updatedAt: now,
     ambush: { ...ambush, status: battle.outcome }
   };
-  return { view: fleetView(dependencies.catalogue, nextShip, nextVoyage, now), battle };
+  return { view: fleetView(dependencies.catalogue, nextShip, nextVoyage, now), battle, bounty: prepared?.view ?? null };
+}
+
+/**
+ * The bounty's request id: one per route and day, the same key the ambush itself is planned by.
+ *
+ * Sailing the same route again the same day meets the same pirates with the same seed, so the same
+ * recorded orders would win the same fight again. Keying the bounty by the voyage would let a player
+ * replay a win for gold without end; keyed by the route and the day, the encounter pays once, and the
+ * second payment collides with the first receipt.
+ */
+async function bountyRequest(dependencies: ShipDependencies, playerId: PlayerId, voyage: VoyageRecord): Promise<{ readonly requestId: string; readonly fingerprint: string }> {
+  const fingerprint = await dependencies.fingerprints.hash(
+    JSON.stringify([PIRATE_BOUNTY_OPERATION, playerId, voyage.fromSlotId, voyage.toSlotId, voyage.departedAt.slice(0, 10)])
+  );
+  return { requestId: `bounty_${fingerprint.slice(0, 48)}`, fingerprint };
+}
+
+/**
+ * Sizes a won fight's bounty against the player's state as it is now: the gold through the economy
+ * service, the materials through the inventory service up to the warehouse's free room (and each
+ * stack's limit), and the experience up to the curve's top. The batch re-checks every one of these.
+ */
+async function prepareBounty(
+  dependencies: ShipDependencies,
+  actor: ActorContext,
+  voyage: VoyageRecord,
+  pirates: readonly string[],
+  request: { readonly requestId: string; readonly fingerprint: string },
+  now: string
+): Promise<{ readonly write: AmbushBountyWrite; readonly view: AmbushBountyView }> {
+  const { catalogue } = dependencies;
+  const playerId = actor.playerId;
+  const bounty = catalogue.bounty(pirates);
+  const currency = dependencies.currencies.findById(parseCurrencyDefinitionId(bounty.currencyDefinitionId));
+  if (currency === null) throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
+  const wallet = (await dependencies.wallets.find(playerId, currency.id)) ?? {
+    playerId,
+    currencyDefinitionId: currency.id,
+    balance: 0,
+    version: 1,
+    updatedAt: now
+  };
+  const { requestId, fingerprint } = request;
+  let economy;
+  try {
+    economy = dependencies.economyService.prepareMutation(actor, wallet, currency, {
+      delta: bounty.gold,
+      reason: "PIRATE_BOUNTY",
+      referenceId: shipIdFor(playerId),
+      requestId
+    });
+  } catch (error: unknown) {
+    if (error instanceof ApplicationError) throw error;
+    if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
+    throw error;
+  }
+
+  // Materials: the warehouse's free room is shared, so it is handed out in the bounty's own order.
+  const stored = await dependencies.warehouse.find(playerId);
+  const capacity = stored?.capacity ?? dependencies.warehouseTiers?.list()[0]?.capacity ?? STARTER_WAREHOUSE_CAPACITY;
+  let room = Math.max(0, capacity - (await dependencies.warehouse.usedCapacity(playerId)));
+  const additions: AmbushBountyWrite["additions"][number][] = [];
+  const expectedInventory: (InventoryItem | null)[] = [];
+  const materials: { itemDefinitionId: string; quantity: number; lost: number }[] = [];
+  for (const [itemDefinitionId, wanted] of Object.entries(bounty.materials)) {
+    if (wanted <= 0) continue;
+    const stack = await dependencies.inventory.find(playerId, parseItemDefinitionId(itemDefinitionId));
+    const probe = dependencies.inventoryService.prepareAddition(playerId, itemDefinitionId, 1);
+    const quantity = Math.max(0, Math.min(wanted, room, probe.maxQuantity - (stack?.quantity ?? 0)));
+    materials.push({ itemDefinitionId, quantity, lost: wanted - quantity });
+    if (quantity <= 0) continue;
+    room -= quantity;
+    additions.push(dependencies.inventoryService.prepareAddition(playerId, itemDefinitionId, quantity));
+    expectedInventory.push(stack);
+  }
+
+  const progression = (await dependencies.progression.find(playerId)) ?? emptyProgression(playerId, now);
+  const xp = Math.min(bounty.xp, MAX_TOTAL_XP - progression.xp);
+  let award: XpAward | null = null;
+  if (xp > 0) {
+    try {
+      award = createXpAward(dependencies.progressionDefinition, progression, xp, now);
+    } catch (error: unknown) {
+      if (error instanceof DomainError) throw new ApplicationError("INTERNAL_ERROR", "Stored player progression is invalid");
+      throw error;
+    }
+  }
+  const view: AmbushBountyView = {
+    currencyDefinitionId: currency.id,
+    gold: bounty.gold,
+    materials,
+    xpAwarded: award?.xpAwarded ?? 0,
+    leveledUp: award?.leveledUp ?? false,
+    progression: progressionView(dependencies.progressionDefinition, award?.xpAfter ?? progression.xp)
+  };
+  const receipt: IdempotencyRecord = {
+    actorPlayerId: playerId,
+    operation: PIRATE_BOUNTY_OPERATION,
+    requestId,
+    payloadFingerprint: fingerprint,
+    resourceId: economy.transactionId,
+    // The voyage it was paid on, so a retried request reports it only for that voyage.
+    responseJson: JSON.stringify({ voyageRequestId: voyage.requestId, bounty: view }),
+    status: "COMPLETED",
+    createdAt: economy.createdAt
+  };
+  return { write: { economy, additions, expectedInventory, award, receipt }, view };
+}
+
+/** A won fight's bounty as its receipt stored it: what a retried request answers with. */
+async function storedBounty(dependencies: ShipDependencies, playerId: PlayerId, voyage: VoyageRecord): Promise<AmbushBountyView | null> {
+  if (voyage.ambush?.status !== "WON") return null;
+  const { requestId } = await bountyRequest(dependencies, playerId, voyage);
+  const receipt = await dependencies.idempotency.find(playerId, PIRATE_BOUNTY_OPERATION, requestId);
+  if (receipt === null) return null;
+  let stored: { readonly voyageRequestId?: unknown; readonly bounty?: AmbushBountyView };
+  try {
+    stored = JSON.parse(receipt.responseJson) as typeof stored;
+  } catch {
+    throw new ApplicationError("INTERNAL_ERROR", "Stored bounty is unavailable");
+  }
+  // The route's bounty may have been paid on an earlier voyage today; this voyage's win then paid nothing.
+  return stored.voyageRequestId === voyage.requestId && stored.bounty !== undefined ? stored.bounty : null;
 }
 
 /**
@@ -546,11 +703,13 @@ export class FightAmbush {
       if (voyage === null || ambush === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "No pirates are on this voyage");
       // Already decided (a retried request, or the ship was called home): the outcome stands, and no
       // new inputs are taken.
-      if (ambush.status !== "PENDING") return { fleet: fleetView(catalogue, ship, voyage, now), battle: null };
+      if (ambush.status !== "PENDING") {
+        return { fleet: fleetView(catalogue, ship, voyage, now), battle: null, bounty: await storedBounty(this.dependencies, actor.playerId, voyage) };
+      }
       if (voyage.status !== "UNDERWAY") throw new ApplicationError("RESOURCE_NOT_FOUND", "No pirates are on this voyage");
       if (Date.parse(ambush.at) > Date.parse(now)) throw new ApplicationError("AMBUSH_NOT_READY", "The pirates have not struck yet");
-      const decided = await decideAmbush(this.dependencies, actor.playerId, ship, voyage, command.inputs, now, false);
-      if (decided !== null) return { fleet: decided.view, battle: decided.battle };
+      const decided = await decideAmbush(this.dependencies, actor, ship, voyage, command.inputs, now, false);
+      if (decided !== null) return { fleet: decided.view, battle: decided.battle, bounty: decided.bounty };
     }
     throw new ApplicationError("CONFLICT_STALE_STATE", "The voyage changed while fighting");
   }

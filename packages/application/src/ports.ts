@@ -1630,6 +1630,13 @@ export interface ShipCatalogue {
     readonly gold: number;
     readonly materials: Readonly<Record<string, number>>;
   };
+  /** What winning a fight against `pirates` pays; asked only for a fight the server's replay won. */
+  bounty(pirates: readonly string[]): {
+    readonly currencyDefinitionId: string;
+    readonly gold: number;
+    readonly materials: Readonly<Record<string, number>>;
+    readonly xp: number;
+  };
 }
 
 /** A player's ship as stored. No row means the dock's rowboat. */
@@ -1700,6 +1707,20 @@ export interface AmbushResolution {
   /** A lost fight, or a ship called home, ends the voyage: the ship is back at its dock. */
   readonly endVoyage: boolean;
   readonly at: string;
+  /**
+   * A won fight's bounty, written in the same batch as the outcome: the gold's ledger row, the
+   * materials the warehouse has room for, the experience, and the receipt that makes it payable once.
+   */
+  readonly bounty?: AmbushBountyWrite | null;
+}
+
+export interface AmbushBountyWrite {
+  readonly economy: EconomyMutation;
+  readonly additions: readonly InventoryAddition[];
+  /** The stacks the additions were sized against, in the same order (null: no row yet). */
+  readonly expectedInventory: readonly (InventoryItem | null)[];
+  readonly award: XpAward | null;
+  readonly receipt: IdempotencyRecord;
 }
 
 export interface ShipRepository {

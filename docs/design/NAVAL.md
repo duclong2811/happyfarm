@@ -97,8 +97,29 @@ places; this document gives it ships.
   - `POST /ships/repair { requestId }` costs 2 gold and 0.25 wood per missing hull point (proposal).
     It goes through the ledger as `SHIP_REPAIR`, in the same guarded batch as a build, and is
     idempotent.
-- **Rewards for a win** are not given yet: that is an economy decision for the owner.
-- Migration 0049 adds the voyage's ambush columns.
+- **Rewards for a win (bounties).** The owner chose the generous scale (2026-11-19):
+
+  | Pirate sunk | Gold | Wood | Ore | XP |
+  |---|---|---|---|---|
+  | Cutter | 160 | 40 | 0 | 60 |
+  | Raider | 500 | 120 | 40 | 180 |
+  | Corsair | 1,200 | 240 | 120 | 400 |
+
+  - Paid only when the whole fight is won, summed over the party. A fight lost, fled or timed out
+    pays nothing.
+  - The server pays it in the same batch as the fight's outcome: gold through the ledger as
+    `PIRATE_BOUNTY` (reference: the player's ship), wood and ore through the inventory, experience
+    through the progression. The receipt (`PIRATE_BOUNTY`) is the guard: anything that moved refuses
+    the whole batch, and the use case reads again.
+  - **Once per route per day.** The same route on the same day meets the same pirates with the same
+    seed, so the same recorded orders would win again. The bounty is therefore keyed by the route and
+    the day, like the ambush itself: a second win there is decided and pays nothing.
+  - Materials go only into the warehouse's free room (and each stack's limit), wood before ore. What
+    does not fit is reported as left behind and is not owed later. Gold and experience are always paid.
+  - The reply to `POST /voyages/ambush` carries `bounty`, and a retried request reports the same one.
+  - Numbers are game data (`packages/game-data/src/pirates`, `PIRATE_SHIPS[].bounty`).
+- Migration 0049 adds the voyage's ambush columns; migration 0050 rebuilds the ledger to admit
+  `PIRATE_BOUNTY`, and adds the bounty receipt guard.
 
 ## Phases
 
@@ -174,8 +195,7 @@ places; this document gives it ships.
   - Pirates are server-run ships with simple behaviours.
 - **PvP (W5d).** Only after PvE is balanced. Consent and fairness rules are an owner decision to come
   (duels, opt-in flags, or zones).
-- **Rewards.** Pirate loot is an economy decision for the owner. Until then a win gives experience and
-  nothing else.
+- **Rewards.** A won pirate fight pays a bounty (see W5c above).
 
 ## How ships look
 

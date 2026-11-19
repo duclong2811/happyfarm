@@ -146,7 +146,7 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
-import { chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import { ambushBounty, chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
 import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
@@ -845,7 +845,16 @@ export const gameDataShipCatalogue: ShipCatalogue = {
     currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
     gold: Math.ceil(Math.max(0, missingHull) * SHIP_REPAIR_GOLD_PER_HULL),
     materials: { [SHIP_WOOD_ITEM_ID]: Math.ceil(Math.max(0, missingHull) * SHIP_REPAIR_WOOD_PER_HULL) }
-  })
+  }),
+  bounty: (pirates) => {
+    const total = ambushBounty(pirates);
+    return {
+      currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
+      gold: total.gold,
+      materials: { [SHIP_WOOD_ITEM_ID]: total.wood, [SHIP_ORE_ITEM_ID]: total.ore },
+      xp: total.xp
+    };
+  }
 };
 
 export const gameDataMineCatalogue: MineCatalogue = {

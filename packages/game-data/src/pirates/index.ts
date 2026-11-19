@@ -17,18 +17,32 @@ export interface BattleShipNumbers {
   readonly spread: number;
 }
 
+/** What sinking one pirate ship pays: gold, materials for the warehouse, and experience. */
+export interface PirateBounty {
+  readonly gold: number;
+  readonly wood: number;
+  readonly ore: number;
+  readonly xp: number;
+}
+
 export interface PirateShipDefinition {
   /** Stable id, `pirate_<name>`. */
   readonly id: string;
   readonly hull: number;
   readonly cannons: number;
   readonly battle: BattleShipNumbers;
+  /** Paid for this ship only when the whole fight is won (`ambushBounty`). */
+  readonly bounty: PirateBounty;
 }
 
+/**
+ * Bounties: the owner chose the generous scale (2026-11-19), twice the first proposal, so a won
+ * fight clearly pays for the repairs it costs and then some.
+ */
 export const PIRATE_SHIPS: readonly PirateShipDefinition[] = [
-  { id: "pirate_cutter", hull: 80, cannons: 2, battle: { speed: 8, turn: 12, radius: 4, spread: 90 } },
-  { id: "pirate_raider", hull: 220, cannons: 6, battle: { speed: 9, turn: 11, radius: 5.5, spread: 70 } },
-  { id: "pirate_corsair", hull: 450, cannons: 10, battle: { speed: 10, turn: 9, radius: 6.5, spread: 60 } }
+  { id: "pirate_cutter", hull: 80, cannons: 2, battle: { speed: 8, turn: 12, radius: 4, spread: 90 }, bounty: { gold: 160, wood: 40, ore: 0, xp: 60 } },
+  { id: "pirate_raider", hull: 220, cannons: 6, battle: { speed: 9, turn: 11, radius: 5.5, spread: 70 }, bounty: { gold: 500, wood: 120, ore: 40, xp: 180 } },
+  { id: "pirate_corsair", hull: 450, cannons: 10, battle: { speed: 10, turn: 9, radius: 6.5, spread: 60 }, bounty: { gold: 1200, wood: 240, ore: 120, xp: 400 } }
 ];
 
 /** The player's ship classes as fighters, by class id. The rowboat carries no guns and is never ambushed. */
@@ -110,6 +124,26 @@ export function planAmbush(input: {
     seed: stableHash(`${key}|seed`),
     pirates: party.pirates
   };
+}
+
+/**
+ * What winning a fight against `pirates` pays: every ship's bounty, summed. Only a won fight pays;
+ * a fight lost or fled pays nothing (the caller decides that, from the server's own replay).
+ */
+export function ambushBounty(pirates: readonly string[]): PirateBounty {
+  return pirates.reduce<PirateBounty>(
+    (total, id) => {
+      const ship = pirateShip(id);
+      if (ship === null) throw new Error(`Unknown pirate ship ${id}`);
+      return {
+        gold: total.gold + ship.bounty.gold,
+        wood: total.wood + ship.bounty.wood,
+        ore: total.ore + ship.bounty.ore,
+        xp: total.xp + ship.bounty.xp
+      };
+    },
+    { gold: 0, wood: 0, ore: 0, xp: 0 }
+  );
 }
 
 export function pirateShip(id: string): PirateShipDefinition | null {

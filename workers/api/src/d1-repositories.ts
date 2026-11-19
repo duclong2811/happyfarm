@@ -157,6 +157,7 @@ import type {
   ,ShipBuild
   ,VoyageRecord
   ,AmbushResolution
+  ,AmbushBountyWrite
   ,AmbushStatus
 } from "@happy-farm/application";
 import { ApplicationError, MAX_LAND_CELLS_PER_REQUEST } from "@happy-farm/application";
@@ -1197,7 +1198,7 @@ export class D1ShipRepository implements ShipRepository {
   async resolveAmbush(resolution: AmbushResolution): Promise<boolean> {
     // The voyage moves on only if both rows are where the caller read them; the ship's hull follows
     // only if the voyage now carries this outcome at the next version. One batch: both or neither.
-    const results = await this.db.batch([
+    const outcome = [
       this.db
         .prepare(
           "UPDATE ship_voyages SET ambush_status = ?, status = CASE WHEN ? = 1 THEN 'ENDED' ELSE status END, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND ambush_status = 'PENDING' AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND version = ?)"
@@ -1216,8 +1217,144 @@ export class D1ShipRepository implements ShipRepository {
           resolution.expectedVoyageVersion + 1,
           resolution.outcome
         )
+    ];
+    const bounty = resolution.bounty ?? null;
+    if (bounty === null) {
+      const results = await this.db.batch(outcome);
+      return results.every((result) => (result.meta.changes ?? 0) === 1);
+    }
+    return this.resolveWithBounty(resolution, bounty, outcome);
+  }
+
+  /**
+   * A won fight and its bounty, in one batch. The receipt is the guard: it is written only if the
+   * voyage now carries this win at the next version, the ship moved with it, the gold's ledger row
+   * landed on the wallet the caller read, the experience is still where it was read, and every stack
+   * still has room. Otherwise its actor is NULL and the whole batch - outcome included - is refused.
+   * The receipt's key is one per route and day, so a bounty can never be paid twice.
+   */
+  private async resolveWithBounty(resolution: AmbushResolution, bounty: AmbushBountyWrite, outcome: readonly D1PreparedStatementLike[]): Promise<boolean> {
+    const { economy, award, receipt } = bounty;
+    if (
+      resolution.outcome !== "WON" ||
+      economy.playerId !== resolution.playerId ||
+      economy.reason !== "PIRATE_BOUNTY" ||
+      economy.delta <= 0 ||
+      receipt.actorPlayerId !== resolution.playerId ||
+      receipt.resourceId !== economy.transactionId ||
+      (award !== null && award.playerId !== resolution.playerId) ||
+      bounty.additions.some((addition) => addition.playerId !== resolution.playerId || addition.quantity <= 0) ||
+      bounty.additions.length !== bounty.expectedInventory.length
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Bounty ownership does not match");
+    }
+    const stackGuards = bounty.additions.map(() => "COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) = ? AND COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) <= ? - ?");
+    const stackValues = bounty.additions.flatMap((addition, index) => [
+      addition.playerId,
+      addition.itemDefinitionId,
+      bounty.expectedInventory[index]?.quantity ?? 0,
+      addition.playerId,
+      addition.itemDefinitionId,
+      addition.maxQuantity,
+      addition.quantity
     ]);
-    return results.every((result) => (result.meta.changes ?? 0) === 1);
+    const statements: D1PreparedStatementLike[] = [
+      ...outcome,
+      this.db
+        .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+        .bind(economy.playerId, economy.currencyDefinitionId, economy.createdAt, economy.createdAt),
+      this.db
+        .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(
+          economy.transactionId,
+          economy.playerId,
+          economy.currencyDefinitionId,
+          economy.delta,
+          economy.balanceBefore,
+          economy.balanceAfter,
+          economy.expectedWalletVersion,
+          economy.reason,
+          economy.referenceType,
+          economy.referenceId,
+          economy.requestId,
+          economy.createdAt
+        )
+    ];
+    if (award !== null) {
+      statements.push(
+        this.db
+          .prepare("INSERT OR IGNORE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 0, 1, ?, ?)")
+          .bind(award.playerId, award.timestamp, award.timestamp)
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM ship_voyages WHERE player_id = ? AND version = ? AND ambush_status = 'WON') AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND version = ?) AND EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND (? = 0 OR EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?))${stackGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          resolution.playerId,
+          resolution.expectedVoyageVersion + 1,
+          resolution.playerId,
+          resolution.expectedShipVersion + 1,
+          economy.playerId,
+          economy.currencyDefinitionId,
+          economy.balanceAfter,
+          economy.expectedWalletVersion + 1,
+          economy.transactionId,
+          economy.playerId,
+          award === null ? 0 : 1,
+          resolution.playerId,
+          award?.xpBefore ?? -1,
+          award?.expectedProgressionVersion ?? -1,
+          ...stackValues,
+          receipt.actorPlayerId,
+          receipt.operation,
+          receipt.requestId,
+          receipt.payloadFingerprint,
+          receipt.status,
+          receipt.resourceId,
+          receipt.responseJson,
+          receipt.createdAt
+        ),
+      ...bounty.additions.map((addition) =>
+        this.db
+          .prepare(
+            "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = inventory_items.quantity + excluded.quantity, updated_at = excluded.updated_at, version = inventory_items.version + 1"
+          )
+          .bind(addition.playerId, addition.itemDefinitionId, addition.quantity, addition.timestamp)
+      )
+    );
+    if (award !== null) {
+      statements.push(
+        this.db
+          .prepare("UPDATE player_progression SET level = ?, xp = ?, progression_version = progression_version + 1, updated_at = ? WHERE player_id = ? AND xp = ? AND progression_version = ?")
+          .bind(award.levelAfter, award.xpAfter, award.timestamp, award.playerId, award.xpBefore, award.expectedProgressionVersion)
+      );
+    }
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) {
+        throw new Error("Atomic pirate bounty failed");
+      }
+      return true;
+    } catch (error: unknown) {
+      // Anything that moved under the fight - the voyage, the ship, the wallet, the experience, or the
+      // warehouse filling up - refused the whole batch. The use case reads again and re-sizes it; a
+      // receipt that already exists (a second payment) means the fight was decided, and it reads that.
+      if (
+        error instanceof Error &&
+        (error.message.includes("economy conflict") ||
+          error.message.includes("warehouse_full") ||
+          error.message.includes("player progression") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys") ||
+          error.message.includes("UNIQUE constraint failed: idempotency_keys") ||
+          error.message.includes("completed pirate bounty idempotency requires its ledger row"))
+      ) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async listVoyagesTouching(

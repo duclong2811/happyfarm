@@ -70,8 +70,11 @@ export interface BattleViewOptions {
   readonly playerShip: string;
   /** Loads a ship model (the shared model library); without it the fight draws block ships. */
   readonly loadModel?: (modelId: string) => Promise<Object3D | null>;
-  /** Sends the recorded orders; resolves with the server's own result (null if it was already decided). */
-  readonly submit: (inputs: readonly [number, number][]) => Promise<SeaBattleResult | null>;
+  /**
+   * Sends the recorded orders; resolves with the server's own result (null if it was already decided)
+   * and, for a won fight, a line saying what the server paid for it.
+   */
+  readonly submit: (inputs: readonly [number, number][]) => Promise<{ readonly battle: SeaBattleResult | null; readonly spoils: string | null }>;
   readonly describeError: (error: unknown) => string;
   readonly onClose: () => void;
 }
@@ -216,7 +219,11 @@ export function openBattleView(options: BattleViewOptions): BattleView {
   endButton.addEventListener("click", () => {
     close();
   });
-  end.replaceChildren(endTitle, endText, endButton);
+  // What a won fight paid, as the server decided it: never a number this view works out.
+  const endSpoils = document.createElement("p");
+  endSpoils.className = "bv-spoils";
+  endSpoils.hidden = true;
+  end.replaceChildren(endTitle, endText, endSpoils, endButton);
 
   const crew = document.createElement("button");
   crew.type = "button";
@@ -288,9 +295,12 @@ export function openBattleView(options: BattleViewOptions): BattleView {
     updateHud();
     const local = seaBattleResult(state);
     try {
-      const verdict = (await options.submit(orders.recorded)) ?? local;
+      const answer = await options.submit(orders.recorded);
+      const verdict = answer.battle ?? local;
       endTitle.textContent = translate(`battle.outcome.${verdict.outcome}` as MessageKey);
       endText.textContent = translate("battle.hullLeft", { hull: verdict.playerHull, hullMax: options.setup.player.hullMax });
+      endSpoils.textContent = answer.spoils ?? "";
+      endSpoils.hidden = answer.spoils === null;
     } catch (error: unknown) {
       endTitle.textContent = translate("battle.failed");
       endText.textContent = options.describeError(error);

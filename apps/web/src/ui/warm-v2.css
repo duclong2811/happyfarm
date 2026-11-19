@@ -1218,6 +1218,8 @@ html.ui-b.ui-warm .battle-view .bv-end {
 html.ui-b.ui-warm .battle-view .bv-end[hidden] { display: none; }
 html.ui-b.ui-warm .battle-view .bv-end h3 { margin: 0; color: var(--w-wood-deep); font-size: 1.3rem; font-weight: 800; }
 html.ui-b.ui-warm .battle-view .bv-end p { margin: 0; color: var(--w-ink-2); font-weight: 700; }
+html.ui-b.ui-warm .battle-view .bv-end .bv-spoils { padding: 8px 12px; border-radius: 12px; background: rgba(217, 164, 65, 0.18); color: var(--w-wood-deep); font-weight: 800; }
+html.ui-b.ui-warm .battle-view .bv-end .bv-spoils[hidden] { display: none; }
 @media (max-width: 760px) {
   html.ui-b.ui-warm .battle-view .bv-hull { grid-template-columns: 6.5rem 1fr 3.6rem; font-size: .74rem; }
   html.ui-b.ui-warm .battle-view .bv-hint { display: none; }

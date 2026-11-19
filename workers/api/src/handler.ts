@@ -1728,7 +1728,10 @@ export function createHandler(host: HandlerDependencies) {
           economyService: new EconomyService(dependencies.ids, dependencies.clock),
           idempotency: new D1IdempotencyRepository(dependencies.db),
           fingerprints: dependencies.fingerprints,
-          clock: dependencies.clock
+          clock: dependencies.clock,
+          // A bounty's wood and ore land in the island's warehouse, never past its room.
+          warehouse: warehouseRepository,
+          ...(dependencies.warehouse === undefined ? {} : { warehouseTiers: dependencies.warehouse.tiers })
         };
   const getFleet = shipDependencies === null ? null : new GetFleet(shipDependencies);
   const buildShip = shipDependencies === null ? null : new BuildShip(shipDependencies);
@@ -2349,7 +2352,18 @@ export function createHandler(host: HandlerDependencies) {
           ok: true,
           data: {
             fleet: toFleetDTO(outcome.fleet),
-            battle: outcome.battle === null ? null : { ...outcome.battle, pirateHulls: [...outcome.battle.pirateHulls], stats: { ...outcome.battle.stats } }
+            battle: outcome.battle === null ? null : { ...outcome.battle, pirateHulls: [...outcome.battle.pirateHulls], stats: { ...outcome.battle.stats } },
+            bounty:
+              outcome.bounty === null
+                ? null
+                : {
+                    currencyDefinitionId: outcome.bounty.currencyDefinitionId,
+                    gold: outcome.bounty.gold,
+                    materials: outcome.bounty.materials.map((entry) => ({ ...entry })),
+                    xpAwarded: outcome.bounty.xpAwarded,
+                    leveledUp: outcome.bounty.leveledUp,
+                    progression: { ...outcome.bounty.progression }
+                  }
           }
         };
         return jsonResponse(body);

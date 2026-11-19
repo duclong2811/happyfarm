@@ -39,6 +39,7 @@ import type {
   ,AquaculturePondDTO
   ,NeighborSnapshotDTO
   ,FarmIslandSummaryDTO
+  ,AmbushBountyDTO
 } from "@happy-farm/contracts";
 import { FarmIslandDTOSchema } from "@happy-farm/contracts";
 import { ApiClient, ApiError, type CreateFarmResult } from "./api";
@@ -7557,6 +7558,18 @@ let ambushAnnounced: string | null = null;
  * Opens the fight with the pirates that struck the voyage. The device plays it; the orders go to the
  * server in one request, and the server's result is the one shown and kept.
  */
+/** What a won fight paid, as one line, and what a full warehouse left behind. */
+function describeSpoils(bounty: AmbushBountyDTO): string {
+  const got = [
+    t("battle.spoilsGold", { amount: bounty.gold.toLocaleString(state.language) }),
+    ...bounty.materials.filter((entry) => entry.quantity > 0).map((entry) => `+${entry.quantity.toLocaleString(state.language)} ${itemLabel(entry.itemDefinitionId)}`),
+    ...(bounty.xpAwarded > 0 ? [t("battle.spoilsXp", { amount: bounty.xpAwarded.toLocaleString(state.language) })] : [])
+  ];
+  const lost = bounty.materials.filter((entry) => entry.lost > 0).map((entry) => `${entry.lost.toLocaleString(state.language)} ${itemLabel(entry.itemDefinitionId)}`);
+  const line = t("battle.spoils", { items: got.join(" · ") });
+  return lost.length === 0 ? line : `${line} ${t("battle.spoilsLost", { items: lost.join(", ") })}`;
+}
+
 function openAmbushFight(): void {
   const ambush = fleetState?.fleet.voyage?.ambush ?? null;
   if (battleView !== null || ambush === null || ambush.status !== "PENDING") return;
@@ -7570,7 +7583,9 @@ function openAmbushFight(): void {
     submit: async (inputs) => {
       const answer = await api().fightAmbush(inputs);
       setFleet(answer.fleet);
-      return answer.battle;
+      // A won fight paid gold, materials and experience: the wallet, the warehouse and the level move.
+      if (answer.bounty !== null) void refreshAccount();
+      return { battle: answer.battle, spoils: answer.bounty === null ? null : describeSpoils(answer.bounty) };
     },
     describeError: (error) => describe(error)(t, state.language),
     onClose: () => {
