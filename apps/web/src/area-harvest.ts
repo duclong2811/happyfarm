@@ -98,9 +98,19 @@ export function areaHarvestBounds(a: AreaHarvestCorner, b: AreaHarvestCorner): A
   };
 }
 
-/** Only orchard fruit trees belong to this first batch; every forestry/resource lifecycle stays out. */
+/** Orchard fruit trees: harvested in an area and left standing to bear again. */
 export function isRepeatingFruitTree(definitionId: string): boolean {
   return definitionId === "tree_apple" || definitionId === "tree_orange" || definitionId === "tree_peach";
+}
+
+/** A planted timber tree: felled in an area for its wood, and its stump cleared in the same pass. */
+export function isTimberTree(definitionId: string): boolean {
+  return definitionId === "tree_wildwood";
+}
+
+/** Every tree an area harvest acts on: the orchard's fruit trees and planted timber. */
+export function isAreaHarvestableTree(definitionId: string): boolean {
+  return isRepeatingFruitTree(definitionId) || isTimberTree(definitionId);
 }
 
 export function previewAreaHarvest(
@@ -127,17 +137,19 @@ export function previewAreaHarvest(
     if (tree.tileX < bounds.minX || tree.tileX > bounds.maxX || tree.tileY < bounds.minY || tree.tileY > bounds.maxY) continue;
     treesInArea += 1;
     const definition = definitions.find((entry) => entry.treeDefinitionId === tree.definitionId);
-    if (definition === undefined || !isRepeatingFruitTree(tree.definitionId) || !tree.ready) {
-      continue;
-    }
+    if (definition === undefined || !isAreaHarvestableTree(tree.definitionId)) continue;
+    // A felled timber tree's stump is cleared by the same pass; it pays nothing.
+    const stump = isTimberTree(tree.definitionId) && tree.phase === "DEPLETED";
+    if (!tree.ready && !stump) continue;
     candidates.push({
       treeInstanceId: tree.treeInstanceId,
       expectedTreeVersion: tree.version,
       itemDefinitionId: definition.harvestItemDefinitionId,
-      quantity: definition.baseQuantity,
+      quantity: stump ? 0 : definition.baseQuantity,
       x: tree.tileX,
       y: tree.tileY
     });
+    if (stump) continue;
     fruitReadyCount += 1;
     products.set(definition.harvestItemDefinitionId, (products.get(definition.harvestItemDefinitionId) ?? 0) + definition.baseQuantity);
   }
@@ -196,7 +208,7 @@ export function previewAreaHarvest(
         const definition = definitions.find((entry) => entry.treeDefinitionId === tree.definitionId);
         const classification: AreaHarvestCellClassification = definition === undefined
           ? { x, y, bucket: "INVALID", reason: "NOT_FOUND" }
-          : !isRepeatingFruitTree(tree.definitionId)
+          : !isAreaHarvestableTree(tree.definitionId)
             ? { x, y, bucket: "INVALID", reason: "NOT_REPEATABLE" }
             : { x, y, bucket: "WAITING", reason: "NOT_READY" };
         (classification.bucket === "WAITING" ? waitingCells : invalidCells).push(classification);

@@ -63,6 +63,22 @@ The start command carries `{ requestId, nodeId }`; a `verb`, an item id or a qua
 schema refusal. The position-trust limitation documented in `FISHING.md` and `MINING.md` applies
 unchanged.
 
+## Planted timber (`tree_wildwood`)
+
+A Wildwood sapling bought at the market grows into a tree row (`treeinst_…`) on the player's own
+ground: an hour to grow, felled once for 12 Wood and 5 XP through the one-tree harvest settlement,
+then a stump that is cleared (`RemoveTree`, no reward) before the ground is planted again.
+
+- **By hand.** The character walks up and fells it (`[E]`, or the panel's "Chặt cây"). Selecting a
+  tree the character cannot stand next to - one inside a planted wood, where every neighbouring cell is
+  another trunk - walks the character to the nearest open ground, searching outward ring by ring
+  (`TARGET_APPROACH_RINGS`, 6), instead of refusing. Trees deeper than reach are for the area harvest.
+- **By area (Toàn cảnh).** The area harvest fells every ready timber tree in the rectangle and clears
+  its stump in the same pass, and clears any stump already standing there, so a planted wood can be
+  harvested and replanted as a block (owner report 2026-11-19). Each fell and each clear is its own
+  derived request through the existing one-tree commands, so a retried group never pays twice; a stump
+  clear pays nothing; a growing tree is never removed. Result status `CLEARED` marks a cleared stump.
+
 ## Visuals
 
 Each wild tree is one generated model - a broadleaf, a resin pine, and a taller hardwood - that reads

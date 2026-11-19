@@ -70,6 +70,30 @@ describe("area fruit-tree harvest preview", () => {
     expect(areaHarvestPanelStage({ x: 1, y: 2 }, { x: 4, y: 5 })).toBe("PREVIEW");
   });
 
+  it("fells ready timber for its wood, clears stumps for nothing, and waits on growing timber", () => {
+    const wildwood: TreeDefinitionDTO = {
+      ...definition,
+      treeDefinitionId: "tree_wildwood",
+      displayNameKey: "tree.wildwood.name",
+      saplingItemDefinitionId: "item_wildwood_sapling",
+      saplingItemDisplayNameKey: "item.wildwood_sapling.name",
+      harvestItemDefinitionId: "item_wood",
+      baseQuantity: 12,
+      harvestXp: 5,
+      requiredLevel: 1
+    };
+    const stump: TreeStateDTO = { ...tree(2, false, "tree_wildwood"), phase: "DEPLETED", version: 2 };
+    const preview = previewAreaHarvest(
+      [tree(0, true, "tree_wildwood"), tree(1, false, "tree_wildwood"), stump],
+      [definition, wildwood],
+      [{ x: 0, y: 0 }, { x: 2, y: 0 }]
+    );
+    expect(preview.candidates.map((candidate) => [candidate.x, candidate.quantity, candidate.expectedTreeVersion])).toEqual([[0, 12, 1], [2, 0, 2]]);
+    expect(preview.products).toEqual([{ itemDefinitionId: "item_wood", quantity: 12 }]);
+    expect(preview.waitingCells.map((cell) => cell.x)).toEqual([1]);
+    expect(preview.invalidCells).toEqual([]);
+  });
+
   it("counts ready fruit trees, expected products, and skipped trees", () => {
     const preview = previewAreaHarvest(
       [tree(0), tree(1, false), tree(2, true, "tree_wildwood"), tree(8)],

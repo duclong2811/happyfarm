@@ -66,6 +66,12 @@ export const MAX_HARVEST_TREE_AREA_GROUP = 25;
 
 /** The area command is deliberately limited to repeating orchard fruit trees. */
 const REPEATING_FRUIT_TREE_DEFINITION_IDS = new Set(["tree_apple", "tree_orange", "tree_peach"]);
+/**
+ * Timber trees an area harvest fells: the one-tree settlement pays their wood and experience, and the
+ * stump is cleared in the same pass, so the ground is free to plant again (owner report 2026-11-19: a
+ * planted wood of a hundred trees could only be felled one at a time, from the edge).
+ */
+const AREA_FELLED_TREE_DEFINITION_IDS = new Set(["tree_wildwood"]);
 
 /**
  * How many times a tree harvest re-reads progression after losing a race before giving up.
@@ -766,7 +772,8 @@ export type HarvestTreeAreaSkipReason =
 
 export interface HarvestTreeAreaTreeResult {
   readonly treeInstanceId: string;
-  readonly status: "HARVESTED" | "SKIPPED";
+  /** `CLEARED`: a felled timber tree's stump, removed (no reward: clearing pays nothing). */
+  readonly status: "HARVESTED" | "SKIPPED" | "CLEARED";
   readonly itemDefinitionId: string | null;
   readonly quantityAdded: number;
   readonly reason: HarvestTreeAreaSkipReason | null;
@@ -789,6 +796,11 @@ export interface HarvestTreeAreaGroupResult {
  * has no player position input and never treats client coordinates as proof of proximity. The server
  * owns the work boundary (25 trees), readiness, ownership, versions and every settlement. Character
  * range remains a separate single-tree interaction contract.
+ *
+ * Timber trees (`tree_wildwood`) are felled through the same one-tree settlement, then their stump is
+ * cleared through `RemoveTree`, each with its own derived request id; a stump already standing in the
+ * area is cleared too. Clearing pays nothing, and only a stump is ever cleared: a growing tree is
+ * never removed by this route.
  */
 export class HarvestTreeAreaGroup {
   constructor(
@@ -799,7 +811,9 @@ export class HarvestTreeAreaGroup {
     private readonly harvestTree: HarvestTree,
     private readonly receipts: TreeHarvestBatchReceiptRepository,
     private readonly fingerprints: PayloadFingerprint,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    /** Clears a felled timber tree's stump. Without it, timber trees are felled and their stumps left. */
+    private readonly removeTree?: RemoveTree
   ) {}
 
   async execute(
@@ -845,10 +859,11 @@ export class HarvestTreeAreaGroup {
       if (candidate === undefined) continue;
       const tree = await this.trees.findById(candidate.treeInstanceId);
       const definition = tree === null ? null : this.definitions.findById(tree.treeDefinitionId);
+      const timber = tree !== null && definition !== null && AREA_FELLED_TREE_DEFINITION_IDS.has(tree.treeDefinitionId);
       if (
         tree !== null &&
         tree.farmId === farmId &&
-        (definition === null || !REPEATING_FRUIT_TREE_DEFINITION_IDS.has(tree.treeDefinitionId))
+        (definition === null || (!REPEATING_FRUIT_TREE_DEFINITION_IDS.has(tree.treeDefinitionId) && !timber))
       ) {
         results.push({
           treeInstanceId: candidate.treeInstanceId,
@@ -857,6 +872,28 @@ export class HarvestTreeAreaGroup {
           quantityAdded: 0,
           reason: "NOT_REPEATABLE"
         });
+        continue;
+      }
+
+      // A timber stump already standing here is cleared, never harvested again.
+      if (
+        timber &&
+        tree.farmId === farmId &&
+        this.removeTree !== undefined &&
+        calculateTreeProduction(definition, tree, this.clock.now()).phase === "DEPLETED"
+      ) {
+        try {
+          await this.removeTree.execute(actor, farmId, {
+            treeInstanceId: candidate.treeInstanceId,
+            expectedTreeVersion: candidate.expectedTreeVersion,
+            requestId: await this.derivedRequestId(command.requestId, index, "clear")
+          });
+          results.push({ treeInstanceId: candidate.treeInstanceId, status: "CLEARED", itemDefinitionId: null, quantityAdded: 0, reason: null });
+        } catch (error: unknown) {
+          const reason = batchSkipReason(error);
+          if (reason === null) throw error;
+          results.push({ treeInstanceId: candidate.treeInstanceId, status: "SKIPPED", itemDefinitionId: null, quantityAdded: 0, reason });
+        }
         continue;
       }
 
@@ -873,6 +910,7 @@ export class HarvestTreeAreaGroup {
           quantityAdded: result.harvest.quantityAdded,
           reason: null
         });
+        if (timber) await this.clearStump(actor, farmId, candidate.treeInstanceId, command.requestId, index);
       } catch (error: unknown) {
         const reason = batchSkipReason(error);
         if (reason === null) throw error;
@@ -913,9 +951,30 @@ export class HarvestTreeAreaGroup {
     throw new ApplicationError("IDEMPOTENCY_CONFLICT", "The harvest group could not be recorded");
   }
 
-  private async derivedRequestId(groupRequestId: string, index: number): Promise<string> {
-    const digest = await this.fingerprints.hash(`${groupRequestId}:${String(index)}`);
+  private async derivedRequestId(groupRequestId: string, index: number, step?: "clear"): Promise<string> {
+    const digest = await this.fingerprints.hash(step === undefined ? `${groupRequestId}:${String(index)}` : `${groupRequestId}:${String(index)}:${step}`);
     return `tree-area-${digest.slice(0, 72)}`;
+  }
+
+  /**
+   * Clears the stump a felled timber tree just left, at the version the fell wrote. The wood is
+   * already paid; a stump that cannot be cleared now (it moved, or the remover is absent) is simply
+   * left standing for the next pass or a hand to clear.
+   */
+  private async clearStump(actor: ActorContext, farmId: FarmId, treeInstanceId: TreeInstance["id"], groupRequestId: string, index: number): Promise<void> {
+    if (this.removeTree === undefined) return;
+    const felled = await this.trees.findById(treeInstanceId);
+    const definition = felled === null ? null : this.definitions.findById(felled.treeDefinitionId);
+    if (felled === null || definition === null || calculateTreeProduction(definition, felled, this.clock.now()).phase !== "DEPLETED") return;
+    try {
+      await this.removeTree.execute(actor, farmId, {
+        treeInstanceId,
+        expectedTreeVersion: felled.version,
+        requestId: await this.derivedRequestId(groupRequestId, index, "clear")
+      });
+    } catch (error: unknown) {
+      if (batchSkipReason(error) === null) throw error;
+    }
   }
 
   private replay(record: IdempotencyRecord, fingerprint: string): HarvestTreeAreaGroupResult {

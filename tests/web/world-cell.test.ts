@@ -315,6 +315,24 @@ describe("buildings occupy ground and block movement", () => {
     const expected = cellToWorld({ x: 2, y: 3 }, input.cells.frame);
     expect(destination).toEqual(expected);
   });
+
+  it("walks to the edge of a planted wood for a tree inside it, nearest the character", () => {
+    const input = starterInput();
+    const target = worldCellAt(input.cells, 3, 3);
+    if (target === null) throw new Error("the tree target must be on the map");
+    // A 7 x 7 wood centred on the target: every centre within three cells of it is a trunk.
+    const blocked = (worldX: number, worldZ: number): boolean => {
+      const cell = { x: Math.round(worldX / input.cells.frame.pitch + input.cells.frame.originTileX), y: Math.round(worldZ / input.cells.frame.pitch + input.cells.frame.originTileY) };
+      return Math.abs(cell.x - 3) <= 3 && Math.abs(cell.y - 3) <= 3;
+    };
+    const fromWest = movementDestinationForTarget(target, input.cells, centreOf(-6, 3), blocked);
+    expect(fromWest).toEqual(cellToWorld({ x: -1, y: 3 }, input.cells.frame));
+    const fromSouth = movementDestinationForTarget(target, input.cells, centreOf(3, 12), blocked);
+    expect(fromSouth).toEqual(cellToWorld({ x: 3, y: 7 }, input.cells.frame));
+    // Ground buried deeper than the search reaches has nowhere to walk to.
+    const everywhere = (): boolean => true;
+    expect(movementDestinationForTarget(target, input.cells, centreOf(-6, 3), everywhere)).toBeNull();
+  });
 });
 
 describe("selection is local, quiet, and never acts on its own", () => {

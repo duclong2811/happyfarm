@@ -78,14 +78,20 @@ export function movementDestination(
   return destinationRejection(cell, map, isBlocked) === null ? cellCentre(cell, map) : null;
 }
 
+/** How far out, in rings of cells, a walk looks for open ground round a target it cannot stand on. */
+export const TARGET_APPROACH_RINGS = 6;
+
 /**
  * A walk destination for a selected world target.
  *
  * A crop is passable, so its own centre is the natural destination. A perennial tree is different:
  * its cell is walkable ground, but its trunk is a collision circle. When the target centre is blocked,
- * offer the nearest walkable neighbour instead. The caller supplies the character position so the
- * straight-line runtime approaches from the player's side of the tree rather than trying to cross its
- * trunk. This is movement presentation only; interaction range and harvest legality remain separate.
+ * the walk looks outward ring by ring (the eight neighbours, then the ring beyond, up to
+ * `TARGET_APPROACH_RINGS`) and stops at the first ring with open ground, so a tree inside a planted
+ * wood still has somewhere to walk to - the wood's edge nearest to it - instead of nowhere. Within
+ * that ring the spot nearest the character wins, so the straight-line runtime approaches from the
+ * player's side rather than across the wood. This is movement presentation only; interaction range
+ * and harvest legality remain separate.
  */
 export function movementDestinationForTarget(
   target: WorldCell,
@@ -96,22 +102,27 @@ export function movementDestinationForTarget(
   const direct = movementDestination(target, map, isBlocked);
   if (direct !== null) return direct;
 
-  const candidates: { readonly worldX: number; readonly worldZ: number }[] = [];
-  for (let dz = -1; dz <= 1; dz += 1) {
-    for (let dx = -1; dx <= 1; dx += 1) {
-      if (dx === 0 && dz === 0) continue;
-      const neighbour = map.cells.get(cellKey(target.x + dx, target.z + dz));
-      if (neighbour === undefined) continue;
-      const destination = movementDestination(neighbour, map, isBlocked);
-      if (destination !== null) candidates.push(destination);
+  for (let ring = 1; ring <= TARGET_APPROACH_RINGS; ring += 1) {
+    const candidates: { readonly worldX: number; readonly worldZ: number }[] = [];
+    for (let dz = -ring; dz <= ring; dz += 1) {
+      for (let dx = -ring; dx <= ring; dx += 1) {
+        // Only this ring's cells: the inner ones were tried already.
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+        const neighbour = map.cells.get(cellKey(target.x + dx, target.z + dz));
+        if (neighbour === undefined) continue;
+        const destination = movementDestination(neighbour, map, isBlocked);
+        if (destination !== null) candidates.push(destination);
+      }
     }
+    if (candidates.length === 0) continue;
+    candidates.sort((a, b) => {
+      const distanceA = Math.hypot(a.worldX - from.worldX, a.worldZ - from.worldZ);
+      const distanceB = Math.hypot(b.worldX - from.worldX, b.worldZ - from.worldZ);
+      return distanceA - distanceB;
+    });
+    return candidates[0] ?? null;
   }
-  candidates.sort((a, b) => {
-    const distanceA = Math.hypot(a.worldX - from.worldX, a.worldZ - from.worldZ);
-    const distanceB = Math.hypot(b.worldX - from.worldX, b.worldZ - from.worldZ);
-    return distanceA - distanceB;
-  });
-  return candidates[0] ?? null;
+  return null;
 }
 
 export function destinationRejection(

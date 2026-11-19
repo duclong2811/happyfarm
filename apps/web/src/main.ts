@@ -278,7 +278,8 @@ import { REWARD_POP_DURATION_MS } from "./interaction/feedback";
 import {
   areaHarvestGroups,
   areaHarvestPanelStage,
-  isRepeatingFruitTree,
+  isAreaHarvestableTree,
+  isTimberTree,
   previewAreaHarvest,
   type AreaHarvestCandidate,
   type AreaHarvestCropCandidate,
@@ -1403,13 +1404,13 @@ function renderSelection(): void {
         state:
           tree === null
             ? t("tree.state.GROWING")
-            : t(`tree.state.${tree.phase}` as MessageKey)
+            : t(isTimberTree(tree.definitionId) && tree.phase === "READY" ? "tree.state.timberReady" : `tree.state.${tree.phase}` as MessageKey)
       });
       detail.textContent =
         tree === null
           ? t("selection.tree.regrowingDetail", { time: formatRemainingGrowth(null, t) })
           : tree.phase === "READY"
-            ? t("selection.tree.readyDetail", { item: treeHarvestItemLabel(tree.definitionId) })
+            ? t(isTimberTree(tree.definitionId) ? "selection.tree.timberReadyDetail" : "selection.tree.readyDetail", { item: treeHarvestItemLabel(tree.definitionId) })
             : tree.phase === "GROWING"
               ? t("selection.tree.growingDetail", {
                   percent: Math.round(tree.growthProgress * 100),
@@ -1544,7 +1545,7 @@ function renderActionControls(selection: SelectionView): void {
       : t(`tree.state.${selection.tree.phase}` as MessageKey);
   const areaButton = element<HTMLButtonElement>("harvest-area");
   const repeatingReadyTrees = state.trees.some(
-    (tree) => tree.storageState !== "STORED" && tree.ready && isRepeatingFruitTree(tree.definitionId)
+    (tree) => tree.storageState !== "STORED" && (tree.ready || tree.phase === "DEPLETED") && isAreaHarvestableTree(tree.definitionId)
   ) || state.crops.length > 0;
   areaButton.hidden = !repeatingReadyTrees && !plantOptionModels().some((option) => option.selectable) && !areaHarvestSelection.active;
   areaButton.disabled = !economicReady;
@@ -1872,7 +1873,7 @@ function renderAreaHarvestProgressDock(): void {
 function renderAreaHarvestLauncher(): void {
   const button = element<HTMLButtonElement>("harvest-area-global");
   const available = state.trees.some(
-    (tree) => tree.storageState !== "STORED" && isRepeatingFruitTree(tree.definitionId)
+    (tree) => tree.storageState !== "STORED" && isAreaHarvestableTree(tree.definitionId)
   ) || state.crops.length > 0 || plantOptionModels().some((option) => option.selectable);
   button.hidden = !available && !areaHarvestSelection.active;
   button.disabled = false;
@@ -2286,7 +2287,9 @@ async function runAreaTask(): Promise<void> {
       areaMsPerCell = Math.min(3000, Math.max(20, areaMsPerCell * 0.4 + perCell * 0.6));
       areaGroupClock = null;
       if (!areaTaskIsCurrent(baseRequestId, taskFarmId)) return;
-      const succeeded = "harvestedCount" in result ? result.harvestedCount : result.plantedCount;
+      // A cleared stump is work done too, though it pays nothing.
+      const cleared = result.results.filter((item) => "status" in item && item.status === "CLEARED").length;
+      const succeeded = ("harvestedCount" in result ? result.harvestedCount : result.plantedCount) + cleared;
       const skipped = result.skippedCount;
       const currentProgress = areaHarvestSelection.progress;
       if (currentProgress === null) return;

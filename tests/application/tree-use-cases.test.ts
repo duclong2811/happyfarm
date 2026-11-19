@@ -19,6 +19,7 @@ import {
   createFarmTile,
   createOwnedFarm,
   parseFarmId,
+  parseTreeInstanceId,
   type TreeInstanceId
 } from "@happy-farm/domain";
 import type { TileTerrainLookup } from "@happy-farm/application";
@@ -215,7 +216,7 @@ describe("tree use cases", () => {
     );
   }
 
-  function harvestTreeArea(): HarvestTreeAreaGroup {
+  function harvestTreeArea(clearsStumps = false): HarvestTreeAreaGroup {
     return new HarvestTreeAreaGroup(
       farms,
       members,
@@ -224,7 +225,8 @@ describe("tree use cases", () => {
       harvestTree(),
       new D1TreeHarvestBatchReceiptRepository(db),
       new Sha256Fingerprint(),
-      clock
+      clock,
+      clearsStumps ? removeTree() : undefined
     );
   }
 
@@ -667,6 +669,61 @@ describe("tree use cases", () => {
         reason: "STALE"
       }]);
       expect(itemQuantity(db, APPLE)).toEqual({ quantity: APPLE_YIELD * 2 });
+    });
+
+    it("fells ready timber in an area, clears its stumps, and never touches a growing tree", async () => {
+      give(db, "item_wildwood_sapling", 5);
+      const ids = new SequenceTreeIds();
+      const timber = { ...plantCommand, treeDefinitionId: "tree_wildwood" };
+      const ready = await plantTree(true, ids).execute(actor, FARM_ONE_ID, { ...timber, requestId: "request_plant_wood_001" });
+      const growing = await plantTree(true, ids).execute(actor, FARM_ONE_ID, { ...timber, x: 1, requestId: "request_plant_wood_002" });
+      db.sqlite.prepare("UPDATE tree_instances SET planted_at = ? WHERE id = ?").run(LONG_AGO, ready.treeInstanceId);
+
+      const settled = await harvestTreeArea(true).execute(actor, FARM_ONE_ID, {
+        requestId: "request_tree_area_wood_001",
+        trees: [
+          { treeInstanceId: ready.treeInstanceId, expectedTreeVersion: 1 },
+          { treeInstanceId: growing.treeInstanceId, expectedTreeVersion: 1 }
+        ]
+      });
+      expect(settled.results).toEqual([
+        { treeInstanceId: ready.treeInstanceId, status: "HARVESTED", itemDefinitionId: "item_wood", quantityAdded: 12, reason: null },
+        { treeInstanceId: growing.treeInstanceId, status: "SKIPPED", itemDefinitionId: null, quantityAdded: 0, reason: "NOT_READY" }
+      ]);
+      expect(itemQuantity(db, "item_wood")).toEqual({ quantity: 12 });
+      // The felled tree's stump is gone, so the ground can be planted again; the growing one stands.
+      expect(await trees.findById(parseTreeInstanceId(ready.treeInstanceId))).toBeNull();
+      expect(await trees.findById(parseTreeInstanceId(growing.treeInstanceId))).not.toBeNull();
+      // Replayed, nothing is paid twice.
+      const replay = await harvestTreeArea(true).execute(actor, FARM_ONE_ID, {
+        requestId: "request_tree_area_wood_001",
+        trees: [
+          { treeInstanceId: ready.treeInstanceId, expectedTreeVersion: 1 },
+          { treeInstanceId: growing.treeInstanceId, expectedTreeVersion: 1 }
+        ]
+      });
+      expect(replay).toEqual(settled);
+      expect(itemQuantity(db, "item_wood")).toEqual({ quantity: 12 });
+    });
+
+    it("clears a timber stump already standing in an area, and pays nothing for it", async () => {
+      give(db, "item_wildwood_sapling", 5);
+      const planted = await plantTree().execute(actor, FARM_ONE_ID, { ...plantCommand, treeDefinitionId: "tree_wildwood", requestId: "request_plant_wood_003" });
+      db.sqlite.prepare("UPDATE tree_instances SET planted_at = ? WHERE id = ?").run(LONG_AGO, planted.treeInstanceId);
+      // Felled by hand, which leaves a stump.
+      await harvestTree().execute(actor, FARM_ONE_ID, { treeInstanceId: planted.treeInstanceId, expectedTreeVersion: 1, requestId: "request_fell_by_hand_01" });
+      expect(itemQuantity(db, "item_wood")).toEqual({ quantity: 12 });
+      expect(await trees.findById(parseTreeInstanceId(planted.treeInstanceId))).not.toBeNull();
+
+      const cleared = await harvestTreeArea(true).execute(actor, FARM_ONE_ID, {
+        requestId: "request_tree_area_wood_002",
+        trees: [{ treeInstanceId: planted.treeInstanceId, expectedTreeVersion: 2 }]
+      });
+      expect(cleared.results).toEqual([{ treeInstanceId: planted.treeInstanceId, status: "CLEARED", itemDefinitionId: null, quantityAdded: 0, reason: null }]);
+      expect(cleared.harvestedCount).toBe(0);
+      expect(cleared.products).toEqual([]);
+      expect(itemQuantity(db, "item_wood")).toEqual({ quantity: 12 });
+      expect(await trees.findById(parseTreeInstanceId(planted.treeInstanceId))).toBeNull();
     });
 
     it("reports a full inventory as a per-tree skip without changing the group settlement", async () => {

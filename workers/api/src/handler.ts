@@ -1771,16 +1771,7 @@ export function createHandler(host: HandlerDependencies) {
     dependencies.fingerprints,
     dependencies.clock
   );
-  const harvestTreeArea = new HarvestTreeAreaGroup(
-    farms,
-    members,
-    trees,
-    dependencies.treeDefinitions,
-    harvestTree,
-    new D1TreeHarvestBatchReceiptRepository(dependencies.db),
-    dependencies.fingerprints,
-    dependencies.clock
-  );
+
   const plantTreeArea = new PlantTreeAreaGroup(
     farms,
     members,
@@ -1796,6 +1787,18 @@ export function createHandler(host: HandlerDependencies) {
     treeIdempotency,
     dependencies.fingerprints,
     dependencies.clock
+  );
+  // The area harvest fells timber trees and clears their stumps through the same one-tree commands.
+  const harvestTreeArea = new HarvestTreeAreaGroup(
+    farms,
+    members,
+    trees,
+    dependencies.treeDefinitions,
+    harvestTree,
+    new D1TreeHarvestBatchReceiptRepository(dependencies.db),
+    dependencies.fingerprints,
+    dependencies.clock,
+    removeTree
   );
   const manageTree = new ManageTree({
     farms,

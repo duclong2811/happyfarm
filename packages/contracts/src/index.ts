@@ -691,7 +691,8 @@ export const HarvestTreeAreaRequestSchema = z
 export const HarvestTreeAreaResultDTOSchema = z
   .object({
     treeInstanceId: TreeInstanceIdSchema,
-    status: z.enum(["HARVESTED", "SKIPPED"]),
+    /** `CLEARED`: a felled timber tree's stump was removed (it pays nothing). */
+    status: z.enum(["HARVESTED", "SKIPPED", "CLEARED"]),
     itemDefinitionId: ItemDefinitionIdSchema.nullable(),
     quantityAdded: z.number().int().nonnegative(),
     reason: z.enum([
