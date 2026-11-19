@@ -2,6 +2,7 @@ import type {
   BuildCatalogEntryDTO,
   ConstructionDTO,
   FarmIslandDTO,
+  FleetResponse,
   VisitWorldPlaceResponse,
   CropDefinitionDTO,
   CropStateDTO,
@@ -43,6 +44,7 @@ import { FarmIslandDTOSchema } from "@happy-farm/contracts";
 import { ApiClient, ApiError, type CreateFarmResult } from "./api";
 import { showIslandPicker } from "./island-picker";
 import { openSeaChart, type SeaChartModal } from "./sea-chart-modal";
+import { archipelagoName } from "./sea-chart-view";
 import { openVisitView, type VisitView } from "./visit-view";
 import { characterNameKey, showCharacterPicker } from "./character-picker";
 import { CHARACTER_PORTRAITS } from "./character-portraits";
@@ -175,7 +177,7 @@ import {
 import { plantedForestryPanelState, resourcePanelState } from "./forestry/panel";
 import { miningPanelState } from "./mining/panel";
 import { minePanelView, mineMilliAt, mineOreAt, mineSecondsUntilFull, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
-import { activityTrayItems, renderActivityTray, type ActivityKind, type ActivityTrayInput } from "./activity-tray";
+import { activityTrayItems, renderActivityTray, timedFraction, type ActivityKind, type ActivityTrayInput, type TimedActivity } from "./activity-tray";
 import { buildIslandGround, islandCellKindAt, islandFishingSpots, mineFootprintTiles } from "@happy-farm/game-data";
 import {
   createAquaculturePondLoader,
@@ -1761,7 +1763,8 @@ function activityTrayInput(nowMs: number): ActivityTrayInput {
           name: gatherNode === undefined ? "" : displayName(state.language, gatherNode.displayNameKey, gatherNode.definitionId)
         }
       : null,
-    mines
+    mines,
+    voyage: voyageActivity()
   };
 }
 
@@ -1776,6 +1779,16 @@ function refreshActivityTray(): void {
 function activateActivity(kind: ActivityKind): void {
   if ((kind === "AREA_PLANT" || kind === "AREA_HARVEST") && areaHarvestSelection.active && areaHarvestSelection.minimized) {
     restoreAreaHarvest();
+    return;
+  }
+  if (kind === "VOYAGE") {
+    // Arrived: look at the place. Still at sea: the chart, where the ship's course is.
+    const voyage = voyageActivity();
+    if (voyage !== null && timedFraction(voyage, Date.now()).secondsLeft === 0 && fleetState?.fleet.voyage != null) {
+      void startVisit(fleetState.fleet.voyage.toSlotId);
+    } else {
+      showSeaChart();
+    }
     return;
   }
   if (kind === "MINES" && farmMines !== null) {
@@ -7491,7 +7504,48 @@ async function refreshWorldMapAvailability(): Promise<void> {
     worldMapAvailable = false;
   }
   renderChrome();
-  if (worldMapAvailable) await refreshHorizon();
+  if (worldMapAvailable) await Promise.all([refreshHorizon(), refreshFleet()]);
+}
+
+/** The player's ship and voyage as the server last reported them, and when this client read it. */
+let fleetState: { readonly fleet: FleetResponse; readonly seenAtMs: number } | null = null;
+
+function setFleet(fleet: FleetResponse): void {
+  fleetState = { fleet, seenAtMs: Date.now() };
+  refreshActivityTray();
+  if (fleet.voyage !== null) ensureActivityTicker();
+}
+
+/** Reads the ship and its voyage (W5a), so a voyage under way shows in the activity tray. */
+async function refreshFleet(): Promise<void> {
+  try {
+    setFleet(await api().getFleet());
+  } catch {
+    fleetState = null;
+    refreshActivityTray();
+  }
+}
+
+/** A place's name as the chart letters it: its archipelago, from the place's own id. */
+function placeName(slotId: string): string {
+  const match = /^slot_([a-z]+)_(\d+)_\d+$/.exec(slotId);
+  const region = match?.[1]?.toUpperCase();
+  if (match === null || (region !== "NORTH" && region !== "EAST" && region !== "SOUTH" && region !== "WEST")) return slotId;
+  return t("chart.archipelago", { name: archipelagoName(region, Number(match[2])) });
+}
+
+/** The voyage card's input: the server's departure and arrival, against the moment this client read them. */
+function voyageActivity(): TimedActivity | null {
+  const voyage = fleetState?.fleet.voyage ?? null;
+  if (fleetState === null || voyage === null) return null;
+  return {
+    id: "voyage",
+    startedAt: voyage.departedAt,
+    readyAt: voyage.arrivesAt,
+    secondsUntilReady: Math.max(0, (Date.parse(voyage.arrivesAt) - Date.parse(fleetState.fleet.readAt)) / 1000),
+    seenAtMs: fleetState.seenAtMs,
+    name: placeName(voyage.toSlotId)
+  };
 }
 
 /**
@@ -7535,6 +7589,18 @@ function showSeaChart(): void {
     visit: state.island === null ? null : (slotId) => {
       void startVisit(slotId);
     },
+    loadFleet: state.island === null ? null : () => client.getFleet(),
+    sail: state.island === null ? null : async (slotId) => {
+      setFleet(await client.startVoyage(slotId, newRequestId("voyage")));
+      setStatus(message("voyage.setSail", { name: placeName(slotId) }));
+    },
+    buildShip: state.island === null ? null : async () => {
+      const fleet = await client.buildShip(newRequestId("ship"));
+      setFleet(fleet);
+      // Gold, wood and ore left the island: the account shows what is left.
+      void refreshAccount();
+      return fleet;
+    },
     describeError: (error) => describe(error)(t, state.language),
     onClose: () => {
       seaChartModal = null;
@@ -7557,7 +7623,6 @@ let visitInFlight = false;
 async function startVisit(slotId: string): Promise<void> {
   if (visitView !== null || visitInFlight) return;
   visitInFlight = true;
-  setStatus(message("visit.sailing"));
   try {
     const visit = await api().visitWorldPlace(slotId);
     if (visit.place.mine) return;
@@ -7572,6 +7637,10 @@ async function startVisit(slotId: string): Promise<void> {
       onClose: () => {
         visitView = null;
         element<HTMLButtonElement>("chart-launcher").focus();
+        // Leaving the place is going home: the voyage ends and the ship is back at its dock.
+        void api()
+          .endVoyage()
+          .then(setFleet, () => refreshFleet());
       },
       onUnavailable: () => {
         setStatus(message("scene.noWebgl"), true);

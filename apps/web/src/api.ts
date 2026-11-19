@@ -74,6 +74,7 @@ import {
   ,GetWorldChartResponseSchema
   ,GetWorldArchipelagoResponseSchema
   ,VisitWorldPlaceResponseSchema
+  ,FleetResponseSchema
   ,EnsureWorldSlotResponseSchema
 } from "@happy-farm/contracts";
 import type {
@@ -142,6 +143,7 @@ import type {
   ,GetWorldChartResponse
   ,GetWorldArchipelagoResponse
   ,VisitWorldPlaceResponse
+  ,FleetResponse
   ,EnsureWorldSlotResponse
   ,SeaRegionDTO
 } from "@happy-farm/contracts";
@@ -325,6 +327,26 @@ export class ApiClient {
    */
   visitWorldPlace(slotId: string): Promise<VisitWorldPlaceResponse> {
     return this.post("/world/visit", { slotId }, VisitWorldPlaceResponseSchema);
+  }
+
+  /** The caller's ship, the next class they could build, and where the ship is (W5a). */
+  getFleet(): Promise<FleetResponse> {
+    return this.get("/ships/fleet", FleetResponseSchema);
+  }
+
+  /** Builds the next class of ship at the dock. Only a request id is sent; class and cost are the server's. */
+  buildShip(requestId: string): Promise<FleetResponse> {
+    return this.post("/ships/build", { requestId }, FleetResponseSchema);
+  }
+
+  /** Sets sail for a place on the caller's chart. Only the place is sent; the time is the server's. */
+  startVoyage(slotId: string, requestId: string): Promise<FleetResponse> {
+    return this.post("/voyages", { slotId, requestId }, FleetResponseSchema);
+  }
+
+  /** Brings the ship home, ending its voyage. */
+  endVoyage(): Promise<FleetResponse> {
+    return this.post("/voyages/end", {}, FleetResponseSchema);
   }
 
   /** The caller's own archipelago: the islands seen from home. One small read. */

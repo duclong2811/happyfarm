@@ -57,6 +57,23 @@ places; this document gives it ships.
   player's voyage has arrived at that place. Home is always visible.
 - A retried `POST /voyages` with the same `requestId` answers with the voyage it started.
 
+### In the client
+
+- The chart window shows the ship on one line (class, speed, hull) and, while the ship is at its
+  dock, a button to build the next class with its price and level.
+- A tapped place offers:
+  - **Set sail · ~N min**, an estimate from the chart distance and the ship's speed (the server's time
+    is the one kept);
+  - **Visit**, where the ship lies;
+  - nothing on home.
+  While the ship is at sea, the button only says so.
+- The voyage shows in the activity tray: a countdown to arrival, then "Arrived at …, tap to look
+  around". Tapping it opens the visit view. Leaving the visit view brings the ship home
+  (`POST /voyages/end`).
+- Files: `apps/web/src/sea-chart-modal.ts` (`placeAction`, `describeFleet`),
+  `apps/web/src/activity-tray.ts` (the `VOYAGE` card), and `main.ts` (`refreshFleet`, `setFleet`,
+  `voyageActivity`).
+
 ## W5b to W5d: the sea and its fights (design only)
 
 - **Realtime sea (W5b).** Each sea area is a Durable Object. Players connect over an authenticated

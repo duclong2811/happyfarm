@@ -1108,3 +1108,20 @@ html.ui-b.ui-warm .visit-view .vv-home {
   html.ui-b.ui-warm .visit-view .vv-text h2 { font-size: 1.05rem; }
   html.ui-b.ui-warm .visit-view .vv-text .vv-note { display: none; }
 }
+html.ui-b.ui-warm .sea-chart .sc-ship { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 2px solid var(--w-slot-edge); border-radius: 12px; background: rgba(255, 248, 230, .7); }
+html.ui-b.ui-warm .sea-chart .sc-ship[hidden] { display: none; }
+html.ui-b.ui-warm .sea-chart .sc-ship-text { margin: 0; color: var(--w-wood-deep); font: 800 .95rem var(--w-display); }
+html.ui-b.ui-warm .sea-chart .sc-ship-build {
+  min-height: 36px;
+  padding: 4px 14px;
+  border: 3px solid var(--w-wood-deep);
+  border-radius: 12px;
+  background: linear-gradient(#a8693a, var(--w-wood));
+  box-shadow: 0 3px 0 var(--w-wood-deep);
+  color: #fff3d6;
+  font: 800 .88rem var(--w-display);
+  cursor: pointer;
+}
+html.ui-b.ui-warm .sea-chart .sc-ship-build[hidden] { display: none; }
+html.ui-b.ui-warm .sea-chart .sc-ship-build:disabled,
+html.ui-b.ui-warm .sea-chart .sc-visit:disabled { opacity: .6; cursor: default; }

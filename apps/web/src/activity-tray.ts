@@ -10,7 +10,7 @@
  * under the player's pointer.
  */
 
-export type ActivityKind = "AREA_PLANT" | "AREA_HARVEST" | "FISHING" | "GATHER" | "MINES";
+export type ActivityKind = "AREA_PLANT" | "AREA_HARVEST" | "FISHING" | "GATHER" | "MINES" | "VOYAGE";
 export type ActivityTone = "active" | "ready" | "done" | "warn";
 
 export interface ActivityItem {
@@ -59,6 +59,16 @@ export interface ActivityTrayInput {
   readonly fishing: TimedActivity | null;
   readonly gather: TimedActivity | null;
   readonly mines: MinesActivity | null;
+  /** The ship's voyage (W5a): `name` is where it is bound. Optional for older callers. */
+  readonly voyage?: TimedActivity | null;
+}
+
+/** Minutes and seconds, for a wait longer than a minute or two. */
+export function clockText(seconds: number): string {
+  const whole = Math.max(0, Math.ceil(seconds));
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return minutes > 0 ? `${String(minutes)}:${String(rest).padStart(2, "0")}` : `0:${String(rest).padStart(2, "0")}`;
 }
 
 export type Translate = (key: string, params?: Readonly<Record<string, string | number>>) => string;
@@ -119,6 +129,20 @@ export function activityTrayItems(input: ActivityTrayInput, t: Translate): reado
       detail: secondsLeft > 0 ? t("activity.secondsLeft", { seconds: secondsLeft }) : t("activity.gatherReady"),
       fraction,
       tone: secondsLeft > 0 ? "active" : "ready"
+    });
+  }
+  const voyage = input.voyage ?? null;
+  if (voyage !== null) {
+    const { fraction, secondsLeft } = timedFraction(voyage, input.nowMs);
+    const sailing = secondsLeft > 0;
+    items.push({
+      id: "voyage",
+      kind: "VOYAGE",
+      icon: "⛵",
+      title: t(sailing ? "activity.voyage" : "activity.voyageArrived", { name: voyage.name ?? "" }),
+      detail: sailing ? t("activity.voyageLeft", { time: clockText(secondsLeft) }) : t("activity.voyageVisit"),
+      fraction,
+      tone: sailing ? "active" : "ready"
     });
   }
   const mines = input.mines;
