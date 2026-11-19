@@ -663,7 +663,9 @@ export function drawChartShips(canvas: HTMLCanvasElement, frame: ChartFrame, shi
   if (context === null) return;
   const size = Math.max(7, Math.min(16, 90 * frame.scale));
   for (const ship of ships) {
-    const at = toCanvas(frame, ship.x, ship.z);
+    const point = toCanvas(frame, ship.x, ship.z);
+    // A ship that has arrived lies at anchor beside the island, not on top of it.
+    const at = ship.arrived ? { x: point.x + size * 1.6, y: point.y + size * 0.4 } : point;
     const to = toCanvas(frame, ship.toX, ship.toZ);
     if (!ship.arrived) {
       context.save();
