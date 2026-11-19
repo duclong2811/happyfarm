@@ -11,6 +11,7 @@ import type {
   FarmRepository,
   FarmTileRepository,
   SeaRegionName,
+  ShipRepository,
   TreeInstanceRepository,
   WorldChartArchipelago,
   WorldChartPort,
@@ -19,6 +20,7 @@ import type {
   WorldSlotRepository,
   WorldVisitRepository
 } from "./ports";
+import { voyageLocation } from "./ships";
 import type { TreeState, TreeStateProjector } from "./trees";
 
 /**
@@ -292,6 +294,9 @@ export interface PublicIslandReaders {
  * - Only an island with a place on the chart can sail, and only to a place on its own chart: its
  *   home archipelago, or one it has seen from a place it visited. Anything else is refused as
  *   uncharted, so a client cannot read an island by guessing its place.
+ * - Going there takes a voyage (W5a, owner decision 2026-11-19): a place other than home can be looked
+ *   at only while the player's ship lies there, its voyage arrived. Anything else is refused as
+ *   `VOYAGE_NOT_ARRIVED`.
  * - The visit is recorded once, which is what grows the chart: from here the player can see the
  *   archipelagos within sight of this place.
  * - Nothing on the visited island changes. Reading it is the only thing done to it.
@@ -301,7 +306,8 @@ export class VisitWorldPlace {
     private readonly farms: FarmRepository,
     private readonly world: WorldPlacement,
     private readonly readers: PublicIslandReaders,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    private readonly ships: ShipRepository
   ) {}
 
   async execute(actor: ActorContext | null, command: { readonly slotId: string }): Promise<WorldVisitView> {
@@ -317,7 +323,14 @@ export class VisitWorldPlace {
       throw new ApplicationError("WORLD_PLACE_UNCHARTED", "That place is not on your chart");
     }
     const mine = slot.slotId === home.slotId;
-    if (!mine) await this.world.visits.record(actor.playerId, slot.slotId, this.clock.now());
+    if (!mine) {
+      const now = this.clock.now();
+      const voyage = await this.ships.findVoyage(actor.playerId);
+      if (voyage === null || voyage.toSlotId !== slot.slotId || voyageLocation(voyage, now) !== "AT_PLACE") {
+        throw new ApplicationError("VOYAGE_NOT_ARRIVED", "Sail there first: the ship has not arrived");
+      }
+      await this.world.visits.record(actor.playerId, slot.slotId, now);
+    }
     const [owner] = await this.world.slots.listClaimedIn([slot.slotId]);
     const settled = owner !== undefined;
     const farmView = settled && !mine ? await this.publicView(owner) : null;

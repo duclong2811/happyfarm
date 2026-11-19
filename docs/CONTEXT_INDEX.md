@@ -952,6 +952,22 @@ slot claiming, or the chart API.
   `tests/web/sea-chart-view.test.ts`,
   `tests/web/horizon-islands.test.ts`.
 
+### Ships and voyages (W5)
+
+Read `docs/design/NAVAL.md` (the owner's decisions, the phases, the proposed ship numbers) before
+changing ships, voyages or anything naval.
+
+- Game data: `packages/game-data/src/ships` (`SHIP_CLASSES`, `voyageSeconds`).
+- Domain: `ShipId` / `shipIdFor`, ledger reasons `SHIP_BUILD` and `SHIP_REPAIR`.
+- Use cases: `packages/application/src/ships.ts` (`GetFleet`, `BuildShip`, `StartVoyage`,
+  `EndVoyage`, `voyageLocation`); `VisitWorldPlace` needs an arrived voyage.
+- Storage: `D1ShipRepository`, migration `0047_ships_and_voyages.sql` (`player_ships`,
+  `ship_voyages`, the ledger rebuilt with the ship reasons).
+- API: `GET /ships/fleet`, `POST /ships/build`, `POST /voyages`, `POST /voyages/end` (on with the world
+  map).
+- Tests: `tests/api/world-map.test.ts`, `tests/integration/ships-migration.test.ts`,
+  `tests/game-data/ships.test.ts`.
+
 ### Resource nodes, mining and forestry (V15.2 / V15.3)
 
 Island mines (Phase B) supersede the hold-to-mine ore node and Auto mining: read

@@ -16,6 +16,7 @@ declare const fishingActionIdBrand: unique symbol;
 declare const resourceActionIdBrand: unique symbol;
 declare const warehouseIdBrand: unique symbol;
 declare const mineIdBrand: unique symbol;
+declare const shipIdBrand: unique symbol;
 declare const workAreaIdBrand: unique symbol;
 declare const actorIdBrand: unique symbol;
 declare const jobIdBrand: unique symbol;
@@ -36,6 +37,8 @@ export type FishingActionId = string & { readonly [fishingActionIdBrand]: true }
 export type ResourceActionId = string & { readonly [resourceActionIdBrand]: true };
 export type WarehouseId = string & { readonly [warehouseIdBrand]: true };
 export type MineId = string & { readonly [mineIdBrand]: true };
+/** A player's ship: one per player, so its id is the player's own uuid under the `ship_` prefix. */
+export type ShipId = string & { readonly [shipIdBrand]: true };
 export type WorkAreaId = string & { readonly [workAreaIdBrand]: true };
 export type ActorId = string & { readonly [actorIdBrand]: true };
 export type JobId = string & { readonly [jobIdBrand]: true };
@@ -56,6 +59,7 @@ const FISHING_ACTION_ID_PATTERN = new RegExp(`^fishact_${UUID_PATTERN}$`, "i");
 const RESOURCE_ACTION_ID_PATTERN = new RegExp(`^resact_${UUID_PATTERN}$`, "i");
 const WAREHOUSE_ID_PATTERN = new RegExp(`^warehouse_${UUID_PATTERN}$`, "i");
 const MINE_ID_PATTERN = new RegExp(`^mine_${UUID_PATTERN}_(?:[0-9]|1[0-5])$`, "i");
+const SHIP_ID_PATTERN = new RegExp(`^ship_${UUID_PATTERN}$`, "i");
 const WORK_AREA_ID_PATTERN = new RegExp(`^workarea_${UUID_PATTERN}$`, "i");
 const ACTOR_ID_PATTERN = new RegExp(`^actor_${UUID_PATTERN}$`, "i");
 const JOB_ID_PATTERN = new RegExp(`^job_${UUID_PATTERN}$`, "i");
@@ -249,6 +253,17 @@ export function parseMineId(value: string): MineId {
     throw new DomainError("INVALID_ID", "Invalid mine ID");
   }
   return value as MineId;
+}
+
+export function parseShipId(value: string): ShipId {
+  if (!SHIP_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid ship ID");
+  }
+  return value as ShipId;
+}
+
+export function shipIdFor(playerId: PlayerId): ShipId {
+  return parseShipId(`ship_${playerId.slice("player_".length)}`);
 }
 
 export function mineIdFor(farmId: FarmId, slot: number): MineId {

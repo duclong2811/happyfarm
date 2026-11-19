@@ -2056,6 +2056,11 @@ export const ErrorCodeSchema = z.enum([
   "ISLAND_CHOICE_UNAVAILABLE",
   "WORLD_REGION_FULL",
   "WORLD_PLACE_UNCHARTED",
+  "SHIP_AT_SEA",
+  "SHIP_MAX_CLASS",
+  "SHIP_LEVEL_REQUIRED",
+  "VOYAGE_UNDERWAY",
+  "VOYAGE_NOT_ARRIVED",
   "CHARACTER_NOT_AVAILABLE",
   "ITEM_DEFINITION_NOT_FOUND",
   "INVENTORY_LIMIT_EXCEEDED",
@@ -2231,6 +2236,62 @@ export const VisitWorldPlaceResponseSchema = z
   })
   .strict();
 export type VisitWorldPlaceResponse = z.infer<typeof VisitWorldPlaceResponseSchema>;
+
+/**
+ * Ships and voyages (W5a, docs/design/NAVAL.md). The client asks to build the next class, to sail to
+ * a place, or to come home; the class, the cost and the time a voyage takes are the server's.
+ */
+const ShipClassIdSchema = z.string().regex(/^ship_class_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+const WorldSlotIdSchema = z.string().max(40).regex(/^slot_[a-z]+_\d{1,3}_\d{1,3}$/);
+export const FleetShipDTOSchema = z
+  .object({
+    classId: ShipClassIdSchema,
+    tier: z.number().int().min(1),
+    hull: z.number().int().nonnegative(),
+    hullMax: z.number().int().positive(),
+    speedTilesPerMinute: z.number().positive(),
+    cannons: z.number().int().nonnegative()
+  })
+  .strict();
+export const FleetNextShipDTOSchema = z
+  .object({
+    classId: ShipClassIdSchema,
+    tier: z.number().int().min(2),
+    requiredPlayerLevel: z.number().int().min(1),
+    speedTilesPerMinute: z.number().positive(),
+    hull: z.number().int().positive(),
+    cannons: z.number().int().nonnegative(),
+    cost: z
+      .object({
+        currencyId: z.string().min(1).max(120),
+        gold: z.number().int().nonnegative(),
+        materials: z.array(z.object({ itemDefinitionId: z.string().min(1).max(120), quantity: z.number().int().positive() }).strict()).max(8)
+      })
+      .strict()
+  })
+  .strict();
+export const VoyageDTOSchema = z
+  .object({
+    fromSlotId: WorldSlotIdSchema,
+    toSlotId: WorldSlotIdSchema,
+    departedAt: z.iso.datetime(),
+    arrivesAt: z.iso.datetime(),
+    arrived: z.boolean()
+  })
+  .strict();
+export const FleetResponseSchema = z
+  .object({
+    readAt: z.iso.datetime(),
+    ship: FleetShipDTOSchema,
+    next: FleetNextShipDTOSchema.nullable(),
+    location: z.enum(["HOME", "AT_SEA", "AT_PLACE"]),
+    voyage: VoyageDTOSchema.nullable()
+  })
+  .strict();
+export const BuildShipRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+export const StartVoyageRequestSchema = z.object({ slotId: WorldSlotIdSchema, requestId: RequestIdSchema }).strict();
+export const EndVoyageRequestSchema = z.object({}).strict();
+export type FleetResponse = z.infer<typeof FleetResponseSchema>;
 export type PublicIslandDTO = z.infer<typeof PublicIslandDTOSchema>;
 
 export type CreateFarmRequest = z.infer<typeof CreateFarmRequestSchema>;

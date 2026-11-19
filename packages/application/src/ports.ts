@@ -35,6 +35,7 @@ import type {
   ItemDefinition,
   ItemDefinitionId,
   MineId,
+  ShipId,
   Player,
   PlayerId,
   PlayerProgression,
@@ -1573,6 +1574,86 @@ export interface ClaimedWorldSlot extends WorldSlotClaim {
   readonly island: WorldIslandTemplate | null;
   /** The island's name: the farm's own, as its owner named it. */
   readonly name: string | null;
+}
+
+/** One class of ship, from game data (docs/design/NAVAL.md). */
+export interface ShipClass {
+  readonly id: string;
+  readonly tier: number;
+  readonly requiredPlayerLevel: number;
+  readonly speedTilesPerMinute: number;
+  readonly hull: number;
+  readonly cannons: number;
+  /** What building it costs; null for the dock's own rowboat. */
+  readonly buildCost: {
+    readonly currencyDefinitionId: string;
+    readonly gold: number;
+    readonly materials: Readonly<Record<string, number>>;
+  } | null;
+}
+
+export interface ShipCatalogue {
+  /** Every class in tier order; the first is the dock's rowboat. */
+  classes(): readonly ShipClass[];
+  /** How long a voyage of `distanceTiles` takes at `speedTilesPerMinute`, in whole seconds. */
+  voyageSeconds(distanceTiles: number, speedTilesPerMinute: number): number;
+}
+
+/** A player's ship as stored. No row means the dock's rowboat. */
+export interface PlayerShipRecord {
+  readonly playerId: PlayerId;
+  readonly shipId: ShipId;
+  readonly classId: string;
+  readonly tier: number;
+  readonly hull: number;
+  readonly version: number;
+  readonly lastChangeId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** Building the next class: gold, materials, the ship row and the receipt, in one batch. */
+export interface ShipBuild {
+  readonly playerId: PlayerId;
+  readonly shipId: ShipId;
+  /** The tier and version the caller read; version 0 means no row was stored (the rowboat). */
+  readonly expectedFromTier: number;
+  readonly expectedVersion: number;
+  readonly toTier: number;
+  readonly classId: string;
+  readonly hull: number;
+  readonly economy: EconomyMutation;
+  readonly removals: readonly InventoryRemoval[];
+  readonly expectedInventory: readonly InventoryItem[];
+  readonly createdAt: string;
+}
+
+/**
+ * A player's one current passage. `UNDERWAY` until it is ended; whether it has *arrived* is read from
+ * the clock against `arrivesAt`, never stored.
+ */
+export interface VoyageRecord {
+  readonly playerId: PlayerId;
+  readonly fromSlotId: string;
+  readonly toSlotId: string;
+  readonly shipTier: number;
+  readonly departedAt: string;
+  readonly arrivesAt: string;
+  readonly status: "UNDERWAY" | "ENDED";
+  readonly requestId: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
+export interface ShipRepository {
+  findShip(playerId: PlayerId): Promise<PlayerShipRecord | null>;
+  buildAtomically(build: ShipBuild, idempotency: IdempotencyRecord): Promise<void>;
+  findVoyage(playerId: PlayerId): Promise<VoyageRecord | null>;
+  /**
+   * Writes `next` only if the stored voyage is still at `expectedVersion` (null: none stored yet).
+   * True when this call wrote it.
+   */
+  writeVoyage(next: VoyageRecord, expectedVersion: number | null): Promise<boolean>;
 }
 
 /** The places a player has visited on the world map: what their chart is grown from. */

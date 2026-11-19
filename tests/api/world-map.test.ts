@@ -14,13 +14,15 @@ import {
   type PlayerId,
   type TreeInstanceId
 } from "@happy-farm/domain";
-import { chartedArchipelagos, seaChart } from "@happy-farm/game-data";
+import { chartedArchipelagos, findSeaSlot, seaChart, SHIP_CLASSES, voyageSeconds } from "@happy-farm/game-data";
+import { cumulativeXpForLevel } from "@happy-farm/domain";
 import {
   EnsureWorldSlotResponseSchema,
   GetMyFarmResponseSchema,
   GetWorldArchipelagoResponseSchema,
   GetWorldChartResponseSchema,
-  VisitWorldPlaceResponseSchema
+  VisitWorldPlaceResponseSchema,
+  FleetResponseSchema
 } from "@happy-farm/contracts";
 import { createHandler } from "../../workers/api/src/handler";
 import { D1FarmMemberRepository, D1FarmRepository, D1PlayerRepository, D1WorldSlotRepository, D1WorldVisitRepository } from "../../workers/api/src/d1-repositories";
@@ -81,7 +83,12 @@ class WorldIds implements IdGenerator {
   }
 }
 
-const clock: Clock = { now: () => NOW };
+/** The test's server clock; `advance` moves it on, so a voyage can arrive. */
+let clockMs = Date.parse(NOW);
+const clock: Clock = { now: () => new Date(clockMs).toISOString() };
+function advance(seconds: number): void {
+  clockMs += seconds * 1000;
+}
 
 class SwitchableAuth implements AuthenticationPort<Request> {
   constructor(private actor: ActorContext | null) {}
@@ -185,7 +192,17 @@ describe("the world map", () => {
     return chart.regions.flatMap((entry) => entry.archipelagos.map((archipelago) => archipelago.archipelagoId));
   }
 
+  let requestCounter = 0;
+  /** Sails the current actor's ship to `slotId` and lets the voyage arrive. */
+  async function sailTo(slotId: string): Promise<void> {
+    requestCounter += 1;
+    const response = await request("/voyages", { slotId, requestId: `voyage-request-${String(requestCounter)}` });
+    expect(response.status).toBe(200);
+    advance(4 * 60 * 60);
+  }
+
   beforeEach(() => {
+    clockMs = Date.parse(NOW);
     db = new NodeD1Database(MIGRATIONS);
     auth = new SwitchableAuth(null);
     ids = new WorldIds();
@@ -205,6 +222,8 @@ describe("the world map", () => {
     expect((await request("/world/chart")).status).toBe(404);
     expect((await request("/world/archipelago")).status).toBe(404);
     expect((await request("/world/visit", { slotId: "slot_north_1_1" })).status).toBe(404);
+    expect((await request("/ships/fleet")).status).toBe(404);
+    expect((await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-request-1" })).status).toBe(404);
   });
 
   it("places a chosen island in the next free slot of the region it named", async () => {
@@ -353,6 +372,9 @@ describe("the world map", () => {
     expect(await chartIds()).toEqual(["sea_north_1"]);
     // A visit to the archipelago's outer edge brings the next archipelagos into sight.
     const edge = "slot_north_1_5";
+    // Looking at a place takes being there: no voyage, no visit.
+    expect(await codeOf(await request("/world/visit", { slotId: edge }))).toBe("VOYAGE_NOT_ARRIVED");
+    await sailTo(edge);
     expect((await request("/world/visit", { slotId: edge })).status).toBe(200);
     const grown = await chartIds();
     expect(grown).toEqual(chartedArchipelagos("slot_north_1_1", [edge]).map((archipelago) => archipelago.archipelagoId));
@@ -378,6 +400,7 @@ describe("the world map", () => {
     const other = farmOf(2);
     const before = islandRows(other);
     auth.setActor({ playerId: playerId(1) });
+    await sailTo("slot_north_1_2");
     const response = await request("/world/visit", { slotId: "slot_north_1_2" });
     expect(response.status).toBe(200);
     const text = await response.text();
@@ -400,6 +423,7 @@ describe("the world map", () => {
   it("shows a free place's wild island, and home as home", async () => {
     await settle(1, "NORTH");
     auth.setActor({ playerId: playerId(1) });
+    await sailTo("slot_north_1_3");
     const wild = VisitWorldPlaceResponseSchema.parse(await dataOf(await request("/world/visit", { slotId: "slot_north_1_3" })));
     const template = seaChart().get("NORTH")?.[0]?.slots[2]?.wild;
     expect(wild.place).toMatchObject({ claimed: false, mine: false, name: null, island: { ...template, generatorVersion: 2 } });
@@ -417,6 +441,162 @@ describe("the world map", () => {
     const refused = await request("/world/visit", { slotId: "slot_north_1_1" });
     expect(refused.status).toBe(403);
     expect(await codeOf(refused)).toBe("WORLD_PLACE_UNCHARTED");
+  });
+
+  /** Puts player `n` at `level`, with `gold`, `wood` and `ore` in hand. */
+  function equip(n: number, level: number, gold: number, wood: number, ore: number): void {
+    db.sqlite
+      .prepare("INSERT OR REPLACE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)")
+      .run(playerId(n), level, cumulativeXpForLevel(gameDataProgressionDefinition, level), NOW, NOW);
+    db.sqlite
+      .prepare(
+        "INSERT INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, 'currency_gold', ?, 1, ?, ?) ON CONFLICT(player_id, currency_id) DO UPDATE SET balance = excluded.balance, version = wallets.version + 1, updated_at = excluded.updated_at"
+      )
+      .run(playerId(n), gold, NOW, NOW);
+    const item = db.sqlite.prepare(
+      "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = excluded.quantity, version = inventory_items.version + 1"
+    );
+    item.run(playerId(n), "item_wood", wood, NOW);
+    item.run(playerId(n), "item_ore", ore, NOW);
+  }
+
+  function holdings(n: number): { gold: number; wood: number; ore: number; ledger: number } {
+    const gold = db.sqlite.prepare("SELECT balance FROM wallets WHERE player_id = ? AND currency_id = 'currency_gold'").get(playerId(n)) as { balance: number } | undefined;
+    const item = (id: string): number =>
+      (db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?").get(playerId(n), id) as { quantity: number } | undefined)?.quantity ?? 0;
+    const ledger = db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE player_id = ? AND reason = 'SHIP_BUILD'").get(playerId(n)) as { n: number };
+    return { gold: gold?.balance ?? 0, wood: item("item_wood"), ore: item("item_ore"), ledger: ledger.n };
+  }
+
+  async function fleet(): Promise<ReturnType<typeof FleetResponseSchema.parse>> {
+    return FleetResponseSchema.parse(await dataOf(await request("/ships/fleet")));
+  }
+
+  it("starts every player with the dock's rowboat, and shows the next class and its price", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const view = await fleet();
+    const [rowboat, sloop] = SHIP_CLASSES;
+    expect(view.location).toBe("HOME");
+    expect(view.voyage).toBeNull();
+    expect(view.ship).toEqual({ classId: rowboat?.id, tier: 1, hull: rowboat?.hull, hullMax: rowboat?.hull, speedTilesPerMinute: rowboat?.speedTilesPerMinute, cannons: 0 });
+    expect(view.next).toMatchObject({
+      classId: sloop?.id,
+      tier: 2,
+      requiredPlayerLevel: sloop?.requiredPlayerLevel,
+      cost: {
+        currencyId: "currency_gold",
+        gold: sloop?.buildCost?.gold,
+        materials: [
+          { itemDefinitionId: "item_wood", quantity: sloop?.buildCost?.wood },
+          { itemDefinitionId: "item_ore", quantity: sloop?.buildCost?.ore }
+        ]
+      }
+    });
+  });
+
+  it("builds the next ship for its price, through the ledger, once per request", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const sloop = SHIP_CLASSES[1];
+    if (sloop?.buildCost == null) throw new Error("no sloop");
+    // Too low a level, then too little wood, then too little gold: nothing is taken.
+    equip(1, sloop.requiredPlayerLevel - 1, 5_000, 300, 200);
+    expect(await codeOf(await request("/ships/build", { requestId: "build-request-1" }))).toBe("SHIP_LEVEL_REQUIRED");
+    equip(1, sloop.requiredPlayerLevel, 5_000, sloop.buildCost.wood - 1, 200);
+    expect(await codeOf(await request("/ships/build", { requestId: "build-request-1" }))).toBe("INSUFFICIENT_ITEMS");
+    equip(1, sloop.requiredPlayerLevel, sloop.buildCost.gold - 1, 300, 200);
+    expect(await codeOf(await request("/ships/build", { requestId: "build-request-1" }))).toBe("INSUFFICIENT_FUNDS");
+    expect(holdings(1)).toEqual({ gold: sloop.buildCost.gold - 1, wood: 300, ore: 200, ledger: 0 });
+
+    equip(1, sloop.requiredPlayerLevel, 5_000, 300, 200);
+    const built = FleetResponseSchema.parse(await dataOf(await request("/ships/build", { requestId: "build-request-2" })));
+    expect(built.ship).toMatchObject({ classId: sloop.id, tier: 2, hull: sloop.hull });
+    const after = { gold: 5_000 - sloop.buildCost.gold, wood: 300 - sloop.buildCost.wood, ore: 200 - sloop.buildCost.ore, ledger: 1 };
+    expect(holdings(1)).toEqual(after);
+    const ledger = db.sqlite.prepare("SELECT delta, reason, reference_type, reference_id, request_id FROM economy_ledger WHERE reason = 'SHIP_BUILD'").get() as Record<string, unknown>;
+    expect(ledger).toEqual({ delta: -sloop.buildCost.gold, reason: "SHIP_BUILD", reference_type: "SHIP", reference_id: `ship_${playerId(1).slice("player_".length)}`, request_id: "build-request-2" });
+    // The same request again answers from its receipt and charges nothing.
+    const replayed = FleetResponseSchema.parse(await dataOf(await request("/ships/build", { requestId: "build-request-2" })));
+    expect(replayed.ship).toEqual(built.ship);
+    expect(holdings(1)).toEqual(after);
+    expect((await fleet()).ship.tier).toBe(2);
+  });
+
+  it("charges one build when two race for the same step", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const sloop = SHIP_CLASSES[1];
+    if (sloop?.buildCost == null) throw new Error("no sloop");
+    // Enough of everything for two builds: only the ship itself can decide the race.
+    equip(1, sloop.requiredPlayerLevel, 50_000, 300, 200);
+    const results = await Promise.all([
+      request("/ships/build", { requestId: "race-request-1" }),
+      request("/ships/build", { requestId: "race-request-2" })
+    ]);
+    const statuses = results.map((response) => response.status).sort();
+    expect(statuses).toContain(200);
+    expect(holdings(1).ledger).toBe(1);
+    expect((await fleet()).ship.tier).toBe(2);
+    expect(holdings(1).gold).toBe(50_000 - sloop.buildCost.gold);
+  });
+
+  it("sails for as long as the distance takes, from wherever the ship lies, and comes home at once", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const home = findSeaSlot("slot_north_1_1");
+    const first = findSeaSlot("slot_north_1_2");
+    const second = findSeaSlot("slot_north_1_4");
+    const rowboat = SHIP_CLASSES[0];
+    if (home === null || first === null || second === null || rowboat === undefined) throw new Error("no chart");
+
+    const out = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: first.slotId, requestId: "voyage-request-a" })));
+    const seconds = voyageSeconds(Math.hypot(first.x - home.x, first.z - home.z), rowboat.speedTilesPerMinute);
+    expect(out.location).toBe("AT_SEA");
+    expect(out.voyage).toMatchObject({ fromSlotId: home.slotId, toSlotId: first.slotId, arrived: false });
+    expect(Date.parse(out.voyage?.arrivesAt ?? "") - Date.parse(out.voyage?.departedAt ?? "")).toBe(seconds * 1000);
+    // The same request again is the same voyage; another one waits for this to arrive.
+    expect(FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: first.slotId, requestId: "voyage-request-a" }))).voyage).toEqual(out.voyage);
+    expect(await codeOf(await request("/voyages", { slotId: second.slotId, requestId: "voyage-request-b" }))).toBe("VOYAGE_UNDERWAY");
+    expect(await codeOf(await request("/ships/build", { requestId: "build-at-sea-1" }))).toBe("SHIP_AT_SEA");
+    expect(await codeOf(await request("/world/visit", { slotId: first.slotId }))).toBe("VOYAGE_NOT_ARRIVED");
+
+    advance(seconds);
+    const there = await fleet();
+    expect(there.location).toBe("AT_PLACE");
+    expect(there.voyage?.arrived).toBe(true);
+    expect((await request("/world/visit", { slotId: first.slotId })).status).toBe(200);
+    // The ship already lies there; sailing on leaves from here.
+    expect(await codeOf(await request("/voyages", { slotId: first.slotId, requestId: "voyage-request-c" }))).toBe("INVALID_INPUT");
+    const onward = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: second.slotId, requestId: "voyage-request-d" })));
+    expect(onward.voyage?.fromSlotId).toBe(first.slotId);
+
+    const ended = FleetResponseSchema.parse(await dataOf(await request("/voyages/end", {})));
+    expect(ended.location).toBe("HOME");
+    expect(ended.voyage).toBeNull();
+    expect((await fleet()).location).toBe("HOME");
+    expect((await request("/voyages/end", {})).status).toBe(200);
+    // Home again, a visit to where the ship no longer is is refused.
+    expect(await codeOf(await request("/world/visit", { slotId: first.slotId }))).toBe("VOYAGE_NOT_ARRIVED");
+  });
+
+  it("keeps each player's ship and voyage their own, and refuses uncharted or malformed voyages", async () => {
+    await settle(1, "NORTH");
+    await settle(2, "EAST");
+    auth.setActor({ playerId: playerId(1) });
+    expect(await codeOf(await request("/voyages", { slotId: "slot_east_1_1", requestId: "voyage-request-x" }))).toBe("WORLD_PLACE_UNCHARTED");
+    expect(await codeOf(await request("/voyages", { slotId: "slot_north_99_1", requestId: "voyage-request-y" }))).toBe("RESOURCE_NOT_FOUND");
+    for (const body of [{}, { slotId: "slot_north_1_2" }, { slotId: "slot_north_1_2", requestId: "x" }, { slotId: "slot_north_1_2", requestId: "voyage-request-z", seconds: 1 }]) {
+      expect((await request("/voyages", body)).status).toBe(400);
+    }
+    expect((await request("/ships/build", { requestId: "build-request-1", tier: 4 })).status).toBe(400);
+    expect((await request("/voyages/end", { slotId: "slot_north_1_1" })).status).toBe(400);
+    await sailTo("slot_north_1_2");
+    auth.setActor({ playerId: playerId(2) });
+    expect((await fleet()).location).toBe("HOME");
+    auth.setActor(null);
+    expect((await request("/ships/fleet")).status).toBe(401);
+    expect((await request("/voyages", { slotId: "slot_north_1_2", requestId: "voyage-request-q" })).status).toBe(401);
   });
 
   it("validates what a client sends and who is asking", async () => {

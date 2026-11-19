@@ -3,6 +3,12 @@
   EnsureWorldSlot,
   GetMyArchipelago,
   GetWorldChart,
+  GetFleet,
+  BuildShip,
+  StartVoyage,
+  EndVoyage,
+  type ShipDependencies,
+  type FleetView,
   VisitWorldPlace,
   type PublicIslandView,
   type WorldArchipelagoView,
@@ -169,6 +175,10 @@ import {
   type GetWorldChartResponse,
   type GetWorldArchipelagoResponse,
   type VisitWorldPlaceResponse,
+  type FleetResponse,
+  BuildShipRequestSchema,
+  StartVoyageRequestSchema,
+  EndVoyageRequestSchema,
   type PublicIslandDTO,
   VisitWorldPlaceRequestSchema,
   type EnsureWorldSlotResponse,
@@ -305,7 +315,7 @@ import {
   ,type NeighborSnapshotDTO
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
-import { farmIslandGeography, islandFishingCatalogue, gameDataCharacterCatalogue, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
+import { farmIslandGeography, islandFishingCatalogue, gameDataCharacterCatalogue, gameDataShipCatalogue, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
 import { rejectsCrossOriginRequest } from "./origin-guard";
 import type { SessionPort } from "./session";
 import {
@@ -358,6 +368,7 @@ import {
   D1FarmIslandRepository,
   D1WorldSlotRepository,
   D1WorldVisitRepository,
+  D1ShipRepository,
   D1FarmRepository,
   D1PlayerAppearanceRepository,
   D1FarmTileRepository,
@@ -825,6 +836,17 @@ function toWorldArchipelagoDTO(archipelago: WorldArchipelagoView): GetWorldChart
   };
 }
 
+/** The fleet view as the contract carries it: copies only, so nothing internal rides along. */
+function toFleetDTO(view: FleetView): FleetResponse {
+  return {
+    readAt: view.readAt,
+    ship: { ...view.ship },
+    next: view.next === null ? null : { ...view.next, cost: { ...view.next.cost, materials: view.next.cost.materials.map((entry) => ({ ...entry })) } },
+    location: view.location,
+    voyage: view.voyage === null ? null : { ...view.voyage }
+  };
+}
+
 /**
  * A settled island as a visitor sees it: the renderer's fields only. No farm, player, crop, tree or
  * object id leaves here, and nothing of the owner's private state was read to build it.
@@ -1019,6 +1041,7 @@ function errorStatus(code: ErrorCode): number {
     case "MINE_LEVEL_REQUIRED":
     case "ISLAND_CHOICE_UNAVAILABLE":
     case "WORLD_PLACE_UNCHARTED":
+    case "SHIP_LEVEL_REQUIRED":
     case "CHARACTER_NOT_AVAILABLE":
     case "PLOT_LEVEL_REQUIRED":
     case "LAND_NOT_DEVELOPABLE":
@@ -1060,6 +1083,10 @@ function errorStatus(code: ErrorCode): number {
       return 404;
     case "CONFLICT_STALE_STATE":
     case "WORLD_REGION_FULL":
+    case "SHIP_AT_SEA":
+    case "SHIP_MAX_CLASS":
+    case "VOYAGE_UNDERWAY":
+    case "VOYAGE_NOT_ARRIVED":
     case "REQUEST_ALREADY_PROCESSED":
     case "TILE_OCCUPIED":
     case "TILE_NOT_PLANTABLE":
@@ -1220,6 +1247,7 @@ export function createHandler(host: HandlerDependencies) {
     dependencies.world === undefined
       ? undefined
       : { chart: dependencies.world.chart, slots: new D1WorldSlotRepository(dependencies.db), visits: new D1WorldVisitRepository(dependencies.db) };
+  const shipRepository = new D1ShipRepository(dependencies.db);
   const createFarm = new CreateFarm(
     players,
     farms,
@@ -1642,8 +1670,33 @@ export function createHandler(host: HandlerDependencies) {
           farms,
           worldPlacement,
           { islands: farmIslands, tiles, crops, cropProjector: projector, trees, treeProjector, constructions },
-          dependencies.clock
+          dependencies.clock,
+          shipRepository
         );
+  // Ships and voyages ride on the world map: a voyage goes to a place on the chart (W5a).
+  const shipDependencies: ShipDependencies | null =
+    worldPlacement === undefined
+      ? null
+      : {
+          farms,
+          world: worldPlacement,
+          ships: shipRepository,
+          catalogue: gameDataShipCatalogue,
+          progression: progressions,
+          progressionDefinition: dependencies.progressionDefinition,
+          inventory,
+          inventoryService,
+          wallets,
+          currencies: dependencies.currencyDefinitions,
+          economyService: new EconomyService(dependencies.ids, dependencies.clock),
+          idempotency: new D1IdempotencyRepository(dependencies.db),
+          fingerprints: dependencies.fingerprints,
+          clock: dependencies.clock
+        };
+  const getFleet = shipDependencies === null ? null : new GetFleet(shipDependencies);
+  const buildShip = shipDependencies === null ? null : new BuildShip(shipDependencies);
+  const startVoyage = shipDependencies === null ? null : new StartVoyage(shipDependencies);
+  const endVoyage = shipDependencies === null ? null : new EndVoyage(shipDependencies);
   const treeIdempotency = new D1IdempotencyRepository(dependencies.db);
   const plantTree = new PlantTree({
     farms,
@@ -2217,6 +2270,32 @@ export function createHandler(host: HandlerDependencies) {
             }))
           }
         };
+        return jsonResponse(body);
+      }
+
+      if (getFleet !== null && request.method === "GET" && url.pathname === "/ships/fleet") {
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await getFleet.execute(actor)) };
+        return jsonResponse(body);
+      }
+
+      if (buildShip !== null && request.method === "POST" && url.pathname === "/ships/build") {
+        const parsed = BuildShipRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await buildShip.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (startVoyage !== null && request.method === "POST" && url.pathname === "/voyages") {
+        const parsed = StartVoyageRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await startVoyage.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (endVoyage !== null && request.method === "POST" && url.pathname === "/voyages/end") {
+        const parsed = EndVoyageRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await endVoyage.execute(actor)) };
         return jsonResponse(body);
       }
 

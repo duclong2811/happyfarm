@@ -75,6 +75,7 @@ import type {
   TreeIdGenerator,
   WarehouseTierRepository,
   MineCatalogue,
+  ShipCatalogue,
   TileTerrainLookup,
   LandSaleLookup,
   WorkAreaGroundLookup,
@@ -145,7 +146,7 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
-import { chartedArchipelagos, findSeaSlot, findSeaArchipelago, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import { chartedArchipelagos, findSeaSlot, findSeaArchipelago, SHIP_CLASSES, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
 import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
@@ -816,6 +817,27 @@ export const gameDataWorldChart: WorldChartPort = {
   chartedArchipelagos: (homeSlotId, visitedSlotIds) => chartedArchipelagos(homeSlotId, visitedSlotIds),
   nextFreeSlot: (region, isClaimed) => nextFreeSeaSlot(region, isClaimed),
   openArchipelagos: (region, isClaimed) => openArchipelagos(region, isClaimed)
+};
+
+export const gameDataShipCatalogue: ShipCatalogue = {
+  classes: () =>
+    SHIP_CLASSES.map((entry) => ({
+      id: entry.id,
+      tier: entry.tier,
+      requiredPlayerLevel: entry.requiredPlayerLevel,
+      speedTilesPerMinute: entry.speedTilesPerMinute,
+      hull: entry.hull,
+      cannons: entry.cannons,
+      buildCost:
+        entry.buildCost === null
+          ? null
+          : {
+              currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
+              gold: entry.buildCost.gold,
+              materials: { [SHIP_WOOD_ITEM_ID]: entry.buildCost.wood, [SHIP_ORE_ITEM_ID]: entry.buildCost.ore }
+            }
+    })),
+  voyageSeconds: (distanceTiles, speedTilesPerMinute) => voyageSeconds(distanceTiles, speedTilesPerMinute)
 };
 
 export const gameDataMineCatalogue: MineCatalogue = {
