@@ -28,3 +28,4 @@ export * from "./auto-travel";
 export * from "./funding";
 export * from "./orchard";
 export * from "./neighbor";
+export * from "./sea-battle";

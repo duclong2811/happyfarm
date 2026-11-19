@@ -26,6 +26,8 @@ export type DomainErrorCode =
   /** A place an actor can be, or a walk between two of them, is not well formed. */
   | "INVALID_ANCHOR"
   | "INVALID_ECONOMY_MUTATION"
+  /** A sea battle's setup or a player's inputs to one are not well formed. */
+  | "INVALID_SEA_BATTLE"
   | "INVALID_PLOT"
   | "INVALID_ROTATION"
   | "INVALID_FOOTPRINT"
