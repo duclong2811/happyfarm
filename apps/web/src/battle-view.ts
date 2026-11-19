@@ -274,12 +274,16 @@ export function openBattleView(options: BattleViewOptions): BattleView {
     endTitle.textContent = translate("battle.sending");
     endText.textContent = "";
     endButton.disabled = true;
-    const local = state.outcome === null ? null : seaBattleResult(state);
+    // Left to the crew: the rest of the fight is played out here too, with no more orders, exactly as
+    // the server will replay it - so the bars show what the server will say.
+    while (state.outcome === null) stepSeaBattle(state, []);
+    previous = state.ships.map((ship) => ({ x: ship.x, z: ship.z, heading: ship.heading }));
+    updateHud();
+    const local = seaBattleResult(state);
     try {
       const verdict = (await options.submit(orders.recorded)) ?? local;
-      const outcome = verdict?.outcome ?? "TIMEOUT";
-      endTitle.textContent = translate(`battle.outcome.${outcome}` as MessageKey);
-      endText.textContent = translate("battle.hullLeft", { hull: verdict?.playerHull ?? 0, hullMax: options.setup.player.hullMax });
+      endTitle.textContent = translate(`battle.outcome.${verdict.outcome}` as MessageKey);
+      endText.textContent = translate("battle.hullLeft", { hull: verdict.playerHull, hullMax: options.setup.player.hullMax });
     } catch (error: unknown) {
       endTitle.textContent = translate("battle.failed");
       endText.textContent = options.describeError(error);
