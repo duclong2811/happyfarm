@@ -245,14 +245,17 @@ a catch the server rolled when it left; the player collects it into the warehous
 
 | Monster | Fights by | Lv 1 hull, speed | Material |
 | --- | --- | --- | --- |
-| Thuồng luồng (water serpent) | rams, fast and nimble | 100, 8 | Vảy thuồng luồng (scale) |
-| Bạch tuộc khổng lồ (giant octopus) | rams, slow and heavy | 160, 6 | Xúc tu (tentacle) |
-| Cua đá khổng lồ (giant rock crab) | rams, armoured, turns slowly | 200, 5.5 | Mai cua đá (shell) |
-| Kình ngư (leviathan fish) | rams, the fastest | 120, 9.5 | Xương kình ngư (bone) |
+| Thuồng luồng (water serpent) | rams, nimble | 100, 8 | Vảy thuồng luồng (scale) |
+| Bạch tuộc khổng lồ (giant octopus) | rams, heavy | 110, 7.2 | Xúc tu (tentacle) |
+| Cua đá khổng lồ (giant rock crab) | rams, slow | 105, 5.6 | Mai cua đá (shell) |
+| Kình ngư (leviathan fish) | rams, the fastest | 100, 9.5 | Xương kình ngư (bone) |
 | Sứa lửa (fire jellyfish) | spits fire like a gun, slow | 80, 5, 2 "guns" | Ngọc sứa (pearl) |
 
-- Levels 1 to 3. Level 2 has 2.2x the hull and a little more speed; level 3 has 4x the hull, more
-  speed and more size. Level 2 monsters appear from player level 25, level 3 from 45.
+- Levels 1 to 3. Level 2 has twice the hull and a little more speed; level 3 has 3.2 times the hull,
+  more speed and more size. Level 2 monsters appear from player level 25, level 3 from 45.
+- Balanced by simulation (`tests/game-data/monsters.test.ts`, the test's attentive gunner over eight
+  seeds): a rank-1 warship beats every level-1 monster most times, a rank-2 warship every level-2,
+  a rank-3 warship every level-3; a ship a level short mostly loses.
 - A ship that fights must have guns (warship or merchant ship), be at its dock and float.
 - Each won fight pays:
 
@@ -283,6 +286,21 @@ a catch the server rolled when it left; the player collects it into the warehous
   - rank 4: 2 of each, level 3.
 - Gold, wood and ore prices stay as in F1.
 - The practice monster of F0 gives way to these real hunts.
+
+### Built (F3 server, 2026-11-20)
+
+- Game data: `packages/game-data/src/monsters` (kinds, levels, `huntRoster`, `monsterBattle`,
+  materials, `upgradeMaterials`); the 15 materials in the item registry.
+- Migration `0053_monster_hunts.sql`: `monster_hunts` (one fight a player, the planned setup and
+  the ship's version), `monster_kills` (one row a window's slot), the ledger rebuilt with
+  `MONSTER_BOUNTY` pointing at the ship that won.
+- Use cases (`packages/application/src/hunts.ts`): `GetHunts`, `StartHunt`, `FightHunt` (the
+  server's replay decides; a ship changed since the fight was planned voids it), `MergeMaterials`.
+  Requests: `GET /hunts`, `POST /hunts/start { slot, shipId }`, `/hunts/fight { inputs }`,
+  `/materials/merge { itemDefinitionId }`.
+- A win writes the hunt's outcome, the hull, the kill, the gold (ledger), the wood, ore and material
+  (warehouse room permitting) and the experience in one batch, under a receipt keyed by window and
+  slot. Ship upgrades now charge the five materials through the same purchase batch as wood and ore.
 
 ## Questions still open
 

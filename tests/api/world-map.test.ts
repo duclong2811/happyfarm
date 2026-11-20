@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CreateFarm, type ActorContext, type AuthenticationPort, type Clock, type IdGenerator, type ShipCatalogue, type WorldChartPort } from "@happy-farm/application";
+import { CreateFarm, type ActorContext, type AuthenticationPort, type Clock, type IdGenerator, type HuntCatalogue, type ShipCatalogue, type WorldChartPort } from "@happy-farm/application";
 import {
   parseConstructionId,
   parseCropInstanceId,
@@ -14,7 +14,7 @@ import {
   type PlayerId,
   type TreeInstanceId
 } from "@happy-farm/domain";
-import { chartedArchipelagos, findSeaSlot, fishingGround, rollTripCatch, seaChart, shipClassById, voyageSeconds } from "@happy-farm/game-data";
+import { chartedArchipelagos, findSeaSlot, fishingGround, MONSTER_KINDS, monsterMaterialId, rollTripCatch, seaChart, shipClassById, voyageSeconds } from "@happy-farm/game-data";
 import {
   createSeaBattle,
   cumulativeXpForLevel,
@@ -32,10 +32,13 @@ import {
   GetWorldChartResponseSchema,
   VisitWorldPlaceResponseSchema,
   FleetResponseSchema,
-  FightAmbushResponseSchema
+  FightAmbushResponseSchema,
+  HuntsResponseSchema,
+  FightHuntResponseSchema,
+  MergeMaterialResponseSchema
 } from "@happy-farm/contracts";
 import { createHandler } from "../../workers/api/src/handler";
-import { gameDataShipCatalogue } from "../../workers/api/src/runtime";
+import { gameDataHuntCatalogue, gameDataShipCatalogue } from "../../workers/api/src/runtime";
 import { D1FarmMemberRepository, D1FarmRepository, D1PlayerRepository, D1WorldSlotRepository, D1WorldVisitRepository } from "../../workers/api/src/d1-repositories";
 import {
   GameDataConstructionDefinitions,
@@ -566,6 +569,7 @@ describe("the world map", () => {
     if (lineBoat === null) throw new Error("no line boat");
     // Enough of everything for two upgrades of the lent rowboat: only the ship itself can decide the race.
     equip(1, lineBoat.requiredPlayerLevel, 50_000, 300, 100);
+    stockMaterials(1, 1, 4);
     const results = await Promise.all([
       request("/ships/upgrade", { shipId: shipOf(1), requestId: "race-request-1" }),
       request("/ships/upgrade", { shipId: shipOf(1), requestId: "race-request-2" })
@@ -577,6 +581,9 @@ describe("the world map", () => {
     expect(view.ships).toHaveLength(1);
     expect(view.ship).toMatchObject({ shipId: shipOf(1), berth: 1, lent: false, classId: lineBoat.id, role: "FISHING", rank: 2, hull: lineBoat.hull });
     expect(holdings(1)).toEqual({ gold: 50_000 - lineBoat.buildCost.gold, wood: 300 - lineBoat.buildCost.wood, ore: 100 - lineBoat.buildCost.ore, ledger: 1 });
+    // The upgrade took two of every monster's level-1 material.
+    for (const kind of MONSTER_KINDS) expect(fishOf(1, monsterMaterialId(kind, 1))).toBe(2);
+    expect(view.next?.cost.materials.map((entry) => entry.itemDefinitionId)).toEqual(["item_wood", "item_ore", ...MONSTER_KINDS.map((kind) => monsterMaterialId(kind, 2))]);
     // Another player's ship, or a ship id that is not one's own, is not found.
     expect(await codeOf(await request("/ships/upgrade", { shipId: shipOf(2), requestId: "upgrade-other-1" }))).toBe("RESOURCE_NOT_FOUND");
     expect(await codeOf(await request("/ships/upgrade", { shipId: shipOf(1, 2), requestId: "upgrade-empty-1" }))).toBe("RESOURCE_NOT_FOUND");
@@ -653,6 +660,14 @@ describe("the world map", () => {
     expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "fleet-voyage-6", shipId: shipOf(2) }))).toBe("RESOURCE_NOT_FOUND");
   });
 
+  /** Gives player `n` `count` of every monster material at `level` (what upgrades ask for). */
+  function stockMaterials(n: number, level: number, count: number): void {
+    const item = db.sqlite.prepare(
+      "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = excluded.quantity, version = inventory_items.version + 1"
+    );
+    for (const kind of MONSTER_KINDS) item.run(playerId(n), monsterMaterialId(kind, level), count, NOW);
+  }
+
   /** Player `n`'s fish of one kind in the warehouse. */
   function fishOf(n: number, itemId: string): number {
     return (db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?").get(playerId(n), itemId) as { quantity: number } | undefined)?.quantity ?? 0;
@@ -717,6 +732,135 @@ describe("the world map", () => {
     equip(1, 10, 5_000, 300, 200);
     expect((await request("/ships/build", { role: "WAR", requestId: "trip-build-2" })).status).toBe(200);
     expect(await codeOf(await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-9" }))).toBe("INVALID_INPUT");
+  });
+
+  /** The game's monsters, with every monster's hull set to `hull`: a win or a loss on demand. */
+  function monstersOf(hull: number): HuntCatalogue {
+    return {
+      ...gameDataHuntCatalogue,
+      battle: (kind, level) => {
+        const battle = gameDataHuntCatalogue.battle(kind, level);
+        return battle === null ? null : { ...battle, hull };
+      }
+    };
+  }
+
+  function buildWithMonsters(hull: number): void {
+    handle = createHandler({
+      db,
+      authenticator: auth,
+      ids,
+      fingerprints: new Sha256Fingerprint(),
+      cropDefinitions: new GameDataCropDefinitions(),
+      itemDefinitions: new GameDataItemDefinitions(),
+      currencyDefinitions: new GameDataCurrencyDefinitions(),
+      shopEntries: new GameDataShopEntries(),
+      plotDefinitions: new GameDataPlotDefinitions(),
+      treeDefinitions: new GameDataTreeDefinitions(),
+      constructionDefinitions: new GameDataConstructionDefinitions(),
+      progressionDefinition: gameDataProgressionDefinition,
+      starterWorld: gameDataStarterWorld,
+      terrain: gameDataTileTerrain,
+      landSale: gameDataLandSale,
+      islands: { choiceEnabled: true, builder: gameDataIslandGroundBuilder },
+      world: { chart: gameDataWorldChart, random: { roll: () => dice }, hunts: monstersOf(hull) },
+      clock
+    });
+  }
+
+  it("surfaces three monsters a window, plans a fight in a ship with guns, and pays a win once", async () => {
+    buildWithMonsters(1);
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const roster = HuntsResponseSchema.parse(await dataOf(await request("/hunts")));
+    expect(roster.monsters).toHaveLength(3);
+    expect(roster.monsters.every((monster) => !monster.defeated && monster.level === 1)).toBe(true);
+    expect(roster.hunt).toBeNull();
+    expect(Date.parse(roster.endsAt)).toBeGreaterThan(Date.parse(NOW));
+    // The lent rowboat has no guns.
+    expect(await codeOf(await request("/hunts/start", { slot: 0, shipId: shipOf(1), requestId: "hunt-request-1" }))).toBe("SHIP_UNARMED");
+    equip(1, 10, 5_000, 300, 200);
+    expect((await request("/ships/build", { role: "WAR", requestId: "hunt-sloop-1" })).status).toBe(200);
+    const planned = HuntsResponseSchema.parse(await dataOf(await request("/hunts/start", { slot: 0, shipId: shipOf(1), requestId: "hunt-request-2" })));
+    expect(planned.hunt).toMatchObject({ slot: 0, kind: roster.monsters[0]?.kind, level: 1, shipId: shipOf(1) });
+    expect(planned.hunt?.setup.pirates[0]?.hull).toBe(1);
+    expect(["BEAST", "SHIP"]).toContain(planned.hunt?.setup.pirates[0]?.behaviour);
+    // One fight at a time; the same request again is the same fight.
+    expect(await codeOf(await request("/hunts/start", { slot: 1, shipId: shipOf(1), requestId: "hunt-request-3" }))).toBe("HUNT_OPEN");
+    expect(HuntsResponseSchema.parse(await dataOf(await request("/hunts/start", { slot: 0, shipId: shipOf(1), requestId: "hunt-request-2" }))).hunt).toEqual(planned.hunt);
+
+    const setup = planned.hunt?.setup;
+    if (setup === undefined) throw new Error("no fight");
+    const played = playOnDevice(setup);
+    expect(played.result.outcome).toBe("WON");
+    const before = holdings(1);
+    const fought = FightHuntResponseSchema.parse(await dataOf(await request("/hunts/fight", { inputs: played.inputs })));
+    expect(fought.battle).toEqual(played.result);
+    const kind = roster.monsters[0]?.kind as (typeof MONSTER_KINDS)[number];
+    expect(fought.bounty).toMatchObject({ gold: 80, xpAwarded: 40 });
+    expect(fought.bounty?.materials).toContainEqual({ itemDefinitionId: monsterMaterialId(kind, 1), quantity: 3, lost: 0 });
+    expect(fought.hunts.monsters[0]?.defeated).toBe(true);
+    expect(fought.hunts.hunt).toBeNull();
+    expect(holdings(1).gold).toBe(before.gold + 80);
+    expect(fishOf(1, monsterMaterialId(kind, 1))).toBe(3);
+    expect(db.sqlite.prepare("SELECT delta, reference_type, reference_id FROM economy_ledger WHERE reason = 'MONSTER_BOUNTY'").all()).toEqual([{ delta: 80, reference_type: "SHIP", reference_id: shipOf(1) }]);
+    // Asked again it is decided and pays nothing; the beaten monster cannot be fought again this window.
+    expect(FightHuntResponseSchema.parse(await dataOf(await request("/hunts/fight", { inputs: played.inputs }))).battle).toBeNull();
+    expect(await codeOf(await request("/hunts/start", { slot: 0, shipId: shipOf(1), requestId: "hunt-request-4" }))).toBe("HUNT_DEFEATED");
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'MONSTER_BOUNTY'").get()).toEqual({ n: 1 });
+    expect(fishOf(1, monsterMaterialId(kind, 1))).toBe(3);
+    // The next window brings a fresh roster.
+    advance(4 * 60 * 60);
+    expect(HuntsResponseSchema.parse(await dataOf(await request("/hunts"))).monsters.every((monster) => !monster.defeated)).toBe(true);
+  });
+
+  it("lets a monster win, voids a fight whose ship changed, and refuses strangers' ships and bad requests", async () => {
+    buildWithMonsters(5_000);
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    equip(1, 10, 5_000, 300, 200);
+    expect((await request("/ships/build", { role: "WAR", requestId: "hunt-sloop-2" })).status).toBe(200);
+    expect(await codeOf(await request("/hunts/start", { slot: 0, shipId: shipOf(2), requestId: "hunt-request-5" }))).toBe("RESOURCE_NOT_FOUND");
+    expect(await codeOf(await request("/hunts/start", { slot: 9, shipId: shipOf(1), requestId: "hunt-request-6" }))).toBe("RESOURCE_NOT_FOUND");
+    for (const body of [{ slot: 0, requestId: "hunt-request-7" }, { slot: -1, shipId: shipOf(1), requestId: "hunt-request-7" }, { slot: 0, shipId: shipOf(1), requestId: "hunt-request-7", level: 1 }]) {
+      expect((await request("/hunts/start", body)).status).toBe(400);
+    }
+    expect((await request("/hunts/start", { slot: 0, shipId: shipOf(1), requestId: "hunt-request-8" })).status).toBe(200);
+    // A captain who gives no orders against a monster that cannot sink: the hull pays, nothing is won.
+    const lost = FightHuntResponseSchema.parse(await dataOf(await request("/hunts/fight", { inputs: [] })));
+    expect(lost.battle?.outcome).not.toBe("WON");
+    expect(lost.bounty).toBeNull();
+    expect(lost.hunts.monsters[0]?.defeated).toBe(false);
+    const hull = FleetResponseSchema.parse(await dataOf(await request("/ships/fleet"))).ship.hull;
+    expect(hull).toBe(lost.battle?.playerHull);
+    expect(hull).toBeLessThan(150);
+    // Mended between planning and fighting, the ship is not the one that set out: the fight is void.
+    expect((await request("/hunts/start", { slot: 0, shipId: shipOf(1), requestId: "hunt-request-9" })).status).toBe(hull > 0 ? 200 : 409);
+    if (hull > 0) {
+      expect((await request("/ships/repair", { requestId: "hunt-repair-1", shipId: shipOf(1) })).status).toBe(200);
+      const voided = FightHuntResponseSchema.parse(await dataOf(await request("/hunts/fight", { inputs: [] })));
+      expect(voided.battle).toBeNull();
+      expect(voided.hunts.hunt).toBeNull();
+      expect(FleetResponseSchema.parse(await dataOf(await request("/ships/fleet"))).ship.hull).toBe(150);
+    }
+    auth.setActor(null);
+    expect((await request("/hunts")).status).toBe(401);
+  });
+
+  it("merges ten of a material into one of the next level, once per request", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const scale1 = monsterMaterialId("thuong_luong", 1);
+    const scale2 = monsterMaterialId("thuong_luong", 2);
+    stockMaterials(1, 1, 9);
+    expect(await codeOf(await request("/materials/merge", { itemDefinitionId: scale1, requestId: "merge-request-1" }))).toBe("INSUFFICIENT_ITEMS");
+    stockMaterials(1, 1, 23);
+    const merged = MergeMaterialResponseSchema.parse(await dataOf(await request("/materials/merge", { itemDefinitionId: scale1, requestId: "merge-request-2" })));
+    expect(merged).toEqual({ from: { itemDefinitionId: scale1, quantity: 13 }, to: { itemDefinitionId: scale2, quantity: 1 } });
+    expect((await request("/materials/merge", { itemDefinitionId: scale1, requestId: "merge-request-2" })).status).toBe(200);
+    expect([fishOf(1, scale1), fishOf(1, scale2)]).toEqual([13, 1]);
+    expect(await codeOf(await request("/materials/merge", { itemDefinitionId: monsterMaterialId("thuong_luong", 3), requestId: "merge-request-3" }))).toBe("INVALID_INPUT");
+    expect((await request("/materials/merge", { itemDefinitionId: "item_wood", requestId: "merge-request-4" })).status).toBe(400);
   });
 
   it("sails for as long as the distance takes, from wherever the ship lies, and comes home at once", async () => {

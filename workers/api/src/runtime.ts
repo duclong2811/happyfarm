@@ -77,6 +77,7 @@ import type {
   MineCatalogue,
   ShipCatalogue,
   ShipPrice,
+  HuntCatalogue,
   TileTerrainLookup,
   LandSaleLookup,
   WorkAreaGroundLookup,
@@ -147,7 +148,7 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
-import { ambushBounty, chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, DOCK_TIERS, FISHING_GROUNDS, fishingGround, rollTripCatch, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import { ambushBounty, chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, DOCK_TIERS, FISHING_GROUNDS, fishingGround, rollTripCatch, upgradeMaterials, huntWindow, HUNT_WINDOW_SECONDS, huntRoster, monsterKind, monsterLevel, monsterBattle, monsterMaterialId, parseMonsterMaterial, MAX_MONSTER_LEVEL, MATERIAL_MERGE_COUNT, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
 import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
@@ -821,13 +822,46 @@ export const gameDataWorldChart: WorldChartPort = {
 };
 
 /** Game data's gold, wood and ore, as the ledger and the inventory take them. */
-function shipPrice(cost: { readonly gold: number; readonly wood: number; readonly ore: number }): ShipPrice {
+function shipPrice(cost: { readonly gold: number; readonly wood: number; readonly ore: number }, extra: Readonly<Record<string, number>> = {}): ShipPrice {
   return {
     currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
     gold: cost.gold,
-    materials: { [SHIP_WOOD_ITEM_ID]: cost.wood, [SHIP_ORE_ITEM_ID]: cost.ore }
+    materials: { [SHIP_WOOD_ITEM_ID]: cost.wood, [SHIP_ORE_ITEM_ID]: cost.ore, ...extra }
   };
 }
+
+/** Sea monsters (F3), from game data. */
+export const gameDataHuntCatalogue: HuntCatalogue = {
+  window: (nowMs) => huntWindow(nowMs),
+  windowEndsAt: (window) => (window + 1) * HUNT_WINDOW_SECONDS * 1000,
+  roster: (playerId, window, playerLevel) => huntRoster(playerId, window, playerLevel),
+  monsterId: (kind) => monsterKind(kind)?.id ?? null,
+  battle: (kind, level) => {
+    const definition = monsterKind(kind);
+    return definition === null || monsterLevel(level) === null ? null : monsterBattle(definition.kind, level);
+  },
+  bounty: (kind, level) => {
+    const definition = monsterKind(kind);
+    const scale = monsterLevel(level);
+    if (definition === null || scale === null) throw new Error("Unknown monster");
+    return {
+      currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
+      gold: scale.bounty.gold,
+      materials: { [SHIP_WOOD_ITEM_ID]: scale.bounty.wood, [SHIP_ORE_ITEM_ID]: scale.bounty.ore, [monsterMaterialId(definition.kind, level)]: scale.drop },
+      xp: scale.bounty.xp
+    };
+  },
+  material: (kind, level) => {
+    const definition = monsterKind(kind);
+    const scale = monsterLevel(level);
+    return definition === null || scale === null ? null : { itemDefinitionId: monsterMaterialId(definition.kind, level), quantity: scale.drop };
+  },
+  mergeInto: (itemDefinitionId) => {
+    const parsed = parseMonsterMaterial(itemDefinitionId);
+    return parsed === null || parsed.level >= MAX_MONSTER_LEVEL ? null : monsterMaterialId(parsed.kind, parsed.level + 1);
+  },
+  mergeCount: MATERIAL_MERGE_COUNT
+};
 
 export const gameDataShipCatalogue: ShipCatalogue = {
   classes: () =>
@@ -841,7 +875,8 @@ export const gameDataShipCatalogue: ShipCatalogue = {
       hull: entry.hull,
       cannons: entry.cannons,
       hold: entry.hold,
-      buildCost: shipPrice(entry.buildCost)
+      // Every upgrade (rank 2 and up) also takes all five monsters' materials (F3).
+      buildCost: shipPrice(entry.buildCost, upgradeMaterials(entry.rank))
     })),
   grounds: () => FISHING_GROUNDS.map((entry) => ({ id: entry.id, seconds: entry.seconds, minRank: entry.minRank })),
   rollCatch: (groundId, hold, roll) => {

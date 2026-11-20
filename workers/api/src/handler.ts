@@ -8,6 +8,12 @@
   UpgradeShip,
   UpgradeDock,
   StartFishingTrip,
+  GetHunts,
+  StartHunt,
+  FightHunt,
+  MergeMaterials,
+  type HuntDependencies,
+  type HuntsView,
   CollectFishingTrip,
   RecallFishingTrip,
   StartVoyage,
@@ -31,6 +37,7 @@
   type IslandGroundBuilder,
   type WorldChartPort,
   type ShipCatalogue,
+  type HuntCatalogue,
   GetPlayerAppearance,
   SetPlayerAppearance,
   type PlayerAppearanceView,
@@ -190,6 +197,11 @@ import {
   UpgradeShipRequestSchema,
   UpgradeDockRequestSchema,
   StartTripRequestSchema,
+  StartHuntRequestSchema,
+  MergeMaterialRequestSchema,
+  type HuntsResponse,
+  type FightHuntResponse,
+  type MergeMaterialResponse,
   CollectTripRequestSchema,
   RecallTripRequestSchema,
   StartVoyageRequestSchema,
@@ -333,7 +345,7 @@ import {
   ,type NeighborSnapshotDTO
 } from "@happy-farm/contracts";
 import { listBuildCatalog } from "./build-catalog";
-import { farmIslandGeography, islandFishingCatalogue, gameDataCharacterCatalogue, gameDataShipCatalogue, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
+import { farmIslandGeography, islandFishingCatalogue, gameDataCharacterCatalogue, gameDataShipCatalogue, gameDataHuntCatalogue, islandStarterWorld, gameDataAquacultureDefinition, gameDataAutoAnchors, gameDataWalk, listWorldObjectDefinitions } from "./runtime";
 import { rejectsCrossOriginRequest } from "./origin-guard";
 import type { SessionPort } from "./session";
 import {
@@ -388,6 +400,7 @@ import {
   D1WorldSlotRepository,
   D1WorldVisitRepository,
   D1ShipRepository,
+  D1HuntRepository,
   D1FarmRepository,
   D1PlayerAppearanceRepository,
   D1FarmTileRepository,
@@ -462,6 +475,8 @@ export interface HandlerDependencies {
     readonly ships?: ShipCatalogue;
     /** The dice for fishing trips' catches; else gathering's or fishing's own entropy. */
     readonly random?: RandomPort;
+    /** Sea monsters; the game data's own unless a test supplies another. */
+    readonly hunts?: HuntCatalogue;
   };
   /** The manual aquaculture definition; omitted hosts use the shipped game-data value. */
   readonly aquaculture?: AquacultureDefinition;
@@ -874,6 +889,21 @@ function toFleetShipDTO(view: ShipView): FleetResponse["ship"] {
   };
 }
 
+function toHuntsDTO(view: HuntsView): HuntsResponse {
+  return {
+    readAt: view.readAt,
+    endsAt: view.endsAt,
+    monsters: view.monsters.map((monster) => ({ ...monster, reward: { ...monster.reward, materials: monster.reward.materials.map((entry) => ({ ...entry })) } })),
+    hunt:
+      view.hunt === null
+        ? null
+        : {
+            ...view.hunt,
+            setup: { seed: view.hunt.setup.seed, player: { ...view.hunt.setup.player }, pirates: view.hunt.setup.pirates.map((pirate) => ({ ...pirate })) }
+          }
+  };
+}
+
 function toFleetDTO(view: FleetView): FleetResponse {
   return {
     readAt: view.readAt,
@@ -1157,6 +1187,9 @@ function errorStatus(code: ErrorCode): number {
     case "SHIP_MAX_CLASS":
     case "DOCK_FULL":
     case "TRIP_NOT_BACK":
+    case "HUNT_OPEN":
+    case "HUNT_DEFEATED":
+    case "SHIP_UNARMED":
     case "DOCK_MAX_TIER":
     case "VOYAGE_UNDERWAY":
     case "VOYAGE_NOT_ARRIVED":
@@ -1781,6 +1814,15 @@ export function createHandler(host: HandlerDependencies) {
   const upgradeShip = shipDependencies === null ? null : new UpgradeShip(shipDependencies);
   const upgradeDock = shipDependencies === null ? null : new UpgradeDock(shipDependencies);
   const startTrip = shipDependencies?.random === undefined ? null : new StartFishingTrip(shipDependencies);
+  // Sea monsters (F3) fight from the same docks, with the same dice.
+  const huntDependencies: HuntDependencies | null =
+    shipDependencies === null || shipDependencies.random === undefined
+      ? null
+      : { ...shipDependencies, hunts: new D1HuntRepository(dependencies.db), huntCatalogue: dependencies.world?.hunts ?? gameDataHuntCatalogue };
+  const getHunts = huntDependencies === null ? null : new GetHunts(huntDependencies);
+  const startHunt = huntDependencies === null ? null : new StartHunt(huntDependencies);
+  const fightHunt = huntDependencies === null ? null : new FightHunt(huntDependencies);
+  const mergeMaterials = huntDependencies === null ? null : new MergeMaterials(huntDependencies);
   const collectTrip = shipDependencies === null ? null : new CollectFishingTrip(shipDependencies);
   const recallTrip = shipDependencies === null ? null : new RecallFishingTrip(shipDependencies);
   const startVoyage = shipDependencies === null ? null : new StartVoyage(shipDependencies);
@@ -2455,6 +2497,55 @@ export function createHandler(host: HandlerDependencies) {
                   }
           }
         };
+        return jsonResponse(body);
+      }
+
+      if (getHunts !== null && request.method === "GET" && url.pathname === "/hunts") {
+        const body: ApiSuccess<HuntsResponse> = { ok: true, data: toHuntsDTO(await getHunts.execute(actor)) };
+        return jsonResponse(body);
+      }
+
+      if (startHunt !== null && request.method === "POST" && url.pathname === "/hunts/start") {
+        const parsed = StartHuntRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<HuntsResponse> = { ok: true, data: toHuntsDTO(await startHunt.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (fightHunt !== null && request.method === "POST" && url.pathname === "/hunts/fight") {
+        const parsed = FightAmbushRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const inputs = parsed.data.inputs.map(([tick, action, aim]) => {
+          const name = SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER";
+          return aim === undefined ? { tick, action: name } : { tick, action: name, aim };
+        });
+        const outcome = await fightHunt.execute(actor, { inputs });
+        const body: ApiSuccess<FightHuntResponse> = {
+          ok: true,
+          data: {
+            hunts: toHuntsDTO(outcome.hunts),
+            battle: outcome.battle === null ? null : { ...outcome.battle, pirateHulls: [...outcome.battle.pirateHulls], stats: { ...outcome.battle.stats } },
+            bounty:
+              outcome.bounty === null
+                ? null
+                : {
+                    currencyDefinitionId: outcome.bounty.currencyDefinitionId,
+                    gold: outcome.bounty.gold,
+                    materials: outcome.bounty.materials.map((entry) => ({ ...entry })),
+                    xpAwarded: outcome.bounty.xpAwarded,
+                    leveledUp: outcome.bounty.leveledUp,
+                    progression: { ...outcome.bounty.progression }
+                  }
+          }
+        };
+        return jsonResponse(body);
+      }
+
+      if (mergeMaterials !== null && request.method === "POST" && url.pathname === "/materials/merge") {
+        const parsed = MergeMaterialRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const merged = await mergeMaterials.execute(actor, parsed.data);
+        const body: ApiSuccess<MergeMaterialResponse> = { ok: true, data: { from: { ...merged.from }, to: { ...merged.to } } };
         return jsonResponse(body);
       }
 

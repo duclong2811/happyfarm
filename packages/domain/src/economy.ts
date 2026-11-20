@@ -79,7 +79,9 @@ export type EconomyReason =
   /** A won pirate fight's bounty (W5c): gold in, decided by the server's replay of the fight. */
   | "PIRATE_BOUNTY"
   /** Raising the dock a tier (F1): gold out, more berths for ships from then on. */
-  | "DOCK_UPGRADE";
+  | "DOCK_UPGRADE"
+  /** A won sea-monster fight's bounty (F3): gold in, decided by the server's replay of the fight. */
+  | "MONSTER_BOUNTY";
 export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION" | "WAREHOUSE" | "MINE" | "SHIP" | "DOCK";
 
 /**
@@ -114,7 +116,9 @@ const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   // A bounty points at the ship that won it.
   PIRATE_BOUNTY: "SHIP",
   // A dock upgrade points at the player's dock.
-  DOCK_UPGRADE: "DOCK"
+  DOCK_UPGRADE: "DOCK",
+  // A monster's bounty points at the ship that won it, as a pirate's does.
+  MONSTER_BOUNTY: "SHIP"
 };
 
 /** The one reference kind a reason may carry. The mapping is total, or the reason is not one. */

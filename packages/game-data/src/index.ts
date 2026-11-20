@@ -11,6 +11,7 @@ export * from "./fishing";
 export * from "./forestry";
 export * from "./items";
 export * from "./mines";
+export * from "./monsters";
 export * from "./ships";
 export * from "./pirates";
 export * from "./plots";

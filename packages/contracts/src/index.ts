@@ -2083,6 +2083,9 @@ export const ErrorCodeSchema = z.enum([
   "SHIP_LEVEL_REQUIRED",
   "SHIP_RANK_REQUIRED",
   "TRIP_NOT_BACK",
+  "HUNT_OPEN",
+  "HUNT_DEFEATED",
+  "SHIP_UNARMED",
   "DOCK_FULL",
   "DOCK_MAX_TIER",
   "DOCK_LEVEL_REQUIRED",
@@ -2352,7 +2355,9 @@ export const BattleShipSpecDTOSchema = z
     speed: z.number().positive().max(100),
     turn: z.number().int().positive().max(512),
     radius: z.number().positive().max(50),
-    spread: z.number().int().nonnegative().max(1024)
+    spread: z.number().int().nonnegative().max(1024),
+    /** A sea monster rams rather than fights with guns (F3); absent for a ship. */
+    behaviour: z.enum(["SHIP", "BEAST"]).optional()
   })
   .strict();
 export const AmbushStatusSchema = z.enum(["PENDING", "WON", "LOST", "FLED", "TIMEOUT"]);
@@ -2472,6 +2477,62 @@ export const FightAmbushResponseSchema = z
   .object({ fleet: FleetResponseSchema, battle: SeaBattleResultDTOSchema.nullable(), bounty: AmbushBountyDTOSchema.nullable() })
   .strict();
 export type FightAmbushResponse = z.infer<typeof FightAmbushResponseSchema>;
+
+/**
+ * Sea-monster hunts (F3, docs/design/FLEET.md). The client names a roster slot and one of its own
+ * ships to fight with, sends its fight's orders, or names a material to merge; the monsters, their
+ * levels, the seed and every reward are the server's.
+ */
+const MonsterKindSchema = z.string().regex(/^[a-z]+(?:_[a-z]+)*$/).max(40);
+const MonsterIdSchema = z.string().regex(/^monster_[a-z]+(?:_[a-z]+)*$/).max(60);
+const HuntSlotSchema = z.number().int().min(0).max(15);
+const RewardItemsSchema = z.array(z.object({ itemDefinitionId: z.string().min(1).max(120), quantity: z.number().int().positive() }).strict()).max(8);
+export const HuntMonsterDTOSchema = z
+  .object({
+    slot: HuntSlotSchema,
+    kind: MonsterKindSchema,
+    level: z.number().int().min(1).max(16),
+    monsterId: MonsterIdSchema,
+    defeated: z.boolean(),
+    reward: z.object({ gold: z.number().int().nonnegative(), xp: z.number().int().nonnegative(), materials: RewardItemsSchema }).strict()
+  })
+  .strict();
+export const OpenHuntDTOSchema = z
+  .object({
+    slot: HuntSlotSchema,
+    kind: MonsterKindSchema,
+    level: z.number().int().min(1).max(16),
+    monsterId: MonsterIdSchema,
+    shipId: ShipIdSchema,
+    setup: z
+      .object({ seed: z.number().int().min(0).max(4_294_967_295), player: BattleShipSpecDTOSchema, pirates: z.array(BattleShipSpecDTOSchema).min(1).max(6) })
+      .strict()
+  })
+  .strict();
+export const HuntsResponseSchema = z
+  .object({
+    readAt: z.iso.datetime(),
+    /** When this roster sinks and the next surfaces. */
+    endsAt: z.iso.datetime(),
+    monsters: z.array(HuntMonsterDTOSchema).max(8),
+    hunt: OpenHuntDTOSchema.nullable()
+  })
+  .strict();
+export type HuntsResponse = z.infer<typeof HuntsResponseSchema>;
+export const StartHuntRequestSchema = z.object({ slot: HuntSlotSchema, shipId: ShipIdSchema, requestId: RequestIdSchema }).strict();
+export const FightHuntResponseSchema = z
+  .object({ hunts: HuntsResponseSchema, battle: SeaBattleResultDTOSchema.nullable(), bounty: AmbushBountyDTOSchema.nullable() })
+  .strict();
+export type FightHuntResponse = z.infer<typeof FightHuntResponseSchema>;
+const MonsterMaterialIdSchema = z.string().regex(/^item_monster_[a-z]+_[0-9]{1,2}$/);
+export const MergeMaterialRequestSchema = z.object({ itemDefinitionId: MonsterMaterialIdSchema, requestId: RequestIdSchema }).strict();
+export const MergeMaterialResponseSchema = z
+  .object({
+    from: z.object({ itemDefinitionId: MonsterMaterialIdSchema, quantity: z.number().int().nonnegative() }).strict(),
+    to: z.object({ itemDefinitionId: MonsterMaterialIdSchema, quantity: z.number().int().positive() }).strict()
+  })
+  .strict();
+export type MergeMaterialResponse = z.infer<typeof MergeMaterialResponseSchema>;
 export type AmbushDTO = z.infer<typeof AmbushDTOSchema>;
 export type PublicIslandDTO = z.infer<typeof PublicIslandDTOSchema>;
 

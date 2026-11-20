@@ -77,6 +77,23 @@ export const itemRegistry = createItemRegistry([
   // Quặng is a new authoritative output. item_stone and the other legacy materials remain intact so
   // old inventory, warehouse upgrades, receipts and resource settlements are not rewritten.
   { id: "item_ore", displayNameKey: "item.ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  // Sea monsters' materials (docs/design/FLEET.md, F3): five kinds, three levels. Won in fights the
+  // server referees, merged ten to one up a level, and spent on ship upgrades. Not sold in the shop.
+  { id: "item_monster_scale_1", displayNameKey: "item.monster_scale_1.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_scale_2", displayNameKey: "item.monster_scale_2.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_scale_3", displayNameKey: "item.monster_scale_3.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_tentacle_1", displayNameKey: "item.monster_tentacle_1.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_tentacle_2", displayNameKey: "item.monster_tentacle_2.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_tentacle_3", displayNameKey: "item.monster_tentacle_3.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_shell_1", displayNameKey: "item.monster_shell_1.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_shell_2", displayNameKey: "item.monster_shell_2.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_shell_3", displayNameKey: "item.monster_shell_3.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_bone_1", displayNameKey: "item.monster_bone_1.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_bone_2", displayNameKey: "item.monster_bone_2.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_bone_3", displayNameKey: "item.monster_bone_3.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_pearl_1", displayNameKey: "item.monster_pearl_1.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_pearl_2", displayNameKey: "item.monster_pearl_2.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
+  { id: "item_monster_pearl_3", displayNameKey: "item.monster_pearl_3.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_stone", displayNameKey: "item.stone.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_copper_ore", displayNameKey: "item.copper_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },
   { id: "item_iron_ore", displayNameKey: "item.iron_ore.name", category: "MATERIAL", stackable: true, maxStack: MAX_ITEM_STACK },

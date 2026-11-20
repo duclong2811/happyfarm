@@ -159,6 +159,11 @@ import type {
   ,ShipBuild
   ,DockUpgrade
   ,FishingTripRecord
+  ,HuntRepository
+  ,HuntResolution
+  ,HuntStatus
+  ,MaterialMerge
+  ,MonsterHuntRecord
   ,TripCollection
   ,PlayerDockRecord
   ,VoyageRecord
@@ -1688,6 +1693,272 @@ export class D1ShipRepository implements ShipRepository {
           error.message.includes(receiptTrigger))
       ) {
         throw new ApplicationError("ECONOMY_CONFLICT", conflictMessage);
+      }
+      throw error;
+    }
+  }
+}
+
+interface MonsterHuntRow {
+  readonly player_id: string;
+  readonly ship_id: string;
+  readonly window_index: number;
+  readonly slot: number;
+  readonly kind: string;
+  readonly level: number;
+  readonly setup_json: string;
+  readonly ship_version: number;
+  readonly status: HuntStatus;
+  readonly request_id: string;
+  readonly version: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+/**
+ * A player's sea-monster fights (docs/design/FLEET.md, F3), the monsters they have beaten, and the
+ * merging of materials.
+ *
+ * A fight's outcome follows the ambush's shape: the hunt moves on one version with its outcome only
+ * over the ship's version the caller read, and the ship's hull follows only if the hunt now carries
+ * that outcome. A win adds the kill (one row a window's slot) and its bounty in the same batch, under a
+ * receipt written only if every piece landed exactly as planned.
+ */
+export class D1HuntRepository implements HuntRepository {
+  constructor(private readonly db: D1DatabaseLike) {}
+
+  async findHunt(playerId: PlayerId): Promise<MonsterHuntRecord | null> {
+    const row = await this.db.prepare("SELECT * FROM monster_hunts WHERE player_id = ?").bind(playerId).first<MonsterHuntRow>();
+    return row === null
+      ? null
+      : {
+          playerId: parsePlayerId(row.player_id),
+          shipId: parseShipId(row.ship_id),
+          window: row.window_index,
+          slot: row.slot,
+          kind: row.kind,
+          level: row.level,
+          setupJson: row.setup_json,
+          shipVersion: row.ship_version,
+          status: row.status,
+          requestId: row.request_id,
+          version: row.version,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        };
+  }
+
+  async listKills(playerId: PlayerId, window: number): Promise<readonly number[]> {
+    const { results } = await this.db.prepare("SELECT slot FROM monster_kills WHERE player_id = ? AND window_index = ? ORDER BY slot").bind(playerId, window).all<{ slot: number }>();
+    return results.map((row) => row.slot);
+  }
+
+  async startHunt(next: MonsterHuntRecord): Promise<boolean> {
+    // Written over a decided fight (or none), never over one still open.
+    const written = await this.db
+      .prepare(
+        "INSERT INTO monster_hunts (player_id, ship_id, window_index, slot, kind, level, setup_json, ship_version, status, request_id, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET ship_id = excluded.ship_id, window_index = excluded.window_index, slot = excluded.slot, kind = excluded.kind, level = excluded.level, setup_json = excluded.setup_json, ship_version = excluded.ship_version, status = 'OPEN', request_id = excluded.request_id, version = monster_hunts.version + 1, created_at = excluded.created_at, updated_at = excluded.updated_at WHERE monster_hunts.status <> 'OPEN' AND monster_hunts.version = excluded.version - 1"
+      )
+      .bind(next.playerId, next.shipId, next.window, next.slot, next.kind, next.level, next.setupJson, next.shipVersion, next.requestId, next.version, next.createdAt, next.updatedAt)
+      .run();
+    return (written.meta.changes ?? 0) === 1;
+  }
+
+  async resolveHunt(resolution: HuntResolution): Promise<boolean> {
+    if (resolution.hull === null) {
+      // A void fight: the hunt is closed and nothing else moves.
+      const closed = await this.db
+        .prepare("UPDATE monster_hunts SET status = ?, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND status = 'OPEN'")
+        .bind(resolution.outcome, resolution.at, resolution.playerId, resolution.expectedHuntVersion)
+        .run();
+      return (closed.meta.changes ?? 0) === 1;
+    }
+    const outcome: D1PreparedStatementLike[] = [
+      this.db
+        .prepare(
+          "UPDATE monster_hunts SET status = ?, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND status = 'OPEN' AND ship_id = ? AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND ship_id = ? AND version = ?)"
+        )
+        .bind(resolution.outcome, resolution.at, resolution.playerId, resolution.expectedHuntVersion, resolution.shipId, resolution.playerId, resolution.shipId, resolution.expectedShipVersion),
+      this.db
+        .prepare(
+          "UPDATE player_ships SET hull = ?, version = version + 1, updated_at = ? WHERE player_id = ? AND ship_id = ? AND version = ? AND EXISTS (SELECT 1 FROM monster_hunts WHERE player_id = ? AND version = ? AND status = ?)"
+        )
+        .bind(Math.max(0, Math.floor(resolution.hull)), resolution.at, resolution.playerId, resolution.shipId, resolution.expectedShipVersion, resolution.playerId, resolution.expectedHuntVersion + 1, resolution.outcome)
+    ];
+    const bounty = resolution.bounty;
+    const kill = resolution.kill;
+    if (bounty === null || kill === null) {
+      if (bounty !== null || kill !== null || resolution.outcome === "WON") throw new ApplicationError("INVALID_INPUT", "A won fight writes its kill and its bounty together");
+      const results = await this.db.batch(outcome);
+      return results.every((result) => (result.meta.changes ?? 0) === 1);
+    }
+    const { economy, award, receipt } = bounty;
+    if (
+      resolution.outcome !== "WON" ||
+      economy.playerId !== resolution.playerId ||
+      economy.reason !== "MONSTER_BOUNTY" ||
+      economy.referenceId !== resolution.shipId ||
+      economy.delta <= 0 ||
+      receipt.actorPlayerId !== resolution.playerId ||
+      receipt.resourceId !== economy.transactionId ||
+      (award !== null && award.playerId !== resolution.playerId) ||
+      bounty.additions.some((addition) => addition.playerId !== resolution.playerId || addition.quantity <= 0) ||
+      bounty.additions.length !== bounty.expectedInventory.length
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Bounty ownership does not match");
+    }
+    const stackGuards = bounty.additions.map(() => "COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) = ? AND COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) <= ? - ?");
+    const stackValues = bounty.additions.flatMap((addition, index) => [
+      addition.playerId,
+      addition.itemDefinitionId,
+      bounty.expectedInventory[index]?.quantity ?? 0,
+      addition.playerId,
+      addition.itemDefinitionId,
+      addition.maxQuantity,
+      addition.quantity
+    ]);
+    const statements: D1PreparedStatementLike[] = [
+      ...outcome,
+      // The kill: one row a window's slot, so a monster pays once whatever else is retried.
+      this.db
+        .prepare("INSERT INTO monster_kills (player_id, window_index, slot, kind, level, ship_id, killed_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(resolution.playerId, kill.window, kill.slot, kill.kind, kill.level, resolution.shipId, resolution.at),
+      this.db
+        .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
+        .bind(economy.playerId, economy.currencyDefinitionId, economy.createdAt, economy.createdAt),
+      this.db
+        .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(
+          economy.transactionId,
+          economy.playerId,
+          economy.currencyDefinitionId,
+          economy.delta,
+          economy.balanceBefore,
+          economy.balanceAfter,
+          economy.expectedWalletVersion,
+          economy.reason,
+          economy.referenceType,
+          economy.referenceId,
+          economy.requestId,
+          economy.createdAt
+        )
+    ];
+    if (award !== null) {
+      statements.push(
+        this.db
+          .prepare("INSERT OR IGNORE INTO player_progression (player_id, level, xp, progression_version, created_at, updated_at) VALUES (?, 1, 0, 1, ?, ?)")
+          .bind(award.playerId, award.timestamp, award.timestamp)
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM monster_hunts WHERE player_id = ? AND version = ? AND status = 'WON') AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND ship_id = ? AND version = ?) AND EXISTS (SELECT 1 FROM monster_kills WHERE player_id = ? AND window_index = ? AND slot = ?) AND EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND (? = 0 OR EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?))${stackGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          resolution.playerId,
+          resolution.expectedHuntVersion + 1,
+          resolution.playerId,
+          resolution.shipId,
+          resolution.expectedShipVersion + 1,
+          resolution.playerId,
+          kill.window,
+          kill.slot,
+          economy.playerId,
+          economy.currencyDefinitionId,
+          economy.balanceAfter,
+          economy.expectedWalletVersion + 1,
+          economy.transactionId,
+          economy.playerId,
+          award === null ? 0 : 1,
+          resolution.playerId,
+          award?.xpBefore ?? -1,
+          award?.expectedProgressionVersion ?? -1,
+          ...stackValues,
+          receipt.actorPlayerId,
+          receipt.operation,
+          receipt.requestId,
+          receipt.payloadFingerprint,
+          receipt.status,
+          receipt.resourceId,
+          receipt.responseJson,
+          receipt.createdAt
+        ),
+      ...bounty.additions.map((addition) =>
+        this.db
+          .prepare(
+            "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = inventory_items.quantity + excluded.quantity, updated_at = excluded.updated_at, version = inventory_items.version + 1"
+          )
+          .bind(addition.playerId, addition.itemDefinitionId, addition.quantity, addition.timestamp)
+      )
+    );
+    if (award !== null) {
+      statements.push(
+        this.db
+          .prepare("UPDATE player_progression SET level = ?, xp = ?, progression_version = progression_version + 1, updated_at = ? WHERE player_id = ? AND xp = ? AND progression_version = ?")
+          .bind(award.levelAfter, award.xpAfter, award.timestamp, award.playerId, award.xpBefore, award.expectedProgressionVersion)
+      );
+    }
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) throw new Error("Atomic monster bounty failed");
+      return true;
+    } catch (error: unknown) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("economy conflict") ||
+          error.message.includes("NOT NULL constraint failed: idempotency_keys") ||
+          error.message.includes("UNIQUE constraint failed: monster_kills") ||
+          error.message.includes("completed monster bounty idempotency requires its ledger row"))
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async mergeAtomically(merge: MaterialMerge, idempotency: IdempotencyRecord): Promise<void> {
+    const { removal, addition } = merge;
+    if (removal.playerId !== merge.playerId || addition.playerId !== merge.playerId || idempotency.actorPlayerId !== merge.playerId || removal.quantity <= 0 || addition.quantity <= 0) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Merge ownership does not match");
+    }
+    const statements: D1PreparedStatementLike[] = [
+      this.db
+        .prepare("UPDATE inventory_items SET quantity = quantity - ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity >= ?")
+        .bind(removal.quantity, removal.timestamp, removal.playerId, removal.itemDefinitionId, merge.expectedFrom.quantity, merge.expectedFrom.version, removal.quantity),
+      this.db
+        .prepare(
+          "INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) VALUES (?, ?, ?, ?, 1) ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = inventory_items.quantity + excluded.quantity, updated_at = excluded.updated_at, version = inventory_items.version + 1"
+        )
+        .bind(addition.playerId, addition.itemDefinitionId, addition.quantity, addition.timestamp),
+      // The receipt: only if the materials went out and the merged one came in, exactly.
+      this.db
+        .prepare(
+          "INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) = ? AND COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) = ? THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(
+          removal.playerId,
+          removal.itemDefinitionId,
+          merge.expectedFrom.quantity - removal.quantity,
+          addition.playerId,
+          addition.itemDefinitionId,
+          (merge.expectedTo?.quantity ?? 0) + addition.quantity,
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        )
+    ];
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) throw new Error("Atomic merge failed");
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("NOT NULL constraint failed: idempotency_keys")) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "The materials changed while merging");
       }
       throw error;
     }

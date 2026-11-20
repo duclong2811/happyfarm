@@ -1852,6 +1852,102 @@ export interface ShipRepository {
   listVoyagesTouching(slotIds: readonly string[], limit: number): Promise<readonly { readonly voyage: VoyageRecord; readonly islandName: string | null }[]>;
 }
 
+/** One monster surfacing in a player's home waters (docs/design/FLEET.md, F3). */
+export interface HuntMonster {
+  readonly slot: number;
+  readonly kind: string;
+  readonly level: number;
+}
+
+/** A monster's fighting numbers at a level, as the sea battle takes them. */
+export interface HuntMonsterBattle {
+  readonly hull: number;
+  readonly cannons: number;
+  readonly speed: number;
+  readonly turn: number;
+  readonly radius: number;
+  readonly spread: number;
+  readonly behaviour: "BEAST" | "SHIP";
+}
+
+/** Sea monsters, from game data. */
+export interface HuntCatalogue {
+  /** The window a moment falls in, and when a window ends (milliseconds). */
+  window(nowMs: number): number;
+  windowEndsAt(window: number): number;
+  /** The monsters a player's home waters hold in a window. */
+  roster(playerId: string, window: number, playerLevel: number): readonly HuntMonster[];
+  /** The model and battle's name for a kind (`monster_<kind>`). */
+  monsterId(kind: string): string | null;
+  battle(kind: string, level: number): HuntMonsterBattle | null;
+  /** What a won fight pays: gold, materials (wood, ore and the monster's own) and experience. */
+  bounty(kind: string, level: number): ShipPrice & { readonly xp: number };
+  /** The material a monster drops at its level. */
+  material(kind: string, level: number): { readonly itemDefinitionId: string; readonly quantity: number } | null;
+  /** What `count` of a material merge into, or null when it does not merge (the top level, or not a material). */
+  mergeInto(itemDefinitionId: string): string | null;
+  readonly mergeCount: number;
+}
+
+export type HuntStatus = "OPEN" | "WON" | "LOST" | "FLED" | "TIMEOUT" | "VOID";
+
+/**
+ * A player's one current monster fight: planned with a seed and the ship as it was when it set out,
+ * then decided by the server's replay of the player's orders.
+ */
+export interface MonsterHuntRecord {
+  readonly playerId: PlayerId;
+  readonly shipId: ShipId;
+  readonly window: number;
+  readonly slot: number;
+  readonly kind: string;
+  readonly level: number;
+  /** The fight exactly as planned: the sea battle's setup, as JSON. */
+  readonly setupJson: string;
+  /** The ship's row version when the fight was planned: the fight stands only over that ship. */
+  readonly shipVersion: number;
+  readonly status: HuntStatus;
+  readonly requestId: string;
+  readonly version: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** Deciding a monster fight: the hunt's outcome, the ship's hull, and for a win the kill and its bounty. */
+export interface HuntResolution {
+  readonly playerId: PlayerId;
+  readonly shipId: ShipId;
+  readonly expectedHuntVersion: number;
+  readonly expectedShipVersion: number;
+  readonly outcome: Exclude<HuntStatus, "OPEN">;
+  /** The hull the fight left; null leaves the ship as it is (a void fight). */
+  readonly hull: number | null;
+  readonly at: string;
+  /** A won fight: the monster struck from the window's roster, and what it pays. */
+  readonly kill: { readonly window: number; readonly slot: number; readonly kind: string; readonly level: number } | null;
+  readonly bounty: AmbushBountyWrite | null;
+}
+
+/** Merging materials: `count` of one out, one of the next level in, and the receipt, in one batch. */
+export interface MaterialMerge {
+  readonly playerId: PlayerId;
+  readonly removal: InventoryRemoval;
+  readonly addition: InventoryAddition;
+  readonly expectedFrom: InventoryItem;
+  readonly expectedTo: InventoryItem | null;
+}
+
+export interface HuntRepository {
+  findHunt(playerId: PlayerId): Promise<MonsterHuntRecord | null>;
+  /** The roster slots the player has already won in a window. */
+  listKills(playerId: PlayerId, window: number): Promise<readonly number[]>;
+  /** Plans a fight: written only while the player has no fight still open. True when this call wrote it. */
+  startHunt(next: MonsterHuntRecord): Promise<boolean>;
+  /** Writes a fight's outcome (and for a win, the kill and its bounty) together; false when anything moved. */
+  resolveHunt(resolution: HuntResolution): Promise<boolean>;
+  mergeAtomically(merge: MaterialMerge, idempotency: IdempotencyRecord): Promise<void>;
+}
+
 /** The places a player has visited on the world map: what their chart is grown from. */
 export interface WorldVisitRepository {
   listVisited(playerId: PlayerId): Promise<readonly string[]>;

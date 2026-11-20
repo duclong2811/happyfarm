@@ -238,7 +238,7 @@ function firstClass(catalogue: ShipCatalogue, role: ShipRole): ShipClass | null 
  * A player's ships as the rules see them: the stored ones in berth order, or the dock's rowboat (lent,
  * in berth 1) when none is stored.
  */
-interface FleetShip {
+export interface FleetShip {
   readonly shipId: ShipId;
   readonly berth: number;
   readonly shipClass: ShipClass;
@@ -247,7 +247,7 @@ interface FleetShip {
   readonly record: PlayerShipRecord | null;
 }
 
-function fleetShips(catalogue: ShipCatalogue, playerId: PlayerId, stored: readonly PlayerShipRecord[]): readonly FleetShip[] {
+export function fleetShips(catalogue: ShipCatalogue, playerId: PlayerId, stored: readonly PlayerShipRecord[]): readonly FleetShip[] {
   if (stored.length === 0) {
     const rowboat = rowboatClass(catalogue);
     return [{ shipId: shipIdFor(playerId, 1), berth: 1, shipClass: rowboat, hull: rowboat.hull, record: null }];
@@ -261,7 +261,7 @@ function fleetShips(catalogue: ShipCatalogue, playerId: PlayerId, stored: readon
 }
 
 /** The ship a command names, which must be one of the player's own; an id from anyone else's fleet is not found. */
-function ownShip(ships: readonly FleetShip[], shipId: string): FleetShip {
+export function ownShip(ships: readonly FleetShip[], shipId: string): FleetShip {
   const found = ships.find((ship) => ship.shipId === shipId);
   if (found === undefined) throw new ApplicationError("RESOURCE_NOT_FOUND", "That ship is not in your fleet");
   return found;
@@ -300,7 +300,7 @@ function nextShipView(shipClass: ShipClass): NextShipView {
 }
 
 /** The ship as it fights: its class's numbers and its hull as it stands. Null for a class that does not fight. */
-function playerSpec(catalogue: ShipCatalogue, ship: FleetShip): SeaBattleShipSpec | null {
+export function playerSpec(catalogue: ShipCatalogue, ship: FleetShip): SeaBattleShipSpec | null {
   const battle = catalogue.battle(ship.shipClass.id);
   if (battle === null || ship.shipClass.cannons <= 0) return null;
   return {
@@ -327,7 +327,7 @@ function ambushSetup(catalogue: ShipCatalogue, ship: FleetShip, ambush: VoyageAm
   return { seed: ambush.seed, player, pirates };
 }
 
-interface FleetState {
+export interface FleetState {
   readonly playerId: PlayerId;
   readonly stored: readonly PlayerShipRecord[];
   readonly dock: PlayerDockRecord | null;
@@ -335,7 +335,7 @@ interface FleetState {
   readonly trips: readonly FishingTripRecord[];
 }
 
-async function readFleet(dependencies: ShipDependencies, playerId: PlayerId): Promise<FleetState> {
+export async function readFleet(dependencies: ShipDependencies, playerId: PlayerId): Promise<FleetState> {
   const [stored, dock, voyage, trips] = await Promise.all([
     dependencies.ships.listShips(playerId),
     dependencies.ships.findDock(playerId),
@@ -435,12 +435,12 @@ function ambushDue(voyage: VoyageRecord | null, now: string): boolean {
 }
 
 /** Whether `ship` is out on the player's voyage, or on a fishing trip, rather than at its dock. */
-function shipAway(state: FleetState, shipId: ShipId, now: string): boolean {
+export function shipAway(state: FleetState, shipId: ShipId, now: string): boolean {
   if (state.trips.some((trip) => trip.shipId === shipId)) return true;
   return state.voyage !== null && voyageLocation(state.voyage, now) !== "HOME" && voyageShipId(state.playerId, state.voyage) === shipId;
 }
 
-async function playerLevel(dependencies: ShipDependencies, playerId: PlayerId): Promise<number> {
+export async function playerLevel(dependencies: ShipDependencies, playerId: PlayerId): Promise<number> {
   return storedLevel(dependencies.progressionDefinition, await dependencies.progression.find(playerId));
 }
 
@@ -1000,9 +1000,39 @@ async function prepareBounty(
   request: { readonly requestId: string; readonly fingerprint: string },
   now: string
 ): Promise<{ readonly write: AmbushBountyWrite; readonly view: AmbushBountyView }> {
-  const { catalogue } = dependencies;
+  return prepareReward(dependencies, actor, {
+    reward: dependencies.catalogue.bounty(pirates),
+    reason: "PIRATE_BOUNTY",
+    operation: PIRATE_BOUNTY_OPERATION,
+    referenceId: voyageShipId(actor.playerId, voyage),
+    request,
+    // The voyage it was paid on, so a retried request reports it only for that voyage.
+    receiptContext: { voyageRequestId: voyage.requestId },
+    now
+  });
+}
+
+/**
+ * Sizes a won fight's reward against the player's state as it is now: the gold through the economy
+ * service, the materials through the inventory service up to the warehouse's free room (and each
+ * stack's limit), and the experience up to the curve's top. The batch re-checks every one of these.
+ * Shared by pirates' bounties and sea monsters'.
+ */
+export async function prepareReward(
+  dependencies: ShipDependencies,
+  actor: ActorContext,
+  input: {
+    readonly reward: ShipPrice & { readonly xp: number };
+    readonly reason: "PIRATE_BOUNTY" | "MONSTER_BOUNTY";
+    readonly operation: string;
+    readonly referenceId: ShipId;
+    readonly request: { readonly requestId: string; readonly fingerprint: string };
+    readonly receiptContext: Readonly<Record<string, unknown>>;
+    readonly now: string;
+  }
+): Promise<{ readonly write: AmbushBountyWrite; readonly view: AmbushBountyView }> {
   const playerId = actor.playerId;
-  const bounty = catalogue.bounty(pirates);
+  const { reward: bounty, now } = input;
   const currency = dependencies.currencies.findById(parseCurrencyDefinitionId(bounty.currencyDefinitionId));
   if (currency === null) throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
   const wallet = (await dependencies.wallets.find(playerId, currency.id)) ?? {
@@ -1012,13 +1042,13 @@ async function prepareBounty(
     version: 1,
     updatedAt: now
   };
-  const { requestId, fingerprint } = request;
+  const { requestId, fingerprint } = input.request;
   let economy;
   try {
     economy = dependencies.economyService.prepareMutation(actor, wallet, currency, {
       delta: bounty.gold,
-      reason: "PIRATE_BOUNTY",
-      referenceId: voyageShipId(playerId, voyage),
+      reason: input.reason,
+      referenceId: input.referenceId,
       requestId
     });
   } catch (error: unknown) {
@@ -1027,7 +1057,7 @@ async function prepareBounty(
     throw error;
   }
 
-  // Materials: the warehouse's free room is shared, so it is handed out in the bounty's own order.
+  // Materials: the warehouse's free room is shared, so it is handed out in the reward's own order.
   const stored = await dependencies.warehouse.find(playerId);
   const capacity = stored?.capacity ?? dependencies.warehouseTiers?.list()[0]?.capacity ?? STARTER_WAREHOUSE_CAPACITY;
   let room = Math.max(0, capacity - (await dependencies.warehouse.usedCapacity(playerId)));
@@ -1067,12 +1097,11 @@ async function prepareBounty(
   };
   const receipt: IdempotencyRecord = {
     actorPlayerId: playerId,
-    operation: PIRATE_BOUNTY_OPERATION,
+    operation: input.operation,
     requestId,
     payloadFingerprint: fingerprint,
     resourceId: economy.transactionId,
-    // The voyage it was paid on, so a retried request reports it only for that voyage.
-    responseJson: JSON.stringify({ voyageRequestId: voyage.requestId, bounty: view }),
+    responseJson: JSON.stringify({ ...input.receiptContext, bounty: view }),
     status: "COMPLETED",
     createdAt: economy.createdAt
   };

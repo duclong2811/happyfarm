@@ -178,3 +178,60 @@ describe("migration 0052: fishing trips", () => {
     }
   });
 });
+
+describe("migration 0053: monster hunts and the ledger rebuild", () => {
+  it("keeps every ledger row and the exact SQL of every trigger, and admits monster bounties against a ship", () => {
+    const db = new NodeD1Database(
+      allMigrationNames()
+        .filter((name) => name < "0053")
+        .map((name) => migrationSql(name))
+        .join("\n")
+    );
+    try {
+      seedPlayer(db);
+      db.sqlite
+        .prepare(
+          "INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES ('econ_eeeeeeee-eeee-4eee-8eee-000000000001', ?, 'currency_gold', -100, 2000, 1900, 1, 'DOCK_UPGRADE', 'DOCK', ?, 'request-0001', ?)"
+        )
+        .run(PLAYER_ONE_ID, DOCK_ID, NOW);
+      const triggers = (): Record<string, string> =>
+        Object.fromEntries((db.sqlite.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all() as { name: string; sql: string }[]).map((row) => [row.name, row.sql]));
+      const before = triggers();
+      db.sqlite.exec(migrationSql("0053_monster_hunts.sql"));
+      expect(db.sqlite.prepare("SELECT reason FROM economy_ledger").all()).toEqual([{ reason: "DOCK_UPGRADE" }]);
+      const after = triggers();
+      expect(Object.keys(after).sort()).toEqual([...Object.keys(before), "idempotency_monster_bounty_requires_ledger"].sort());
+      for (const [name, sql] of Object.entries(before)) expect(after[name]).toBe(sql);
+      const insert = db.sqlite.prepare(
+        "INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES ('econ_eeeeeeee-eeee-4eee-8eee-000000000002', ?, 'currency_gold', 80, 1900, 1980, 2, 'MONSTER_BOUNTY', ?, ?, 'hunt_1_0', ?)"
+      );
+      expect(() => insert.run(PLAYER_ONE_ID, "DOCK", DOCK_ID, NOW)).toThrow();
+      insert.run(PLAYER_ONE_ID, "SHIP", SHIP_ID, NOW);
+      const receipt = db.sqlite.prepare("INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (?, 'MONSTER_BOUNTY', ?, ?, 'COMPLETED', ?, '{}', ?)");
+      expect(() => receipt.run(PLAYER_ONE_ID, "hunt_1_1", FINGERPRINT, "econ_eeeeeeee-eeee-4eee-8eee-000000000009", NOW)).toThrow();
+      receipt.run(PLAYER_ONE_ID, "hunt_1_0", FINGERPRINT, "econ_eeeeeeee-eeee-4eee-8eee-000000000002", NOW);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("holds one fight a player and one kill a window's slot", () => {
+    const db = new NodeD1Database(schemaSql());
+    try {
+      seedPlayer(db);
+      const hunt = db.sqlite.prepare(
+        "INSERT INTO monster_hunts (player_id, ship_id, window_index, slot, kind, level, setup_json, ship_version, status, request_id, created_at, updated_at) VALUES (?, ?, 1, ?, 'thuong_luong', 1, '{}', 1, ?, 'hunt-request-1', ?, ?)"
+      );
+      expect(() => hunt.run(PLAYER_ONE_ID, SHIP_ID, 0, "ASLEEP", NOW, NOW)).toThrow();
+      expect(() => hunt.run(PLAYER_ONE_ID, SHIP_ID, 16, "OPEN", NOW, NOW)).toThrow();
+      hunt.run(PLAYER_ONE_ID, SHIP_ID, 0, "OPEN", NOW, NOW);
+      expect(() => hunt.run(PLAYER_ONE_ID, SHIP_ID, 1, "OPEN", NOW, NOW)).toThrow();
+      const kill = db.sqlite.prepare("INSERT INTO monster_kills (player_id, window_index, slot, kind, level, ship_id, killed_at) VALUES (?, 1, ?, 'thuong_luong', 1, ?, ?)");
+      kill.run(PLAYER_ONE_ID, 0, SHIP_ID, NOW);
+      expect(() => kill.run(PLAYER_ONE_ID, 0, SHIP_ID, NOW)).toThrow();
+      kill.run(PLAYER_ONE_ID, 1, SHIP_ID, NOW);
+    } finally {
+      db.close();
+    }
+  });
+});

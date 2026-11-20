@@ -125,7 +125,7 @@ export interface SeaBattleShipSpec {
    * circles its prey and charges in to ram whenever it has the strength. Absent means a ship, so
    * every setup the server stores reads exactly as before.
    */
-  readonly behaviour?: "SHIP" | "BEAST";
+  readonly behaviour?: "SHIP" | "BEAST" | undefined;
 }
 
 export interface SeaBattleSetup {
