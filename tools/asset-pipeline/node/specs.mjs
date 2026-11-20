@@ -30,7 +30,7 @@ import {
   buildShipFrigate,
   buildShipRowboat,
   buildShipSloop, buildShipLineBoat, buildShipNetBoat, buildShipTrawler, buildShipCoaster, buildShipJunk, buildShipCargoJunk, buildShipGreatJunk, buildShipDragon } from "./ships.mjs";
-import { buildThuongLuong } from "./monsters.mjs";
+import { buildBachTuoc, buildCuaDa, buildKinhNgu, buildSuaLua, buildThuongLuong } from "./monsters.mjs";
 import { VIET_BUILDERS } from "./viet.mjs";
 import { VIET_REGION_BUILDERS } from "./viet-regions.mjs";
 
@@ -526,6 +526,42 @@ export const MODEL_SPECS = [
     envelope: { height: 5.37, halfFootprint: 7.3 },
     budget: SHIP_BUDGET,
     build: buildThuongLuong
+  },
+  // Bạch tuộc khổng lồ: the giant octopus.
+  {
+    id: "monster_bach_tuoc",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 6.7, halfFootprint: 6.6 },
+    budget: SHIP_BUDGET,
+    build: buildBachTuoc
+  },
+  // Cua đá khổng lồ: the giant rock crab.
+  {
+    id: "monster_cua_da",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 5.67, halfFootprint: 5.3 },
+    budget: SHIP_BUDGET,
+    build: buildCuaDa
+  },
+  // Kình ngư: the leviathan fish.
+  {
+    id: "monster_kinh_ngu",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 6.91, halfFootprint: 8.45 },
+    budget: SHIP_BUDGET,
+    build: buildKinhNgu
+  },
+  // Sứa lửa: the fire jellyfish.
+  {
+    id: "monster_sua_lua",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 7.4, halfFootprint: 4.9 },
+    budget: SHIP_BUDGET,
+    build: buildSuaLua
   },
   // Làng Việt: houses, village pieces, fences and trees (viet.mjs).
   ...VILLAGE_SPECS

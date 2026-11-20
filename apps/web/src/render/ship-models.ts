@@ -32,7 +32,7 @@ const MODEL_BY_CLASS: Readonly<Record<string, string>> = {
 
 const MODEL_BY_TIER = ["ship_rowboat", "ship_sloop", "ship_brig", "ship_frigate"] as const;
 
-const PIRATE_MODELS = new Set(["pirate_cutter", "pirate_raider", "pirate_corsair", "monster_thuong_luong"]);
+const PIRATE_MODELS = new Set(["pirate_cutter", "pirate_raider", "pirate_corsair", "monster_thuong_luong", "monster_bach_tuoc", "monster_cua_da", "monster_kinh_ngu", "monster_sua_lua"]);
 
 /**
  * How deep a sea monster lies, as a share of its length: deeper than a ship, so the coils between its

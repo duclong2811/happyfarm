@@ -1,6 +1,10 @@
 import barnModelUrl from "../assets/models/buildings/building_barn.glb?url";
 import farmerModelUrl from "../assets/models/characters/character_farmer.glb?url";
 import monsterThuongLuongModelUrl from "../assets/models/ships/monster_thuong_luong.glb?url";
+import monsterBachTuocModelUrl from "../assets/models/ships/monster_bach_tuoc.glb?url";
+import monsterCuaDaModelUrl from "../assets/models/ships/monster_cua_da.glb?url";
+import monsterKinhNguModelUrl from "../assets/models/ships/monster_kinh_ngu.glb?url";
+import monsterSuaLuaModelUrl from "../assets/models/ships/monster_sua_lua.glb?url";
 import pirateCorsairModelUrl from "../assets/models/ships/pirate_corsair.glb?url";
 import pirateCutterModelUrl from "../assets/models/ships/pirate_cutter.glb?url";
 import pirateRaiderModelUrl from "../assets/models/ships/pirate_raider.glb?url";
@@ -47,7 +51,11 @@ export const GENERATED_MODEL_URLS = {
   pirate_cutter: pirateCutterModelUrl,
   pirate_raider: pirateRaiderModelUrl,
   pirate_corsair: pirateCorsairModelUrl,
-  monster_thuong_luong: monsterThuongLuongModelUrl
+  monster_thuong_luong: monsterThuongLuongModelUrl,
+  monster_bach_tuoc: monsterBachTuocModelUrl,
+  monster_cua_da: monsterCuaDaModelUrl,
+  monster_kinh_ngu: monsterKinhNguModelUrl,
+  monster_sua_lua: monsterSuaLuaModelUrl
 } as const;
 
 export type GeneratedModelId = keyof typeof GENERATED_MODEL_URLS;
