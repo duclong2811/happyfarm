@@ -1,8 +1,7 @@
 # Fleet: fishing boats, merchant ships, warships
 
-Status: **proposal, waiting for the owner's decisions** (2026-11-20). Only the practice sea monster is
-built (see NAVAL.md, "A monster off the island"). Nothing below changes the economy until the owner
-signs off the open questions at the end.
+Status: **F1 approved and in progress** (2026-11-20). The owner answered the open questions the same
+day (below). F0, the practice sea monster, is built (see NAVAL.md, "A monster off the island").
 
 ## The owner's direction (2026-11-20)
 
@@ -19,7 +18,7 @@ The proposal is three ladders, and more than one ship at a time:
 
 | Role | Ladder (tier 1 to 4) | What it is for | Fights |
 | --- | --- | --- | --- |
-| **Thuyền cá** (fishing) | thuyền thúng, ghe câu, ghe lưới, tàu cá vỏ gỗ | fishing trips; a small hold | no guns, can only flee |
+| **Thuyền cá** (fishing) | thuyền câu, ghe câu, ghe lưới, tàu cá vỏ gỗ | fishing trips; a small hold | no guns, can only flee |
 | **Tàu buôn** (merchant) | ghe bầu, thuyền mành, ghe chài, tàu buôn lớn | carrying goods: market deliveries, trade runs; a big hold | light guns |
 | **Tàu chiến** (war) | thuyền chiến, chiến thuyền, lâu thuyền, chiến hạm rồng | fighting pirates and monsters, escorting; a small hold | full broadsides |
 
@@ -71,15 +70,93 @@ The proposal is three ladders, and more than one ship at a time:
 | F4 | Player marketplace, escrow, deliveries by merchant ship | yes | fees, limits, anti-abuse |
 | F5 | Escorts, pirate lairs; the shared realtime sea (S3) | yes | rewards |
 
-## Questions for the owner
+## The owner's decisions (2026-11-20)
 
-1. **Fleet:** do several ships at once suit you, capped by the dock's tier as above? Or one ship of
-   each role?
-2. **Conversion:** do today's sloop, brig and frigate become warships, and the rowboat a fishing boat?
-3. **Fishing trips:** timed trips with a server-rolled catch (proposed)? Or something more hands-on
-   at the helm, accepting that the server cannot see where the ship is?
-4. **Marketplace:** who pays for delivery, the buyer or the seller? What market fee (for example
-   5%)? Should prices be free or within a band around the shop's price? Should there be a minimum
-   level to trade?
-5. **A sunk merchant ship:** are its goods lost, insured, or returned to the seller?
-6. **Monster rewards:** should real monster hunts (F3) pay like pirates do: gold, materials, XP?
+1. **Fleet:** several ships at once, capped by the dock's tier (1, 2, 3, then 5 berths). Approved.
+2. **Conversion:** the rowboat becomes the first fishing boat; the sloop, brig and frigate become the
+   first three warships. Approved.
+3. **Fishing:** the catch depends on the boat's rank: a better boat brings in more (and, on farther
+   grounds, rarer) fish. Read as: timed trips with a server-rolled catch, scaled by the boat.
+4. **Marketplace:** only a player of the level to buy a merchant ship joins the market, for example
+   level 50 (levelling is fast today, so the gate sits high). Open still: the market fee, who pays
+   for delivery, and whether prices are free or banded.
+5. **A sunk merchant ship:** the goods are lost and the trade fails. Read as: the buyer's gold comes
+   back out of escrow in full; the goods were the seller's, on the seller's ship, and are gone.
+6. **Monster hunts (F3):** pay as pirates do (gold, materials, experience), and also drop a **rare
+   item** that is precious in the game. What that item is, is still open (ideas below).
+
+## F1: the fleet (design, numbers provisional)
+
+Everything here is game data and can be retuned without a migration. The numbers are a first proposal
+on the scale of today's ships, mines and warehouse; they are marked provisional until the owner signs
+them off.
+
+### Rules
+
+- A player's ships each take a **berth** at the dock. The dock's tier sets how many berths there are.
+- **Building** a ship puts the first rank of a ladder into a free berth, paid in gold (ledger,
+  `SHIP_BUILD`), wood and ore (inventory). A player with no ship of their own still has the dock's
+  rowboat, lent for free; their first build takes its place, exactly as building a sloop does today.
+- **Upgrading** a ship moves it one rank up its own ladder, in place: same ship, same berth. The role
+  never changes; a fishing boat never becomes a warship.
+- **Upgrading the dock** adds berths (ledger, `DOCK_UPGRADE`).
+- Each class has a player level it needs. Merchant ships start at level 50: having one is what lets
+  a player trade on the market (F4).
+- A ship must be at home to be upgraded or repaired. The player sails **one ship at a time**: the
+  voyage names the ship. The other ships wait at the dock (fishing trips and deliveries come with F2
+  and F4).
+- **Ship without guns** (fishing boats) do not meet pirates on voyages: they are small, and they could
+  only run. Merchant ships and warships do.
+- `tier` stays what it is today, the ship's size (1 to 4): it decides the model's scale, how it handles
+  at the helm, and which pirate parties come for it. `rank` is its place on its own ladder.
+
+### Dock
+
+| Dock tier | Berths | Player level | Upgrade cost (gold / wood / ore) |
+| --- | --- | --- | --- |
+| 1 | 1 | 1 | the starting dock |
+| 2 | 2 | 15 | 1,500 / 300 / 100 |
+| 3 | 3 | 30 | 6,000 / 900 / 500 |
+| 4 | 5 | 50 | 20,000 / 2,500 / 1,800 |
+
+### Ships
+
+Cost is what building rank 1 costs, or what upgrading from the rank before costs. Hold is cargo room
+in items, for fishing trips (F2) and deliveries (F4); F1 only shows it.
+
+| Role | Rank | Class | Name | Size tier | Level | Speed | Hull | Guns | Hold | Cost (gold / wood / ore) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Fishing | 1 | `ship_class_rowboat` | Thuyền câu | 1 | 1 | 40 | 60 | 0 | 20 | 200 / 40 / 0 (the first is the dock's, free) |
+| Fishing | 2 | `ship_class_line_boat` | Ghe câu | 1 | 8 | 55 | 90 | 0 | 40 | 400 / 80 / 20 |
+| Fishing | 3 | `ship_class_net_boat` | Ghe lưới | 2 | 20 | 70 | 150 | 0 | 80 | 1,500 / 250 / 100 |
+| Fishing | 4 | `ship_class_trawler` | Tàu cá vỏ gỗ | 3 | 35 | 85 | 240 | 0 | 140 | 5,000 / 700 / 400 |
+| Merchant | 1 | `ship_class_coaster` | Ghe bầu | 2 | 50 | 70 | 220 | 1 | 150 | 6,000 / 900 / 300 |
+| Merchant | 2 | `ship_class_junk` | Thuyền mành | 3 | 55 | 85 | 320 | 2 | 250 | 10,000 / 1,400 / 600 |
+| Merchant | 3 | `ship_class_cargo_junk` | Ghe chài | 3 | 62 | 95 | 420 | 3 | 400 | 16,000 / 2,000 / 1,000 |
+| Merchant | 4 | `ship_class_great_junk` | Tàu buôn lớn | 4 | 70 | 110 | 560 | 4 | 600 | 25,000 / 3,000 / 1,600 |
+| War | 1 | `ship_class_sloop` | Thuyền chiến | 2 | 10 | 70 | 150 | 2 | 30 | 800 / 150 / 60 (today's) |
+| War | 2 | `ship_class_brig` | Chiến thuyền | 3 | 25 | 100 | 320 | 6 | 50 | 3,000 / 500 / 300 (today's) |
+| War | 3 | `ship_class_frigate` | Lâu thuyền | 4 | 45 | 130 | 600 | 12 | 80 | 12,000 / 1,600 / 1,200 (today's) |
+| War | 4 | `ship_class_dragon` | Chiến hạm rồng | 4 | 65 | 140 | 900 | 16 | 120 | 30,000 / 3,500 / 2,800 |
+
+### Conversion of today's ships
+
+No row changes: the classes keep their ids, sizes and numbers. The stored ship becomes berth 1, and its
+voyage is its voyage. A player who has a sloop keeps a sloop, now the first warship; its next upgrade
+is the brig, as before. A player still on the dock's rowboat now upgrades it to a line boat; a
+warship needs a second berth, or replaces the lent rowboat as their first build.
+
+### Ideas for the rare monster drop (open)
+
+- **Ngọc thuồng luồng** (serpent pearl): needed, with gold, for the top rank of each ladder (the
+  dragon warship, the great junk, the trawler), so the best ships are hunted for, not only bought.
+- Or a decoration only monster hunters can place (a serpent skull arch, a pearl shrine).
+- Or a sail or figurehead that changes how a ship looks.
+
+## Questions still open
+
+- **Market (F4):** the fee (for example 5% of the price, taken from the seller); who pays for the
+  delivery (proposed: the seller, because it is the seller's ship); free prices or a band around the
+  shop's price (proposed: a band, against laundering gold between alt accounts).
+- **The rare monster item (F3):** which of the ideas above, or something else.
+- **F1 numbers:** the two tables above.
