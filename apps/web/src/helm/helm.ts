@@ -241,23 +241,69 @@ export function islandHelmWaters(input: {
   readonly pier: { readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number } | null;
   /** How far past the grid's half-width home waters reach, in tiles. */
   readonly reach?: number;
+  /** Home waters' radius, when the host knows better (out to the horizon's islands); overrides `reach`. */
+  readonly radius?: number;
+  /** Land the hull must keep out of beyond the island's own grid: the horizon's islands, as circles. */
+  readonly obstacles?: readonly HelmIsland[];
   /** How close to the pier's centre line a hull may come, in tiles. */
   readonly pierClearance?: number;
 }): HelmWaters {
   const reach = input.reach ?? HELM_HOME_WATERS_REACH;
   const clearance = input.pierClearance ?? 0.45;
   const pier = input.pier;
+  const obstacles = input.obstacles ?? [];
   const half = (input.size - 1) / 2;
   return {
     centerX: input.originX + half,
     centerY: input.originY + half,
-    radius: half + reach,
+    radius: input.radius ?? half + reach,
     isWater(x, y) {
       if (!input.isSeaCell(Math.round(x), Math.round(y))) return false;
+      if (obstacles.some((island) => Math.hypot(x - island.x, y - island.y) < island.radius)) return false;
       if (pier === null) return true;
       return distanceToSegment(x, y, pier.x0, pier.y0, pier.x1, pier.y1) > clearance;
     }
   };
+}
+
+/** A neighbour on the horizon, in island tiles: its place on the chart and the circle of its shore. */
+export interface HelmIsland {
+  readonly slotId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+}
+
+/** How close to a neighbour's shore, in tiles, the helm offers to sail there. */
+export const HELM_PORT_REACH = 8;
+
+/**
+ * Home waters that take in the horizon: out past the farthest neighbour (and its shore), but never past
+ * the sea drawn round the island, and never smaller than the island's own waters.
+ */
+export function horizonWatersRadius(input: {
+  readonly centre: { readonly x: number; readonly y: number };
+  readonly gridHalf: number;
+  readonly seaRadius: number;
+  readonly islands: readonly HelmIsland[];
+}): number {
+  const own = input.gridHalf + HELM_HOME_WATERS_REACH;
+  const farthest = input.islands.reduce((most, island) => Math.max(most, Math.hypot(island.x - input.centre.x, island.y - input.centre.y) + island.radius + HELM_PORT_REACH * 1.5), 0);
+  return Math.max(own, Math.min(farthest, input.seaRadius * 0.94));
+}
+
+/** The neighbour the ship lies close enough to sail for, nearest first, or null. */
+export function nearestPort(state: Pick<HelmState, "x" | "y">, islands: readonly HelmIsland[]): HelmIsland | null {
+  let best: HelmIsland | null = null;
+  let bestGap = HELM_PORT_REACH;
+  for (const island of islands) {
+    const gap = Math.hypot(state.x - island.x, state.y - island.y) - island.radius;
+    if (gap <= bestGap) {
+      best = island;
+      bestGap = gap;
+    }
+  }
+  return best;
 }
 
 function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {

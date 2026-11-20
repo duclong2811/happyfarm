@@ -285,9 +285,17 @@ How S1 works:
     (1.3 down to 0.65 rad/s), and the rudder still bites a little with no way on.
   - The hull (bow, middle and stern) must lie on open sea or shallows, and clear of the pier. A ship
     that would run aground stops instead and says so ("Nước cạn phía trước"); it can turn away.
-  - **Home waters are a circle round the island**: its grid's half-width plus 20 tiles (68 tiles
-    for a 96-tile island), well short of the neighbours on the horizon. Past the grid everything is
-    open sea. At the edge the ship stops and offers the chart ("Mở Hải đồ"). The helm waits while the chart is open: it sails on if the chart is
+  - **Home waters reach out to the horizon** (2026-11-20, after playtest: "không đi xa được"). The
+    circle takes in the neighbours drawn on the horizon and stops short of the edge of the drawn
+    ocean (`horizonWatersRadius`). Without neighbours it is the island's own waters: the grid's
+    half-width plus 20 tiles.
+    - The neighbours are land: the hull keeps off their shores as it does off the home island's.
+    - Off a neighbour's shore (`nearestPort`, within 8 tiles) the helm offers "Ra khơi tới …". That
+      is the chart's own voyage request (`POST /voyages`), decided and timed by the server. The helm
+      ends when the fleet says the ship has left.
+    - At the edge the ship stops and offers the chart ("Mở Hải đồ").
+  - Taking the helm closes the selection, its strip and any open panel, so the helm's bar is never
+    drawn over a tile's actions. The helm waits while the chart is open: it sails on if the chart is
     closed, and ends if a voyage is begun, because the ship has then left for real.
   - Frames are cut into steps of at most 0.05 s, and a pause longer than 0.5 s is not sailed, so a
     stutter cannot carry the ship through a spit of land.

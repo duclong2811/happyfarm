@@ -32,6 +32,10 @@ export interface HelmViewOptions {
   readonly onOpenChart: () => void;
   /** The player stepped off: the host takes the ship back to the pier. */
   readonly onLeave: () => void;
+  /** The neighbour the ship lies close to, with its name, or null; asked as the ship moves. */
+  readonly portAt?: (state: HelmState) => { readonly slotId: string; readonly name: string } | null;
+  /** The player asked to sail for that neighbour: a real voyage, which the host requests. */
+  readonly onSailTo?: (slotId: string) => void;
 }
 
 export interface HelmView {
@@ -72,7 +76,15 @@ export function openHelmView(options: HelmViewOptions): HelmView {
   chartButton.addEventListener("click", () => {
     options.onOpenChart();
   });
-  notice.replaceChildren(noticeText, chartButton);
+  const sailButton = document.createElement("button");
+  sailButton.type = "button";
+  sailButton.className = "primary helm-sail-to";
+  sailButton.hidden = true;
+  let port: { readonly slotId: string; readonly name: string } | null = null;
+  sailButton.addEventListener("click", () => {
+    if (port !== null) options.onSailTo?.(port.slotId);
+  });
+  notice.replaceChildren(noticeText, chartButton, sailButton);
 
   const controls = document.createElement("div");
   controls.className = "helm-controls";
@@ -141,16 +153,28 @@ export function openHelmView(options: HelmViewOptions): HelmView {
 
   function render(): void {
     const resting = helmOarRestShare(state);
-    const next = `${String(state.sail)}|${state.blocked}|${resting.toFixed(2)}|${String(state.oars > 0)}`;
+    port = options.portAt?.(state) ?? null;
+    const next = `${String(state.sail)}|${state.blocked}|${resting.toFixed(2)}|${String(state.oars > 0)}|${port?.slotId ?? ""}`;
     if (next === signature) return;
     signature = next;
     sailText.textContent = translate(SAIL_KEYS[state.sail] ?? "battle.sailDown");
     oars.style.setProperty("--reload", resting.toFixed(2));
     oars.disabled = state.oars > 0 || state.oarRest > 0;
     oars.classList.toggle("is-rowing", state.oars > 0);
-    notice.hidden = state.blocked === "NONE";
-    chartButton.hidden = state.blocked !== "EDGE";
-    noticeText.textContent = state.blocked === "EDGE" ? translate("helm.edge") : state.blocked === "LAND" ? translate("helm.aground") : "";
+    // One notice at a time: the edge of home waters, then a neighbour close by, then shoal water.
+    const atEdge = state.blocked === "EDGE";
+    const nearPort = !atEdge && port !== null;
+    notice.hidden = !atEdge && !nearPort && state.blocked === "NONE";
+    chartButton.hidden = !atEdge;
+    sailButton.hidden = !nearPort;
+    if (nearPort && port !== null) sailButton.textContent = translate("helm.sailTo", { name: port.name });
+    noticeText.textContent = atEdge
+      ? translate("helm.edge")
+      : nearPort && port !== null
+        ? translate("helm.nearPort", { name: port.name })
+        : state.blocked === "LAND"
+          ? translate("helm.aground")
+          : "";
   }
 
   /** Whether the ship would change from one frame to the next: way on, a sprint, a turn, or the view still swinging. */

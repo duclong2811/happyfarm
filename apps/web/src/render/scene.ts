@@ -83,7 +83,7 @@ import { SEA_SURFACE_Y } from "./world-cell-overlay";
 import { cellKey } from "./world-cell";
 import { islandDecorPlan } from "./island-decor";
 import { createClouds, createSun, driftClouds, placeSun } from "./sky-life";
-import { buildHorizonIsland, buildHorizonShip, disposeHorizon, horizonPlacements, horizonShipPose, type HorizonSlot, type HorizonVoyage } from "./horizon-islands";
+import { buildHorizonIsland, buildHorizonShip, disposeHorizon, horizonPlacements, horizonShipPose, type HorizonPlacement, type HorizonSlot, type HorizonVoyage } from "./horizon-islands";
 import { worldFrame } from "./layout";
 import { buildLockedPlotOverlay, buildTerrain, TILE_SURFACE_Y, TILE_THICKNESS } from "./terrain";
 import { GROUND_SURFACE_Y, islandRimPoint, terrainHeightAt } from "./terrain-height";
@@ -569,6 +569,14 @@ export interface DockShipMooring {
   readonly lengthTiles: number;
 }
 
+/** The sea round the home island as the helm sees it, in island tiles. */
+export interface HelmSea {
+  readonly centre: { readonly x: number; readonly y: number };
+  /** How far the drawn ocean reaches from the centre. */
+  readonly seaRadius: number;
+  readonly islands: readonly { readonly slotId: string; readonly x: number; readonly y: number; readonly radius: number }[];
+}
+
 /** The ship under the player's hand: where it is, where it points, where the camera looks, its heel. */
 export interface HelmScenePose {
   readonly x: number;
@@ -714,6 +722,11 @@ export interface FarmSceneHandle {
   setDockShip(ship: { readonly tier: number } | null): void;
   /** Where the moored ship lies, in island tiles, or null while there is none at the pier. */
   dockShipMooring(): DockShipMooring | null;
+  /**
+   * The open water the helm may sail, in island tiles: the horizon's islands as circles (with the
+   * place each one is), and the radius of the sea drawn round the home island.
+   */
+  helmSea(): HelmSea | null;
   /**
    * Takes the moored ship to the helm's pose and puts the camera behind it, or (null) brings it back
    * to the pier and the camera back to the view it left. Presentation only: the helm is the player's
@@ -1661,6 +1674,8 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   let horizonInput: SceneHorizon | null = null;
   let horizonCentre: { x: number; z: number } | null = null;
   let horizonExtent = 0;
+  /** Where the horizon's islands stand now, for the helm to steer round them and make for them. */
+  let horizonPlaced: readonly HorizonPlacement[] = [];
   let horizonBuildToken = 0;
   let horizonSignature = "";
   /** What the horizon's ships need to find their place each tick. */
@@ -3120,12 +3135,14 @@ let interactionGeometry: BufferGeometry | null = null;
     horizonBuildToken += 1;
     disposeHorizon(horizonGroup);
     horizonShips = null;
+    horizonPlaced = [];
     if (input === null || centre === null || disposed) {
       draw();
       return;
     }
     const token = horizonBuildToken;
     const queue = horizonPlacements(input.home, input.slots, centre, horizonExtent);
+    horizonPlaced = [...queue];
     // The ships are cheap and built at once; they sail between the placements just computed.
     const voyages = input.voyages ?? [];
     if (input.homeSlotId !== undefined && voyages.length > 0) {
@@ -5289,6 +5306,24 @@ let interactionGeometry: BufferGeometry | null = null;
     setDockShip(next: { readonly tier: number } | null): void {
       dockShip = next === null ? null : { tier: next.tier };
       refreshDockShip(state);
+    },
+    helmSea(): HelmSea | null {
+      if (state.world.terrain.field === undefined) return null;
+      const frame = worldFrame(state.layout.pitch);
+      const toTiles = (worldX: number, worldZ: number): { x: number; y: number } => ({
+        x: worldX / frame.pitch + frame.originTileX,
+        y: worldZ / frame.pitch + frame.originTileY
+      });
+      return {
+        centre: toTiles(state.world.terrain.centerWorldX, state.world.terrain.centerWorldZ),
+        // The ocean disc under a chosen island (terrain.ts) is 3.6 half-widths across.
+        seaRadius: (Math.min(state.world.islandHalfWidthWorld, state.world.islandHalfDepthWorld) * 3.6) / frame.pitch,
+        islands: horizonPlaced.map((placement) => ({
+          slotId: placement.slotId,
+          ...toTiles(placement.worldX, placement.worldZ),
+          radius: (placement.footprint * 0.42) / frame.pitch
+        }))
+      };
     },
     dockShipMooring(): DockShipMooring | null {
       const place = dockShipMooringPlace;

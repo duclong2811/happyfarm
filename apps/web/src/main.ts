@@ -142,7 +142,7 @@ import {
 import { createHoldControl, createJoystickControl, type HoldControl, type JoystickControl } from "./mobile/joystick";
 import { sharedModelLibrary } from "./render/model-library";
 import { openShipPanel, shipPanelModel, type ShipPanel } from "./ship-panel";
-import { helmShipForTier, islandHelmWaters, startHelm } from "./helm/helm";
+import { helmShipForTier, horizonWatersRadius, islandHelmWaters, nearestPort, startHelm } from "./helm/helm";
 import { openHelmView, type HelmView } from "./helm/helm-view";
 import { islandDecorPlan } from "./render/island-decor";
 import { deviceQualityProfile } from "./render/render-quality";
@@ -7591,6 +7591,11 @@ function takeHelm(): void {
   }
   const island = state.island;
   const pier = islandDecorPlan(island).pier;
+  // Home waters reach out to the neighbours on the horizon: the ship sails up to their shores, never
+  // through them, and never past the sea that is drawn.
+  const sea = scene.helmSea();
+  const neighbours = sea?.islands ?? [];
+  const gridHalf = (island.size - 1) / 2;
   const waters = islandHelmWaters({
     size: island.size,
     originX: island.originX,
@@ -7599,8 +7604,14 @@ function takeHelm(): void {
       const kind = islandCellKindAt(island, { x, y });
       return kind === "DEEP" || kind === "SHALLOW";
     },
-    pier: pier === null ? null : { x0: pier.x, y0: pier.y, x1: pier.x + pier.dirX * pier.lengthTiles, y1: pier.y + pier.dirY * pier.lengthTiles }
+    pier: pier === null ? null : { x0: pier.x, y0: pier.y, x1: pier.x + pier.dirX * pier.lengthTiles, y1: pier.y + pier.dirY * pier.lengthTiles },
+    obstacles: neighbours,
+    ...(sea === null ? {} : { radius: horizonWatersRadius({ centre: { x: island.originX + gridHalf, y: island.originY + gridHalf }, gridHalf, seaRadius: sea.seaRadius, islands: neighbours }) })
   });
+  // The helm takes the screen: the selection, its strip and any open panel close with the walk.
+  clearSelection();
+  if (state.selectedObjectId !== null) clearObjectSelection();
+  if (panels.active !== null) setActivePanel(closePanel(panels));
   // The character stays on the island, standing still: no walk left queued, no key left held.
   movement?.clear();
   if (!autoIsDriving()) playerRuntime.clearDestination();
@@ -7623,6 +7634,26 @@ function takeHelm(): void {
     },
     onLeave: () => {
       leaveHelm();
+    },
+    portAt: (pose) => {
+      const port = nearestPort(pose, neighbours);
+      return port === null ? null : { slotId: port.slotId, name: placeName(port.slotId) };
+    },
+    onSailTo: (slotId) => {
+      // Off a neighbour's shore, the way ashore is the real voyage: the server decides it and times it,
+      // exactly as from the chart. The helm ends when the fleet says the ship has left (setFleet).
+      helm?.setPaused(true);
+      void api()
+        .startVoyage(slotId, newRequestId("voyage"))
+        .then((fleet) => {
+          setFleet(fleet);
+          setStatus(message("voyage.setSail", { name: placeName(slotId) }));
+          void refreshHorizon();
+        })
+        .catch((error: unknown) => {
+          setStatus(describe(error));
+          helm?.setPaused(false);
+        });
     }
   });
   renderCameraMode();

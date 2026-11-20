@@ -1314,7 +1314,8 @@ html.ui-b.ui-warm .helm-view .helm-notice {
   text-align: center; pointer-events: auto;
 }
 html.ui-b.ui-warm .helm-view .helm-notice[hidden],
-html.ui-b.ui-warm .helm-view .helm-chart[hidden] { display: none; }
+html.ui-b.ui-warm .helm-view .helm-chart[hidden],
+html.ui-b.ui-warm .helm-view .helm-sail-to[hidden] { display: none; }
 html.ui-b.ui-warm .helm-view .helm-notice p { margin: 0; color: var(--w-wood-deep); font-weight: 800; font-size: .9rem; }
 html.ui-b.ui-warm .helm-view .helm-controls {
   display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 8px 10px;

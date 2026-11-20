@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   giveHelmOrder,
   helmShipForTier,
+  horizonWatersRadius,
+  nearestPort,
+  HELM_PORT_REACH,
   helmTargetSpeed,
   HELM_OAR_REST_SECONDS,
   HELM_OARS_SECONDS,
@@ -132,5 +135,32 @@ describe("home waters", () => {
     expect(waters.isWater(-3, 0.6)).toBe(true);
     // Past the pier's head the water is open again.
     expect(waters.isWater(-6, 0)).toBe(true);
+  });
+});
+
+describe("sailing to the horizon", () => {
+  const islands = [
+    { slotId: "slot_north_1_1", x: 0, y: -120, radius: 18 },
+    { slotId: "slot_east_1_2", x: 130, y: 0, radius: 16 }
+  ];
+
+  it("reaches out past the farthest neighbour, but not past the sea that is drawn", () => {
+    const radius = horizonWatersRadius({ centre: { x: 0, y: 0 }, gridHalf: 47.5, seaRadius: 200, islands });
+    expect(radius).toBeGreaterThan(130 + 16);
+    expect(horizonWatersRadius({ centre: { x: 0, y: 0 }, gridHalf: 47.5, seaRadius: 150, islands })).toBeCloseTo(150 * 0.94, 5);
+    // With no neighbours on the horizon, home waters are the island's own.
+    expect(horizonWatersRadius({ centre: { x: 0, y: 0 }, gridHalf: 47.5, seaRadius: 200, islands: [] })).toBeCloseTo(67.5, 5);
+  });
+
+  it("keeps the hull off a neighbour's shore", () => {
+    const waters = islandHelmWaters({ size: 96, originX: -47, originY: -47, isSeaCell: () => true, pier: null, radius: 160, obstacles: islands });
+    expect(waters.isWater(130, 0)).toBe(false);
+    expect(waters.isWater(130 - 16 - 1, 0)).toBe(true);
+  });
+
+  it("offers a neighbour once the ship is close to its shore, the nearest one first", () => {
+    expect(nearestPort({ x: 0, y: 0 }, islands)).toBeNull();
+    expect(nearestPort({ x: 130 - 16 - HELM_PORT_REACH + 1, y: 0 }, islands)?.slotId).toBe("slot_east_1_2");
+    expect(nearestPort({ x: 0, y: -120 + 18 + 2 }, islands)?.slotId).toBe("slot_north_1_1");
   });
 });
