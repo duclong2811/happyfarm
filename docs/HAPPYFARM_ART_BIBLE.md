@@ -138,6 +138,8 @@ object. Display names are not identifiers.
 | Character | ≤ 1200 | ≤ 6 | ≤ 40 kB |
 | Building | ≤ 1500 | ≤ 6 | ≤ 40 kB |
 | Ship | ≤ 1500 | ≤ 6 | ≤ 110 kB |
+| Làng Việt house or monument | ≤ 1500 | ≤ 6 | ≤ 110 kB |
+| Làng Việt village piece or tree | ≤ 900 | ≤ 6 | ≤ 70 kB |
 
 A ship is seen close and from every side in a sea fight, and a flat-shaded triangle soup costs 72
 bytes a triangle, so its file ceiling is above a building's. Ships load only when a fight or a ship at
@@ -145,6 +147,14 @@ sea needs them.
 
 One model is loaded once and cloned or instanced per placement, never loaded per instance. Nothing
 in the renderer may fetch a model during a farm refresh.
+
+### Làng Việt
+
+The village pack (`tools/asset-pipeline/node/viet.mjs`, `docs/design/LANG_VIET.md`) takes the look of
+the Vietnamese countryside: thatch over earth walls, tiled roofs whose ridge ends and corners curl up,
+red lacquered columns, lime-washed walls, brick and breeze-block, bamboo, Hội An silk lanterns, the
+banyan, bamboo, areca, banana, and the Tết blossoms. Each piece is built in metres, front toward +z,
+and unit-fitted; its manifest gives the largest side in metres.
 
 ### Ships
 

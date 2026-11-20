@@ -175,6 +175,17 @@ const DEFINITIONS: Readonly<Record<string, GameplayDefinition>> = {
   // presented as one in the construction inspector. The dedicated domain flow owns stock/harvest.
   place_fish_cage: utility("place.fish_cage.effect"),
 
+  // ---- Làng Việt: every piece of the village pack is cosmetic ----
+  ...Object.fromEntries(
+    [
+      "place_viet_house_thatch", "place_viet_house_stilt", "place_viet_house_tiled", "place_viet_village_gate", "place_viet_shrine",
+      "place_viet_well", "place_viet_jars", "place_viet_straw_stack", "place_viet_rice_mortar", "place_viet_bamboo_daybed",
+      "place_viet_bonsai", "place_viet_rockery", "place_viet_lotus_pond", "place_viet_screen_wall", "place_viet_lantern_post",
+      "place_viet_lantern_string", "place_viet_fence_bamboo", "place_viet_fence_breeze", "place_viet_tree_banyan",
+      "place_viet_bamboo_clump", "place_viet_tree_areca", "place_viet_tree_banana", "place_viet_tree_mai", "place_viet_tree_dao"
+    ].map((id) => [id, cosmetic("place.viet.effect")])
+  ),
+
   // ---- Buildings: the first functional assets ----
   place_barn_t1: storage("place.barn_t1.effect", { WOOD: 250, FOOD: 150, STONE: 100 }),
   place_barn_t2: storage("place.barn_t2.effect", { WOOD: 600, FOOD: 360, STONE: 240 }),

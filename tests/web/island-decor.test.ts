@@ -62,12 +62,12 @@ describe("island decor", () => {
 
   it("moves out of the way of the player's fields instead of standing in them", () => {
     const untouched = islandDecorPlan(groundOf("THO", 77));
-    const well = untouched.props.find((piece) => piece.modelId === "civic.well.t1");
+    const well = untouched.props.find((piece) => piece.modelId === "viet_well");
     if (well === undefined) throw new Error("no well");
     // The player tills a 7x7 field right where the well stood.
     const field = (x: number, y: number) => Math.abs(x - Math.round(well.x)) <= 3 && Math.abs(y - Math.round(well.y)) <= 3;
     const moved = islandDecorPlan(groundOf("THO", 77), field);
-    const wellNow = moved.props.find((piece) => piece.modelId === "civic.well.t1");
+    const wellNow = moved.props.find((piece) => piece.modelId === "viet_well");
     expect(wellNow).toBeDefined();
     expect(field(Math.round(wellNow?.x ?? 0), Math.round(wellNow?.y ?? 0))).toBe(false);
   });

@@ -2,7 +2,9 @@
 /**
  * Generates every model in `specs.mjs` into the client's asset tree.
  *
- * Run: `npm run assets:generate --workspace @happy-farm/web`
+ * Run: `npm run assets:generate --workspace @happy-farm/web`, or with `-- --only=<prefix>` to write
+ * only the specs whose id starts with that prefix (`--only=viet_` for the Làng Việt pack), leaving
+ * every other shipped file untouched.
  *
  * The builder describes a shape; this runner makes it obey the contract, so a builder cannot ship a
  * crop that floats, sinks, or overhangs its tile: it measures the parts, puts the base on y = 0,
@@ -33,12 +35,17 @@ function boundsOf(parts) {
   return { min, max };
 }
 
-/** Base on the ground, footprint centred, height exactly the spec's - in that order. */
+/**
+ * Base on the ground, footprint centred, and the size the spec asks for - in that order. A spec
+ * normally fixes the height; one with `fit: "unit"` is scaled so its largest side is one unit, the
+ * convention the client's prop and building manifests draw against (`sizeWorld` is then metres).
+ */
 function normalise(parts, spec) {
   const { min, max } = boundsOf(parts);
   const height = max[1] - min[1];
   if (!Number.isFinite(height) || height <= 0) throw new Error(`${spec.id}: no height to normalise`);
-  const scale = spec.envelope.height / height;
+  const largest = Math.max(max[0] - min[0], height, max[2] - min[2]);
+  const scale = spec.fit === "unit" ? 1 / largest : spec.envelope.height / height;
   const centerX = (min[0] + max[0]) / 2;
   const centerZ = (min[2] + max[2]) / 2;
   for (const current of parts) {
@@ -60,8 +67,11 @@ function normalise(parts, spec) {
   return parts;
 }
 
+const only = process.argv.find((argument) => argument.startsWith("--only="))?.slice("--only=".length) ?? null;
+
 let failed = false;
 for (const spec of MODEL_SPECS) {
+  if (only !== null && !spec.id.startsWith(only)) continue;
   const parts = normalise(spec.build(), spec);
   const { glb, triangles } = buildGlb(spec.id, parts);
   const target = join(REPO_ROOT, spec.directory);

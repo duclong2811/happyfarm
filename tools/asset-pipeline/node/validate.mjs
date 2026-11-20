@@ -62,7 +62,14 @@ export function checkGeneratedAssets(repoRoot = REPO_ROOT) {
     if (bytes.byteLength > spec.budget.bytes) problems.push(`${spec.id}: ${String(bytes.byteLength)} bytes over budget`);
 
     if (Math.abs(measured.min[1]) > ENVELOPE_TOLERANCE) problems.push(`${spec.id}: base is not on y = 0`);
-    if (Math.abs(measured.size[1] - spec.envelope.height) > ENVELOPE_TOLERANCE) {
+    if (spec.fit === "unit") {
+      // Scaled so its largest side is one unit: the client's manifest gives that side in metres.
+      const largest = Math.max(measured.size[0], measured.size[1], measured.size[2]);
+      if (Math.abs(largest - 1) > ENVELOPE_TOLERANCE) problems.push(`${spec.id}: largest side ${largest.toFixed(3)} is not 1`);
+      if (measured.size[1] > spec.envelope.height + ENVELOPE_TOLERANCE) {
+        problems.push(`${spec.id}: height ${measured.size[1].toFixed(3)} exceeds ${String(spec.envelope.height)}`);
+      }
+    } else if (Math.abs(measured.size[1] - spec.envelope.height) > ENVELOPE_TOLERANCE) {
       problems.push(`${spec.id}: height ${measured.size[1].toFixed(3)} is not ${String(spec.envelope.height)}`);
     }
     for (const axis of [0, 2]) {

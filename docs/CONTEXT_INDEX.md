@@ -952,6 +952,16 @@ slot claiming, or the chart API.
   `tests/web/sea-chart-view.test.ts`,
   `tests/web/horizon-islands.test.ts`.
 
+### Làng Việt (village pack)
+
+Read `docs/design/LANG_VIET.md` before adding a village piece or a decoration set.
+
+- Models: `tools/asset-pipeline/node/viet.mjs` (generated with `--only=viet_`), files in
+  `apps/web/src/assets/models/viet`, sizes in `apps/web/src/render/viet-model-urls.ts`.
+- Catalogue rows: `villageEntries()` in `packages/game-data/src/placement/catalog.ts`; gameplay
+  definitions in `placement/gameplay.ts` (all cosmetic).
+- The island's decorative village: `VILLAGE` in `apps/web/src/render/island-decor.ts`.
+
 ### Ships and voyages (W5)
 
 Read `docs/design/NAVAL.md` (the owner's decisions, the phases, the proposed ship numbers) before

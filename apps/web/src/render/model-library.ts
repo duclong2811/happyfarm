@@ -4,6 +4,7 @@ import { CROP_MODEL_URLS, CROP_STAGE_MODEL_URLS, PRODUCE_MODEL_URLS, resourceMod
 import { ENVIRONMENT_MODEL_URL_BY_ID } from "./environment-model-urls";
 import { PROP_MODEL_URL_BY_ID } from "./prop-model-urls";
 import { BUILDING_MODELS } from "./building-model-urls";
+import { VILLAGE_MODELS } from "./viet-model-urls";
 import { CHARACTER_MODEL_URL_BY_ID } from "./character-model-urls";
 import { GENERATED_MODEL_URLS, type GeneratedModelId } from "./generated-model-urls";
 import { cropModelId } from "./assets";
@@ -63,6 +64,8 @@ export function modelUrlFor(modelId: string): string | undefined {
   if (prop !== undefined) return prop;
   const building = BUILDING_MODELS.get(modelId);
   if (building !== undefined) return building.url;
+  const village = VILLAGE_MODELS.get(modelId);
+  if (village !== undefined) return village.url;
   const generated = GENERATED_MODEL_URLS[modelId as GeneratedModelId];
   return generated;
 }

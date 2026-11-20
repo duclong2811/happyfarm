@@ -90,6 +90,10 @@ farmer's seven-joint rig and 32 clips, which `tests/integration/player-character
 asserts. The portraits were rendered from the shipped GLBs in a headless browser and are derived work
 of CC0 material. The per-file import record is `tools/asset-pipeline/node/character-roster-report.json`.
 
+**Generated in this repository.** The crops' fallback models, the ships (`ships.mjs`) and the Làng
+Việt village pack (`viet.mjs`) are built in code by `tools/asset-pipeline/node/`: original geometry,
+written for this project, with no third-party asset or texture behind them.
+
 ## What was selected, and what was left out
 
 The island places 18 environment models and 4 props, not the packs' 68 and 176.

@@ -154,24 +154,31 @@ interface VillageSlot {
   readonly clearance: number;
 }
 
-/** The village, as slots around the camp: distance in tiles, angle from the island's own heading. */
+/**
+ * The village, as slots around the camp: distance in tiles, angle from the island's own heading.
+ *
+ * A Vietnamese village (the Làng Việt pack, docs/design/LANG_VIET.md): a brick well at the centre
+ * ringed by lantern posts, the banyan at the edge of the village, a three-bay house and a thatched
+ * cottage, a straw stack, jars, a daybed and a potted tree - with the market cart and the produce
+ * crates the island has always had.
+ */
 const VILLAGE: readonly VillageSlot[] = [
-  { modelId: "civic.well.t1", radius: 3.4, angle: 0, sizeWorld: 2.1, clearance: 1.1 },
-  { modelId: "farm.windmill.t2", radius: 7.5, angle: 1.9, sizeWorld: 7, clearance: 2 },
-  { modelId: "farm.openbarn.t1", radius: 7, angle: 3.5, sizeWorld: 5.2, clearance: 2.4 },
-  { modelId: "farm.silo.t1", radius: 7.6, angle: 4.4, sizeWorld: 3.6, clearance: 1.3 },
-  { modelId: "farm.coop.t1", radius: 5.6, angle: 5.3, sizeWorld: 1.6, clearance: 0.9 },
+  { modelId: "viet_well", radius: 3.4, angle: 0, sizeWorld: 2.0, clearance: 1.1 },
+  { modelId: "viet_tree_banyan", radius: 7.5, angle: 1.9, sizeWorld: 5.0, clearance: 2 },
+  { modelId: "viet_house_tiled", radius: 7, angle: 3.5, sizeWorld: 5.2, clearance: 2.5 },
+  { modelId: "viet_straw_stack", radius: 7.6, angle: 4.4, sizeWorld: 2.1, clearance: 1.0 },
+  { modelId: "viet_house_thatch", radius: 6.4, angle: 5.3, sizeWorld: 3.4, clearance: 1.6 },
   { modelId: "prop_wagon", radius: 5, angle: 2.7, sizeWorld: 2.2, clearance: 1.1 },
   { modelId: "prop_stall_cart", radius: 4.8, angle: 0.95, sizeWorld: 2.9, clearance: 1.3 },
-  { modelId: "prop_bench", radius: 3.4, angle: 0.62, sizeWorld: 1.5, clearance: 0.7 },
-  { modelId: "prop_lantern", radius: 2.8, angle: 1.4, sizeWorld: 0.55, clearance: 0.3 },
-  { modelId: "prop_lantern", radius: 2.8, angle: 3.5, sizeWorld: 0.55, clearance: 0.3 },
-  { modelId: "prop_lantern", radius: 2.8, angle: 5.6, sizeWorld: 0.55, clearance: 0.3 },
-  { modelId: "prop_barrel_apples", radius: 5.2, angle: 3.15, sizeWorld: 0.95, clearance: 0.45 },
+  { modelId: "viet_bamboo_daybed", radius: 3.4, angle: 0.62, sizeWorld: 1.8, clearance: 0.8 },
+  { modelId: "viet_lantern_post", radius: 2.8, angle: 1.4, sizeWorld: 2.3, clearance: 0.4 },
+  { modelId: "viet_lantern_post", radius: 2.8, angle: 3.5, sizeWorld: 2.3, clearance: 0.4 },
+  { modelId: "viet_lantern_post", radius: 2.8, angle: 5.6, sizeWorld: 2.3, clearance: 0.4 },
+  { modelId: "viet_jars", radius: 5.2, angle: 3.15, sizeWorld: 1.0, clearance: 0.5 },
   { modelId: "prop_crate_produce", radius: 5.5, angle: 3.85, sizeWorld: 0.68, clearance: 0.4 },
   { modelId: "prop_sack", radius: 5.9, angle: 3.55, sizeWorld: 0.8, clearance: 0.4 },
   { modelId: "prop_crate_carrot", radius: 4.4, angle: 5.0, sizeWorld: 0.68, clearance: 0.4 },
-  { modelId: "prop_planter", radius: 3.9, angle: 2.2, sizeWorld: 0.75, clearance: 0.4 }
+  { modelId: "viet_bonsai", radius: 3.9, angle: 2.2, sizeWorld: 1.0, clearance: 0.4 }
 ];
 
 /** Placement attempts per village piece: 22 turns per ring, rings 1.6 tiles apart, about 9 tiles out. */

@@ -73,7 +73,32 @@ export const PROVISIONAL_ASSET_PRICES = {
   openBarn: 1400,
   silo: 1800,
   siloHouse: 3200,
-  windmill: 2600
+  windmill: 2600,
+  // Làng Việt (docs/design/LANG_VIET.md): the same magnitudes as the pieces above, a house priced
+  // like the barn it stands beside, a monument like the windmill.
+  vietThatchHouse: 1200,
+  vietStiltHouse: 2400,
+  vietTiledHouse: 3600,
+  vietGate: 1800,
+  vietShrine: 1500,
+  vietWell: 450,
+  vietJars: 70,
+  vietStrawStack: 80,
+  vietRiceMortar: 60,
+  vietDaybed: 130,
+  vietLanternPost: 160,
+  vietLanternString: 260,
+  vietBonsai: 110,
+  vietRockery: 380,
+  vietLotusPond: 520,
+  vietScreenWall: 340,
+  vietFenceBamboo: 45,
+  vietFenceBreeze: 70,
+  vietBanyan: 220,
+  vietBamboo: 60,
+  vietAreca: 50,
+  vietBanana: 45,
+  vietTetBlossom: 150
 } as const;
 
 /**
@@ -276,6 +301,9 @@ function assetEntries(): PlacementCatalogEntryData[] {
       allowedTerrain: ["SHALLOW_WATER"]
     },
 
+    // ---- Làng Việt: the Vietnamese village pack (docs/design/LANG_VIET.md) -----------------
+    ...villageEntries(),
+
     // ---- Buildings: the working farm the player grows into ----------------------------
     {
       id: "place_barn_t1",
@@ -425,6 +453,74 @@ function assetEntries(): PlacementCatalogEntryData[] {
 }
 
 /**
+ * Làng Việt: houses, village pieces, fences and trees in the look of the Vietnamese countryside
+ * (`tools/asset-pipeline/node/viet.mjs`). Every one is cosmetic - it is bought, placed, moved, stored
+ * and taken down like any other piece, and changes nothing but how the island looks. All of them carry
+ * the `lang_viet` tag, so the shop can show the set together.
+ */
+function villageEntries(): PlacementCatalogEntryData[] {
+  const level = PLACEMENT_LEVEL_POLICY;
+  const price = PROVISIONAL_ASSET_PRICES;
+  const piece = (
+    name: string,
+    category: PlacementCategory,
+    priceGold: number,
+    requiredLevel: number,
+    footprint: { readonly widthCells: number; readonly depthCells: number },
+    tags: readonly string[]
+  ): PlacementCatalogEntryData => ({
+    id: `place_${name}`,
+    category,
+    displayNameKey: `place.${name}.name`,
+    requiredLevel,
+    price: priceGold,
+    currencyDefinitionId: "currency_gold",
+    // The entry is named after its model: `place_viet_well` draws `viet_well`.
+    modelId: name,
+    footprint: { widthCells: footprint.widthCells, depthCells: footprint.depthCells },
+    allowedTerrain: ["LAND"],
+    tier: null,
+    upgradeTo: null,
+    rotatable: true,
+    movable: true,
+    storable: true,
+    removable: true,
+    removalRefundRate: REMOVAL_REFUND_POLICY[category],
+    decorative: true,
+    tags: ["lang_viet", ...tags],
+    descriptionKey: `place.${name}.description`,
+    unlockCondition: "OWNED_LAND"
+  });
+  const cells = (widthCells: number, depthCells: number) => ({ widthCells, depthCells });
+  return [
+    piece("viet_house_thatch", "BUILDING", price.vietThatchHouse, level.SETTLED, cells(3, 3), ["housing"]),
+    piece("viet_house_stilt", "BUILDING", price.vietStiltHouse, level.SETTLED + 1, cells(3, 3), ["housing"]),
+    piece("viet_house_tiled", "BUILDING", price.vietTiledHouse, level.ESTABLISHED, cells(5, 4), ["housing"]),
+    piece("viet_village_gate", "MONUMENT", price.vietGate, level.ESTABLISHED, cells(3, 2), ["landmark"]),
+    piece("viet_shrine", "MONUMENT", price.vietShrine, level.ESTABLISHED, cells(2, 2), ["landmark"]),
+    piece("viet_well", "DECORATION", price.vietWell, level.SETTLED, cells(2, 2), ["water"]),
+    piece("viet_jars", "DECORATION", price.vietJars, level.BASIC, cells(1, 1), ["storage"]),
+    piece("viet_straw_stack", "DECORATION", price.vietStrawStack, level.BASIC, cells(2, 2), ["farm"]),
+    piece("viet_rice_mortar", "DECORATION", price.vietRiceMortar, level.BASIC, cells(1, 1), ["farm"]),
+    piece("viet_bamboo_daybed", "DECORATION", price.vietDaybed, level.SETTLED, cells(2, 1), ["seating"]),
+    piece("viet_bonsai", "DECORATION", price.vietBonsai, level.SETTLED, cells(1, 1), ["planting"]),
+    piece("viet_rockery", "DECORATION", price.vietRockery, level.ESTABLISHED, cells(2, 2), ["water", "stone"]),
+    piece("viet_lotus_pond", "DECORATION", price.vietLotusPond, level.ESTABLISHED, cells(3, 3), ["water"]),
+    piece("viet_screen_wall", "DECORATION", price.vietScreenWall, level.ESTABLISHED, cells(2, 1), ["landmark"]),
+    piece("viet_lantern_post", "LIGHTING", price.vietLanternPost, level.ESTABLISHED, cells(1, 1), ["light"]),
+    piece("viet_lantern_string", "LIGHTING", price.vietLanternString, level.ESTABLISHED, cells(3, 1), ["light"]),
+    piece("viet_fence_bamboo", "FENCE", price.vietFenceBamboo, level.BASIC, cells(1, 1), ["fencing"]),
+    piece("viet_fence_breeze", "FENCE", price.vietFenceBreeze, level.SETTLED, cells(1, 1), ["fencing"]),
+    piece("viet_tree_banyan", "VEGETATION", price.vietBanyan, level.ESTABLISHED, cells(2, 2), ["trees"]),
+    piece("viet_bamboo_clump", "VEGETATION", price.vietBamboo, level.BASIC, cells(1, 1), ["trees"]),
+    piece("viet_tree_areca", "VEGETATION", price.vietAreca, level.BASIC, cells(1, 1), ["trees"]),
+    piece("viet_tree_banana", "VEGETATION", price.vietBanana, level.BASIC, cells(1, 1), ["trees"]),
+    piece("viet_tree_mai", "VEGETATION", price.vietTetBlossom, level.SETTLED, cells(1, 1), ["trees", "flowers"]),
+    piece("viet_tree_dao", "VEGETATION", price.vietTetBlossom, level.SETTLED, cells(1, 1), ["trees", "flowers"])
+  ];
+}
+
+/**
  * The curated assets the catalogue is allowed to name.
  *
  * The catalogue cannot read the client's asset folder - `packages/game-data` must not depend on
@@ -463,7 +559,32 @@ export const CATALOGUE_MODEL_IDS = [
   "rock_boulder_1",
   "rock_boulder_3",
   "tree_broad_2",
-  "tree_pine_2"
+  "tree_pine_2",
+  // Làng Việt (generated by tools/asset-pipeline/node/viet.mjs).
+  "viet_bamboo_clump",
+  "viet_bamboo_daybed",
+  "viet_bonsai",
+  "viet_fence_bamboo",
+  "viet_fence_breeze",
+  "viet_house_stilt",
+  "viet_house_thatch",
+  "viet_house_tiled",
+  "viet_jars",
+  "viet_lantern_post",
+  "viet_lantern_string",
+  "viet_lotus_pond",
+  "viet_rice_mortar",
+  "viet_rockery",
+  "viet_screen_wall",
+  "viet_shrine",
+  "viet_straw_stack",
+  "viet_tree_areca",
+  "viet_tree_banana",
+  "viet_tree_banyan",
+  "viet_tree_dao",
+  "viet_tree_mai",
+  "viet_village_gate",
+  "viet_well"
 ] as const;
 
 /** The full ship list, in a stable order: roads first, then everything a player places. */

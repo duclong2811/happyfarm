@@ -3,6 +3,7 @@ import { STARTER_WORLD_PLACEMENTS } from "@happy-farm/game-data";
 import { BUILDING_MODELS } from "./render/building-model-urls";
 import { tileToWorld, type WorldFrame } from "./render/layout";
 import { PROP_MODELS } from "./render/prop-model-urls";
+import { VILLAGE_MODELS } from "./render/viet-model-urls";
 import type { WorldObstacle } from "./render/world-config";
 
 /**
@@ -95,6 +96,8 @@ export function settledModelSize(modelId: string): number {
   if (prop !== undefined) return prop.sizeWorld;
   const building = BUILDING_MODELS.get(modelId);
   if (building !== undefined) return building.sizeWorld;
+  const village = VILLAGE_MODELS.get(modelId);
+  if (village !== undefined) return village.sizeWorld;
   // The vegetation families, by the name the manifest gives them.
   if (modelId.startsWith("tree_pine")) return 3.8;
   if (modelId.startsWith("tree_broad")) return 3.4;

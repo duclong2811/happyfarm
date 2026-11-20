@@ -31,6 +31,7 @@ import {
   buildShipRowboat,
   buildShipSloop
 } from "./ships.mjs";
+import { VIET_BUILDERS } from "./viet.mjs";
 
 const PALETTE = {
   carrot: 0xe0803c,
@@ -271,6 +272,30 @@ const SHIP_BUDGET = { triangles: 1500, materials: 6, bytes: 110000 };
  * `envelope` is what the artifact test asserts: base on `y = 0`, height exactly as stated, nothing
  * past `halfFootprint` on x or z. `budget` is the ceiling from the art bible.
  */
+/**
+ * The Làng Việt pack's budgets (docs/HAPPYFARM_ART_BIBLE.md, "Làng Việt"): a house or a monument is
+ * seen close and turned about like a ship; a village piece or a tree is smaller and more numerous.
+ */
+const VILLAGE_BUDGETS = {
+  building: { triangles: 1500, materials: 6, bytes: 110000 },
+  piece: { triangles: 900, materials: 6, bytes: 70000 },
+  tree: { triangles: 900, materials: 6, bytes: 70000 }
+};
+
+/**
+ * Làng Việt: unit-fitted, so the client's manifest (`render/viet-model-urls.ts`) states each piece's
+ * size in metres, the way the imported props and buildings do.
+ */
+const VILLAGE_SPECS = VIET_BUILDERS.map(({ id, build, family }) => ({
+  id,
+  kind: "village",
+  directory: "apps/web/src/assets/models/viet",
+  fit: "unit",
+  envelope: { height: 1, halfFootprint: 0.5 },
+  budget: VILLAGE_BUDGETS[family],
+  build
+}));
+
 export const MODEL_SPECS = [
   {
     id: "crop_carrot",
@@ -418,5 +443,7 @@ export const MODEL_SPECS = [
     envelope: { height: 12.78, halfFootprint: 8.2 },
     budget: SHIP_BUDGET,
     build: buildPirateCorsair
-  }
+  },
+  // Làng Việt: houses, village pieces, fences and trees (viet.mjs).
+  ...VILLAGE_SPECS
 ];
