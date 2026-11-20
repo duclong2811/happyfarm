@@ -82,7 +82,10 @@ The proposal is three ladders, and more than one ship at a time:
   each role; the dock line offers the next tier. A ship at the dock waits while another is out.
 - The ship picked is the one drawn at the pier, taken to the helm, fought in the practice fight and
   sailed from the chart (`pierShipOf`, `sailingShipId` in `main.ts`).
-- The new classes sail as the nearest existing model until their own are drawn (F1 art).
+- Every class has its own model (F1 art, `tools/asset-pipeline/node/ships.mjs`): fishing boats in
+  sea-blue with a red band (the trawler with a white wheelhouse and squid lamps on its booms),
+  merchant boats in oiled wood under mat sails with jars and bales, and the dragon warship in black
+  lacquer and gold.
 - Note: some upgrades take more wood and ore than the starting warehouse holds (the dock's tier 3 and
   up, the top ranks). A player needs a bigger warehouse for them, as with the high mine levels.
 
@@ -91,7 +94,7 @@ The proposal is three ladders, and more than one ship at a time:
 | Phase | Content | Migration | Economy |
 | --- | --- | --- | --- |
 | F0 (built) | Practice monster off the home island | no | none |
-| F1 (server built; client and models next) | Fleet of several ships, three roles, conversion of today's ship | yes (0051) | ship prices and upgrades |
+| F1 (built) | Fleet of several ships, three roles, conversion of today's ship | yes (0051) | ship prices and upgrades |
 | F2 | Fishing trips: grounds, catch tables, the warehouse | yes | fish values |
 | F3 | Monster hunts with rewards, referee'd by the server (like pirate bounties) | yes | bounties |
 | F4 | Player marketplace, escrow, deliveries by merchant ship | yes | fees, limits, anti-abuse |

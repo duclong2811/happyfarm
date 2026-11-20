@@ -20,7 +20,7 @@
  * 0.04 x the hull's length above the keel; the renderer sinks a ship by that much.
  */
 
-import { beam, facingQuad, facingTriangle, lowPolyBlob, part, sheetQuad, sheetTriangle, taperedBox, taperedCylinder } from "./glb.mjs";
+import { beam, facingQuad, facingTriangle, gableRoof, lowPolyBlob, part, sheetQuad, sheetTriangle, taperedBox, taperedCylinder } from "./glb.mjs";
 
 /** Colours, sRGB. They follow the art bible's warm palette, darkened where lacquer would be. */
 const SHIP_PALETTE = {
@@ -676,5 +676,327 @@ export function buildPirateCorsair() {
   oars(parts.deck, lines, spread(0.38, 0.68, 5), { reach: 1.9, thickness: 0.1 });
   guns(parts.metal, lines, [0.22, 0.28, 0.72, 0.78], { length: 0.7, bore: 0.22 });
   rudder(parts.deck, lines, { width: 1.0, drop: 0.35 });
+  return Object.values(parts);
+}
+
+// --- the fleet's new classes (docs/design/FLEET.md, F1) ------------------------------------------
+//
+// Fishing boats wear the coast's own colours: a hull painted sea-blue, a red sheer band, cream eyes
+// with dark-blue pupils. The largest is the **tàu cá vỏ gỗ** of today's fleets, its white wheelhouse
+// aft and a string of squid-fishing lamps along its booms. Merchant boats are oiled wood under mat
+// sails (**buồm cót**), their decks stacked with earthenware jars and bales; the **ghe chài** carries
+// its cargo under a long arched roof. The dragon warship is the last word of the war ladder: black
+// lacquer and gold, a dragon at the prow and its tail at the stern.
+
+const FISHING = { hull: 0x2f6f9a, band: 0xb03a2e, deck: SHIP_PALETTE.deckWood, sail: SHIP_PALETTE.sail, metal: SHIP_PALETTE.bamboo, white: SHIP_PALETTE.eyeWhite };
+const MERCHANT = { hull: 0x5c3d26, band: SHIP_PALETTE.vermilion, deck: SHIP_PALETTE.deckWood, sail: 0xc9a46a, metal: 0x9c5a32, white: SHIP_PALETTE.eyeWhite };
+const DRAGON = { hull: SHIP_PALETTE.lacquer, band: SHIP_PALETTE.vermilion, deck: SHIP_PALETTE.deckWood, sail: 0x9c3b28, metal: SHIP_PALETTE.gold, white: SHIP_PALETTE.eyeWhite };
+
+/** Earthenware jars (chum, vại) standing on the deck at `t`, in a row across it. */
+function jars(target, lines, t, { count, radius, height }) {
+  const sec = section(lines, t);
+  const across = Math.max(0, sec.b - sec.wall - radius * 1.3);
+  for (const x of spread(-across, across, count)) {
+    taperedCylinder(target, { x, y: sec.deckY, z: sec.z }, { bottomRadius: radius * 0.7, topRadius: radius, height: height * 0.62, segments: 6 });
+    taperedCylinder(target, { x, y: sec.deckY + height * 0.62, z: sec.z }, { bottomRadius: radius, topRadius: radius * 0.55, height: height * 0.38, segments: 6 });
+  }
+}
+
+/** Bales and crates stacked on the deck at `t`. */
+function bales(target, lines, t, { count, size }) {
+  const sec = section(lines, t);
+  const across = Math.max(0, sec.b - sec.wall - size * 0.6);
+  spread(-across, across, count).forEach((x, index) => {
+    taperedBox(target, { x, y: sec.deckY, z: sec.z + (index % 2 === 0 ? 0 : size * 0.3) }, { width: size, depth: size * 1.1, height: size * 0.8, topScale: 0.9 });
+  });
+}
+
+/** Bamboo fishing rods leaning out over both sides from the deck at each `t`. */
+function rods(target, lines, positions, { length, rise }) {
+  for (const t of positions) {
+    const sec = section(lines, t);
+    for (const side of [1, -1]) {
+      const from = [(sec.b - sec.wall * 2) * side, sec.s + 0.05, sec.z];
+      beam(target, from, [(sec.b + length * 0.85) * side, sec.s + rise, sec.z + length * 0.35], 0.04, { caps: false });
+    }
+  }
+}
+
+/** Ghe câu: a line-fishing boat, one small bat-wing sail, a mui aft and bamboo rods out both sides. */
+export function buildShipLineBoat() {
+  const parts = shipParts(FISHING);
+  const lines = hullLines({
+    length: 6.2,
+    halfBeam: [[0, 0.55], [0.12, 0.8], [0.45, 1.02], [0.75, 0.88], [0.93, 0.42], [1, 0.12]],
+    sheer: [[0, 1.3], [0.15, 0.98], [0.45, 0.82], [0.8, 0.95], [0.95, 1.32], [1, 1.55]],
+    keel: [[0, 0.42], [0.15, 0.08], [0.4, 0], [0.75, 0.03], [0.92, 0.36], [1, 0.75]],
+    deck: [[0, 0.82], [0.5, 0.55], [1, 0.8]],
+    wall: 0.06,
+    band: 0.16,
+    stations: [0, 0.05, 0.12, 0.24, 0.38, 0.52, 0.66, 0.78, 0.88, 0.95, 1],
+    endFade: 0.09
+  });
+  junk(parts, lines, {
+    rig: [{ t: 0.64, mast: 3.7, height: 2.3, foot: 1.5, head: 2.0, radius: 0.07, panels: 4 }],
+    eye: { t: 0.88, share: 0.34, size: 0.22 },
+    pennantPart: parts.band,
+    pupilPart: parts.hull
+  });
+  mui(parts.metal, parts.deck, { y: 0.72, z0: -1.9, z1: -0.6, halfWidth: 0.82, height: 0.7, segments: 5, ribCount: 2 });
+  rods(parts.metal, lines, [0.42, 0.52], { length: 1.6, rise: 1.0 });
+  rudder(parts.deck, lines, { width: 0.45, drop: 0.12 });
+  return Object.values(parts);
+}
+
+/** Ghe lưới: a net boat, two sails, a net heaped on deck and a roller at the stern to haul it. */
+export function buildShipNetBoat() {
+  const parts = shipParts(FISHING);
+  const lines = hullLines({
+    length: 8.6,
+    halfBeam: [[0, 0.8], [0.12, 1.1], [0.45, 1.38], [0.75, 1.2], [0.92, 0.6], [1, 0.16]],
+    sheer: [[0, 1.75], [0.14, 1.32], [0.45, 1.12], [0.8, 1.28], [0.95, 1.72], [1, 2.0]],
+    keel: [[0, 0.6], [0.14, 0.12], [0.38, 0], [0.75, 0.04], [0.92, 0.48], [1, 1.0]],
+    deck: [[0, 1.2], [0.5, 0.78], [1, 1.12]],
+    wall: 0.08,
+    band: 0.22,
+    stations: [0, 0.04, 0.1, 0.2, 0.32, 0.45, 0.58, 0.7, 0.8, 0.88, 0.95, 1],
+    endFade: 0.08
+  });
+  junk(parts, lines, {
+    rig: [
+      { t: 0.56, mast: 6.0, height: 3.9, foot: 2.5, head: 3.4, radius: 0.11, panels: 4 },
+      { t: 0.84, mast: 4.2, height: 2.6, foot: 1.6, head: 2.2, radius: 0.08, lean: 0.08, panels: 3 }
+    ],
+    eye: { t: 0.885, share: 0.34, size: 0.3 },
+    pennantPart: parts.band,
+    pupilPart: parts.hull
+  });
+  // The net, heaped amidships and drying; the roller that hauls it, across the stern.
+  const heap = section(lines, 0.36);
+  lowPolyBlob(parts.sail, { x: 0.15, y: heap.deckY - 0.05, z: heap.z }, { radiusX: 0.8, radiusY: 0.32, radiusZ: 0.9, segments: 6, rings: 3 });
+  lowPolyBlob(parts.band, { x: -0.55, y: heap.deckY + 0.15, z: heap.z + 0.5 }, { radiusX: 0.14, radiusY: 0.12, radiusZ: 0.14, segments: 5, rings: 2 });
+  const stern = section(lines, 0.12);
+  beam(parts.metal, [-(stern.b - 0.1), stern.s + 0.25, stern.z], [stern.b - 0.1, stern.s + 0.25, stern.z], 0.16);
+  for (const side of [1, -1]) beam(parts.deck, [side * (stern.b - 0.12), stern.deckY, stern.z], [side * (stern.b - 0.12), stern.s + 0.3, stern.z], 0.08);
+  mui(parts.metal, parts.deck, { y: 1.0, z0: -3.1, z1: -2.0, halfWidth: 1.0, height: 0.8, segments: 5, ribCount: 2 });
+  rudder(parts.deck, lines, { width: 0.55, drop: 0.16 });
+  return Object.values(parts);
+}
+
+/**
+ * Tàu cá vỏ gỗ: the wooden fishing boat of today's coast. A white wheelhouse aft, a mast forward with
+ * a steadying sail, outrigger booms out both sides, and a string of squid-fishing lamps along them.
+ */
+export function buildShipTrawler() {
+  const parts = shipParts(FISHING);
+  const lines = hullLines({
+    length: 11.5,
+    halfBeam: [[0, 1.25], [0.12, 1.55], [0.45, 1.8], [0.75, 1.62], [0.92, 0.85], [1, 0.2]],
+    sheer: [[0, 2.15], [0.14, 1.75], [0.45, 1.5], [0.8, 1.7], [0.95, 2.25], [1, 2.55]],
+    keel: [[0, 0.7], [0.14, 0.15], [0.38, 0], [0.75, 0.05], [0.92, 0.6], [1, 1.3]],
+    deck: [[0, 1.6], [0.5, 1.08], [1, 1.5]],
+    wall: 0.1,
+    band: 0.3,
+    stations: [0, 0.04, 0.1, 0.2, 0.32, 0.45, 0.58, 0.7, 0.8, 0.88, 0.95, 1],
+    endFade: 0.07
+  });
+  hull(parts, lines);
+  bowEyes(parts.white, parts.hull, lines, { t: 0.88, share: 0.34, size: 0.42 });
+  // The wheelhouse: white walls, dark-blue windows, a red roof with a little overhang.
+  const house = section(lines, 0.22);
+  const houseBase = house.deckY - 0.05;
+  taperedBox(parts.white, { x: 0, y: houseBase, z: house.z }, { width: 2.3, depth: 2.4, height: 1.55, topScale: 0.94 });
+  taperedBox(parts.band, { x: 0, y: houseBase + 1.55, z: house.z }, { width: 2.7, depth: 2.9, height: 0.18, topScale: 0.92 });
+  for (const side of [1, -1]) sheetQuad(parts.hull, [side * 1.16, houseBase + 0.85, house.z - 0.8], [side * 1.16, houseBase + 0.85, house.z + 0.8], [side * 1.13, houseBase + 1.3, house.z + 0.78], [side * 1.13, houseBase + 1.3, house.z - 0.78]);
+  sheetQuad(parts.hull, [-0.9, houseBase + 0.85, house.z + 1.22], [0.9, houseBase + 0.85, house.z + 1.22], [0.86, houseBase + 1.32, house.z + 1.16], [-0.86, houseBase + 1.32, house.z + 1.16]);
+  // A red flag on a staff above the wheelhouse.
+  const staffTop = [0, houseBase + 3.0, house.z - 0.6];
+  beam(parts.deck, [0, houseBase + 1.7, house.z - 0.6], staffTop, 0.05);
+  sheetQuad(parts.band, staffTop, [0, staffTop[1] - 0.5, staffTop[2]], [0, staffTop[1] - 0.5, staffTop[2] - 0.8], [0, staffTop[1], staffTop[2] - 0.8]);
+  // The foremast and its steadying sail.
+  const fore = section(lines, 0.66);
+  const top = mast(parts.deck, { y: fore.deckY - 0.05, z: fore.z, height: 6.2, radius: 0.13 });
+  battenedSail(parts.sail, parts.deck, [0, fore.s + 0.6, fore.z], { height: 3.4, foot: 2.2, head: 2.9, panels: 4, yaw: 0.4, rise: 0.7 });
+  pennant(parts.band, top, { length: 1.1, height: 0.32 });
+  // Outrigger booms from the mast, out over each side, hung with lamps for squid.
+  for (const side of [1, -1]) {
+    const root = [side * 0.12, fore.s + 2.4, fore.z];
+    const tip = [side * (fore.b + 2.4), fore.s + 1.4, fore.z - 0.6];
+    beam(parts.metal, root, tip, 0.07, { caps: false });
+    for (const share of [0.35, 0.55, 0.75, 0.95]) {
+      const at = add(root, scale(subtract(tip, root), share));
+      lowPolyBlob(parts.white, { x: at[0], y: at[1] - 0.42, z: at[2] }, { radiusX: 0.12, radiusY: 0.14, radiusZ: 0.12, segments: 5, rings: 2 });
+    }
+  }
+  // A lamp line from the masthead to the wheelhouse roof.
+  beam(parts.metal, [0, fore.s + 3.0, fore.z], [0, houseBase + 1.8, house.z + 1.0], 0.04, { caps: false });
+  rudder(parts.deck, lines, { width: 0.7, drop: 0.22 });
+  return Object.values(parts);
+}
+
+/** Ghe bầu: the round-bellied coaster of the central coast, one mat sail, jars and bales on deck. */
+export function buildShipCoaster() {
+  const parts = shipParts(MERCHANT);
+  const lines = hullLines({
+    length: 10.5,
+    halfBeam: [[0, 1.2], [0.1, 1.65], [0.4, 2.05], [0.7, 1.85], [0.9, 0.95], [1, 0.22]],
+    sheer: [[0, 2.15], [0.12, 1.7], [0.45, 1.42], [0.8, 1.62], [0.95, 2.05], [1, 2.35]],
+    keel: [[0, 0.8], [0.12, 0.16], [0.35, 0], [0.75, 0.05], [0.92, 0.58], [1, 1.25]],
+    deck: [[0, 1.65], [0.5, 1.02], [1, 1.55]],
+    wall: 0.1,
+    band: 0.28,
+    stations: [0, 0.03, 0.08, 0.16, 0.26, 0.37, 0.48, 0.59, 0.7, 0.8, 0.88, 0.94, 1]
+  });
+  junk(parts, lines, {
+    rig: [{ t: 0.62, mast: 8.0, height: 5.4, foot: 3.7, head: 5.0, radius: 0.16, panels: 5 }],
+    eye: { t: 0.885, share: 0.36, size: 0.4 },
+    pennantPart: parts.band,
+    pupilPart: parts.hull
+  });
+  jars(parts.metal, lines, 0.44, { count: 3, radius: 0.36, height: 0.85 });
+  jars(parts.metal, lines, 0.36, { count: 2, radius: 0.34, height: 0.8 });
+  bales(parts.sail, lines, 0.76, { count: 2, size: 0.7 });
+  mui(parts.sail, parts.deck, { y: 1.35, z0: -4.0, z1: -2.3, halfWidth: 1.35, height: 1.0, segments: 5, ribCount: 2 });
+  guns(parts.deck, lines, [0.52], { length: 0.45, bore: 0.15 });
+  rudder(parts.deck, lines, { width: 0.75, drop: 0.2 });
+  return Object.values(parts);
+}
+
+/** Thuyền mành: a two-masted trader under bamboo-mat sails, a long mui over its hold amidships. */
+export function buildShipJunk() {
+  const parts = shipParts(MERCHANT);
+  const lines = hullLines({
+    length: 12.6,
+    halfBeam: [[0, 1.4], [0.1, 1.8], [0.4, 2.15], [0.72, 1.95], [0.9, 1.0], [1, 0.24]],
+    sheer: [[0, 2.7], [0.1, 2.1], [0.45, 1.72], [0.8, 1.95], [0.95, 2.45], [1, 2.8]],
+    keel: [[0, 0.95], [0.12, 0.2], [0.35, 0], [0.75, 0.05], [0.92, 0.66], [1, 1.45]],
+    deck: [[0, 2.1], [0.5, 1.28], [1, 1.9]],
+    wall: 0.12,
+    band: 0.34,
+    stations: [0, 0.03, 0.08, 0.16, 0.26, 0.37, 0.48, 0.59, 0.7, 0.8, 0.88, 0.94, 1]
+  });
+  junk(parts, lines, {
+    rig: [
+      { t: 0.6, mast: 9.4, height: 6.2, foot: 4.0, head: 5.5, radius: 0.18, panels: 5 },
+      { t: 0.85, mast: 6.6, height: 4.2, foot: 2.6, head: 3.5, lean: 0.08, panels: 4 }
+    ],
+    eye: { t: 0.89, share: 0.36, size: 0.46 },
+    pennantPart: parts.band,
+    pupilPart: parts.hull
+  });
+  const hold = section(lines, 0.4);
+  mui(parts.sail, parts.deck, { y: hold.deckY + 0.1, z0: hold.z - 1.6, z1: hold.z + 1.0, halfWidth: 1.55, height: 1.15, segments: 5, ribCount: 3 });
+  jars(parts.metal, lines, 0.72, { count: 2, radius: 0.34, height: 0.8 });
+  bales(parts.deck, lines, 0.2, { count: 2, size: 0.75 });
+  guns(parts.deck, lines, [0.3, 0.68], { length: 0.5, bore: 0.16 });
+  rudder(parts.deck, lines, { width: 0.85, drop: 0.28 });
+  return Object.values(parts);
+}
+
+/** Ghe chài: a broad cargo boat of the southern rivers, its hold under a long arched roof, two masts. */
+export function buildShipCargoJunk() {
+  const parts = shipParts(MERCHANT);
+  const lines = hullLines({
+    length: 14,
+    halfBeam: [[0, 1.75], [0.1, 2.2], [0.4, 2.55], [0.72, 2.35], [0.9, 1.25], [1, 0.3]],
+    sheer: [[0, 2.85], [0.1, 2.25], [0.45, 1.85], [0.8, 2.05], [0.95, 2.55], [1, 2.9]],
+    keel: [[0, 1.0], [0.12, 0.2], [0.35, 0], [0.75, 0.05], [0.92, 0.68], [1, 1.5]],
+    deck: [[0, 2.25], [0.5, 1.4], [1, 2.0]],
+    wall: 0.13,
+    band: 0.36,
+    stations: [0, 0.03, 0.08, 0.16, 0.26, 0.37, 0.48, 0.59, 0.7, 0.8, 0.88, 0.94, 1]
+  });
+  junk(parts, lines, {
+    rig: [
+      { t: 0.7, mast: 10, height: 6.4, foot: 4.2, head: 5.8, radius: 0.19, panels: 5 },
+      { t: 0.88, mast: 6.8, height: 4.2, foot: 2.6, head: 3.5, lean: 0.1, panels: 4 }
+    ],
+    eye: { t: 0.9, share: 0.36, size: 0.5 },
+    pennantPart: parts.band,
+    pupilPart: parts.hull
+  });
+  // The hold's long roof, from the stern house to the foremast.
+  const hold = section(lines, 0.38);
+  mui(parts.sail, parts.deck, { y: hold.deckY + 0.05, z0: hold.z - 4.0, z1: hold.z + 2.6, halfWidth: 2.0, height: 1.5, segments: 6, ribCount: 4 });
+  bales(parts.metal, lines, 0.82, { count: 2, size: 0.8 });
+  guns(parts.deck, lines, [0.24, 0.52, 0.76], { length: 0.55, bore: 0.17 });
+  rudder(parts.deck, lines, { width: 1.0, drop: 0.3 });
+  return Object.values(parts);
+}
+
+/** Tàu buôn lớn: the great trading junk, three mat sails, a red stern house, jars and crates forward. */
+export function buildShipGreatJunk() {
+  const parts = shipParts(MERCHANT);
+  const lines = hullLines({
+    length: 16.5,
+    halfBeam: [[0, 1.75], [0.1, 2.15], [0.4, 2.5], [0.72, 2.3], [0.9, 1.25], [1, 0.28]],
+    sheer: [[0, 3.4], [0.1, 2.7], [0.45, 2.2], [0.8, 2.45], [0.95, 2.95], [1, 3.25]],
+    keel: [[0, 1.2], [0.12, 0.25], [0.35, 0], [0.75, 0.06], [0.92, 0.82], [1, 1.8]],
+    deck: [[0, 2.8], [0.5, 1.65], [1, 2.4]],
+    wall: 0.14,
+    band: 0.44,
+    stations: [0, 0.03, 0.08, 0.15, 0.23, 0.32, 0.42, 0.52, 0.62, 0.72, 0.8, 0.87, 0.93, 0.97, 1]
+  });
+  junk(parts, lines, {
+    rig: [
+      { t: 0.36, mast: 8.4, height: 5.0, foot: 3.0, head: 4.2, panels: 4 },
+      { t: 0.57, mast: 11.6, height: 7.4, foot: 4.7, head: 6.4, radius: 0.22, panels: 5 },
+      { t: 0.82, mast: 8.2, height: 5.0, foot: 3.1, head: 4.3, lean: 0.1, panels: 4 }
+    ],
+    eye: { t: 0.875, share: 0.38, size: 0.62 },
+    pennantPart: parts.band,
+    pupilPart: parts.hull
+  });
+  // The stern house: red walls under a mat roof.
+  const house = section(lines, 0.14);
+  const houseBase = Math.min(section(lines, 0.06).deckY, section(lines, 0.22).deckY) - 0.15;
+  taperedBox(parts.band, { x: 0, y: houseBase, z: house.z }, { width: 3.0, depth: 3.2, height: house.deckY - houseBase + 1.6, topScale: 0.95 });
+  gableRoof(parts.sail, { x: 0, y: house.deckY + 1.6, z: house.z }, { width: 3.6, depth: 3.8, height: 1.0, overhang: 0.2, thickness: 0.12 });
+  jars(parts.metal, lines, 0.47, { count: 3, radius: 0.4, height: 0.95 });
+  bales(parts.deck, lines, 0.68, { count: 3, size: 0.8 });
+  guns(parts.deck, lines, [0.26, 0.74], { length: 0.6, bore: 0.18 });
+  rudder(parts.deck, lines, { width: 1.1, drop: 0.35 });
+  return Object.values(parts);
+}
+
+/**
+ * Chiến hạm rồng: the dragon warship, the top of the war ladder. Black lacquer banded in vermilion,
+ * gold at every end: a dragon's head at the prow, its tail curling over the stern castle, four red
+ * sails, and bronze guns all along.
+ */
+export function buildShipDragon() {
+  const parts = shipParts(DRAGON);
+  const lines = hullLines({
+    length: 18,
+    halfBeam: [[0, 1.7], [0.1, 2.1], [0.4, 2.5], [0.72, 2.3], [0.9, 1.25], [1, 0.26]],
+    sheer: [[0, 3.6], [0.1, 2.9], [0.45, 2.3], [0.8, 2.55], [0.95, 3.05], [1, 3.4]],
+    keel: [[0, 1.25], [0.12, 0.25], [0.35, 0], [0.75, 0.06], [0.92, 0.86], [1, 1.9]],
+    deck: [[0, 2.95], [0.5, 1.75], [1, 2.5]],
+    wall: 0.14,
+    band: 0.46,
+    stations: [0, 0.03, 0.08, 0.15, 0.24, 0.34, 0.45, 0.56, 0.67, 0.77, 0.85, 0.92, 0.97, 1]
+  });
+  junk(parts, lines, {
+    rig: [
+      { t: 0.33, mast: 8.6, height: 5.0, foot: 3.0, head: 4.1, panels: 4 },
+      { t: 0.5, mast: 12.6, height: 7.8, foot: 4.8, head: 6.6, radius: 0.23, panels: 5 },
+      { t: 0.67, mast: 10.4, height: 6.2, foot: 3.8, head: 5.2, radius: 0.19, panels: 4 },
+      { t: 0.84, mast: 7.6, height: 4.4, foot: 2.6, head: 3.6, lean: 0.1, panels: 3 }
+    ],
+    eye: { t: 0.875, share: 0.38, size: 0.66 },
+    pennantPart: parts.metal,
+    pupilPart: parts.hull
+  });
+  // The stern castle under a golden swept roof.
+  const castle = section(lines, 0.14);
+  const castleBase = Math.min(section(lines, 0.06).deckY, section(lines, 0.22).deckY) - 0.2;
+  const castleTop = castle.deckY + 1.7;
+  taperedBox(parts.band, { x: 0, y: castleBase, z: castle.z }, { width: 3.0, depth: 3.4, height: castleTop - castleBase, topScale: 0.95 });
+  sweptRoof(parts.metal, parts.band, { y: castleTop, z: castle.z, width: 3.9, depth: 4.2, height: 1.35, sweep: 0.75, segments: 3 });
+  const bow = section(lines, 1);
+  dragonHead(parts.metal, parts.white, { y: bow.s, z: bow.z });
+  sternCurl(parts.metal, { y: section(lines, 0).s, z: section(lines, 0).z });
+  guns(parts.metal, lines, [0.24, 0.3, 0.58, 0.64, 0.78], { length: 0.8, bore: 0.25 });
+  rudder(parts.deck, lines, { width: 1.2, drop: 0.38 });
   return Object.values(parts);
 }

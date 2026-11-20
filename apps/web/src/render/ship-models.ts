@@ -19,16 +19,15 @@ const MODEL_BY_CLASS: Readonly<Record<string, string>> = {
   ship_class_sloop: "ship_sloop",
   ship_class_brig: "ship_brig",
   ship_class_frigate: "ship_frigate",
-  // The fleet's new classes (docs/design/FLEET.md, F1) sail as the nearest existing model until
-  // their own are drawn.
-  ship_class_line_boat: "ship_rowboat",
-  ship_class_net_boat: "ship_rowboat",
-  ship_class_trawler: "ship_sloop",
-  ship_class_coaster: "ship_sloop",
-  ship_class_junk: "ship_brig",
-  ship_class_cargo_junk: "ship_brig",
-  ship_class_great_junk: "ship_frigate",
-  ship_class_dragon: "ship_frigate"
+  // The fleet's new classes (docs/design/FLEET.md, F1).
+  ship_class_line_boat: "ship_line_boat",
+  ship_class_net_boat: "ship_net_boat",
+  ship_class_trawler: "ship_trawler",
+  ship_class_coaster: "ship_coaster",
+  ship_class_junk: "ship_junk",
+  ship_class_cargo_junk: "ship_cargo_junk",
+  ship_class_great_junk: "ship_great_junk",
+  ship_class_dragon: "ship_dragon"
 };
 
 const MODEL_BY_TIER = ["ship_rowboat", "ship_sloop", "ship_brig", "ship_frigate"] as const;

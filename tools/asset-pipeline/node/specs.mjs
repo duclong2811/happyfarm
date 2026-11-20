@@ -29,8 +29,7 @@ import {
   buildShipBrig,
   buildShipFrigate,
   buildShipRowboat,
-  buildShipSloop
-} from "./ships.mjs";
+  buildShipSloop, buildShipLineBoat, buildShipNetBoat, buildShipTrawler, buildShipCoaster, buildShipJunk, buildShipCargoJunk, buildShipGreatJunk, buildShipDragon } from "./ships.mjs";
 import { buildThuongLuong } from "./monsters.mjs";
 import { VIET_BUILDERS } from "./viet.mjs";
 import { VIET_REGION_BUILDERS } from "./viet-regions.mjs";
@@ -420,6 +419,79 @@ export const MODEL_SPECS = [
     envelope: { height: 13.71, halfFootprint: 9.6 },
     budget: SHIP_BUDGET,
     build: buildShipFrigate
+  },
+  // The fleet's new classes (docs/design/FLEET.md, F1).
+  // Ghe câu: a line-fishing boat, rods out both sides.
+  {
+    id: "ship_line_boat",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 4.25, halfFootprint: 3.5 },
+    budget: SHIP_BUDGET,
+    build: buildShipLineBoat
+  },
+  // Ghe lưới: two sails and a net on deck.
+  {
+    id: "ship_net_boat",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 6.76, halfFootprint: 4.75 },
+    budget: SHIP_BUDGET,
+    build: buildShipNetBoat
+  },
+  // Tàu cá vỏ gỗ: wheelhouse aft, booms hung with squid lamps.
+  {
+    id: "ship_trawler",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 7.33, halfFootprint: 6.3 },
+    budget: SHIP_BUDGET,
+    build: buildShipTrawler
+  },
+  // Ghe bầu: the round-bellied coaster, jars and bales on deck.
+  {
+    id: "ship_coaster",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 9.05, halfFootprint: 5.8 },
+    budget: SHIP_BUDGET,
+    build: buildShipCoaster
+  },
+  // Thuyền mành: two mat sails over a roofed hold.
+  {
+    id: "ship_junk",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 10.71, halfFootprint: 6.9 },
+    budget: SHIP_BUDGET,
+    build: buildShipJunk
+  },
+  // Ghe chài: a broad cargo boat under a long arched roof.
+  {
+    id: "ship_cargo_junk",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 11.53, halfFootprint: 7.7 },
+    budget: SHIP_BUDGET,
+    build: buildShipCargoJunk
+  },
+  // Tàu buôn lớn: three mat sails and a red stern house.
+  {
+    id: "ship_great_junk",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 13.26, halfFootprint: 9.0 },
+    budget: SHIP_BUDGET,
+    build: buildShipGreatJunk
+  },
+  // Chiến hạm rồng: the dragon warship, four sails, gold at every end.
+  {
+    id: "ship_dragon",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 14.36, halfFootprint: 10.65 },
+    budget: SHIP_BUDGET,
+    build: buildShipDragon
   },
   // Tàu Ô: the pirates' black ships, smallest first.
   {

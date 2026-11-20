@@ -8,6 +8,14 @@ import shipBrigModelUrl from "../assets/models/ships/ship_brig.glb?url";
 import shipFrigateModelUrl from "../assets/models/ships/ship_frigate.glb?url";
 import shipRowboatModelUrl from "../assets/models/ships/ship_rowboat.glb?url";
 import shipSloopModelUrl from "../assets/models/ships/ship_sloop.glb?url";
+import shipLineBoatModelUrl from "../assets/models/ships/ship_line_boat.glb?url";
+import shipNetBoatModelUrl from "../assets/models/ships/ship_net_boat.glb?url";
+import shipTrawlerModelUrl from "../assets/models/ships/ship_trawler.glb?url";
+import shipCoasterModelUrl from "../assets/models/ships/ship_coaster.glb?url";
+import shipJunkModelUrl from "../assets/models/ships/ship_junk.glb?url";
+import shipCargoJunkModelUrl from "../assets/models/ships/ship_cargo_junk.glb?url";
+import shipGreatJunkModelUrl from "../assets/models/ships/ship_great_junk.glb?url";
+import shipDragonModelUrl from "../assets/models/ships/ship_dragon.glb?url";
 
 /**
  * Models produced by `tools/asset-pipeline/node/generate-models.mjs`, keyed by the id they were
@@ -28,6 +36,14 @@ export const GENERATED_MODEL_URLS = {
   ship_sloop: shipSloopModelUrl,
   ship_brig: shipBrigModelUrl,
   ship_frigate: shipFrigateModelUrl,
+  ship_line_boat: shipLineBoatModelUrl,
+  ship_net_boat: shipNetBoatModelUrl,
+  ship_trawler: shipTrawlerModelUrl,
+  ship_coaster: shipCoasterModelUrl,
+  ship_junk: shipJunkModelUrl,
+  ship_cargo_junk: shipCargoJunkModelUrl,
+  ship_great_junk: shipGreatJunkModelUrl,
+  ship_dragon: shipDragonModelUrl,
   pirate_cutter: pirateCutterModelUrl,
   pirate_raider: pirateRaiderModelUrl,
   pirate_corsair: pirateCorsairModelUrl,
