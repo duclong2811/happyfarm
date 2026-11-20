@@ -15,7 +15,7 @@ import {
 } from "../../apps/web/src/items/catalogue";
 import { cropVisualFor, itemVisualFor } from "../../apps/web/src/items/visuals";
 import { ITEM_THUMBNAIL_MAP } from "../../apps/web/src/items/item-thumbnail-map";
-import { shops } from "@happy-farm/game-data";
+import { MONSTER_MATERIAL_IDS, shops } from "@happy-farm/game-data";
 
 /**
  * What the inventory shelf shows, and what picture each card gets.
@@ -213,11 +213,12 @@ describe("thumbnails and their fallbacks", () => {
     ]);
   });
 
-  it("covers every Shop item with an explicit, decodable thumbnail source", () => {
+  it("covers every Shop item and every monster material with an explicit, decodable thumbnail source", () => {
     const shopItemIds = [...new Set(shops.map((entry) => entry.itemDefinitionId))].sort();
-    expect(Object.keys(ITEM_THUMBNAIL_MAP).sort()).toEqual(shopItemIds);
+    // Monster materials are never sold: a won fight drops them (F3). They are mapped all the same.
+    expect(Object.keys(ITEM_THUMBNAIL_MAP).sort()).toEqual([...shopItemIds, ...MONSTER_MATERIAL_IDS].sort());
     const assetRoot = fileURLToPath(new URL("../../apps/web/src/assets/", import.meta.url));
-    for (const itemId of shopItemIds) {
+    for (const itemId of [...shopItemIds, ...MONSTER_MATERIAL_IDS]) {
       const spec = ITEM_THUMBNAIL_MAP[itemId];
       if (spec === undefined) throw new Error(`missing thumbnail mapping for ${itemId}`);
       if (spec.kind === "IMAGE") {

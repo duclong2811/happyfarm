@@ -768,6 +768,23 @@ describe("the world map", () => {
     });
   }
 
+  it("matches the monsters' levels to the player's strongest warship, whatever the player's own level", async () => {
+    buildWithMonsters(1);
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    equip(1, 80, 5_000, 300, 200);
+    const levels = async (): Promise<number[]> => HuntsResponseSchema.parse(await dataOf(await request("/hunts"))).monsters.map((monster) => monster.level);
+    // A level-80 player with no warship, then with a sloop, meets the monsters a sloop can beat.
+    expect(await levels()).toEqual([1, 1, 1]);
+    expect((await request("/ships/build", { role: "WAR", requestId: "cap-sloop-1" })).status).toBe(200);
+    expect(await levels()).toEqual([1, 1, 1]);
+    // A frigate (set directly: the upgrade path is tested with the fleet) lifts the cap to level 3.
+    db.sqlite.prepare("UPDATE player_ships SET class_id = 'ship_class_frigate' WHERE player_id = ?").run(playerId(1));
+    const lifted = await levels();
+    expect(lifted.every((level) => level >= 1 && level <= 3)).toBe(true);
+    expect(lifted.some((level) => level > 1)).toBe(true);
+  });
+
   it("surfaces three monsters a window, plans a fight in a ship with guns, and pays a win once", async () => {
     buildWithMonsters(1);
     await settle(1, "NORTH");

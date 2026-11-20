@@ -135,19 +135,30 @@ export function huntWindow(nowMs: number): number {
 
 /**
  * The monsters a player's home waters hold in a window: three of three different kinds, at levels the
- * player's level reaches (the highest level likelier as the player grows). Decided from the player and
- * the window alone, so every read of the same window agrees.
+ * player's level reaches and their fleet can fight - never above the rank of their strongest warship,
+ * so a player with a sloop meets monsters a sloop can beat, and the materials its upgrade needs. The
+ * top level open is twice as likely as each one below, so lower materials keep coming.
+ *
+ * Decided from the player, the window, their level and that rank alone, so every read agrees while
+ * they stand. The kinds do not depend on the levels: an upgrade mid-window may lift a monster's
+ * level, never change its kind, and a slot already won stays won.
  */
-export function huntRoster(playerId: string, window: number, playerLevel: number): readonly { readonly slot: number; readonly kind: MonsterKind; readonly level: number }[] {
+export function huntRoster(
+  playerId: string,
+  window: number,
+  playerLevel: number,
+  warshipRank: number
+): readonly { readonly slot: number; readonly kind: MonsterKind; readonly level: number }[] {
   const roll = (salt: string): number => stableHash(`${playerId}|hunt|${String(window)}|${salt}`) / 4294967296;
-  const open = MONSTER_LEVELS.filter((entry) => playerLevel >= entry.minPlayerLevel).map((entry) => entry.level);
+  const cap = Math.max(1, warshipRank);
+  const reached = MONSTER_LEVELS.filter((entry) => playerLevel >= entry.minPlayerLevel && entry.level <= cap).map((entry) => entry.level);
+  const open = reached.length === 0 ? [1] : reached;
   const kinds = [...MONSTER_KINDS];
   const roster: { slot: number; kind: MonsterKind; level: number }[] = [];
   for (let slot = 0; slot < HUNT_ROSTER_SIZE; slot += 1) {
     const index = Math.floor(roll(`kind${String(slot)}`) * kinds.length);
     const kind = kinds.splice(index, 1)[0] ?? MONSTER_KINDS[0];
-    // Weighted toward the top level the player reaches: 1 : 2 : 3 by rising level.
-    const weights = open.map((_, position) => position + 1);
+    const weights = open.map((_, position) => (position === open.length - 1 ? 2 : 1));
     const total = weights.reduce((sum, weight) => sum + weight, 0);
     let pick = roll(`level${String(slot)}`) * total;
     const levelIndex = weights.findIndex((weight) => (pick -= weight) < 0);

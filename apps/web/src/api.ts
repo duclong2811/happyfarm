@@ -76,6 +76,9 @@ import {
   ,VisitWorldPlaceResponseSchema
   ,FleetResponseSchema
   ,FightAmbushResponseSchema
+  ,HuntsResponseSchema
+  ,FightHuntResponseSchema
+  ,MergeMaterialResponseSchema
   ,EnsureWorldSlotResponseSchema
 } from "@happy-farm/contracts";
 import type {
@@ -147,6 +150,9 @@ import type {
   ,FleetResponse
   ,ShipRole
   ,FightAmbushResponse
+  ,HuntsResponse
+  ,FightHuntResponse
+  ,MergeMaterialResponse
   ,EnsureWorldSlotResponse
   ,SeaRegionDTO
 } from "@happy-farm/contracts";
@@ -383,6 +389,26 @@ export class ApiClient {
    */
   fightAmbush(inputs: readonly (readonly [number, number] | readonly [number, number, number])[]): Promise<FightAmbushResponse> {
     return this.post("/voyages/ambush", { inputs }, FightAmbushResponseSchema);
+  }
+
+  /** The monsters in the caller's home waters this window, which are beaten, and any fight still open (F3). */
+  getHunts(): Promise<HuntsResponse> {
+    return this.get("/hunts", HuntsResponseSchema);
+  }
+
+  /** Plans a fight with one roster monster in one of the caller's warships; the monster and the seed are the server's. */
+  startHunt(slot: number, shipId: string, requestId: string): Promise<HuntsResponse> {
+    return this.post("/hunts/start", { slot, shipId, requestId }, HuntsResponseSchema);
+  }
+
+  /** Submits a fought hunt: only the player's orders. The server replays it and pays any bounty. */
+  fightHunt(inputs: readonly (readonly [number, number] | readonly [number, number, number])[]): Promise<FightHuntResponse> {
+    return this.post("/hunts/fight", { inputs }, FightHuntResponseSchema);
+  }
+
+  /** Merges ten of a monster material into one of the next level; the counts are the server's. */
+  mergeMaterial(itemDefinitionId: string, requestId: string): Promise<MergeMaterialResponse> {
+    return this.post("/materials/merge", { itemDefinitionId, requestId }, MergeMaterialResponseSchema);
   }
 
   /** Brings the ship home, ending its voyage. */

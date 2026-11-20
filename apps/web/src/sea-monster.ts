@@ -1,20 +1,13 @@
-import type { FleetResponse } from "@happy-farm/contracts";
-import { SHIP_BATTLE_NUMBERS, type SeaMonsterDefinition } from "@happy-farm/game-data";
-import { runSeaBattle, SEA_BATTLE_ACTIONS, type SeaBattleResult, type SeaBattleSetup } from "@happy-farm/domain";
-
 /**
- * The sea monster that lairs off the home island (docs/design/NAVAL.md, "A monster off the island").
- *
- * A practice fight, decided entirely on the player's screen: the same battle simulation the server
- * referees for pirates, run here with a monster as the opponent. It sends nothing, pays nothing and
- * costs nothing - the ship fights at full hull and comes back as it was - so it can be fought as often
- * as the player likes while the fleet's own design (fishing, trade, war) is settled.
+ * Where the roster's sea monsters lie in the home waters (docs/design/FLEET.md, F3), for the 3D view
+ * and the helm. Presentation only: which monsters surface, their levels and every fight are the
+ * server's (`/hunts`); this module only spreads them round the island so each can be sailed up to.
  */
 
-/** How close to the lair, in tiles, the helm offers the fight. */
+/** How close to a lair, in tiles, the helm offers the fight. */
 export const MONSTER_REACH = 14;
 
-/** Where the monster lairs, in island tiles: in open water a little off the island, away from the pier. */
+/** Where a monster lairs, in island tiles: in open water a little off the island, away from the pier. */
 export interface MonsterLair {
   readonly x: number;
   readonly y: number;
@@ -22,57 +15,49 @@ export interface MonsterLair {
   readonly heading: number;
 }
 
+/** How far past the island's grid the first lair lies, and how much farther out each next one. */
+const LAIR_OFFSET = 12;
+const LAIR_STEP = 4;
+
 /**
- * The lair, from the island's own seed: a bearing off the island's middle, a dozen tiles past the edge
- * of its grid (open water on every island), turned away from the pier so a ship leaving it does not
- * sail straight into the monster.
+ * The lairs of a roster of `count` monsters, slot by slot, from the island's own seed: spread evenly
+ * round the island, a dozen tiles or more past the edge of its grid (open water on every island). With
+ * a pier, the spread is turned so the pier falls between two lairs: a ship leaving it does not sail
+ * straight into a monster. The same island always gives the same lairs.
  */
-export function monsterLair(island: { readonly size: number; readonly originX: number; readonly originY: number; readonly seed: number }, pier: { readonly x: number; readonly y: number } | null): MonsterLair {
+export function monsterLairs(island: { readonly size: number; readonly originX: number; readonly originY: number; readonly seed: number }, pier: { readonly x: number; readonly y: number } | null, count: number): MonsterLair[] {
   const half = (island.size - 1) / 2;
   const centre = { x: island.originX + half, y: island.originY + half };
-  let bearing = (((island.seed * 2654435761) >>> 0) / 4294967296) * Math.PI * 2;
-  if (pier !== null) {
-    const pierBearing = Math.atan2(pier.y - centre.y, pier.x - centre.x);
-    const apart = Math.abs(Math.atan2(Math.sin(bearing - pierBearing), Math.cos(bearing - pierBearing)));
-    if (apart < Math.PI / 3) bearing = pierBearing + Math.PI * (2 / 3);
+  const spacing = (Math.PI * 2) / Math.max(1, count);
+  const base = pier === null ? (((island.seed * 2654435761) >>> 0) / 4294967296) * Math.PI * 2 : Math.atan2(pier.y - centre.y, pier.x - centre.x) + spacing / 2;
+  const lairs: MonsterLair[] = [];
+  for (let slot = 0; slot < count; slot += 1) {
+    const bearing = base + slot * spacing;
+    const distance = half + LAIR_OFFSET + (slot % 3) * LAIR_STEP;
+    lairs.push({
+      x: centre.x + Math.cos(bearing) * distance,
+      y: centre.y + Math.sin(bearing) * distance,
+      // It lies across the bearing, coiled round the island.
+      heading: bearing + Math.PI / 2
+    });
   }
-  const distance = half + 12;
-  return {
-    x: centre.x + Math.cos(bearing) * distance,
-    y: centre.y + Math.sin(bearing) * distance,
-    // It lies across the bearing, coiled round the island.
-    heading: bearing + Math.PI / 2
-  };
+  return lairs;
 }
 
-/** Whether a ship at (x, y) is close enough to the lair to be offered the fight. */
+/** Whether a ship at (x, y) is close enough to a lair to be offered the fight. */
 export function nearMonster(at: { readonly x: number; readonly y: number }, lair: MonsterLair): boolean {
   return Math.hypot(at.x - lair.x, at.y - lair.y) <= MONSTER_REACH;
 }
 
-/**
- * The practice fight: the player's own ship, at full hull, against the monster. The seed varies the
- * wind and where the monster comes from, so no two fights are quite alike.
- */
-export function practiceBattleSetup(ship: FleetResponse["ship"], monster: SeaMonsterDefinition, seed: number): SeaBattleSetup {
-  const numbers = SHIP_BATTLE_NUMBERS[ship.classId] ?? SHIP_BATTLE_NUMBERS.ship_class_rowboat ?? { speed: 6, turn: 16, radius: 3, spread: 60 };
-  return {
-    seed: seed >>> 0,
-    player: { hull: ship.hullMax, hullMax: ship.hullMax, cannons: ship.cannons, ...numbers },
-    pirates: [{ hull: monster.hull, hullMax: monster.hull, cannons: 0, ...monster.battle, behaviour: "BEAST" }]
-  };
-}
+/** How long each kind is drawn at level 1, in world units; a level up draws it a sixth larger. */
+const DRAWN_LENGTH: Readonly<Record<string, number>> = {
+  monster_thuong_luong: 14,
+  monster_bach_tuoc: 11,
+  monster_cua_da: 10,
+  monster_kinh_ngu: 15,
+  monster_sua_lua: 8
+};
 
-/**
- * Plays the recorded orders through the simulation on this screen - the practice fight's referee.
- * The orders arrive as the battle view records them: `[tick, action index]` or with an aim.
- */
-export function runPracticeFight(setup: SeaBattleSetup, orders: readonly ([number, number] | [number, number, number])[]): SeaBattleResult {
-  return runSeaBattle(
-    setup,
-    orders.map(([tick, action, aim]) => {
-      const name = SEA_BATTLE_ACTIONS[action] ?? "RUDDER_CENTER";
-      return aim === undefined ? { tick, action: name } : { tick, action: name, aim };
-    })
-  );
+export function monsterDrawnLength(monsterId: string, level: number): number {
+  return (DRAWN_LENGTH[monsterId] ?? 12) * (1 + (Math.max(1, level) - 1) / 6);
 }

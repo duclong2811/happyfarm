@@ -1,5 +1,16 @@
-import type { FleetResponse, ShipRole } from "@happy-farm/contracts";
-import { FISHING_GROUNDS, SHIP_CLASSES, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL } from "@happy-farm/game-data";
+import type { FleetResponse, HuntsResponse, ShipRole } from "@happy-farm/contracts";
+import {
+  FISHING_GROUNDS,
+  MATERIAL_MERGE_COUNT,
+  MAX_MONSTER_LEVEL,
+  MONSTER_KIND_DEFINITIONS,
+  MONSTER_LEVELS,
+  monsterMaterialId,
+  parseMonsterMaterial,
+  SHIP_CLASSES,
+  SHIP_REPAIR_GOLD_PER_HULL,
+  SHIP_REPAIR_WOOD_PER_HULL
+} from "@happy-farm/game-data";
 import type { MessageKey } from "./i18n";
 import { createIcon } from "./icons";
 import { shipModelId, shipModelForTier } from "./render/ship-models";
@@ -20,7 +31,26 @@ import { shipModelId, shipModelForTier } from "./render/ship-models";
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
-export type ShipActionKind = "FIGHT" | "SAIL" | "HELM" | "VISIT" | "COME_HOME" | "REPAIR" | "UPGRADE" | "BUILD" | "DOCK" | "FISH" | "TRIP" | "COLLECT" | "RECALL";
+export type ShipActionKind =
+  | "FIGHT"
+  | "SAIL"
+  | "HELM"
+  | "VISIT"
+  | "COME_HOME"
+  | "REPAIR"
+  | "UPGRADE"
+  | "BUILD"
+  | "DOCK"
+  | "FISH"
+  | "TRIP"
+  | "COLLECT"
+  | "RECALL"
+  /** Opens the sea-monster page (the panel's own, not a request). */
+  | "HUNTS"
+  /** Fights a roster monster, or resumes the fight already planned. */
+  | "HUNT"
+  /** Merges ten of a monster material into one of the next level. */
+  | "MERGE";
 
 /** The panel's pictures, drawn by the stylesheet (`assets/ui/fleet`). */
 export type FleetIcon =
@@ -44,13 +74,21 @@ export type FleetIcon =
   | "fight"
   | "visit"
   | "fish"
-  | "clock";
+  | "clock"
+  | "monster"
+  | "xp";
 
 export interface CostChip {
-  readonly icon: "gold" | "wood" | "ore";
+  /** A resource drawn as an icon, or an item (a monster material) drawn as its own picture. */
+  readonly icon: "gold" | "wood" | "ore" | "item";
   readonly amount: number;
   /** The island has less than this. */
   readonly short: boolean;
+  /** The item, for an item's chip. */
+  readonly itemDefinitionId?: string;
+  readonly name?: string;
+  /** How many the island has, for an item's chip; null when unknown. */
+  readonly have?: number | null;
 }
 
 export interface ShipActionModel {
@@ -73,6 +111,10 @@ export interface ShipActionModel {
   readonly role?: ShipRole;
   /** The fishing ground a trip would work (trip). */
   readonly groundId?: string;
+  /** The roster slot of the monster to fight (hunt). */
+  readonly slot?: number;
+  /** The material to merge (merge). */
+  readonly itemDefinitionId?: string;
 }
 
 /** What the panel is about: one of the player's ships, the free berth, or the dock itself. */
@@ -81,7 +123,9 @@ export type FleetSelection =
   | { readonly kind: "BERTH" }
   | { readonly kind: "DOCK" }
   /** The fishing grounds, for one fishing boat at its dock. */
-  | { readonly kind: "GROUNDS"; readonly shipId: string };
+  | { readonly kind: "GROUNDS"; readonly shipId: string }
+  /** The sea monsters in home waters, and the ship that would fight them (null: the panel picks). */
+  | { readonly kind: "HUNTS"; readonly shipId: string | null };
 
 export interface BerthTileModel {
   readonly key: string;
@@ -185,17 +229,71 @@ export interface DockDetailModel {
   readonly next: { readonly tier: number; readonly berths: number; readonly action: ShipActionModel } | null;
 }
 
+export interface HuntCardModel {
+  readonly slot: number;
+  readonly name: string;
+  readonly level: number;
+  readonly modelId: string;
+  readonly defeated: boolean;
+  /** This monster's fight is planned and waits to be fought. */
+  readonly open: boolean;
+  readonly gold: number;
+  readonly xp: number;
+  /** The materials a win drops, as item chips. */
+  readonly drops: readonly CostChip[];
+  readonly action: ShipActionModel;
+}
+
+export interface HuntFighterModel {
+  readonly shipId: string;
+  readonly name: string;
+  readonly modelId: string;
+  readonly hull: number;
+  readonly selected: boolean;
+  /** At its dock, afloat and free: it can set out to fight now. */
+  readonly ready: boolean;
+}
+
+export interface MaterialCellModel {
+  readonly itemDefinitionId: string;
+  readonly name: string;
+  readonly level: number;
+  /** How many the island has; null when unknown. */
+  readonly have: number | null;
+  /** Merging ten of these into one of the next level; null on the top level. */
+  readonly merge: ShipActionModel | null;
+}
+
+export interface HuntsModel {
+  readonly kind: "HUNTS";
+  /** The roster is still being read. */
+  readonly loading: boolean;
+  /** The player's armed ships; the selected one fights. */
+  readonly fighters: readonly HuntFighterModel[];
+  /** Why the fight buttons are held back, in a few words; null when nothing is. */
+  readonly warning: string | null;
+  /** When the next roster surfaces, written out; null while unknown. */
+  readonly renews: string | null;
+  readonly cards: readonly HuntCardModel[];
+  /** Every material, kind by kind (rows) and level by level (cells). */
+  readonly materials: readonly { readonly kind: string; readonly name: string; readonly cells: readonly MaterialCellModel[] }[];
+}
+
 export interface ShipPanelModel {
   readonly title: string;
   readonly berths: readonly BerthTileModel[];
   readonly dock: { readonly tier: number; readonly used: number; readonly berths: number; readonly selected: boolean; readonly canGrow: boolean };
-  readonly detail: ShipDetailModel | ShipyardModel | DockDetailModel | GroundsModel;
+  /** The header's monster badge: how many monsters are still to beat (null while unread). */
+  readonly hunts: { readonly alive: number | null; readonly selected: boolean };
+  readonly detail: ShipDetailModel | ShipyardModel | DockDetailModel | GroundsModel | HuntsModel;
 }
 
 export interface Holdings {
   readonly gold: number;
   readonly wood: number;
   readonly ore: number;
+  /** How many of an item the island has (monster materials); absent when unknown. */
+  readonly count?: (itemDefinitionId: string) => number;
 }
 
 export interface ShipPanelInput {
@@ -210,6 +308,8 @@ export interface ShipPanelInput {
   readonly holdings?: Holdings | null;
   /** Whether pirates have struck this voyage and wait to be fought. */
   readonly ambushDue: boolean;
+  /** The monsters in home waters this window (F3); null while unread. */
+  readonly hunts?: HuntsResponse | null;
   /** Whether the ship can be taken by hand round home waters: drawn at the pier, in the 3D view. */
   readonly canHelm: boolean;
   readonly placeName: (slotId: string) => string;
@@ -247,8 +347,19 @@ function costChips(price: { readonly gold: number; readonly wood: number; readon
   return chips;
 }
 
-function priceChips(cost: Price, holdings: Holdings | null | undefined): CostChip[] {
-  return costChips({ gold: cost.gold, wood: materialQuantity(cost.materials, "item_wood"), ore: materialQuantity(cost.materials, "item_ore") }, holdings);
+/** An item's chip: its picture, how many it takes, and whether the island has that many. */
+function itemChip(input: { readonly itemName?: (itemDefinitionId: string) => string }, holdings: Holdings | null | undefined, itemDefinitionId: string, amount: number): CostChip {
+  const have = holdings?.count === undefined ? null : holdings.count(itemDefinitionId);
+  return { icon: "item", itemDefinitionId, name: input.itemName?.(itemDefinitionId) ?? itemDefinitionId, amount, short: have !== null && have < amount, have };
+}
+
+/** A price as chips: gold, wood and ore as icons, then any monster materials it takes as pictures. */
+function priceChips(cost: Price, holdings: Holdings | null | undefined, input: { readonly itemName?: (itemDefinitionId: string) => string } = {}): CostChip[] {
+  const chips = costChips({ gold: cost.gold, wood: materialQuantity(cost.materials, "item_wood"), ore: materialQuantity(cost.materials, "item_ore") }, holdings);
+  for (const entry of cost.materials) {
+    if (entry.quantity > 0 && parseMonsterMaterial(entry.itemDefinitionId) !== null) chips.push(itemChip(input, holdings, entry.itemDefinitionId, entry.quantity));
+  }
+  return chips;
 }
 
 /** Whether the fleet has room for a new ship: a free berth, or the lent rowboat to give way. */
@@ -261,6 +372,7 @@ export function resolveSelection(fleet: FleetResponse, selected: FleetSelection 
   if (selected?.kind === "SHIP" && fleet.ships.some((ship) => ship.shipId === selected.shipId)) return selected;
   if (selected?.kind === "BERTH" && canBuild(fleet)) return selected;
   if (selected?.kind === "DOCK") return selected;
+  if (selected?.kind === "HUNTS") return selected.shipId === null || fleet.ships.some((ship) => ship.shipId === selected.shipId) ? selected : { kind: "HUNTS", shipId: null };
   if (selected?.kind === "GROUNDS") {
     const boat = fleet.ships.find((ship) => ship.shipId === selected.shipId);
     if (boat !== undefined && boat.role === "FISHING" && boat.trip === null && !boat.away) return selected;
@@ -345,15 +457,17 @@ export function shipPanelModel(input: ShipPanelInput): ShipPanelModel {
   }
   const dock = { tier: fleet.dock.tier, used: stored, berths: fleet.dock.berths, selected: selection.kind === "DOCK", canGrow: nextDock !== null };
   const title = translate("fleet.title");
+  const hunts = { alive: input.hunts == null ? null : input.hunts.monsters.filter((monster) => !monster.defeated).length, selected: selection.kind === "HUNTS" };
 
-  if (selection.kind === "DOCK") return { title, berths, dock, detail: dockDetail(input) };
-  if (selection.kind === "BERTH") return { title, berths, dock, detail: shipyard(input) };
+  if (selection.kind === "DOCK") return { title, berths, dock, hunts, detail: dockDetail(input) };
+  if (selection.kind === "BERTH") return { title, berths, dock, hunts, detail: shipyard(input) };
+  if (selection.kind === "HUNTS") return { title, berths, dock, hunts, detail: huntsDetail(input, selection.shipId) };
   if (selection.kind === "GROUNDS") {
     const boat = fleet.ships.find((entry) => entry.shipId === selection.shipId);
-    if (boat !== undefined) return { title, berths, dock, detail: groundsDetail(input, boat) };
+    if (boat !== undefined) return { title, berths, dock, hunts, detail: groundsDetail(input, boat) };
   }
   const ship = fleet.ships.find((entry) => entry.shipId === selection.shipId) ?? fleet.ship;
-  return { title, berths, dock, detail: shipDetail(input, ship) };
+  return { title, berths, dock, hunts, detail: shipDetail(input, ship) };
 }
 
 function stats(ship: { readonly hull: number; readonly hullMax: number; readonly speedTilesPerMinute: number; readonly cannons: number; readonly hold: number }, translate: Translate, upgrade: FleetShip["upgrade"]): StatModel[] {
@@ -429,9 +543,13 @@ function shipDetail(input: ShipPanelInput, ship: FleetShip): ShipDetailModel {
     status = { icon: "anchor", text: translate("fleet.status.home"), tone: "calm" };
     if (otherAway) warning = translate("fleet.warn.otherAway");
     else if (sunk) warning = translate("fleet.warn.sunk");
-    // A fishing boat leads with fishing: its trips need no voyage, so another ship out does not hold it.
+    // A fishing boat leads with fishing, and a warship with the hunt: neither needs a voyage, so
+    // another ship out does not hold them.
     if (ship.role === "FISHING") actions.push(action("FISH", "fish", "fleet.action.fish", translate("fleet.fishHint"), { enabled: !sunk, primary: !sunk }));
-    actions.push(action("SAIL", "sail", "fleet.action.sail", translate("shipPanel.sailDetail"), { enabled: !otherAway && !sunk, primary: ship.role !== "FISHING" && !otherAway && !sunk }));
+    const hunts = armed(ship);
+    if (hunts && ship.role === "WAR") actions.push(action("HUNTS", "monster", "fleet.action.hunt", translate("fleet.huntHint"), { enabled: !sunk, primary: !sunk }));
+    actions.push(action("SAIL", "sail", "fleet.action.sail", translate("shipPanel.sailDetail"), { enabled: !otherAway && !sunk, primary: ship.role === "MERCHANT" && !otherAway && !sunk }));
+    if (hunts && ship.role !== "WAR") actions.push(action("HUNTS", "monster", "fleet.action.hunt", translate("fleet.huntHint"), { enabled: !sunk }));
     if (input.canHelm && !sunk && !otherAway) actions.push(action("HELM", "helm", "fleet.action.helm", translate("shipPanel.helmDetail")));
     const missing = ship.hullMax - ship.hull;
     if (missing > 0 && !ship.lent) {
@@ -453,7 +571,7 @@ function shipDetail(input: ShipPanelInput, ship: FleetShip): ShipDetailModel {
           rank: next.rank,
           action: action("UPGRADE", "upgrade", "fleet.action.upgrade", translate("fleet.upgradeTo", { name: className(translate, next.classId) }), {
             enabled: !levelShort(input, next.requiredPlayerLevel),
-            cost: priceChips(next.cost, input.holdings),
+            cost: priceChips(next.cost, input.holdings, input),
             lockLevel: levelShort(input, next.requiredPlayerLevel) ? next.requiredPlayerLevel : null
           })
         };
@@ -578,6 +696,127 @@ function dockDetail(input: ShipPanelInput): DockDetailModel {
   };
 }
 
+/** Whether a ship can fight a monster: one of the player's own, with guns (the server checks again). */
+function armed(ship: FleetShip): boolean {
+  return !ship.lent && ship.cannons > 0;
+}
+
+/** At its dock, afloat and not out fishing: free to set out for a fight now. */
+function readyToFight(ship: FleetShip): boolean {
+  return armed(ship) && !ship.away && ship.trip === null && ship.hull > 0;
+}
+
+function monsterName(translate: Translate, monsterId: string): string {
+  return translate(`pirate.${monsterId}` as MessageKey);
+}
+
+/** Time to the next roster: hours and minutes, or minutes alone in the last hour. */
+function renewsIn(translate: Translate, endsAt: string, nowMs: number): string {
+  const minutes = Math.max(1, Math.ceil((Date.parse(endsAt) - nowMs) / 60_000));
+  return minutes >= 60
+    ? translate("fleet.hunt.endsHours", { hours: Math.floor(minutes / 60), minutes: minutes % 60 })
+    : translate("fleet.hunt.endsMinutes", { minutes });
+}
+
+/**
+ * The sea-monster page: the roster's cards (picture, level, what a win pays and drops, and the fight
+ * button), the warships to fight with, and every material with its merge arrows. A fight planned and
+ * not yet fought is resumed with its own ship, and holds every other card back.
+ */
+function huntsDetail(input: ShipPanelInput, pickedShipId: string | null): HuntsModel {
+  const { fleet, translate } = input;
+  const hunts = input.hunts ?? null;
+  const open = hunts?.hunt ?? null;
+  const candidates = fleet.ships.filter(armed);
+  const picked = candidates.find((ship) => ship.shipId === pickedShipId) ?? null;
+  const fighter =
+    open !== null
+      ? (fleet.ships.find((ship) => ship.shipId === open.shipId) ?? null)
+      : (picked ?? [...candidates].sort((a, b) => Number(readyToFight(b)) - Number(readyToFight(a)) || b.rank - a.rank || b.hull - a.hull)[0] ?? null);
+  const ready = fighter !== null && readyToFight(fighter);
+  let warning: string | null = null;
+  if (fighter === null) warning = translate("fleet.hunt.needWarship");
+  else if (open === null && fighter.hull <= 0) warning = translate("fleet.warn.sunk");
+  else if (open === null && !ready) warning = translate("fleet.hunt.fighterAway");
+
+  const cards: HuntCardModel[] = (hunts?.monsters ?? []).map((monster) => {
+    const isOpen = open !== null && open.slot === monster.slot;
+    const held = open !== null && !isOpen;
+    const enabled = isOpen || (!monster.defeated && !held && ready);
+    const label = isOpen ? "fleet.hunt.resume" : monster.defeated ? "fleet.hunt.beaten" : "fleet.hunt.fight";
+    return {
+      slot: monster.slot,
+      name: monsterName(translate, monster.monsterId),
+      level: monster.level,
+      modelId: monster.monsterId,
+      defeated: monster.defeated,
+      open: isOpen,
+      gold: monster.reward.gold,
+      xp: monster.reward.xp,
+      drops: monster.reward.materials.map((entry) => ({ ...itemChip(input, null, entry.itemDefinitionId, entry.quantity), short: false })),
+      action: {
+        kind: "HUNT",
+        icon: "fight",
+        label: translate(label),
+        hint: held ? translate("fleet.hunt.finishOpen") : monsterName(translate, monster.monsterId),
+        enabled,
+        primary: enabled,
+        cost: [],
+        lockLevel: null,
+        slot: monster.slot,
+        ...(fighter === null ? {} : { shipId: isOpen ? open.shipId : fighter.shipId })
+      }
+    };
+  });
+
+  const materials = MONSTER_KIND_DEFINITIONS.map((definition) => ({
+    kind: definition.kind,
+    name: monsterName(translate, definition.id),
+    cells: MONSTER_LEVELS.map((level): MaterialCellModel => {
+      const itemDefinitionId = monsterMaterialId(definition.kind, level.level);
+      const name = input.itemName?.(itemDefinitionId) ?? itemDefinitionId;
+      const have = input.holdings?.count === undefined ? null : input.holdings.count(itemDefinitionId);
+      return {
+        itemDefinitionId,
+        name,
+        level: level.level,
+        have,
+        merge:
+          level.level >= MAX_MONSTER_LEVEL
+            ? null
+            : {
+                kind: "MERGE",
+                icon: "upgrade",
+                label: translate("fleet.hunt.merge"),
+                hint: translate("fleet.hunt.mergeHint", { count: MATERIAL_MERGE_COUNT, name }),
+                enabled: have !== null && have >= MATERIAL_MERGE_COUNT,
+                primary: false,
+                cost: [],
+                lockLevel: null,
+                itemDefinitionId
+              }
+      };
+    })
+  }));
+
+  return {
+    kind: "HUNTS",
+    loading: hunts === null,
+    fighters: candidates.map((ship) => ({
+      shipId: ship.shipId,
+      name: className(translate, ship.classId),
+      modelId: modelOf(ship.classId, ship.tier),
+      hull: ship.hullMax <= 0 ? 0 : Math.max(0, Math.min(1, ship.hull / ship.hullMax)),
+      selected: fighter !== null && fighter.shipId === ship.shipId,
+      ready: readyToFight(ship)
+    })),
+    warning,
+    renews: hunts === null ? null : renewsIn(translate, hunts.endsAt, input.serverNowMs),
+    cards,
+    materials
+  };
+}
+
 export interface ShipPanelOptions {
   readonly host: HTMLElement;
   readonly translate: Translate;
@@ -639,15 +878,6 @@ function formatAmount(amount: number): string {
   return amount >= 10_000 ? `${String(Math.round(amount / 100) / 10)}k` : String(amount);
 }
 
-function chipsOf(cost: readonly CostChip[]): HTMLSpanElement {
-  const row = element("span", "fl-cost");
-  for (const chip of cost) {
-    const node = element("span", `fl-chip${chip.short ? " is-short" : ""}`);
-    put(node, icon(chip.icon, "fl-chip-icon"), element("span", "fl-chip-amount", formatAmount(chip.amount)));
-    row.appendChild(node);
-  }
-  return row;
-}
 
 export function openShipPanel(options: ShipPanelOptions): ShipPanel {
   const { host, translate } = options;
@@ -666,12 +896,15 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
   title.id = "ship-panel-title";
   const dockBadge = element("button", "fl-dock");
   dockBadge.type = "button";
+  const huntBadge = element("button", "fl-dock fl-hunts");
+  huntBadge.type = "button";
+  huntBadge.title = translate("fleet.hunts");
   const closeButton = element("button", "panel-close fl-close");
   closeButton.type = "button";
   closeButton.setAttribute("aria-label", translate("shipPanel.close"));
   closeButton.title = translate("shipPanel.close");
   closeButton.appendChild(createIcon("close", 18));
-  head.replaceChildren(title, dockBadge, closeButton);
+  head.replaceChildren(title, huntBadge, dockBadge, closeButton);
   const berthRow = element("div", "fl-berths");
   berthRow.setAttribute("role", "tablist");
   berthRow.setAttribute("aria-label", translate("shipPanel.berths"));
@@ -699,17 +932,40 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
   }
 
   /** An item's picture, drawn the warehouse's way when the host can, and kept across redraws. */
-  function itemImage(key: string, entry: CatchChip, className: string): HTMLImageElement {
+  function itemImage(key: string, entry: { readonly itemDefinitionId: string; readonly name: string; readonly modelId?: string }, className: string): HTMLImageElement {
     const draw = options.itemPicture;
-    if (draw === undefined) return picture(key, entry.modelId, className);
+    if (draw === undefined) return picture(key, entry.modelId ?? entry.itemDefinitionId, className);
     const known = pictures.get(key);
-    if (known !== undefined && known.modelId === entry.itemDefinitionId) return known.image;
+    if (known !== undefined && known.modelId === entry.itemDefinitionId) {
+      known.image.className = className;
+      return known.image;
+    }
     const image = element("img", className);
     image.alt = entry.name;
     image.draggable = false;
     draw(entry.itemDefinitionId, image);
     pictures.set(key, { modelId: entry.itemDefinitionId, image });
     return image;
+  }
+
+  /**
+   * A price or a drop as chips: resources as icons, items (monster materials) as their pictures. An
+   * item chip with a known stock reads "have/need", and turns red when short.
+   */
+  function chipsOf(cost: readonly CostChip[], key: string, needs = false): HTMLSpanElement {
+    const row = element("span", `fl-cost${needs ? " is-needs" : ""}`);
+    for (const chip of cost) {
+      const node = element("span", `fl-chip${chip.short ? " is-short" : ""}${chip.icon === "item" ? " is-item" : ""}`);
+      if (chip.icon === "item" && chip.itemDefinitionId !== undefined) {
+        node.title = chip.name ?? chip.itemDefinitionId;
+        const amount = needs && chip.have != null ? `${formatAmount(chip.have)}/${formatAmount(chip.amount)}` : `×${formatAmount(chip.amount)}`;
+        put(node, itemImage(`${key}:${chip.itemDefinitionId}`, { itemDefinitionId: chip.itemDefinitionId, name: chip.name ?? chip.itemDefinitionId }, "fl-chip-picture"), element("span", "fl-chip-amount", amount));
+      } else {
+        put(node, icon(chip.icon === "item" ? "plus" : chip.icon, "fl-chip-icon"), element("span", "fl-chip-amount", formatAmount(chip.amount)));
+      }
+      row.appendChild(node);
+    }
+    return row;
   }
 
   function actionButton(action: ShipActionModel, extra = ""): HTMLButtonElement {
@@ -722,7 +978,9 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
     const top = element("span", "fl-button-top");
     put(top, icon(action.lockLevel !== null ? "lock" : action.icon, "fl-button-icon"), element("span", "fl-button-label", action.lockLevel !== null ? translate("fleet.lockLevel", { level: action.lockLevel }) : action.label));
     button.appendChild(top);
-    if (action.cost.length > 0 && action.lockLevel === null) button.appendChild(chipsOf(action.cost));
+    // Resources ride on the button; items (monster materials) are drawn beside it, with their stock.
+    const resources = action.cost.filter((chip) => chip.icon !== "item");
+    if (resources.length > 0 && action.lockLevel === null) button.appendChild(chipsOf(resources, `button:${action.kind}`));
     button.addEventListener("click", () => {
       void run(action);
     });
@@ -771,6 +1029,13 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
       const label = element("div", "fl-upgrade-label");
       put(label, icon("upgrade", "fl-upgrade-icon"), element("span", "fl-upgrade-name", model.upgrade.name), stars(model.upgrade.rank, model.maxRank));
       put(upgrade, label, actionButton(model.upgrade.action, " is-upgrade"));
+      const needs = model.upgrade.action.cost.filter((chip) => chip.icon === "item");
+      if (needs.length > 0 && model.upgrade.action.lockLevel === null) {
+        const row = element("div", "fl-needs");
+        row.title = translate("fleet.upgradeMaterials");
+        put(row, icon("monster", "fl-needs-icon"), chipsOf(needs, `needs:${model.key}`, true));
+        upgrade.appendChild(row);
+      }
       info.appendChild(upgrade);
     }
     if (model.tripShare !== null) {
@@ -847,6 +1112,96 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
     return [heading, cards];
   }
 
+  function renderHunts(model: HuntsModel): HTMLElement[] {
+    const head = element("div", "fl-hunts-head");
+    put(head, icon("monster", "fl-hunts-icon"), element("h3", "fl-heading", translate("fleet.hunts")));
+    if (model.renews !== null) {
+      const renews = element("span", "fl-hunts-renews");
+      put(renews, icon("clock", "fl-ground-clock"), element("span", "", model.renews));
+      head.appendChild(renews);
+    }
+    const nodes: HTMLElement[] = [head];
+    // The warships, as small pictures: the lit one fights.
+    if (model.fighters.length > 0) {
+      const fighters = element("div", "fl-fighters");
+      fighters.setAttribute("aria-label", translate("fleet.hunt.fighter"));
+      for (const ship of model.fighters) {
+        const chip = element("button", `fl-fighter${ship.selected ? " is-selected" : ""}${ship.ready ? "" : " is-away"}`);
+        chip.type = "button";
+        chip.title = ship.name;
+        chip.disabled = busy;
+        const bar = element("span", "fl-tile-hull");
+        const fill = element("span", `fl-tile-hull-fill${ship.hull < 0.35 ? " is-low" : ""}`);
+        fill.style.width = `${String(Math.round(ship.hull * 100))}%`;
+        bar.appendChild(fill);
+        put(chip, picture(`fighter:${ship.shipId}`, ship.modelId, "fl-fighter-picture"), bar);
+        chip.addEventListener("click", () => {
+          select({ kind: "HUNTS", shipId: ship.shipId });
+        });
+        fighters.appendChild(chip);
+      }
+      nodes.push(fighters);
+    }
+    if (model.warning !== null) {
+      const warning = element("p", "fl-warning");
+      put(warning, icon("lock", "fl-warning-icon"), element("span", "", model.warning));
+      nodes.push(warning);
+    }
+    if (model.loading) {
+      nodes.push(element("p", "fl-note", translate("fleet.hunt.loading")));
+      return nodes;
+    }
+    const cards = element("div", "fl-yard fl-monsters");
+    for (const card of model.cards) {
+      const node = element("div", `fl-yard-card fl-monster is-level-${String(card.level)}${card.defeated ? " is-beaten" : ""}${card.open ? " is-open" : ""}`);
+      const pictureBox = element("div", "fl-yard-picture fl-monster-picture");
+      pictureBox.appendChild(picture(`monster:${String(card.slot)}`, card.modelId, "fl-yard-image"));
+      pictureBox.appendChild(element("span", `fl-monster-level is-level-${String(card.level)}`, translate("fleet.hunt.level", { level: card.level })));
+      if (card.defeated) pictureBox.appendChild(element("span", "fl-monster-stamp", translate("fleet.hunt.beaten")));
+      const reward = element("div", "fl-monster-reward");
+      const gold = element("span", "fl-chip");
+      put(gold, icon("gold", "fl-chip-icon"), element("span", "fl-chip-amount", formatAmount(card.gold)));
+      const xp = element("span", "fl-chip");
+      put(xp, icon("xp", "fl-chip-icon"), element("span", "fl-chip-amount", formatAmount(card.xp)));
+      put(reward, gold, xp, chipsOf(card.drops, `drop:${String(card.slot)}`));
+      put(node, pictureBox, element("span", "fl-yard-name", card.name), reward, actionButton(card.action));
+      cards.appendChild(node);
+    }
+    nodes.push(cards);
+
+    // The materials: one row per monster, its three levels with the merge arrows between them.
+    const bag = element("div", "fl-materials");
+    bag.appendChild(element("h4", "fl-materials-title", translate("fleet.hunt.materials")));
+    const grid = element("div", "fl-materials-grid");
+    for (const row of model.materials) {
+      const line = element("div", "fl-material-row");
+      line.title = row.name;
+      row.cells.forEach((cell) => {
+        const box = element("span", `fl-material${cell.have === 0 ? " is-empty" : ""}`);
+        box.title = cell.name;
+        put(box, itemImage(`material:${cell.itemDefinitionId}`, cell, "fl-material-picture"), element("span", "fl-material-count", cell.have === null ? "–" : formatAmount(cell.have)));
+        line.appendChild(box);
+        if (cell.merge !== null) {
+          const merge = cell.merge;
+          const arrow = element("button", "fl-merge");
+          arrow.type = "button";
+          arrow.dataset.action = merge.kind;
+          arrow.title = merge.hint;
+          arrow.disabled = busy || !merge.enabled;
+          put(arrow, element("span", "fl-merge-count", `${String(MATERIAL_MERGE_COUNT)}→1`), element("span", "fl-merge-label", merge.label));
+          arrow.addEventListener("click", () => {
+            void run(merge);
+          });
+          line.appendChild(arrow);
+        }
+      });
+      grid.appendChild(line);
+    }
+    bag.appendChild(grid);
+    nodes.push(bag);
+    return nodes;
+  }
+
   function renderDock(model: DockDetailModel): HTMLElement[] {
     const box = element("div", "fl-dock-card");
     const art = element("div", "fl-dock-art");
@@ -883,6 +1238,10 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
     dockBadge.classList.toggle("can-grow", model.dock.canGrow);
     dockBadge.title = translate("fleet.dockTier", { tier: model.dock.tier });
     dockBadge.disabled = busy;
+    huntBadge.replaceChildren(icon("monster", "fl-dock-icon"), ...(model.hunts.alive === null ? [] : [element("span", "fl-dock-text", String(model.hunts.alive))]));
+    huntBadge.classList.toggle("is-selected", model.hunts.selected);
+    huntBadge.classList.toggle("can-grow", (model.hunts.alive ?? 0) > 0);
+    huntBadge.disabled = busy;
     berthRow.replaceChildren(
       ...model.berths.map((berth) => {
         const tile = element("button", `fl-tile is-${berth.kind.toLowerCase()}${berth.selected ? " is-selected" : ""}${berth.away || berth.fishing === false ? " is-away" : ""}`);
@@ -921,7 +1280,9 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
           ? renderShipyard(model.detail)
           : model.detail.kind === "GROUNDS"
             ? renderGrounds(model.detail)
-            : renderDock(model.detail);
+            : model.detail.kind === "HUNTS"
+              ? renderHunts(model.detail)
+              : renderDock(model.detail);
     detail.className = `fl-detail is-${model.detail.kind.toLowerCase()}`;
     detail.replaceChildren(...content);
   }
@@ -939,6 +1300,10 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
     // Choosing a ground is the panel's own page, not a request.
     if (action.kind === "FISH" && action.shipId !== undefined) {
       select({ kind: "GROUNDS", shipId: action.shipId });
+      return;
+    }
+    if (action.kind === "HUNTS") {
+      select({ kind: "HUNTS", shipId: action.shipId ?? null });
       return;
     }
     busy = true;
@@ -962,6 +1327,9 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
   const ticker = window.setInterval(refresh, 15_000);
   dockBadge.addEventListener("click", () => {
     select({ kind: "DOCK" });
+  });
+  huntBadge.addEventListener("click", () => {
+    select({ kind: "HUNTS", shipId: null });
   });
   closeButton.addEventListener("click", () => {
     close();

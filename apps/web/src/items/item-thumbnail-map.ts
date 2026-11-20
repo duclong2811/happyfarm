@@ -46,5 +46,21 @@ export const ITEM_THUMBNAIL_MAP: Readonly<Record<string, ItemThumbnailSpec>> = {
   item_coal: { kind: "MODEL", modelId: "resource_coal" },
   item_wood: { kind: "IMAGE", assetName: "material_wood" },
   item_hardwood: { kind: "IMAGE", assetName: "material_hardwood" },
-  item_resin: { kind: "IMAGE", assetName: "material_resin" }
+  item_resin: { kind: "IMAGE", assetName: "material_resin" },
+  // Sea-monster materials (F3): one drawing per material and level.
+  item_monster_scale_1: { kind: "IMAGE", assetName: "monster_scale_1" },
+  item_monster_scale_2: { kind: "IMAGE", assetName: "monster_scale_2" },
+  item_monster_scale_3: { kind: "IMAGE", assetName: "monster_scale_3" },
+  item_monster_tentacle_1: { kind: "IMAGE", assetName: "monster_tentacle_1" },
+  item_monster_tentacle_2: { kind: "IMAGE", assetName: "monster_tentacle_2" },
+  item_monster_tentacle_3: { kind: "IMAGE", assetName: "monster_tentacle_3" },
+  item_monster_shell_1: { kind: "IMAGE", assetName: "monster_shell_1" },
+  item_monster_shell_2: { kind: "IMAGE", assetName: "monster_shell_2" },
+  item_monster_shell_3: { kind: "IMAGE", assetName: "monster_shell_3" },
+  item_monster_bone_1: { kind: "IMAGE", assetName: "monster_bone_1" },
+  item_monster_bone_2: { kind: "IMAGE", assetName: "monster_bone_2" },
+  item_monster_bone_3: { kind: "IMAGE", assetName: "monster_bone_3" },
+  item_monster_pearl_1: { kind: "IMAGE", assetName: "monster_pearl_1" },
+  item_monster_pearl_2: { kind: "IMAGE", assetName: "monster_pearl_2" },
+  item_monster_pearl_3: { kind: "IMAGE", assetName: "monster_pearl_3" }
 };

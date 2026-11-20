@@ -1875,8 +1875,8 @@ export interface HuntCatalogue {
   /** The window a moment falls in, and when a window ends (milliseconds). */
   window(nowMs: number): number;
   windowEndsAt(window: number): number;
-  /** The monsters a player's home waters hold in a window. */
-  roster(playerId: string, window: number, playerLevel: number): readonly HuntMonster[];
+  /** The monsters a player's home waters hold in a window, no higher than their strongest warship's rank. */
+  roster(playerId: string, window: number, playerLevel: number, warshipRank: number): readonly HuntMonster[];
   /** The model and battle's name for a kind (`monster_<kind>`). */
   monsterId(kind: string): string | null;
   battle(kind: string, level: number): HuntMonsterBattle | null;

@@ -36,10 +36,19 @@ export interface HelmViewOptions {
   readonly portAt?: (state: HelmState) => { readonly slotId: string; readonly name: string } | null;
   /** The player asked to sail for that neighbour: a real voyage, which the host requests. */
   readonly onSailTo?: (slotId: string) => void;
-  /** A sea monster close by, with its name, or null; asked as the ship moves. */
-  readonly monsterAt?: (state: HelmState) => { readonly name: string } | null;
-  /** The player chose to fight it. */
-  readonly onFight?: () => void;
+  /**
+   * A sea monster close by, or null; asked as the ship moves. `key` tells one monster from another;
+   * `canFight` is false when the ship at the helm has no guns, and the fight is not offered.
+   */
+  readonly monsterAt?: (state: HelmState) => HelmMonster | null;
+  /** The player chose to fight the monster with this key. */
+  readonly onFight?: (key: string) => void;
+}
+
+export interface HelmMonster {
+  readonly key: string;
+  readonly name: string;
+  readonly canFight: boolean;
 }
 
 export interface HelmView {
@@ -94,9 +103,9 @@ export function openHelmView(options: HelmViewOptions): HelmView {
   fightButton.hidden = true;
   fightButton.textContent = translate("helm.fight");
   fightButton.addEventListener("click", () => {
-    options.onFight?.();
+    if (monster !== null && monster.canFight) options.onFight?.(monster.key);
   });
-  let monster: { readonly name: string } | null = null;
+  let monster: HelmMonster | null = null;
   notice.replaceChildren(noticeText, fightButton, chartButton, sailButton);
 
   const controls = document.createElement("div");
@@ -168,7 +177,7 @@ export function openHelmView(options: HelmViewOptions): HelmView {
     const resting = helmOarRestShare(state);
     port = options.portAt?.(state) ?? null;
     monster = options.monsterAt?.(state) ?? null;
-    const next = `${String(state.sail)}|${state.blocked}|${resting.toFixed(2)}|${String(state.oars > 0)}|${port?.slotId ?? ""}|${monster?.name ?? ""}`;
+    const next = `${String(state.sail)}|${state.blocked}|${resting.toFixed(2)}|${String(state.oars > 0)}|${port?.slotId ?? ""}|${monster?.key ?? ""}:${monster?.name ?? ""}:${String(monster?.canFight ?? false)}`;
     if (next === signature) return;
     signature = next;
     sailText.textContent = translate(SAIL_KEYS[state.sail] ?? "battle.sailDown");
@@ -180,12 +189,12 @@ export function openHelmView(options: HelmViewOptions): HelmView {
     const atEdge = !nearMonster && state.blocked === "EDGE";
     const nearPort = !nearMonster && !atEdge && port !== null;
     notice.hidden = !nearMonster && !atEdge && !nearPort && state.blocked === "NONE";
-    fightButton.hidden = !nearMonster;
+    fightButton.hidden = !nearMonster || monster?.canFight !== true;
     chartButton.hidden = !atEdge;
     sailButton.hidden = !nearPort;
     if (nearPort && port !== null) sailButton.textContent = translate("helm.sailTo", { name: port.name });
     noticeText.textContent = nearMonster && monster !== null
-      ? translate("helm.monster", { name: monster.name })
+      ? translate(monster.canFight ? "helm.monster" : "helm.monsterUnarmed", { name: monster.name })
       : atEdge
       ? translate("helm.edge")
       : nearPort && port !== null

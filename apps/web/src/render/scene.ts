@@ -571,6 +571,8 @@ export interface DockShipMooring {
 
 /** A sea monster lying in the home waters: its model, where it is in island tiles, and its length. */
 export interface SceneSeaMonster {
+  /** Which monster this is (its roster slot), so one can be told from another. */
+  readonly key: string;
   readonly modelId: string;
   readonly x: number;
   readonly y: number;
@@ -732,7 +734,8 @@ export interface FarmSceneHandle {
   /** Where the moored ship lies, in island tiles, or null while there is none at the pier. */
   dockShipMooring(): DockShipMooring | null;
   /** Draws a sea monster in the home waters, or none (null). Presentation only. */
-  setSeaMonster(monster: SceneSeaMonster | null): void;
+  /** The monsters in the home waters this window (F3); an empty list clears them. */
+  setSeaMonsters(monsters: readonly SceneSeaMonster[]): void;
   /**
    * The open water the helm may sail, in island tiles: the horizon's islands as circles (with the
    * place each one is), and the radius of the sea drawn round the home island.
@@ -5320,27 +5323,29 @@ let interactionGeometry: BufferGeometry | null = null;
       horizonInput = next;
       rebuildHorizon();
     },
-    setSeaMonster(next: SceneSeaMonster | null): void {
-      const signature = next === null ? "" : `${next.modelId}@${next.x.toFixed(2)},${next.y.toFixed(2)},${next.heading.toFixed(3)}:${String(next.lengthWorld)}`;
+    setSeaMonsters(next: readonly SceneSeaMonster[]): void {
+      const signature = next
+        .map((monster) => `${monster.key}:${monster.modelId}@${monster.x.toFixed(2)},${monster.y.toFixed(2)},${monster.heading.toFixed(3)}:${monster.lengthWorld.toFixed(2)}`)
+        .join("|");
       if (signature === seaMonsterSignature || disposed) return;
       seaMonsterSignature = signature;
       const token = ++seaMonsterToken;
-      // The model is the library's, shared: taken off the scene, never disposed.
+      // The models are the library's, shared: taken off the scene, never disposed.
       seaMonsterGroup.clear();
-      if (next === null) {
-        draw();
-        return;
+      draw();
+      for (const entry of next) {
+        void library.load(entry.modelId).then((source) => {
+          if (disposed || token !== seaMonsterToken || source === null) return;
+          const monster = fitShipModel(source, entry.lengthWorld, undefined, draftShareFor(entry.modelId));
+          const at = tileToWorld({ x: entry.x, y: entry.y }, worldFrame(state.layout.pitch));
+          monster.position.set(at.worldX, SEA_SURFACE_Y, at.worldZ);
+          // The model's head is +x once fitted; turn it to the heading.
+          monster.rotation.y = -entry.heading;
+          monster.name = `sea-monster:${entry.key}`;
+          seaMonsterGroup.add(monster);
+          draw();
+        });
       }
-      void library.load(next.modelId).then((source) => {
-        if (disposed || token !== seaMonsterToken || source === null) return;
-        const monster = fitShipModel(source, next.lengthWorld, undefined, draftShareFor(next.modelId));
-        const at = tileToWorld({ x: next.x, y: next.y }, worldFrame(state.layout.pitch));
-        monster.position.set(at.worldX, SEA_SURFACE_Y, at.worldZ);
-        // The model's head is +x once fitted; turn it to the heading.
-        monster.rotation.y = -next.heading;
-        seaMonsterGroup.add(monster);
-        draw();
-      });
     },
     setDockShip(next: { readonly tier: number; readonly modelId?: string } | null): void {
       dockShip = next === null ? null : { tier: next.tier, modelId: next.modelId ?? shipModelForTier(next.tier) };

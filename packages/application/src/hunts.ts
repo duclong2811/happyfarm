@@ -10,7 +10,7 @@ import {
 } from "@happy-farm/domain";
 import { ApplicationError } from "./errors";
 import type { ActorContext, HuntCatalogue, HuntRepository, IdempotencyRecord, MonsterHuntRecord } from "./ports";
-import { fleetShips, ownShip, playerLevel, playerSpec, prepareReward, readFleet, shipAway, type AmbushBountyView, type ShipDependencies } from "./ships";
+import { fleetShips, ownShip, playerLevel, playerSpec, prepareReward, readFleet, shipAway, type AmbushBountyView, type FleetShip, type ShipDependencies } from "./ships";
 
 /**
  * Sea-monster hunts (docs/design/FLEET.md, F3; the owner's design, 2026-11-20).
@@ -83,16 +83,25 @@ function parseSetup(json: string): SeaBattleSetup {
   }
 }
 
+/**
+ * The rank of the player's strongest warship of their own, which caps the monsters' levels (1 with
+ * none, so a new player still meets the first monsters).
+ */
+function warshipRank(ships: readonly FleetShip[]): number {
+  return ships.reduce((best, ship) => (ship.record !== null && ship.shipClass.role === "WAR" ? Math.max(best, ship.shipClass.rank) : best), 1);
+}
+
 async function huntsView(dependencies: HuntDependencies, playerId: ActorContext["playerId"], now: string, hunt: MonsterHuntRecord | null): Promise<HuntsView> {
-  const { huntCatalogue } = dependencies;
+  const { huntCatalogue, catalogue } = dependencies;
   const window = huntCatalogue.window(Date.parse(now));
   const level = await playerLevel(dependencies, playerId);
+  const rank = warshipRank(fleetShips(catalogue, playerId, (await readFleet(dependencies, playerId)).stored));
   const kills = new Set(await dependencies.hunts.listKills(playerId, window));
   const open = hunt !== null && hunt.status === "OPEN" ? hunt : null;
   return {
     readAt: now,
     endsAt: new Date(huntCatalogue.windowEndsAt(window)).toISOString(),
-    monsters: huntCatalogue.roster(playerId, window, level).map((monster) => {
+    monsters: huntCatalogue.roster(playerId, window, level, rank).map((monster) => {
       const bounty = huntCatalogue.bounty(monster.kind, monster.level);
       return {
         slot: monster.slot,
@@ -156,11 +165,12 @@ export class StartHunt {
       if (current !== null && current.status === "OPEN") throw new ApplicationError("HUNT_OPEN", "A fight is waiting to be fought first");
       const window = huntCatalogue.window(Date.parse(now));
       const level = await playerLevel(this.dependencies, actor.playerId);
-      const monster = huntCatalogue.roster(actor.playerId, window, level).find((entry) => entry.slot === command.slot);
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const ships = fleetShips(catalogue, actor.playerId, state.stored);
+      const monster = huntCatalogue.roster(actor.playerId, window, level, warshipRank(ships)).find((entry) => entry.slot === command.slot);
       if (monster === undefined) throw new ApplicationError("RESOURCE_NOT_FOUND", "No monster is there");
       if ((await this.dependencies.hunts.listKills(actor.playerId, window)).includes(monster.slot)) throw new ApplicationError("HUNT_DEFEATED", "That monster is already beaten");
-      const state = await readFleet(this.dependencies, actor.playerId);
-      const ship = ownShip(fleetShips(catalogue, actor.playerId, state.stored), command.shipId);
+      const ship = ownShip(ships, command.shipId);
       const player = playerSpec(catalogue, ship);
       if (player === null || ship.record === null) throw new ApplicationError("SHIP_UNARMED", "Only a ship with guns can fight a monster");
       if (shipAway(state, ship.shipId, now)) throw new ApplicationError("SHIP_AT_SEA", "The ship must be at its dock to fight");

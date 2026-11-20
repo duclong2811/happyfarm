@@ -40,6 +40,7 @@ import type {
   ,NeighborSnapshotDTO
   ,FarmIslandSummaryDTO
   ,AmbushBountyDTO
+  ,HuntsResponse
 } from "@happy-farm/contracts";
 import { FarmIslandDTOSchema } from "@happy-farm/contracts";
 import { ApiClient, ApiError, type CreateFarmResult } from "./api";
@@ -48,7 +49,7 @@ import { openSeaChart, type SeaChartModal } from "./sea-chart-modal";
 import { archipelagoName } from "./sea-chart-view";
 import { openVisitView, type VisitView } from "./visit-view";
 import { openBattleView, type BattleView } from "./battle-view";
-import { monsterLair, nearMonster, practiceBattleSetup, runPracticeFight, type MonsterLair } from "./sea-monster";
+import { monsterDrawnLength, monsterLairs, nearMonster, type MonsterLair } from "./sea-monster";
 import { characterNameKey, showCharacterPicker } from "./character-picker";
 import { CHARACTER_PORTRAITS } from "./character-portraits";
 import { DEFAULT_PLAYER_CHARACTER_ID } from "@happy-farm/game-data";
@@ -187,7 +188,7 @@ import { plantedForestryPanelState, resourcePanelState } from "./forestry/panel"
 import { miningPanelState } from "./mining/panel";
 import { minePanelView, mineMilliAt, mineOreAt, mineSecondsUntilFull, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
 import { activityTrayItems, renderActivityTray, timedFraction, type ActivityKind, type ActivityTrayInput, type TimedActivity } from "./activity-tray";
-import { buildIslandGround, islandCellKindAt, islandFishingSpots, mineFootprintTiles, seaMonster } from "@happy-farm/game-data";
+import { buildIslandGround, HUNT_ROSTER_SIZE, islandCellKindAt, islandFishingSpots, mineFootprintTiles } from "@happy-farm/game-data";
 import {
   createAquaculturePondLoader,
   selectedAquaculturePond,
@@ -7512,6 +7513,8 @@ async function refreshAccount(): Promise<void> {
     });
     if (!current()) return;
     ensurePlantableSelection();
+    // The fleet panel's prices turn red on what the island holds: they follow the new stock.
+    shipPanel?.refresh();
     if (firstFailure !== null) {
       throw firstFailure instanceof Error ? firstFailure : new Error("Account bootstrap read failed");
     }
@@ -7566,7 +7569,7 @@ async function refreshWorldMapAvailability(): Promise<void> {
     worldMapAvailable = false;
   }
   renderChrome();
-  if (worldMapAvailable) await Promise.all([refreshHorizon(), refreshFleet()]);
+  if (worldMapAvailable) await Promise.all([refreshHorizon(), refreshFleet(), refreshHunts()]);
 }
 
 /** The player's ship and voyage as the server last reported them, and when this client read it. */
@@ -7592,7 +7595,7 @@ let fleetSelection: FleetSelection | null = null;
  */
 function pierShipOf(fleet: FleetResponse): FleetResponse["ship"] | null {
   const home = fleet.ships.filter((ship) => !ship.away && ship.trip === null);
-  const picked = fleetSelection?.kind === "SHIP" ? fleetSelection.shipId : null;
+  const picked = fleetSelection?.kind === "SHIP" || fleetSelection?.kind === "HUNTS" ? fleetSelection.shipId : null;
   return home.find((ship) => ship.shipId === picked) ?? home[0] ?? null;
 }
 
@@ -7609,52 +7612,118 @@ function sailingShipId(): string | undefined {
 /** The helm while the player sails the ship round home waters; null while it lies at the pier. */
 let helm: HelmView | null = null;
 
-/** The practice monster, and the drawn length it has. Presentation only (sea-monster.ts). */
-const PRACTICE_MONSTER_ID = "monster_thuong_luong";
-const PRACTICE_MONSTER_LENGTH = 14;
+/** The sea monsters in home waters this window (F3), as the server last reported them. */
+let huntsState: { readonly hunts: HuntsResponse; readonly seenAtMs: number } | null = null;
+/** The read that brings the next roster, when this one sinks. */
+let huntsRenewTimer: number | null = null;
 
-/** Where the practice monster lairs off this island, or null on a farm without a chosen island. */
-function practiceLair(): MonsterLair | null {
-  if (state.island === null) return null;
-  const pier = islandDecorPlan(state.island).pier;
-  return monsterLair(state.island, pier === null ? null : { x: pier.x, y: pier.y });
+function setHunts(hunts: HuntsResponse): void {
+  huntsState = { hunts, seenAtMs: Date.now() };
+  if (huntsRenewTimer !== null) window.clearTimeout(huntsRenewTimer);
+  // A new roster surfaces at the window's end, by the server's clock: one read then, no polling.
+  const offset = Date.parse(hunts.readAt) - Date.now();
+  const wait = Math.max(5_000, Date.parse(hunts.endsAt) - (Date.now() + offset) + 2_000);
+  huntsRenewTimer = window.setTimeout(() => {
+    huntsRenewTimer = null;
+    void refreshHunts();
+  }, Math.min(wait, 2_147_000_000));
+  scene?.setSeaMonsters(seaMonstersOf());
+  shipPanel?.refresh();
 }
 
-/** The monster as the scene draws it, at its lair. */
-function seaMonsterOf(): { modelId: string; x: number; y: number; heading: number; lengthWorld: number } | null {
-  const lair = practiceLair();
-  return lair === null ? null : { modelId: PRACTICE_MONSTER_ID, x: lair.x, y: lair.y, heading: lair.heading, lengthWorld: PRACTICE_MONSTER_LENGTH };
+/** Reads the roster; a deployment without hunts (or a farm without an island) simply shows none. */
+async function refreshHunts(): Promise<void> {
+  try {
+    setHunts(await api().getHunts());
+  } catch {
+    huntsState = null;
+    scene?.setSeaMonsters([]);
+  }
+}
+
+/** Each roster slot's lair off this island, or none on a farm without a chosen island. */
+function rosterLairs(): readonly MonsterLair[] {
+  if (state.island === null) return [];
+  const pier = islandDecorPlan(state.island).pier;
+  return monsterLairs(state.island, pier === null ? null : { x: pier.x, y: pier.y }, HUNT_ROSTER_SIZE);
+}
+
+/** The monsters still to beat, each at its slot's lair. */
+function aliveMonsters(): { readonly slot: number; readonly monsterId: string; readonly level: number; readonly lair: MonsterLair }[] {
+  const lairs = rosterLairs();
+  return (huntsState?.hunts.monsters ?? []).flatMap((monster) => {
+    const lair = lairs[monster.slot];
+    return monster.defeated || lair === undefined ? [] : [{ slot: monster.slot, monsterId: monster.monsterId, level: monster.level, lair }];
+  });
+}
+
+/** The monsters as the scene draws them, at their lairs. */
+function seaMonstersOf(): { key: string; modelId: string; x: number; y: number; heading: number; lengthWorld: number }[] {
+  return aliveMonsters().map((monster) => ({
+    key: String(monster.slot),
+    modelId: monster.monsterId,
+    x: monster.lair.x,
+    y: monster.lair.y,
+    heading: monster.lair.heading,
+    lengthWorld: monsterDrawnLength(monster.monsterId, monster.level)
+  }));
 }
 
 /**
- * The practice fight with the monster: the battle simulation run on this screen, with the player's
- * ship at full hull. Nothing is sent and nothing is paid; the fleet is exactly as it was afterwards.
+ * Fights a planned hunt: the device plays it from the server's own setup, the orders go to the server
+ * in one request, and the server's result (and bounty) is the one shown and kept.
  */
-function openPracticeFight(onClosed: () => void): void {
-  const monster = seaMonster(PRACTICE_MONSTER_ID);
-  const ship = fleetState?.fleet.ship ?? null;
-  if (battleView !== null || monster === null || ship === null) {
-    onClosed();
+function openHuntFight(open: NonNullable<HuntsResponse["hunt"]>, onClosed?: () => void): void {
+  if (battleView !== null) {
+    onClosed?.();
     return;
   }
-  // The ship at the pier fights: the one the player took to the helm.
-  const fighter = fleetState === null ? ship : (pierShipOf(fleetState.fleet) ?? ship);
-  const setup = practiceBattleSetup(fighter, monster, Math.floor(Math.random() * 0xffffffff));
+  const fighter = fleetState?.fleet.ships.find((ship) => ship.shipId === open.shipId) ?? null;
+  const name = t(`pirate.${open.monsterId}` as MessageKey);
   battleView = openBattleView({
     host: document.body,
     translate: (key, params) => t(key, params),
-    setup,
-    pirates: [PRACTICE_MONSTER_ID],
-    playerShip: fighter.classId,
-    title: t("battle.monsterTitle"),
+    setup: open.setup,
+    pirates: [open.monsterId],
+    playerShip: fighter?.classId ?? "ship_class_sloop",
+    title: t("battle.huntTitle", { name, level: open.level }),
     loadModel: (modelId) => sharedModelLibrary().load(modelId),
-    submit: (inputs) => Promise.resolve({ battle: runPracticeFight(setup, inputs), spoils: t("battle.practice") }),
+    submit: async (inputs) => {
+      const answer = await api().fightHunt(inputs);
+      setHunts(answer.hunts);
+      // The fight left its marks on the hull, and a win paid gold, materials and XP.
+      void refreshFleet();
+      if (answer.bounty !== null) {
+        setStatus(message("fleet.hunt.won", { name }));
+        void refreshAccount();
+      }
+      return { battle: answer.battle, spoils: answer.bounty === null ? null : describeSpoils(answer.bounty) };
+    },
     describeError: (error) => describe(error)(t, state.language),
     onClose: () => {
       battleView = null;
-      onClosed();
+      onClosed?.();
     }
   });
+}
+
+/**
+ * Sets out to fight one roster monster in one ship: the server plans the fight (the monster, its level,
+ * the seed) and the device then plays it. A fight already planned is fought first, whichever it is.
+ */
+async function beginHunt(slot: number, shipId: string, onClosed?: () => void): Promise<void> {
+  const planned = huntsState?.hunts.hunt ?? null;
+  if (planned !== null) {
+    openHuntFight(planned, onClosed);
+    return;
+  }
+  const hunts = await api().startHunt(slot, shipId, newRequestId("hunt"));
+  setHunts(hunts);
+  if (hunts.hunt === null) {
+    onClosed?.();
+    return;
+  }
+  openHuntFight(hunts.hunt, onClosed);
 }
 
 /**
@@ -7678,9 +7747,10 @@ function takeHelm(): void {
   // through them, and never past the sea that is drawn.
   const sea = scene.helmSea();
   const neighbours = sea?.islands ?? [];
-  // The practice monster lies in the way like a rock: the ship comes alongside, never through it.
-  const lair = practiceLair();
-  const obstacles = lair === null ? neighbours : [...neighbours, { slotId: PRACTICE_MONSTER_ID, x: lair.x, y: lair.y, radius: 4 }];
+  // The monsters lie in the way like rocks: the ship comes alongside, never through them. They are
+  // the ones on the water when the helm is taken; one beaten meanwhile still blocks until the next.
+  const monsters = aliveMonsters();
+  const obstacles = [...neighbours, ...monsters.map((monster) => ({ slotId: `monster_${String(monster.slot)}`, x: monster.lair.x, y: monster.lair.y, radius: 4 }))];
   const gridHalf = (island.size - 1) / 2;
   const waters = islandHelmWaters({
     size: island.size,
@@ -7721,11 +7791,28 @@ function takeHelm(): void {
     onLeave: () => {
       leaveHelm();
     },
-    monsterAt: (pose) => (lair !== null && nearMonster(pose, lair) ? { name: t("pirate.monster_thuong_luong") } : null),
-    onFight: () => {
+    monsterAt: (pose) => {
+      // The roster as it stands now: a monster beaten from the panel is no longer offered.
+      const near = aliveMonsters().find((monster) => nearMonster(pose, monster.lair)) ?? null;
+      if (near === null) return null;
+      const ship = fleetState === null ? null : pierShipOf(fleetState.fleet);
+      return {
+        key: String(near.slot),
+        name: `${t(`pirate.${near.monsterId}` as MessageKey)} · ${t("fleet.hunt.level", { level: near.level })}`,
+        canFight: ship !== null && !ship.lent && ship.cannons > 0
+      };
+    },
+    onFight: (key) => {
+      const ship = fleetState === null ? null : pierShipOf(fleetState.fleet);
+      if (ship === null) return;
       helm?.setPaused(true);
-      openPracticeFight(() => {
+      const resume = (): void => {
+        // A ship sunk in the fight goes back to the pier (setFleet ends the helm); else it sails on.
         helm?.setPaused(false);
+      };
+      beginHunt(Number(key), ship.shipId, resume).catch((error: unknown) => {
+        setStatus(describe(error));
+        resume();
       });
     },
     portAt: (pose) => {
@@ -7776,6 +7863,8 @@ let shipPanel: ShipPanel | null = null;
 function showShipPanel(): void {
   if (shipPanel !== null || fleetState === null || state.island === null) return;
   const client = api();
+  // The roster may have turned over, or a monster been beaten elsewhere: one read as the panel opens.
+  void refreshHunts();
   shipPanel = openShipPanel({
     host: document.body,
     translate: (key, params) => t(key, params),
@@ -7791,9 +7880,11 @@ function showShipPanel(): void {
             holdings: {
               gold: state.wallet.find((entry) => entry.currencyId === "currency_gold")?.balance ?? 0,
               wood: state.inventory.find((entry) => entry.itemDefinitionId === "item_wood")?.quantity ?? 0,
-              ore: state.inventory.find((entry) => entry.itemDefinitionId === "item_ore")?.quantity ?? 0
+              ore: state.inventory.find((entry) => entry.itemDefinitionId === "item_ore")?.quantity ?? 0,
+              count: (itemDefinitionId) => state.inventory.find((entry) => entry.itemDefinitionId === itemDefinitionId)?.quantity ?? 0
             },
             ambushDue: ambushDue(),
+            hunts: huntsState?.hunts ?? null,
             canHelm: helm === null && scene?.dockShipMooring() != null,
             placeName,
             itemName: (itemDefinitionId) => displayName(state.language, itemDisplayKey(itemDefinitionId) ?? `item.${itemDefinitionId.replace(/^item_/, "")}.name`, itemDefinitionId),
@@ -7886,7 +7977,34 @@ function showShipPanel(): void {
           setFleet(await client.recallTrip(action.shipId));
           return;
         case "FISH":
+        case "HUNTS":
           return;
+        case "HUNT": {
+          if (action.slot === undefined || action.shipId === undefined) return;
+          const slot = action.slot;
+          const shipId = action.shipId;
+          const planned = huntsState?.hunts.hunt ?? null;
+          if (planned === null) {
+            // Planned here, so a refusal (a sunk ship, a beaten monster) shows on the panel.
+            setHunts(await client.startHunt(slot, shipId, newRequestId("hunt")));
+          }
+          const open = huntsState?.hunts.hunt ?? null;
+          if (open === null) return;
+          // The panel gives way to the fight, and comes back on the monsters when it ends.
+          shipPanel?.close();
+          openHuntFight(open, () => {
+            fleetSelection = { kind: "HUNTS", shipId: open.shipId };
+            showShipPanel();
+          });
+          return;
+        }
+        case "MERGE": {
+          if (action.itemDefinitionId === undefined) return;
+          const merged = await client.mergeMaterial(action.itemDefinitionId, newRequestId("merge"));
+          await refreshAccount();
+          setStatus(message("fleet.hunt.merged", { name: itemLabel(merged.to.itemDefinitionId) }));
+          return;
+        }
         case "DOCK":
           setFleet(await client.upgradeDock(newRequestId("dock")));
           setStatus(message("shipPanel.dockRaised"));
@@ -8042,8 +8160,8 @@ async function refreshHorizon(): Promise<void> {
     horizonView = null;
   }
   scene?.setHorizon(state.island === null ? null : horizonView);
-  // The island may have arrived after the 3D view opened: the monster follows it (a no-op when unchanged).
-  scene?.setSeaMonster(seaMonsterOf());
+  // The island may have arrived after the 3D view opened: the monsters follow it (a no-op when unchanged).
+  scene?.setSeaMonsters(seaMonstersOf());
 }
 
 /** Opens the sea chart over the farm. It only reads, except to give a placeless island its place. */
@@ -9765,7 +9883,7 @@ function enable3D(): void {
     scene.setBuildingLooks({ STORAGE_SHED: warehouseLookFor(state.warehouse?.tier ?? null) });
     scene.setHorizon(state.island === null ? null : horizonView);
     scene.setDockShip(dockShipOf(fleetState));
-    scene.setSeaMonster(seaMonsterOf());
+    scene.setSeaMonsters(seaMonstersOf());
     mineSceneSignature = "";
     pushMinesToScene();
   }

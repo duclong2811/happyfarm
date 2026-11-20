@@ -61,28 +61,43 @@ describe("sea monsters", () => {
 
 describe("the hunt roster", () => {
   it("holds three monsters of three different kinds, the same for the same player and window", () => {
-    const roster = huntRoster("player_1", 1000, 60);
+    const roster = huntRoster("player_1", 1000, 60, 4);
     expect(roster).toHaveLength(HUNT_ROSTER_SIZE);
     expect(new Set(roster.map((entry) => entry.kind)).size).toBe(HUNT_ROSTER_SIZE);
     expect(roster.map((entry) => entry.slot)).toEqual([0, 1, 2]);
-    expect(huntRoster("player_1", 1000, 60)).toEqual(roster);
+    expect(huntRoster("player_1", 1000, 60, 4)).toEqual(roster);
     // Another window, or another player, is another roster (over a few windows, at least once).
-    const others = [1001, 1002, 1003].map((window) => JSON.stringify(huntRoster("player_1", window, 60)));
+    const others = [1001, 1002, 1003].map((window) => JSON.stringify(huntRoster("player_1", window, 60, 4)));
     expect(others.some((other) => other !== JSON.stringify(roster))).toBe(true);
   });
 
   it("surfaces only the levels the player reaches, and every kind over time", () => {
     const seen = new Set<string>();
     for (let window = 0; window < 200; window += 1) {
-      for (const entry of huntRoster("player_2", window, 10)) {
+      for (const entry of huntRoster("player_2", window, 10, 4)) {
         expect(entry.level).toBe(1);
         seen.add(entry.kind);
       }
-      for (const entry of huntRoster("player_2", window, 30)) expect(entry.level).toBeLessThanOrEqual(2);
+      for (const entry of huntRoster("player_2", window, 30, 4)) expect(entry.level).toBeLessThanOrEqual(2);
     }
     expect(seen.size).toBe(MONSTER_KINDS.length);
-    const levels = new Set(Array.from({ length: 200 }, (_, window) => huntRoster("player_3", window, 80).map((entry) => entry.level)).flat());
+    const levels = new Set(Array.from({ length: 200 }, (_, window) => huntRoster("player_3", window, 80, 4).map((entry) => entry.level)).flat());
     expect([...levels].sort()).toEqual([1, 2, 3]);
+  });
+
+  it("never surfaces a monster above the rank of the player's strongest warship, and keeps lower ones coming", () => {
+    const counts = [0, 0, 0, 0];
+    for (let window = 0; window < 400; window += 1) {
+      for (const entry of huntRoster("player_4", window, 80, 1)) expect(entry.level).toBe(1);
+      for (const entry of huntRoster("player_4", window, 80, 2)) expect(entry.level).toBeLessThanOrEqual(2);
+      for (const entry of huntRoster("player_4", window, 80, 4)) counts[entry.level] = (counts[entry.level] ?? 0) + 1;
+    }
+    // The top level open is twice as likely as each below it: about 1 : 1 : 2.
+    const total = (counts[1] ?? 0) + (counts[2] ?? 0) + (counts[3] ?? 0);
+    expect((counts[1] ?? 0) / total).toBeGreaterThan(0.18);
+    expect((counts[3] ?? 0) / total).toBeGreaterThan(0.4);
+    // An upgrade mid-window changes levels, never kinds: a slot won stays the same monster.
+    expect(huntRoster("player_4", 77, 80, 1).map((entry) => entry.kind)).toEqual(huntRoster("player_4", 77, 80, 4).map((entry) => entry.kind));
   });
 });
 

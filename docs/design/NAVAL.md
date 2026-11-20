@@ -224,24 +224,20 @@ places; this document gives it ships.
   (duels, opt-in flags, or zones).
 - **Rewards.** A won pirate fight pays a bounty (see W5c above).
 
-## A monster off the island (practice, F0)
+## Monsters off the island (F0, now F3)
 
-The first sea monster, the **thuồng luồng**, lairs in the open water about a dozen tiles off every
-chosen island (`monsterLair` in `apps/web/src/sea-monster.ts`). Its place comes from the island's
-seed and is turned away from the pier. The scene draws it lying in the water, three humps and a
-raised head. At the helm, coming within 14 tiles of it offers **"Giao chiến (luyện tập)"**.
+F0 put a practice monster, the **thuồng luồng**, off every chosen island: a fight run on the player's
+screen that paid and changed nothing. F3 replaced it with real hunts (docs/design/FLEET.md, "F3"):
+five kinds in three levels, three a window, each fight planned and refereed by the server and paid
+like a pirate's bounty. What F0 left behind:
 
-- **The fight is the battle simulation's**, with a new behaviour for beasts (`behaviour: "BEAST"`
-  in `SeaBattleShipSpec`). A beast has no guns. It circles its prey at a distance, then, once its
-  strength is back (the oars' rest), charges, leading the ship a little, and rams. A ship spec with
-  no behaviour is a ship, so every setup the server stores plays exactly as before.
-- **Practice only.** The fight runs on the player's screen (`runPracticeFight`) with the ship at
-  full hull. It sends nothing, pays nothing and changes nothing; the end card says so.
-- **Numbers** (`SEA_MONSTERS` in game data): hull 100, speed 8, turn 15, radius 6, no guns. Against
-  the test captain (`gunner()`), a two-gun sloop wins in about 55 seconds with a third of its hull or
-  less left. A captain who gives no orders never wins.
-- **Next:** real monster hunts paid like pirate bounties, which needs a server-planned encounter and
-  the owner's numbers (docs/design/FLEET.md).
+- **Beasts in the battle simulation** (`behaviour: "BEAST"` in `SeaBattleShipSpec`): no guns; a beast
+  circles its prey at a distance, then, once its strength is back (the oars' rest), charges, leading
+  the ship a little, and rams. A ship spec with no behaviour is a ship, so every stored setup plays as
+  before. The fire jellyfish is a monster that fights as a ship (`"SHIP"`), spitting fire like guns.
+- **Lairs** (`monsterLairs` in `apps/web/src/sea-monster.ts`): in open water a dozen tiles or more past
+  the island's grid, spread evenly round it and turned away from the pier. At the helm, coming within
+  14 tiles of one offers **"Giao chiến"**.
 
 ## How ships look
 

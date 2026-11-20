@@ -834,7 +834,7 @@ function shipPrice(cost: { readonly gold: number; readonly wood: number; readonl
 export const gameDataHuntCatalogue: HuntCatalogue = {
   window: (nowMs) => huntWindow(nowMs),
   windowEndsAt: (window) => (window + 1) * HUNT_WINDOW_SECONDS * 1000,
-  roster: (playerId, window, playerLevel) => huntRoster(playerId, window, playerLevel),
+  roster: (playerId, window, playerLevel, warshipRank) => huntRoster(playerId, window, playerLevel, warshipRank),
   monsterId: (kind) => monsterKind(kind)?.id ?? null,
   battle: (kind, level) => {
     const definition = monsterKind(kind);

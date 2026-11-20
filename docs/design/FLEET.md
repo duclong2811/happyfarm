@@ -1,7 +1,7 @@
 # Fleet: fishing boats, merchant ships, warships
 
-Status: **F1 approved and in progress** (2026-11-20). The owner answered the open questions the same
-day (below). F0, the practice sea monster, is built (see NAVAL.md, "A monster off the island").
+Status: **F1, F2 and F3 built** (2026-11-20). The owner answered the open questions the same day
+(below). F0's practice sea monster is retired: F3's real hunts took its place.
 
 ## The owner's direction (2026-11-20)
 
@@ -87,8 +87,8 @@ The proposal is three ladders, and more than one ship at a time:
   price as resource chips that turn red when the island is short. Explanations are tooltips; only a
   warning that holds a button back is written out. Icons: `apps/web/src/assets/ui/fleet/`. Ship
   pictures are drawn on a clear backdrop (`ThumbnailRequest.backdrop`).
-- The ship picked is the one drawn at the pier, taken to the helm, fought in the practice fight and
-  sailed from the chart (`pierShipOf`, `sailingShipId` in `main.ts`).
+- The ship picked is the one drawn at the pier, taken to the helm, sent against a monster from the
+  helm and sailed from the chart (`pierShipOf`, `sailingShipId` in `main.ts`).
 - Every class has its own model (F1 art, `tools/asset-pipeline/node/ships.mjs`): fishing boats in
   sea-blue with a red band (the trawler with a white wheelhouse and squid lamps on its booms),
   merchant boats in oiled wood under mat sails with jars and bales, and the dragon warship in black
@@ -252,7 +252,14 @@ a catch the server rolled when it left; the player collects it into the warehous
 | Sứa lửa (fire jellyfish) | spits fire like a gun, slow | 80, 5, 2 "guns" | Ngọc sứa (pearl) |
 
 - Levels 1 to 3. Level 2 has twice the hull and a little more speed; level 3 has 3.2 times the hull,
-  more speed and more size. Level 2 monsters appear from player level 25, level 3 from 45.
+  more speed and more size. Level 2 monsters appear from player level 25, level 3 from 45, and
+  **never above the rank of the player's strongest warship** (Claude's balance, found while testing
+  the client): a level-80 player with only a sloop meets level-1 monsters, which a sloop beats, and
+  so earns the materials its first upgrade needs. Without the cap such a player would meet mostly
+  monsters a sloop cannot beat, and rarely the level-1 ones its upgrade asks for.
+- Among the levels open, the top one is twice as likely as each one below (1 : 2, or 1 : 1 : 2), so
+  lower materials, which every ladder's next upgrade needs, keep coming. The kinds do not depend on
+  the levels: an upgrade mid-window may lift a monster's level, never change its kind.
 - Balanced by simulation (`tests/game-data/monsters.test.ts`, the test's attentive gunner over eight
   seeds): a rank-1 warship beats every level-1 monster most times, a rank-2 warship every level-2,
   a rank-3 warship every level-3; a ship a level short mostly loses.
@@ -285,7 +292,7 @@ a catch the server rolled when it left; the player collects it into the warehous
   - rank 3: 2 of each, level 2;
   - rank 4: 2 of each, level 3.
 - Gold, wood and ore prices stay as in F1.
-- The practice monster of F0 gives way to these real hunts.
+- The practice monster of F0 gave way to these real hunts.
 
 ### Built (F3 server, 2026-11-20)
 
@@ -301,6 +308,23 @@ a catch the server rolled when it left; the player collects it into the warehous
 - A win writes the hunt's outcome, the hull, the kill, the gold (ledger), the wood, ore and material
   (warehouse room permitting) and the experience in one batch, under a receipt keyed by window and
   slot. Ship upgrades now charge the five materials through the same purchase batch as wood and ore.
+
+### Built (F3 client and art, 2026-11-20)
+
+- Models for all five monsters (`tools/asset-pipeline/node/monsters.mjs`); item pictures for the 15
+  materials, a shape per material and a bronze, silver or gold badge per level
+  (`tools/asset-pipeline/node/monster-material-icons.mjs`, `apps/web/src/assets/items/monster_*`).
+- The fleet panel's monster page (`ship-panel.ts`, selection `HUNTS`; the header's monster badge
+  counts the monsters left, and a warship leads with "Hunt"): a card per monster (picture, level,
+  gold, experience and drop chips, the fight button), the warships to pick from, the time to the next
+  roster, and every material with its stock and a "10→1" merge between levels. A fight already
+  planned is resumed from its card ("Fight on") and holds the others back.
+- An upgrade's materials show under its button as pictures with "have/need", red when short.
+- The fight plays in the battle view from the server's setup; the server's result and bounty are the
+  ones shown. After it, the panel comes back on the monsters.
+- At sea (`sea-monster.ts`, `scene.setSeaMonsters`): the monsters still to beat lie round the island,
+  spread evenly and turned away from the pier, a level larger as they grow. The helm offers the fight
+  close by, in the ship at the helm; a ship without guns is told so instead.
 
 ## Questions still open
 

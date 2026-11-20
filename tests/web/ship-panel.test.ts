@@ -1,7 +1,7 @@
-import type { FleetResponse } from "@happy-farm/contracts";
+import type { FleetResponse, HuntsResponse } from "@happy-farm/contracts";
 import { describe, expect, it } from "vitest";
 import { shipPanelModel, type ShipDetailModel, type ShipPanelInput, type ShipyardModel, type DockDetailModel } from "../../apps/web/src/ship-panel";
-import { FIXTURE_PLAYER_UUID, fleetResponse } from "../support/fleet-fixture";
+import { FIXTURE_PLAYER_UUID, fleetResponse, nextShip } from "../support/fleet-fixture";
 
 /**
  * The fleet's panel (ship-panel.ts): which tiles, numbers and buttons it draws from the fleet read,
@@ -38,12 +38,13 @@ const voyage = (arrived: boolean, ambush: NonNullable<FleetResponse["voyage"]>["
 });
 
 describe("the fleet panel at the pier", () => {
-  it("leads with sailing, offers the helm, and shows the ship's numbers as bars with the upgrade's gain", () => {
+  it("leads a warship with the hunt, offers sailing and the helm, and shows the ship's numbers as bars with the upgrade's gain", () => {
     const view = ship(model({ fleet: fleet() }));
     expect(view.modelId).toBe("ship_sloop");
     expect(view).toMatchObject({ role: "WAR", rank: 1, maxRank: 4, status: { icon: "anchor", text: "fleet.status.home", tone: "calm" }, warning: null });
     expect(view.actions.map((action) => [action.kind, action.icon, action.enabled, action.primary])).toEqual([
-      ["SAIL", "sail", true, true],
+      ["HUNTS", "monster", true, true],
+      ["SAIL", "sail", true, false],
       ["HELM", "helm", true, false]
     ]);
     expect(view.stats.map((stat) => [stat.icon, stat.value, stat.next])).toEqual([
@@ -229,5 +230,102 @@ describe("fishing trips in the fleet panel", () => {
     ]);
     expect(landed.actions.map((action) => [action.kind, action.primary])).toEqual([["COLLECT", true]]);
     expect(landed.tripShare).toBeNull();
+  });
+});
+
+describe("sea monsters in the fleet panel", () => {
+  const itemName = (id: string): string => `name(${id})`;
+  const reward = (gold: number, xp: number, itemDefinitionId: string, quantity: number): HuntsResponse["monsters"][number]["reward"] => ({ gold, xp, materials: [{ itemDefinitionId, quantity }] });
+  const roster = (hunt: HuntsResponse["hunt"] = null): HuntsResponse => ({
+    readAt: "2026-11-20T10:00:00.000Z",
+    endsAt: "2026-11-20T12:13:00.000Z",
+    monsters: [
+      { slot: 0, kind: "thuong_luong", level: 1, monsterId: "monster_thuong_luong", defeated: false, reward: reward(80, 40, "item_monster_scale_1", 3) },
+      { slot: 1, kind: "cua_da", level: 2, monsterId: "monster_cua_da", defeated: true, reward: reward(250, 120, "item_monster_shell_2", 2) },
+      { slot: 2, kind: "sua_lua", level: 1, monsterId: "monster_sua_lua", defeated: false, reward: reward(80, 40, "item_monster_pearl_1", 3) }
+    ],
+    hunt
+  });
+  const hunts = (input: Partial<ShipPanelInput> & { fleet: FleetResponse }) => {
+    const view = model({ selected: { kind: "HUNTS", shipId: null }, itemName, ...input });
+    if (view.detail.kind !== "HUNTS") throw new Error(`expected the hunts, got ${view.detail.kind}`);
+    return { view, detail: view.detail };
+  };
+
+  it("shows the roster's cards with what a win pays, the warship that fights, and when the roster turns over", () => {
+    const { view, detail } = hunts({ fleet: fleet(), hunts: roster() });
+    expect(view.hunts).toEqual({ alive: 2, selected: true });
+    expect(detail.loading).toBe(false);
+    expect(detail.warning).toBeNull();
+    expect(detail.renews).toBe('fleet.hunt.endsHours:{"hours":2,"minutes":13}');
+    expect(detail.fighters.map((entry) => [entry.shipId, entry.selected, entry.ready])).toEqual([[SHIP, true, true]]);
+    expect(detail.cards.map((card) => [card.slot, card.name, card.level, card.defeated, card.action.label, card.action.enabled, card.action.shipId])).toEqual([
+      [0, "pirate.monster_thuong_luong", 1, false, "fleet.hunt.fight", true, SHIP],
+      [1, "pirate.monster_cua_da", 2, true, "fleet.hunt.beaten", false, SHIP],
+      [2, "pirate.monster_sua_lua", 1, false, "fleet.hunt.fight", true, SHIP]
+    ]);
+    expect(detail.cards[0]).toMatchObject({ gold: 80, xp: 40, drops: [{ icon: "item", itemDefinitionId: "item_monster_scale_1", amount: 3, name: "name(item_monster_scale_1)" }] });
+  });
+
+  it("resumes a fight already planned with its own ship, and holds every other card back", () => {
+    const setup = { seed: 1, player: { hull: 150, hullMax: 150, cannons: 2, speed: 9, turn: 14, radius: 4.5, spread: 40 }, pirates: [{ hull: 80, hullMax: 80, cannons: 2, speed: 5, turn: 12, radius: 5, spread: 70, behaviour: "SHIP" as const }] };
+    const { detail } = hunts({ fleet: fleet(), hunts: roster({ slot: 2, kind: "sua_lua", level: 1, monsterId: "monster_sua_lua", shipId: SHIP, setup }) });
+    expect(detail.cards.map((card) => [card.slot, card.open, card.action.label, card.action.enabled, card.action.primary])).toEqual([
+      [0, false, "fleet.hunt.fight", false, false],
+      [1, false, "fleet.hunt.beaten", false, false],
+      [2, true, "fleet.hunt.resume", true, true]
+    ]);
+    expect(detail.cards[0]?.action.hint).toBe("fleet.hunt.finishOpen");
+  });
+
+  it("needs a ship of one's own with guns, at its dock and afloat", () => {
+    const boat = { classId: "ship_class_line_boat", role: "FISHING" as const, rank: 2, tier: 1, cannons: 0, upgrade: null };
+    const unarmed = hunts({ fleet: fleet({ ship: boat }), hunts: roster() }).detail;
+    expect(unarmed.warning).toBe("fleet.hunt.needWarship");
+    expect(unarmed.fighters).toEqual([]);
+    expect(unarmed.cards.every((card) => !card.action.enabled)).toBe(true);
+    expect(hunts({ fleet: fleet({ ship: { lent: true, classId: "ship_class_rowboat", cannons: 1 } }), hunts: roster() }).detail.warning).toBe("fleet.hunt.needWarship");
+    const sunk = hunts({ fleet: fleet({ ship: { hull: 0 } }), hunts: roster() }).detail;
+    expect(sunk.warning).toBe("fleet.warn.sunk");
+    expect(sunk.cards.every((card) => !card.action.enabled)).toBe(true);
+    // A fishing boat is never offered the hunt from its own page.
+    expect(ship(model({ fleet: fleet({ ship: boat }) })).actions.map((action) => action.kind)).not.toContain("HUNTS");
+  });
+
+  it("lists every material with its stock, and offers a merge at ten", () => {
+    const stock: Record<string, number> = { item_monster_scale_1: 12, item_monster_scale_2: 1, item_monster_pearl_1: 9 };
+    const { detail } = hunts({ fleet: fleet(), hunts: roster(), holdings: { gold: 0, wood: 0, ore: 0, count: (id) => stock[id] ?? 0 } });
+    expect(detail.materials.map((row) => row.kind)).toEqual(["thuong_luong", "bach_tuoc", "cua_da", "kinh_ngu", "sua_lua"]);
+    const scale = detail.materials[0]?.cells ?? [];
+    expect(scale.map((cell) => [cell.itemDefinitionId, cell.have, cell.merge?.enabled ?? null])).toEqual([
+      ["item_monster_scale_1", 12, true],
+      ["item_monster_scale_2", 1, false],
+      ["item_monster_scale_3", 0, null]
+    ]);
+    expect(scale[0]?.merge).toMatchObject({ kind: "MERGE", itemDefinitionId: "item_monster_scale_1" });
+    expect(detail.materials[4]?.cells[0]?.merge?.enabled).toBe(false);
+  });
+
+  it("waits for the roster, and counts nothing on the badge until it is read", () => {
+    const { view, detail } = hunts({ fleet: fleet(), hunts: null });
+    expect(view.hunts.alive).toBeNull();
+    expect(detail.loading).toBe(true);
+    expect(detail.renews).toBeNull();
+  });
+
+  it("prices an upgrade's monster materials as pictures with the island's stock, red when short", () => {
+    const needs = ["item_monster_scale_1", "item_monster_tentacle_1", "item_monster_shell_1", "item_monster_bone_1", "item_monster_pearl_1"].map((itemDefinitionId) => ({ itemDefinitionId, quantity: 2 }));
+    const upgrade = nextShip({ cost: { currencyId: "currency_gold", gold: 3000, materials: [{ itemDefinitionId: "item_wood", quantity: 500 }, ...needs] } });
+    const stock: Record<string, number> = { item_monster_scale_1: 5, item_monster_pearl_1: 1 };
+    const view = ship(model({ fleet: fleet({ ship: { upgrade } }), itemName, holdings: { gold: 5000, wood: 900, ore: 0, count: (id) => stock[id] ?? 0 } }));
+    const items = view.upgrade?.action.cost.filter((chip) => chip.icon === "item") ?? [];
+    expect(items.map((chip) => [chip.itemDefinitionId, chip.amount, chip.have, chip.short])).toEqual([
+      ["item_monster_scale_1", 2, 5, false],
+      ["item_monster_tentacle_1", 2, 0, true],
+      ["item_monster_shell_1", 2, 0, true],
+      ["item_monster_bone_1", 2, 0, true],
+      ["item_monster_pearl_1", 2, 1, true]
+    ]);
+    expect(view.upgrade?.action.cost.filter((chip) => chip.icon !== "item").map((chip) => chip.icon)).toEqual(["gold", "wood"]);
   });
 });
