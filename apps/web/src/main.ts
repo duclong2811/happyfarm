@@ -7779,13 +7779,19 @@ function showShipPanel(): void {
             selected,
             serverNowMs: fleetServerNow(),
             playerLevel: state.progression?.level ?? null,
+            holdings: {
+              gold: state.wallet.find((entry) => entry.currencyId === "currency_gold")?.balance ?? 0,
+              wood: state.inventory.find((entry) => entry.itemDefinitionId === "item_wood")?.quantity ?? 0,
+              ore: state.inventory.find((entry) => entry.itemDefinitionId === "item_ore")?.quantity ?? 0
+            },
             ambushDue: ambushDue(),
             canHelm: helm === null && scene?.dockShipMooring() != null,
             placeName,
             translate: (key, params) => t(key, params)
           }),
     picture: (modelId, image) => {
-      itemThumbnails.apply({ modelId, roadTierId: null }, image);
+      // Ships float on the panel's own painted stage: no card, no disc.
+      itemThumbnails.apply({ modelId, roadTierId: null, backdrop: "CLEAR" }, image);
     },
     onSelect: (selected) => {
       // The ship picked is the one drawn at the pier: the helm takes it, the chart sails it.

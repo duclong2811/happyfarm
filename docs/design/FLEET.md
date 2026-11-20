@@ -80,6 +80,13 @@ The proposal is three ladders, and more than one ship at a time:
 - The ship panel is the fleet's panel (`apps/web/src/ship-panel.ts`): a berth row picks a ship or the
   empty berth; a ship offers sail, helm, repair and its upgrade; the empty berth offers a new ship of
   each role; the dock line offers the next tier. A ship at the dock waits while another is out.
+- Laid out as a shipyard (redesign, 2026-11-20, after the owner found the first panel too wordy): berth
+  tiles with each ship's picture, role badge, rank stars and hull bar, a "+" for a free berth and locks
+  for the berths the next dock tier adds; the picked ship large on a stage tinted by its role; its
+  numbers as bars with icons, the upgrade's gain striped in green; big buttons with one word and the
+  price as resource chips that turn red when the island is short. Explanations are tooltips; only a
+  warning that holds a button back is written out. Icons: `apps/web/src/assets/ui/fleet/`. Ship
+  pictures are drawn on a clear backdrop (`ThumbnailRequest.backdrop`).
 - The ship picked is the one drawn at the pier, taken to the helm, fought in the practice fight and
   sailed from the chart (`pierShipOf`, `sailingShipId` in `main.ts`).
 - Every class has its own model (F1 art, `tools/asset-pipeline/node/ships.mjs`): fishing boats in

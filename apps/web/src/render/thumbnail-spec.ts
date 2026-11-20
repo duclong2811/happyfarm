@@ -33,6 +33,11 @@ export interface ThumbnailRequest {
   readonly roadTierId: string | null;
   /** A Vite-hashed transparent illustration for an item with no suitable GLB. */
   readonly imageUrl?: string | null;
+  /**
+   * What the model stands on: the cream card and its ground disc (the default, for shop cards), or
+   * nothing at all - a transparent picture for a panel that paints its own stage (the fleet's ships).
+   */
+  readonly backdrop?: "CARD" | "CLEAR";
 }
 
 export interface ThumbnailResult {
@@ -50,7 +55,7 @@ export interface ThumbnailResult {
 export function thumbnailCacheKey(request: ThumbnailRequest): string {
   if (request.imageUrl !== undefined && request.imageUrl !== null) return `image:${request.imageUrl}`;
   if (request.roadTierId !== null) return `road:${request.roadTierId}`;
-  if (request.modelId !== null) return `model:${request.modelId}`;
+  if (request.modelId !== null) return request.backdrop === "CLEAR" ? `model-clear:${request.modelId}` : `model:${request.modelId}`;
   return "fallback";
 }
 

@@ -1243,71 +1243,283 @@ html.ui-b.ui-warm .battle-view .bv-end .bv-spoils[hidden] { display: none; }
 }
 
 /* -------------------------------------------------------------------------------------------
- * Ship panel: the ship moored at the pier, its hull, where it is, and what it can do.
+ * The fleet's panel: a shipyard, not a form. Berth tiles with each ship's picture, role badge and
+ * rank stars; the picked ship large on a sea-blue stage; its numbers as bars with icons; a few big
+ * buttons whose prices are resource chips that turn red when the island is short.
  * ------------------------------------------------------------------------------------------- */
 html.ui-b.ui-warm .ship-panel {
-  position: fixed; inset: 0; z-index: 950; display: grid; place-items: center; padding: 18px 16px;
-  background: rgba(20, 40, 56, .45); font-family: var(--w-display); color: var(--w-ink);
+  position: fixed; inset: 0; z-index: 950; display: grid; place-items: center; padding: 12px;
+  background: rgba(20, 40, 56, .5); font-family: var(--w-display); color: var(--w-ink);
 }
-html.ui-b.ui-warm .ship-panel .sp-card {
-  display: grid; gap: 10px; width: min(520px, 100%); max-height: 100%; overflow: auto; padding: 10px 14px 14px;
-  border: 5px solid var(--w-wood); border-radius: 22px; background: var(--w-parchment);
-  box-shadow: 0 8px 0 var(--w-wood-deep), 0 22px 40px rgba(10, 40, 70, .4);
+html.ui-b.ui-warm .fleet-panel .fl-card {
+  position: relative; display: grid; gap: 10px; width: min(680px, 100%); max-height: 100%; overflow: auto;
+  padding: 0 14px 14px; border: 5px solid var(--w-wood); border-radius: 24px;
+  background: radial-gradient(120% 70% at 50% 0%, rgba(255, 248, 230, .9) 0%, rgba(255, 248, 230, 0) 60%), #f6dfb2 url("../assets/ui/inventory-premium/parchment-texture.png") center / 420px;
+  box-shadow: 0 8px 0 var(--w-wood-deep), 0 22px 40px rgba(10, 40, 70, .45), inset 0 0 0 3px rgba(255, 255, 255, .5);
+  scrollbar-width: thin;
 }
-html.ui-b.ui-warm .ship-panel .sp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-html.ui-b.ui-warm .ship-panel .sp-head h2 {
-  margin: 0; padding: 4px 18px; border-radius: 14px; background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo));
-  box-shadow: inset 0 -3px 0 #c8642a, 0 3px 0 var(--w-orange-edge); color: #fff; font-size: clamp(1.1rem, 2.6vw, 1.4rem);
-  font-weight: 800; text-shadow: var(--w-outline);
+/* Every icon is a picture from assets/ui/fleet, drawn by data-icon. */
+html.ui-b.ui-warm .fleet-panel [data-icon] { display: inline-block; flex: none; background: center / contain no-repeat; }
+html.ui-b.ui-warm .fleet-panel [data-icon="gold"] { background-image: url("../assets/ui/target-handoff/hud-gold-coin.png"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="hold"] { background-image: url("../assets/ui/warm/crate.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="sail"] { background-image: url("../assets/ui/warm/map.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="visit"] { background-image: url("../assets/ui/warm/compass.svg"); }
+html.ui-b.ui-warm .fleet-panel .fl-stat-icon[data-icon="speed"],
+html.ui-b.ui-warm .fleet-panel .fl-tile-away[data-icon="sail"],
+html.ui-b.ui-warm .fleet-panel .fl-where-icon[data-icon="sail"] { background-image: url("../assets/ui/fleet/speed.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="wood"] { background-image: url("../assets/ui/fleet/wood.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="ore"] { background-image: url("../assets/ui/fleet/ore.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="speed"] { background-image: url("../assets/ui/fleet/speed.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="hull"] { background-image: url("../assets/ui/fleet/hull.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="cannon"] { background-image: url("../assets/ui/fleet/cannon.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="role-FISHING"] { background-image: url("../assets/ui/fleet/role-fishing.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="role-MERCHANT"] { background-image: url("../assets/ui/fleet/role-merchant.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="role-WAR"] { background-image: url("../assets/ui/fleet/role-war.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="helm"] { background-image: url("../assets/ui/fleet/helm.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="repair"] { background-image: url("../assets/ui/fleet/repair.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="upgrade"] { background-image: url("../assets/ui/fleet/upgrade.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="anchor"] { background-image: url("../assets/ui/fleet/anchor.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="lock"] { background-image: url("../assets/ui/fleet/lock.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="plus"] { background-image: url("../assets/ui/fleet/plus.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="fight"] { background-image: url("../assets/ui/fleet/fight.svg"); }
+
+/* Header: a title ribbon hanging over the frame, the dock badge, the close button. */
+html.ui-b.ui-warm .fleet-panel .fl-head {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; margin: 0 -14px; padding: 8px 12px 6px;
+  background: linear-gradient(#fff8e6, rgba(255, 248, 230, .92)); border-bottom: 2px solid rgba(122, 82, 50, .18);
 }
-html.ui-b.ui-warm .ship-panel .sp-close { color: var(--w-wood-deep); background: rgba(255, 255, 255, .6); }
-html.ui-b.ui-warm .ship-panel .sp-berths { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
-html.ui-b.ui-warm .ship-panel .sp-berth {
-  display: grid; gap: 1px; flex: 0 0 auto; min-width: 104px; max-width: 160px; padding: 6px 10px; text-align: left;
-  border: 2px solid var(--w-wood-deep); border-radius: 12px; background: rgba(255, 255, 255, .55); color: var(--w-wood-deep); cursor: pointer;
+html.ui-b.ui-warm .fleet-panel .fl-title {
+  margin: 0 auto 0 0; padding: 4px 20px 5px; border-radius: 14px; background: var(--w-title-pill);
+  box-shadow: inset 0 -3px 0 #c8642a, 0 3px 0 var(--w-orange-edge); color: #fff; font-size: clamp(1.1rem, 2.6vw, 1.45rem);
+  font-weight: 900; letter-spacing: .02em; text-shadow: var(--w-outline);
 }
-html.ui-b.ui-warm .ship-panel .sp-berth.is-selected { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); border-color: var(--w-orange-edge); color: #fff; }
-html.ui-b.ui-warm .ship-panel .sp-berth.is-empty { border-style: dashed; background: rgba(255, 255, 255, .3); }
-html.ui-b.ui-warm .ship-panel .sp-berth.is-empty.is-selected { border-style: solid; background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); }
-html.ui-b.ui-warm .ship-panel .sp-berth:disabled { opacity: .6; cursor: default; }
-html.ui-b.ui-warm .ship-panel .sp-berth-label { font: 800 .9rem var(--w-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-html.ui-b.ui-warm .ship-panel .sp-berth.is-selected .sp-berth-label { text-shadow: var(--w-outline); }
-html.ui-b.ui-warm .ship-panel .sp-berth-detail { font: 700 .72rem "Nunito Variable", system-ui, sans-serif; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-html.ui-b.ui-warm .ship-panel .sp-berth.is-away .sp-berth-detail::before { content: "⛵ "; }
-html.ui-b.ui-warm .ship-panel .sp-dock { margin: 0; color: var(--w-ink-2); font: 800 .8rem "Nunito Variable", system-ui, sans-serif; }
-html.ui-b.ui-warm .ship-panel .sp-picture[hidden],
-html.ui-b.ui-warm .ship-panel .sp-hull[hidden],
-html.ui-b.ui-warm .ship-panel .sp-where[hidden] { display: none; }
-html.ui-b.ui-warm .ship-panel .sp-body:has(.sp-picture[hidden]) { grid-template-columns: 1fr; }
-html.ui-b.ui-warm .ship-panel .sp-body { display: grid; grid-template-columns: 132px 1fr; gap: 12px; align-items: center; }
-html.ui-b.ui-warm .ship-panel .sp-picture {
-  width: 132px; height: 132px; border: 3px solid var(--w-slot-edge); border-radius: 16px; background: #f6efe0; object-fit: contain;
+html.ui-b.ui-warm .fleet-panel .fl-dock {
+  display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px 0 6px; border: 3px solid var(--w-wood-deep);
+  border-radius: 99px; background: linear-gradient(#e9f6ff, #b9dcf2); color: #1d3d5c; font: 900 1rem var(--w-display); cursor: pointer;
+  box-shadow: 0 3px 0 var(--w-wood-deep);
 }
-html.ui-b.ui-warm .ship-panel .sp-facts { display: grid; gap: 5px; min-width: 0; }
-html.ui-b.ui-warm .ship-panel .sp-name { margin: 0; color: var(--w-wood-deep); font-size: 1.2rem; font-weight: 800; }
-html.ui-b.ui-warm .ship-panel .sp-hull { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font: 800 .85rem var(--w-display); color: var(--w-wood-deep); }
-html.ui-b.ui-warm .ship-panel .sp-hull-track { height: 12px; border: 2px solid var(--w-wood-deep); border-radius: 99px; background: rgba(0, 0, 0, .12); overflow: hidden; }
-html.ui-b.ui-warm .ship-panel .sp-hull-fill { display: block; height: 100%; background: linear-gradient(#7ed36b, #3f8f3a); transition: width .2s ease; }
-html.ui-b.ui-warm .ship-panel .sp-hull-fill.is-low { background: linear-gradient(#e5533d, #a8402c); }
-html.ui-b.ui-warm .ship-panel .sp-stats,
-html.ui-b.ui-warm .ship-panel .sp-where { margin: 0; color: var(--w-ink-2); font: 700 .88rem "Nunito Variable", system-ui, sans-serif; }
-html.ui-b.ui-warm .ship-panel .sp-where { color: var(--w-wood-deep); font-weight: 800; }
-html.ui-b.ui-warm .ship-panel .sp-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-html.ui-b.ui-warm .ship-panel .sp-action {
-  display: grid; gap: 2px; padding: 9px 12px; border: 3px solid var(--w-wood); border-radius: 14px; text-align: left;
-  background: linear-gradient(#fff6e3, #f0dcb4); box-shadow: 0 3px 0 var(--w-wood-deep); color: var(--w-wood-deep); cursor: pointer;
+html.ui-b.ui-warm .fleet-panel .fl-dock.can-grow::after {
+  content: ""; width: 16px; height: 16px; margin-left: 2px; background: url("../assets/ui/fleet/upgrade.svg") center / contain no-repeat;
 }
-html.ui-b.ui-warm .ship-panel .sp-action.is-primary { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); border-color: var(--w-orange-edge); color: #fff; }
-html.ui-b.ui-warm .ship-panel .sp-action:disabled { opacity: .55; cursor: default; }
-html.ui-b.ui-warm .ship-panel .sp-action-label { font: 800 1rem var(--w-display); }
-html.ui-b.ui-warm .ship-panel .sp-action.is-primary .sp-action-label { text-shadow: var(--w-outline); }
-html.ui-b.ui-warm .ship-panel .sp-action-detail { font: 700 .76rem "Nunito Variable", system-ui, sans-serif; opacity: .9; }
-html.ui-b.ui-warm .ship-panel .sp-next { margin: 0; padding: 6px 10px; border-radius: 10px; background: rgba(217, 164, 65, .16); color: var(--w-wood-deep); font: 700 .8rem "Nunito Variable", system-ui, sans-serif; }
-html.ui-b.ui-warm .ship-panel .sp-next[hidden] { display: none; }
-html.ui-b.ui-warm .ship-panel .sp-status { margin: 0; min-height: 1em; color: #a8402c; font: 800 .82rem "Nunito Variable", system-ui, sans-serif; }
-@media (max-width: 520px) {
-  html.ui-b.ui-warm .ship-panel .sp-body { grid-template-columns: 92px 1fr; }
-  html.ui-b.ui-warm .ship-panel .sp-picture { width: 92px; height: 92px; }
+html.ui-b.ui-warm .fleet-panel .fl-dock.is-selected { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); color: #fff; text-shadow: var(--w-outline); }
+html.ui-b.ui-warm .fleet-panel .fl-dock-icon { width: 26px; height: 26px; }
+html.ui-b.ui-warm .fleet-panel .fl-close { flex: none; color: var(--w-wood-deep); background: rgba(255, 255, 255, .7); }
+
+/* Berth tiles. */
+html.ui-b.ui-warm .fleet-panel .fl-berths { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 6px; scrollbar-width: thin; }
+html.ui-b.ui-warm .fleet-panel .fl-tile {
+  position: relative; flex: none; width: 82px; height: 82px; padding: 0; overflow: hidden; border: 3px solid var(--w-wood-deep);
+  border-radius: 16px; background: radial-gradient(circle at 50% 70%, #9fd8f5 0%, #5cb2e2 60%, #3a8fd0 100%); cursor: pointer;
+  box-shadow: 0 4px 0 var(--w-wood-deep); transition: transform .12s ease, box-shadow .12s ease;
+}
+html.ui-b.ui-warm .fleet-panel .fl-tile:hover:not(:disabled) { transform: translateY(-2px); }
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-selected {
+  border-color: #fff; box-shadow: 0 0 0 3px var(--w-orange), 0 5px 0 var(--w-orange-edge), 0 0 14px rgba(255, 166, 64, .8);
+}
+html.ui-b.ui-warm .fleet-panel .fl-tile-picture { position: absolute; inset: 2px 2px 14px; width: calc(100% - 4px); height: calc(100% - 16px); object-fit: contain; }
+html.ui-b.ui-warm .fleet-panel .fl-tile-role { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; filter: drop-shadow(0 1px 0 rgba(0, 0, 0, .35)); }
+html.ui-b.ui-warm .fleet-panel .fl-tile .fl-stars { position: absolute; top: 4px; right: 4px; flex-direction: column; gap: 0; }
+html.ui-b.ui-warm .fleet-panel .fl-tile .fl-star { width: 11px; height: 11px; }
+html.ui-b.ui-warm .fleet-panel .fl-tile-hull { position: absolute; left: 6px; right: 6px; bottom: 5px; height: 7px; border: 2px solid var(--w-wood-deep); border-radius: 99px; background: rgba(0, 0, 0, .3); overflow: hidden; }
+html.ui-b.ui-warm .fleet-panel .fl-tile-hull-fill { display: block; height: 100%; background: linear-gradient(#8fe07a, #3f9a32); }
+html.ui-b.ui-warm .fleet-panel .fl-tile-hull-fill.is-low { background: linear-gradient(#ff8a6a, #c43a28); }
+html.ui-b.ui-warm .fleet-panel .fl-tile-away { position: absolute; right: 4px; bottom: 15px; width: 26px; height: 26px; filter: drop-shadow(0 1px 0 #fff); }
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-away .fl-tile-picture { opacity: .45; filter: grayscale(.4); }
+html.ui-b.ui-warm .fleet-panel .fl-tile-lent {
+  position: absolute; left: -16px; bottom: 16px; padding: 1px 18px; transform: rotate(-30deg) translate(4px, 6px); background: var(--w-gold);
+  color: var(--w-wood-deep); font: 900 .62rem var(--w-display); text-transform: uppercase;
+}
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-free,
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-locked {
+  display: grid; place-items: center; border-style: dashed; background: rgba(255, 255, 255, .45); box-shadow: none;
+}
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-locked { background: rgba(80, 60, 40, .12); }
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-free.is-selected,
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-locked.is-selected { border-style: solid; background: #fff4d8; }
+html.ui-b.ui-warm .fleet-panel .fl-tile-mark { width: 40px; height: 40px; }
+html.ui-b.ui-warm .fleet-panel .fl-tile.is-locked .fl-tile-mark { width: 32px; height: 32px; opacity: .75; }
+
+/* Rank stars. */
+html.ui-b.ui-warm .fleet-panel .fl-stars { display: inline-flex; gap: 2px; }
+html.ui-b.ui-warm .fleet-panel .fl-star {
+  display: inline-block; width: 15px; height: 15px; background: url("../assets/ui/target-handoff/hud-level-star.png") center / contain no-repeat;
+  filter: grayscale(1) brightness(.75) opacity(.45);
+}
+html.ui-b.ui-warm .fleet-panel .fl-star.is-on { filter: none; }
+
+/* The picked ship: stage on the left, numbers on the right. */
+html.ui-b.ui-warm .fleet-panel .fl-detail { display: grid; gap: 10px; }
+html.ui-b.ui-warm .fleet-panel .fl-ship { display: grid; grid-template-columns: minmax(180px, 240px) 1fr; gap: 12px; align-items: stretch; }
+html.ui-b.ui-warm .fleet-panel .fl-stage {
+  position: relative; display: grid; grid-template-rows: 1fr auto; min-height: 170px; overflow: hidden; border: 3px solid var(--w-wood-deep);
+  border-radius: 18px; background: radial-gradient(90% 70% at 50% 75%, #b8e6fb 0%, #63b9e6 55%, #2f7fbd 100%);
+  box-shadow: inset 0 -26px 0 rgba(17, 82, 140, .35), 0 4px 0 var(--w-wood-deep);
+}
+html.ui-b.ui-warm .fleet-panel .fl-stage.is-merchant { background: radial-gradient(90% 70% at 50% 75%, #f7e7c0 0%, #e2b96f 55%, #b5813f 100%); }
+html.ui-b.ui-warm .fleet-panel .fl-stage.is-war { background: radial-gradient(90% 70% at 50% 75%, #f3c4b0 0%, #c8695a 55%, #7d2e28 100%); }
+html.ui-b.ui-warm .fleet-panel .fl-stage-picture { width: 100%; height: 100%; min-height: 0; object-fit: contain; padding: 6px; }
+html.ui-b.ui-warm .fleet-panel .fl-plate {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: linear-gradient(var(--w-cocoa-hi), var(--w-cocoa));
+  color: #fff; text-shadow: var(--w-outline);
+}
+html.ui-b.ui-warm .fleet-panel .fl-role { width: 26px; height: 26px; }
+html.ui-b.ui-warm .fleet-panel .fl-name { flex: 1; min-width: 0; font: 900 1.02rem var(--w-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.ui-b.ui-warm .fleet-panel .fl-ribbon {
+  position: absolute; top: 12px; left: -30px; padding: 2px 34px; transform: rotate(-35deg); background: var(--w-gold); color: var(--w-wood-deep);
+  font: 900 .72rem var(--w-display); text-transform: uppercase; box-shadow: 0 2px 0 rgba(0, 0, 0, .2);
+}
+html.ui-b.ui-warm .fleet-panel .fl-info { display: grid; align-content: start; gap: 8px; min-width: 0; }
+html.ui-b.ui-warm .fleet-panel .fl-where {
+  display: inline-flex; align-items: center; gap: 6px; justify-self: start; margin: 0; padding: 3px 12px 3px 5px; border-radius: 99px;
+  background: rgba(63, 154, 50, .16); color: #2c6b23; font: 900 .9rem var(--w-display);
+}
+html.ui-b.ui-warm .fleet-panel .fl-where.is-busy { background: rgba(58, 143, 208, .16); color: #1d5f8e; }
+html.ui-b.ui-warm .fleet-panel .fl-where.is-alert { background: rgba(217, 71, 47, .18); color: #a8402c; animation: fl-pulse 1.2s ease-in-out infinite; }
+html.ui-b.ui-warm .fleet-panel .fl-where-icon { width: 22px; height: 22px; }
+@keyframes fl-pulse { 50% { transform: scale(1.05); } }
+
+/* Stat bars. */
+html.ui-b.ui-warm .fleet-panel .fl-stats { display: grid; gap: 6px; }
+html.ui-b.ui-warm .fleet-panel .fl-stat { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; }
+html.ui-b.ui-warm .fleet-panel .fl-stat-icon { width: 26px; height: 26px; }
+html.ui-b.ui-warm .fleet-panel .fl-stat-track {
+  position: relative; height: 14px; border: 2px solid var(--w-wood-deep); border-radius: 99px; background: rgba(74, 42, 20, .18); overflow: hidden;
+}
+html.ui-b.ui-warm .fleet-panel .fl-stat-fill,
+html.ui-b.ui-warm .fleet-panel .fl-stat-next { position: absolute; inset: 0 auto 0 0; border-radius: 99px; }
+html.ui-b.ui-warm .fleet-panel .fl-stat-fill { background: linear-gradient(#ffd77a, #e09a2c); box-shadow: inset 0 2px 0 rgba(255, 255, 255, .45); }
+html.ui-b.ui-warm .fleet-panel .is-hull .fl-stat-fill { background: linear-gradient(#8fe07a, #3f9a32); }
+html.ui-b.ui-warm .fleet-panel .is-hull .fl-stat-fill.is-low { background: linear-gradient(#ff8a6a, #c43a28); }
+html.ui-b.ui-warm .fleet-panel .fl-stat-next { background: repeating-linear-gradient(-45deg, #9be36d 0 5px, #6cc04a 5px 10px); opacity: .85; }
+html.ui-b.ui-warm .fleet-panel .fl-stat-value { min-width: 3.4em; text-align: right; color: var(--w-wood-deep); font: 900 .92rem var(--w-display); white-space: nowrap; }
+html.ui-b.ui-warm .fleet-panel .fl-stat-gain { margin-left: 4px; color: #3f9a32; font-size: .82rem; }
+html.ui-b.ui-warm .fleet-panel .fl-stats.is-compact { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; }
+html.ui-b.ui-warm .fleet-panel .fl-stats.is-compact .fl-stat { display: inline-flex; gap: 3px; }
+html.ui-b.ui-warm .fleet-panel .fl-stats.is-compact .fl-stat-icon { width: 20px; height: 20px; }
+html.ui-b.ui-warm .fleet-panel .fl-stats.is-compact .fl-stat-value { min-width: 0; font-size: .85rem; }
+
+/* The upgrade strip. */
+html.ui-b.ui-warm .fleet-panel .fl-upgrade {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 6px 6px 10px; border: 2px dashed rgba(63, 154, 50, .55);
+  border-radius: 14px; background: rgba(155, 227, 109, .14);
+}
+html.ui-b.ui-warm .fleet-panel .fl-upgrade-label { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 8rem; }
+html.ui-b.ui-warm .fleet-panel .fl-upgrade-icon { width: 22px; height: 22px; }
+html.ui-b.ui-warm .fleet-panel .fl-upgrade-name { color: #2c6b23; font: 900 .95rem var(--w-display); }
+
+/* Buttons: an icon, a word, and the price as chips. */
+html.ui-b.ui-warm .fleet-panel .fl-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; }
+html.ui-b.ui-warm .fleet-panel .fl-button {
+  display: grid; justify-items: center; gap: 3px; min-height: 52px; padding: 6px 10px; border: 3px solid var(--w-wood-deep); border-radius: 16px;
+  background: linear-gradient(#fffaf0, #f1dfbd); color: var(--w-wood-deep); cursor: pointer;
+  box-shadow: inset 0 -4px 0 rgba(122, 82, 50, .22), 0 4px 0 var(--w-wood-deep); transition: transform .08s ease;
+}
+html.ui-b.ui-warm .fleet-panel .fl-button:active:not(:disabled) { transform: translateY(3px); box-shadow: inset 0 -2px 0 rgba(122, 82, 50, .22), 0 1px 0 var(--w-wood-deep); }
+html.ui-b.ui-warm .fleet-panel .fl-button.is-primary {
+  background: linear-gradient(#9be36d, #4caf50); border-color: #1f5a1a; color: #fff;
+  box-shadow: inset 0 -4px 0 rgba(20, 70, 20, .35), 0 4px 0 #1f5a1a;
+}
+html.ui-b.ui-warm .fleet-panel .fl-button.is-upgrade { background: linear-gradient(#ffd77a, #f0a93c); border-color: #8a5a14; box-shadow: inset 0 -4px 0 rgba(138, 90, 20, .3), 0 4px 0 #8a5a14; }
+html.ui-b.ui-warm .fleet-panel .fl-button.is-locked { background: linear-gradient(#e6ddd0, #c9bca9); border-color: #6f6457; box-shadow: 0 4px 0 #6f6457; color: #5d5246; }
+html.ui-b.ui-warm .fleet-panel .fl-button:disabled { cursor: default; filter: saturate(.55); opacity: .7; }
+html.ui-b.ui-warm .fleet-panel .fl-button-top { display: inline-flex; align-items: center; gap: 6px; }
+html.ui-b.ui-warm .fleet-panel .fl-button-icon { width: 28px; height: 28px; filter: drop-shadow(0 1px 0 rgba(255, 255, 255, .6)); }
+html.ui-b.ui-warm .fleet-panel .fl-button-label { font: 900 1.02rem var(--w-display); white-space: nowrap; }
+html.ui-b.ui-warm .fleet-panel .fl-button.is-primary .fl-button-label { text-shadow: var(--w-outline); }
+html.ui-b.ui-warm .fleet-panel .fl-cost { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 3px; }
+html.ui-b.ui-warm .fleet-panel .fl-chip {
+  display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px 1px 2px; border-radius: 99px; background: rgba(255, 255, 255, .7);
+  color: var(--w-wood-deep); font: 900 .78rem var(--w-display);
+}
+html.ui-b.ui-warm .fleet-panel .fl-chip-icon { width: 17px; height: 17px; }
+html.ui-b.ui-warm .fleet-panel .fl-chip.is-short { background: #ffe1da; color: #c43a28; box-shadow: inset 0 0 0 1.5px #e5533d; }
+
+/* Warnings and notes. */
+html.ui-b.ui-warm .fleet-panel .fl-warning {
+  display: flex; align-items: center; gap: 6px; margin: 0; padding: 5px 10px; border-radius: 12px; background: rgba(217, 71, 47, .12);
+  color: #a8402c; font: 900 .88rem var(--w-display);
+}
+html.ui-b.ui-warm .fleet-panel .fl-warning-icon { width: 20px; height: 20px; }
+html.ui-b.ui-warm .fleet-panel .fl-heading { margin: 0; color: var(--w-wood-deep); font: 900 1.15rem var(--w-display); }
+html.ui-b.ui-warm .fleet-panel .fl-note { margin: 0; color: var(--w-ink-2); font: 800 .84rem "Nunito Variable", system-ui, sans-serif; }
+html.ui-b.ui-warm .fleet-panel .fl-status { margin: 0; min-height: 1em; color: #a8402c; font: 800 .84rem "Nunito Variable", system-ui, sans-serif; }
+html.ui-b.ui-warm .fleet-panel .fl-status:empty { display: none; }
+
+/* The shipyard: a card per role. */
+html.ui-b.ui-warm .fleet-panel .fl-yard { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+html.ui-b.ui-warm .fleet-panel .fl-yard-card {
+  display: grid; justify-items: center; gap: 4px; padding: 0 0 8px; overflow: hidden; border: 3px solid var(--w-wood-deep); border-radius: 18px;
+  background: linear-gradient(#fffaf0, #f3e3c3); box-shadow: 0 4px 0 var(--w-wood-deep);
+}
+html.ui-b.ui-warm .fleet-panel .fl-yard-card .fl-button { width: calc(100% - 16px); }
+html.ui-b.ui-warm .fleet-panel .fl-yard-picture {
+  position: relative; width: 100%; height: 104px; background: radial-gradient(90% 80% at 50% 80%, #b8e6fb 0%, #63b9e6 60%, #2f7fbd 100%);
+  border-bottom: 3px solid var(--w-wood-deep);
+}
+html.ui-b.ui-warm .fleet-panel .fl-yard-card.is-merchant .fl-yard-picture { background: radial-gradient(90% 80% at 50% 80%, #f7e7c0 0%, #e2b96f 60%, #b5813f 100%); }
+html.ui-b.ui-warm .fleet-panel .fl-yard-card.is-war .fl-yard-picture { background: radial-gradient(90% 80% at 50% 80%, #f3c4b0 0%, #c8695a 60%, #7d2e28 100%); }
+html.ui-b.ui-warm .fleet-panel .fl-yard-card.is-locked .fl-yard-picture { filter: grayscale(.7) brightness(.85); }
+html.ui-b.ui-warm .fleet-panel .fl-yard-image { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
+html.ui-b.ui-warm .fleet-panel .fl-yard-picture .fl-role { position: absolute; top: 6px; left: 6px; width: 30px; height: 30px; }
+html.ui-b.ui-warm .fleet-panel .fl-yard-role { color: var(--w-ink-2); font: 900 .72rem var(--w-display); text-transform: uppercase; letter-spacing: .04em; }
+html.ui-b.ui-warm .fleet-panel .fl-yard-name { color: var(--w-wood-deep); font: 900 1rem var(--w-display); }
+
+/* The dock. */
+html.ui-b.ui-warm .fleet-panel .fl-dock-card {
+  display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: center; padding: 10px; border: 3px solid var(--w-wood-deep);
+  border-radius: 18px; background: linear-gradient(#e9f6ff, #b9dcf2); box-shadow: 0 4px 0 var(--w-wood-deep);
+}
+html.ui-b.ui-warm .fleet-panel .fl-dock-anchor { width: 96px; height: 96px; }
+html.ui-b.ui-warm .fleet-panel .fl-dock-facts { display: grid; gap: 8px; }
+html.ui-b.ui-warm .fleet-panel .fl-dock-tiers { display: flex; align-items: center; gap: 8px; margin: 0; color: #1d3d5c; font: 900 1.15rem var(--w-display); }
+html.ui-b.ui-warm .fleet-panel .fl-dock-tier.is-next { color: #2c6b23; }
+html.ui-b.ui-warm .fleet-panel .fl-dock-arrow { color: #2c6b23; font-size: 1.3rem; }
+html.ui-b.ui-warm .fleet-panel .fl-dock-slots { display: flex; flex-wrap: wrap; gap: 6px; }
+html.ui-b.ui-warm .fleet-panel .fl-dock-slot { width: 30px; height: 30px; }
+html.ui-b.ui-warm .fleet-panel .fl-dock-slot.is-new { animation: fl-pulse 1.4s ease-in-out infinite; }
+
+/* Narrow and short screens: the stage above the numbers, smaller tiles. */
+@media (max-width: 560px) {
+  html.ui-b.ui-warm .fleet-panel .fl-ship { grid-template-columns: 1fr; }
+  html.ui-b.ui-warm .fleet-panel .fl-stage { min-height: 140px; }
+  html.ui-b.ui-warm .fleet-panel .fl-tile { width: 68px; height: 68px; }
+}
+/* A phone held sideways: everything smaller and tighter, so the whole panel fits without scrolling. */
+@media (max-height: 520px) {
+  html.ui-b.ui-warm .ship-panel { padding: 4px 10px; }
+  html.ui-b.ui-warm .fleet-panel .fl-card { width: min(820px, 100%); gap: 6px; padding: 0 10px 10px; border-width: 4px; border-radius: 18px; }
+  html.ui-b.ui-warm .fleet-panel .fl-head { margin: 0 -10px; padding: 5px 8px 4px; }
+  html.ui-b.ui-warm .fleet-panel .fl-title { padding: 2px 14px 3px; font-size: 1.05rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-dock { height: 32px; font-size: .9rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-dock-icon { width: 22px; height: 22px; }
+  html.ui-b.ui-warm .fleet-panel .fl-close { width: 34px; height: 34px; }
+  html.ui-b.ui-warm .fleet-panel .fl-berths { gap: 6px; padding: 2px 2px 4px; }
+  html.ui-b.ui-warm .fleet-panel .fl-tile { width: 56px; height: 56px; border-radius: 12px; }
+  html.ui-b.ui-warm .fleet-panel .fl-tile-role { width: 18px; height: 18px; }
+  html.ui-b.ui-warm .fleet-panel .fl-tile .fl-star { width: 9px; height: 9px; }
+  html.ui-b.ui-warm .fleet-panel .fl-tile-mark { width: 28px; height: 28px; }
+  html.ui-b.ui-warm .fleet-panel .fl-ship { grid-template-columns: minmax(150px, 200px) 1fr; gap: 10px; }
+  html.ui-b.ui-warm .fleet-panel .fl-stage { min-height: 0; }
+  html.ui-b.ui-warm .fleet-panel .fl-plate { padding: 3px 6px; }
+  html.ui-b.ui-warm .fleet-panel .fl-name { font-size: .88rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-info { gap: 5px; }
+  html.ui-b.ui-warm .fleet-panel .fl-where { padding: 1px 10px 1px 4px; font-size: .8rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-where-icon { width: 18px; height: 18px; }
+  html.ui-b.ui-warm .fleet-panel .fl-stats { gap: 3px; }
+  html.ui-b.ui-warm .fleet-panel .fl-stat { grid-template-columns: 20px 1fr auto; gap: 6px; }
+  html.ui-b.ui-warm .fleet-panel .fl-stat-icon { width: 20px; height: 20px; }
+  html.ui-b.ui-warm .fleet-panel .fl-stat-track { height: 10px; }
+  html.ui-b.ui-warm .fleet-panel .fl-stat-value { font-size: .8rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-upgrade { padding: 3px 4px 3px 8px; }
+  html.ui-b.ui-warm .fleet-panel .fl-upgrade-name { font-size: .82rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-button { min-height: 40px; padding: 3px 8px; gap: 1px; border-width: 2.5px; border-radius: 12px; }
+  html.ui-b.ui-warm .fleet-panel .fl-button-icon { width: 22px; height: 22px; }
+  html.ui-b.ui-warm .fleet-panel .fl-button-label { font-size: .88rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-chip { font-size: .7rem; }
+  html.ui-b.ui-warm .fleet-panel .fl-chip-icon { width: 14px; height: 14px; }
+  html.ui-b.ui-warm .fleet-panel .fl-yard-picture { height: 72px; }
+  html.ui-b.ui-warm .fleet-panel .fl-dock-card { grid-template-columns: 76px 1fr; padding: 6px; }
+  html.ui-b.ui-warm .fleet-panel .fl-dock-anchor { width: 64px; height: 64px; }
 }
 
 /* -------------------------------------------------------------------------------------------

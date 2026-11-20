@@ -123,7 +123,7 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
   }
 
   /** Puts a model on the stage, scaled and centred to the framing rule, and removes it again. */
-  async function drawModel(modelId: string): Promise<ThumbnailResult> {
+  async function drawModel(modelId: string, backdrop: "CARD" | "CLEAR" = "CARD"): Promise<ThumbnailResult> {
     const model = await library.load(modelId);
     if (model === null) return { dataUrl: null, source: "FALLBACK" };
     const stageParts = stage();
@@ -150,8 +150,20 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
     const focus = new Vector3(0, framing.centerY, 0);
     stageParts.camera.position.copy(VIEW_DIRECTION).multiplyScalar(framing.cameraDistance).add(focus);
     stageParts.camera.lookAt(focus);
+    // A clear backdrop drops the card and the disc: the picture is the model alone, on transparency.
+    const clear = backdrop === "CLEAR";
+    const background = stageParts.scene.background;
+    if (clear) {
+      stageParts.scene.background = null;
+      stageParts.renderer.setClearColor(0x000000, 0);
+      if (ground !== null) ground.visible = false;
+    }
     stageParts.renderer.render(stageParts.scene, stageParts.camera);
     const dataUrl = stageParts.renderer.domElement.toDataURL("image/png");
+    if (clear) {
+      stageParts.scene.background = background;
+      if (ground !== null) ground.visible = true;
+    }
     stageParts.scene.remove(holder);
     // The clone shares geometry and materials with the cached model, so only its own transform is
     // discarded; disposing here would break the world.
@@ -257,7 +269,7 @@ export function createThumbnailRenderer(options: ThumbnailRendererOptions = {}):
           : request.roadTierId !== null && isRoadTier(request.roadTierId)
           ? drawRoad(request.roadTierId)
           : request.modelId !== null
-            ? await drawModel(request.modelId)
+            ? await drawModel(request.modelId, request.backdrop ?? "CARD")
             : { dataUrl: null, source: "FALLBACK" as const };
       drawn += 1;
       // Only a real picture is cached: caching a failure would make one flaky download permanent.
