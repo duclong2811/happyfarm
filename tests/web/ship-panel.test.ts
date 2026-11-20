@@ -31,16 +31,18 @@ const voyage = (arrived: boolean, ambush: NonNullable<FleetResponse["voyage"]>["
 });
 
 describe("the ship's panel", () => {
-  it("offers sailing, the helm, the build and its price at the pier, and leads with sailing", () => {
+  it("offers sailing, the helm, the upgrade and its price at the pier, and leads with sailing", () => {
     const view = model({ fleet: fleet() });
     expect(view.modelId).toBe("ship_sloop");
     expect(view.where).toBe("shipPanel.atHome");
     expect(view.actions.map((action) => [action.kind, action.enabled, action.primary])).toEqual([
       ["SAIL", true, true],
       ["HELM", true, false],
-      ["BUILD", true, false]
+      ["UPGRADE", true, false],
+      ["DOCK", true, false]
     ]);
     expect(view.actions[2]?.detail).toBe('shipPanel.buildCost:{"gold":3000,"wood":500,"ore":300}');
+    expect(view.actions[2]?.shipId).toBe(`ship_${FIXTURE_PLAYER_UUID}`);
     expect(view.next).toContain("ship.class.ship_class_brig");
   });
 
@@ -56,8 +58,8 @@ describe("the ship's panel", () => {
     const view = model({ fleet: fleet({ ship: { hull: 100 } }), playerLevel: 12 });
     const repair = view.actions.find((action) => action.kind === "REPAIR");
     expect(repair?.detail).toBe('shipPanel.repairCost:{"gold":100,"wood":13}');
-    const build = view.actions.find((action) => action.kind === "BUILD");
-    expect(build).toMatchObject({ enabled: false, detail: 'shipPanel.buildLevel:{"level":25}' });
+    const upgrade = view.actions.find((action) => action.kind === "UPGRADE");
+    expect(upgrade).toMatchObject({ enabled: false, detail: 'shipPanel.buildLevel:{"level":25}' });
   });
 
   it("will not sail a sunk ship, and leads with the repair", () => {
@@ -95,5 +97,54 @@ describe("the ship's panel", () => {
       ["COME_HOME", false]
     ]);
     expect(view.actions[1]?.detail).toBe("shipPanel.comeHomeAmbush");
+  });
+
+  it("lists a berth per ship and an empty one while the dock has room, and builds any role into it", () => {
+    const fishing = { shipId: `ship_${FIXTURE_PLAYER_UUID}_2`, berth: 2, classId: "ship_class_rowboat", role: "FISHING" as const, rank: 1, tier: 1, hull: 60, hullMax: 60, cannons: 0, hold: 20, upgrade: null };
+    const base = fleet();
+    const two = fleetResponse({ ships: [base.ship, { ...base.ship, ...fishing }], dock: { ...base.dock, tier: 3, berths: 3, freeBerths: 1, next: null } });
+    const view = model({ fleet: two });
+    expect(view.dock).toBe('shipPanel.dock:{"tier":3,"used":2,"berths":3}');
+    expect(view.berths.map((berth) => [berth.label, berth.selected, berth.empty])).toEqual([
+      ["ship.class.ship_class_sloop", true, false],
+      ["ship.class.ship_class_rowboat", false, false],
+      ["shipPanel.berthEmpty", false, true]
+    ]);
+    // The dock at its largest offers no raise.
+    expect(view.actions.map((action) => action.kind)).not.toContain("DOCK");
+
+    const boat = model({ fleet: two, selected: { kind: "SHIP", shipId: fishing.shipId } });
+    expect(boat.name).toBe("ship.class.ship_class_rowboat");
+    expect(boat.actions.find((action) => action.kind === "SAIL")?.shipId).toBe(fishing.shipId);
+
+    const empty = model({ fleet: two, selected: { kind: "BERTH" }, playerLevel: 20 });
+    expect(empty.modelId).toBeNull();
+    expect(empty.hull).toBeNull();
+    expect(empty.actions.map((action) => [action.kind, action.role, action.enabled])).toEqual([
+      ["BUILD", "FISHING", true],
+      ["BUILD", "MERCHANT", false],
+      ["BUILD", "WAR", true]
+    ]);
+    expect(empty.actions[1]?.detail).toBe('shipPanel.buildLevel:{"level":50}');
+    // A full dock has no empty berth; asking for one falls back to the ship in hand.
+    const full = model({ fleet: fleet(), selected: { kind: "BERTH" } });
+    expect(full.berths.some((berth) => berth.empty)).toBe(false);
+    expect(full.name).toBe("ship.class.ship_class_sloop");
+  });
+
+  it("keeps the ships at the dock waiting while another is out, and says the lent rowboat gives way", () => {
+    const base = fleet();
+    const away = { ...base.ship, shipId: `ship_${FIXTURE_PLAYER_UUID}_2`, berth: 2, away: true };
+    const out = fleetResponse({ ship: { ...away }, ships: [base.ship, away], location: "AT_SEA", voyage: { ...voyage(false), shipId: away.shipId } });
+    const home = model({ fleet: out, selected: { kind: "SHIP", shipId: base.ship.shipId } });
+    expect(home.actions.find((action) => action.kind === "SAIL")).toMatchObject({ enabled: false, detail: "shipPanel.otherAway" });
+    expect(home.actions.map((action) => action.kind)).not.toContain("HELM");
+    expect(home.actions.map((action) => action.kind)).toContain("UPGRADE");
+    expect(model({ fleet: out }).actions.map((action) => action.kind)).toEqual(["COME_HOME"]);
+
+    const lent = fleetResponse({ ship: { lent: true, classId: "ship_class_rowboat", role: "FISHING", hull: 60, hullMax: 60 }, dock: { ...base.dock, freeBerths: 1 } });
+    const berth = model({ fleet: lent, selected: { kind: "BERTH" } });
+    expect(berth.stats).toBe("shipPanel.replaceLent");
+    expect(model({ fleet: lent }).berths[0]?.detail).toBe("shipPanel.lent");
   });
 });

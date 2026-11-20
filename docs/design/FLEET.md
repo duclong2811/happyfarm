@@ -75,6 +75,17 @@ The proposal is three ladders, and more than one ship at a time:
 - Ships without guns meet no pirates. A ship lying at a place sails on; no other ship sets out until
   it is home.
 
+### Built (F1 client, 2026-11-20)
+
+- The ship panel is the fleet's panel (`apps/web/src/ship-panel.ts`): a berth row picks a ship or the
+  empty berth; a ship offers sail, helm, repair and its upgrade; the empty berth offers a new ship of
+  each role; the dock line offers the next tier. A ship at the dock waits while another is out.
+- The ship picked is the one drawn at the pier, taken to the helm, fought in the practice fight and
+  sailed from the chart (`pierShipOf`, `sailingShipId` in `main.ts`).
+- The new classes sail as the nearest existing model until their own are drawn (F1 art).
+- Note: some upgrades take more wood and ore than the starting warehouse holds (the dock's tier 3 and
+  up, the top ranks). A player needs a bigger warehouse for them, as with the high mine levels.
+
 ### Phases
 
 | Phase | Content | Migration | Economy |

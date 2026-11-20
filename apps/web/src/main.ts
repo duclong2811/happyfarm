@@ -142,7 +142,8 @@ import {
 } from "./mobile/capability";
 import { createHoldControl, createJoystickControl, type HoldControl, type JoystickControl } from "./mobile/joystick";
 import { sharedModelLibrary } from "./render/model-library";
-import { openShipPanel, shipPanelModel, type ShipPanel } from "./ship-panel";
+import { shipModelForTier, shipModelId } from "./render/ship-models";
+import { openShipPanel, shipPanelModel, type FleetSelection, type ShipPanel } from "./ship-panel";
 import { helmShipForTier, horizonWatersRadius, islandHelmWaters, nearestPort, startHelm } from "./helm/helm";
 import { openHelmView, type HelmView } from "./helm/helm-view";
 import { islandDecorPlan } from "./render/island-decor";
@@ -7568,9 +7569,32 @@ function setFleet(fleet: FleetResponse): void {
   if (fleet.voyage !== null) ensureActivityTicker();
   // The ship has sailed (from the chart the helm opened) or sunk: the helm ends before it leaves the
   // pier, so the camera flies home from behind the hull rather than cutting.
-  if (helm !== null && (dockShipOf(fleetState) === null || fleet.ship.hull <= 0)) leaveHelm();
+  if (helm !== null && (fleet.location !== "HOME" || (pierShipOf(fleet)?.hull ?? 0) <= 0)) leaveHelm();
   scene?.setDockShip(dockShipOf(fleetState));
   shipPanel?.refresh();
+}
+
+/** The berth the fleet panel last showed: which ship is drawn at the pier, takes the helm and sets sail. */
+let fleetSelection: FleetSelection | null = null;
+
+/**
+ * The ship at the pier: the one the fleet panel last picked if it is home, else the first ship that
+ * is. Null while every ship is out.
+ */
+function pierShipOf(fleet: FleetResponse): FleetResponse["ship"] | null {
+  const home = fleet.ships.filter((ship) => !ship.away);
+  const picked = fleetSelection?.kind === "SHIP" ? fleetSelection.shipId : null;
+  return home.find((ship) => ship.shipId === picked) ?? home[0] ?? null;
+}
+
+/**
+ * The ship a voyage from the chart or the helm sails in: the one lying at a place sails on (the server
+ * picks it), else the ship at the pier.
+ */
+function sailingShipId(): string | undefined {
+  const fleet = fleetState?.fleet ?? null;
+  if (fleet === null || fleet.location !== "HOME") return undefined;
+  return pierShipOf(fleet)?.shipId;
 }
 
 /** The helm while the player sails the ship round home waters; null while it lies at the pier. */
@@ -7604,13 +7628,15 @@ function openPracticeFight(onClosed: () => void): void {
     onClosed();
     return;
   }
-  const setup = practiceBattleSetup(ship, monster, Math.floor(Math.random() * 0xffffffff));
+  // The ship at the pier fights: the one the player took to the helm.
+  const fighter = fleetState === null ? ship : (pierShipOf(fleetState.fleet) ?? ship);
+  const setup = practiceBattleSetup(fighter, monster, Math.floor(Math.random() * 0xffffffff));
   battleView = openBattleView({
     host: document.body,
     translate: (key, params) => t(key, params),
     setup,
     pirates: [PRACTICE_MONSTER_ID],
-    playerShip: ship.classId,
+    playerShip: fighter.classId,
     title: t("battle.monsterTitle"),
     loadModel: (modelId) => sharedModelLibrary().load(modelId),
     submit: (inputs) => Promise.resolve({ battle: runPracticeFight(setup, inputs), spoils: t("battle.practice") }),
@@ -7632,7 +7658,8 @@ function takeHelm(): void {
   if (helm !== null || scene === null || fleetState === null || state.island === null) return;
   const fleet = fleetState.fleet;
   const mooring = scene.dockShipMooring();
-  if (fleet.location !== "HOME" || fleet.ship.hull <= 0 || mooring === null) {
+  const helmShip = pierShipOf(fleet);
+  if (fleet.location !== "HOME" || helmShip === null || helmShip.hull <= 0 || mooring === null) {
     setStatus(message("helm.unavailable"));
     return;
   }
@@ -7668,7 +7695,7 @@ function takeHelm(): void {
   helm = openHelmView({
     host: document.body,
     translate: (key, params) => t(key, params),
-    ship: helmShipForTier(fleet.ship.tier, mooring.lengthTiles),
+    ship: helmShipForTier(helmShip.tier, mooring.lengthTiles),
     waters,
     start: startHelm(mooring),
     onPose: (pose) => {
@@ -7701,7 +7728,7 @@ function takeHelm(): void {
       // exactly as from the chart. The helm ends when the fleet says the ship has left (setFleet).
       helm?.setPaused(true);
       void api()
-        .startVoyage(slotId, newRequestId("voyage"))
+        .startVoyage(slotId, newRequestId("voyage"), sailingShipId())
         .then((fleet) => {
           setFleet(fleet);
           setStatus(message("voyage.setSail", { name: placeName(slotId) }));
@@ -7743,11 +7770,13 @@ function showShipPanel(): void {
   shipPanel = openShipPanel({
     host: document.body,
     translate: (key, params) => t(key, params),
-    model: () =>
+    initial: fleetSelection,
+    model: (selected) =>
       fleetState === null
         ? null
         : shipPanelModel({
             fleet: fleetState.fleet,
+            selected,
             serverNowMs: fleetServerNow(),
             playerLevel: state.progression?.level ?? null,
             ambushDue: ambushDue(),
@@ -7758,19 +7787,27 @@ function showShipPanel(): void {
     picture: (modelId, image) => {
       itemThumbnails.apply({ modelId, roadTierId: null }, image);
     },
-    act: async (kind) => {
+    onSelect: (selected) => {
+      // The ship picked is the one drawn at the pier: the helm takes it, the chart sails it.
+      fleetSelection = selected;
+      scene?.setDockShip(dockShipOf(fleetState));
+    },
+    act: async (action) => {
       const voyage = fleetState?.fleet.voyage ?? null;
-      switch (kind) {
+      switch (action.kind) {
         case "FIGHT":
           shipPanel?.close();
           openAmbushFight();
           return;
         case "SAIL":
-          // The chart is where a place is picked; it sails from there.
+          // The chart is where a place is picked; the ship picked here sails from there.
+          if (action.shipId !== undefined) fleetSelection = { kind: "SHIP", shipId: action.shipId };
           shipPanel?.close();
           showSeaChart();
           return;
         case "HELM":
+          if (action.shipId !== undefined) fleetSelection = { kind: "SHIP", shipId: action.shipId };
+          scene?.setDockShip(dockShipOf(fleetState));
           shipPanel?.close();
           takeHelm();
           return;
@@ -7784,18 +7821,37 @@ function showShipPanel(): void {
           void refreshHorizon();
           return;
         case "REPAIR":
-          setFleet(await client.repairShip(newRequestId("repair"), fleetState?.fleet.ship.shipId));
+          setFleet(await client.repairShip(newRequestId("repair"), action.shipId));
           void refreshAccount();
           return;
-        case "BUILD": {
-          const inHand = fleetState?.fleet.ship.shipId;
-          if (inHand === undefined) return;
-          const fleet = await client.upgradeShip(inHand, newRequestId("ship"));
+        case "UPGRADE": {
+          if (action.shipId === undefined) return;
+          const fleet = await client.upgradeShip(action.shipId, newRequestId("ship"));
           setFleet(fleet);
-          setStatus(message("chart.shipBuilt", { name: t(`ship.class.${fleet.ship.classId}` as MessageKey) }));
+          const upgraded = fleet.ships.find((ship) => ship.shipId === action.shipId);
+          if (upgraded !== undefined) setStatus(message("chart.shipBuilt", { name: t(`ship.class.${upgraded.classId}` as MessageKey) }));
           void refreshAccount();
           return;
         }
+        case "BUILD": {
+          if (action.role === undefined) return;
+          const before = new Set(fleetState?.fleet.ships.filter((ship) => !ship.lent).map((ship) => ship.shipId) ?? []);
+          const fleet = await client.buildShip(action.role, newRequestId("ship"));
+          const built = fleet.ships.find((ship) => !ship.lent && !before.has(ship.shipId)) ?? null;
+          if (built !== null) fleetSelection = { kind: "SHIP", shipId: built.shipId };
+          setFleet(fleet);
+          if (built !== null) {
+            shipPanel?.select({ kind: "SHIP", shipId: built.shipId });
+            setStatus(message("chart.shipBuilt", { name: t(`ship.class.${built.classId}` as MessageKey) }));
+          }
+          void refreshAccount();
+          return;
+        }
+        case "DOCK":
+          setFleet(await client.upgradeDock(newRequestId("dock")));
+          setStatus(message("shipPanel.dockRaised"));
+          void refreshAccount();
+          return;
       }
     },
     describeError: (error) => describe(error)(t, state.language),
@@ -7805,10 +7861,11 @@ function showShipPanel(): void {
   });
 }
 
-/** The ship moored at the pier: the fleet's own class while it is at its dock, nothing while away. */
-function dockShipOf(current: { readonly fleet: FleetResponse } | null): { readonly tier: number } | null {
-  if (current === null || current.fleet.location !== "HOME") return null;
-  return { tier: current.fleet.ship.tier };
+/** The ship moored at the pier (see `pierShipOf`), as the scene draws it; nothing while every ship is out. */
+function dockShipOf(current: { readonly fleet: FleetResponse } | null): { readonly tier: number; readonly modelId: string } | null {
+  const ship = current === null ? null : pierShipOf(current.fleet);
+  if (ship === null) return null;
+  return { tier: ship.tier, modelId: shipModelId(ship.classId) ?? shipModelForTier(ship.tier) };
 }
 
 /** Reads the ship and its voyage (W5a), so a voyage under way shows in the activity tray. */
@@ -7947,7 +8004,7 @@ function showSeaChart(onClosed?: () => void): void {
     },
     loadFleet: state.island === null ? null : () => client.getFleet(),
     sail: state.island === null ? null : async (slotId) => {
-      setFleet(await client.startVoyage(slotId, newRequestId("voyage")));
+      setFleet(await client.startVoyage(slotId, newRequestId("voyage"), sailingShipId()));
       setStatus(message("voyage.setSail", { name: placeName(slotId) }));
       // The horizon shows the ship leaving: the archipelago is read once more, then it sails by itself.
       void refreshHorizon();

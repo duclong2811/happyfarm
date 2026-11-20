@@ -49,7 +49,9 @@ export function fleetShip(overrides: Partial<FleetShip> = {}): FleetShip {
 /** A fleet read; `ship` overrides apply to the ship in hand and to the same ship in `ships`. */
 export function fleetResponse(overrides: Partial<Omit<FleetResponse, "ship">> & { readonly ship?: Partial<FleetShip> } = {}): FleetResponse {
   const { ship: shipOverrides, ...rest } = overrides;
-  const ship = fleetShip(shipOverrides);
+  // As the server says it: the ship sailing a voyage that is not over is away from the dock.
+  const sailing = (rest.location ?? "HOME") !== "HOME" && rest.voyage != null && rest.voyage.shipId === (shipOverrides?.shipId ?? `ship_${FIXTURE_PLAYER_UUID}`);
+  const ship = fleetShip({ away: sailing, ...shipOverrides });
   return {
     readAt: "2026-11-20T10:00:00.000Z",
     ship,

@@ -728,7 +728,7 @@ export interface FarmSceneHandle {
    * The player's own ship moored at the island's pier, by its class's tier, or nothing (null) while
    * it is away at sea. Presentation only: the fleet read decides where the ship is.
    */
-  setDockShip(ship: { readonly tier: number } | null): void;
+  setDockShip(ship: { readonly tier: number; readonly modelId?: string } | null): void;
   /** Where the moored ship lies, in island tiles, or null while there is none at the pier. */
   dockShipMooring(): DockShipMooring | null;
   /** Draws a sea monster in the home waters, or none (null). Presentation only. */
@@ -1400,7 +1400,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   seaMonsterGroup.name = "sea-monster";
   let seaMonsterSignature = "";
   let seaMonsterToken = 0;
-  let dockShip: { readonly tier: number } | null = null;
+  let dockShip: { readonly tier: number; readonly modelId: string } | null = null;
   let dockShipSignature = "";
   let dockShipToken = 0;
   /** The moored ship's model and its place at the pier, once loaded. */
@@ -2666,7 +2666,7 @@ let interactionGeometry: BufferGeometry | null = null;
     const pier = ground === undefined || dockShip === null ? null : islandDecorPlan(ground).pier;
     const signature = pier === null || dockShip === null
       ? ""
-      : `${String(dockShip.tier)}@${pier.x.toFixed(2)},${pier.y.toFixed(2)},${pier.dirX.toFixed(3)},${pier.dirY.toFixed(3)},${pier.lengthTiles.toFixed(2)}#${String(next.layout.pitch)}`;
+      : `${dockShip.modelId}/${String(dockShip.tier)}@${pier.x.toFixed(2)},${pier.y.toFixed(2)},${pier.dirX.toFixed(3)},${pier.dirY.toFixed(3)},${pier.lengthTiles.toFixed(2)}#${String(next.layout.pitch)}`;
     if (signature === dockShipSignature) return;
     dockShipSignature = signature;
     const token = ++dockShipToken;
@@ -2694,7 +2694,7 @@ let interactionGeometry: BufferGeometry | null = null;
     const along = (length / pitch) * 0.1;
     const mooring = { x: endX + pier.dirX * along + pier.dirY * across, y: endY + pier.dirY * along - pier.dirX * across };
     const heading = Math.atan2(pier.dirY, pier.dirX);
-    void library.load(shipModelForTier(dockShip.tier)).then((source) => {
+    void library.load(dockShip.modelId).then((source) => {
       if (disposed || token !== dockShipToken || source === null) return;
       const ship = fitShipModel(source, length);
       // The heel is a roll about the hull's own fore-and-aft line, so the yaw goes first.
@@ -5342,8 +5342,8 @@ let interactionGeometry: BufferGeometry | null = null;
         draw();
       });
     },
-    setDockShip(next: { readonly tier: number } | null): void {
-      dockShip = next === null ? null : { tier: next.tier };
+    setDockShip(next: { readonly tier: number; readonly modelId?: string } | null): void {
+      dockShip = next === null ? null : { tier: next.tier, modelId: next.modelId ?? shipModelForTier(next.tier) };
       refreshDockShip(state);
     },
     helmSea(): HelmSea | null {

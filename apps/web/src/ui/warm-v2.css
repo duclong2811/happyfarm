@@ -1261,6 +1261,24 @@ html.ui-b.ui-warm .ship-panel .sp-head h2 {
   font-weight: 800; text-shadow: var(--w-outline);
 }
 html.ui-b.ui-warm .ship-panel .sp-close { color: var(--w-wood-deep); background: rgba(255, 255, 255, .6); }
+html.ui-b.ui-warm .ship-panel .sp-berths { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+html.ui-b.ui-warm .ship-panel .sp-berth {
+  display: grid; gap: 1px; flex: 0 0 auto; min-width: 104px; max-width: 160px; padding: 6px 10px; text-align: left;
+  border: 2px solid var(--w-wood-deep); border-radius: 12px; background: rgba(255, 255, 255, .55); color: var(--w-wood-deep); cursor: pointer;
+}
+html.ui-b.ui-warm .ship-panel .sp-berth.is-selected { background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); border-color: var(--w-orange-edge); color: #fff; }
+html.ui-b.ui-warm .ship-panel .sp-berth.is-empty { border-style: dashed; background: rgba(255, 255, 255, .3); }
+html.ui-b.ui-warm .ship-panel .sp-berth.is-empty.is-selected { border-style: solid; background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); }
+html.ui-b.ui-warm .ship-panel .sp-berth:disabled { opacity: .6; cursor: default; }
+html.ui-b.ui-warm .ship-panel .sp-berth-label { font: 800 .9rem var(--w-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.ui-b.ui-warm .ship-panel .sp-berth.is-selected .sp-berth-label { text-shadow: var(--w-outline); }
+html.ui-b.ui-warm .ship-panel .sp-berth-detail { font: 700 .72rem "Nunito Variable", system-ui, sans-serif; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.ui-b.ui-warm .ship-panel .sp-berth.is-away .sp-berth-detail::before { content: "⛵ "; }
+html.ui-b.ui-warm .ship-panel .sp-dock { margin: 0; color: var(--w-ink-2); font: 800 .8rem "Nunito Variable", system-ui, sans-serif; }
+html.ui-b.ui-warm .ship-panel .sp-picture[hidden],
+html.ui-b.ui-warm .ship-panel .sp-hull[hidden],
+html.ui-b.ui-warm .ship-panel .sp-where[hidden] { display: none; }
+html.ui-b.ui-warm .ship-panel .sp-body:has(.sp-picture[hidden]) { grid-template-columns: 1fr; }
 html.ui-b.ui-warm .ship-panel .sp-body { display: grid; grid-template-columns: 132px 1fr; gap: 12px; align-items: center; }
 html.ui-b.ui-warm .ship-panel .sp-picture {
   width: 132px; height: 132px; border: 3px solid var(--w-slot-edge); border-radius: 16px; background: #f6efe0; object-fit: contain;
