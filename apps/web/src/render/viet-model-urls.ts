@@ -22,9 +22,31 @@ import vietTreeArecaUrl from "../assets/models/viet/viet_tree_areca.glb?url";
 import vietTreeBananaUrl from "../assets/models/viet/viet_tree_banana.glb?url";
 import vietTreeMaiUrl from "../assets/models/viet/viet_tree_mai.glb?url";
 import vietTreeDaoUrl from "../assets/models/viet/viet_tree_dao.glb?url";
+import vietDinhUrl from "../assets/models/viet/viet_dinh.glb?url";
+import vietBellTowerUrl from "../assets/models/viet/viet_bell_tower.glb?url";
+import vietBridgeTiledUrl from "../assets/models/viet/viet_bridge_tiled.glb?url";
+import vietTreeGaoUrl from "../assets/models/viet/viet_tree_gao.glb?url";
+import vietHouseRuongUrl from "../assets/models/viet/viet_house_ruong.glb?url";
+import vietGateTamQuanUrl from "../assets/models/viet/viet_gate_tam_quan.glb?url";
+import vietChamTowerUrl from "../assets/models/viet/viet_cham_tower.glb?url";
+import vietBasketBoatUrl from "../assets/models/viet/viet_basket_boat.glb?url";
+import vietTreeCoconutUrl from "../assets/models/viet/viet_tree_coconut.glb?url";
+import vietHouseNipaUrl from "../assets/models/viet/viet_house_nipa.glb?url";
+import vietMonkeyBridgeUrl from "../assets/models/viet/viet_monkey_bridge.glb?url";
+import vietSampanUrl from "../assets/models/viet/viet_sampan.glb?url";
+import vietNipaPalmUrl from "../assets/models/viet/viet_nipa_palm.glb?url";
+import vietFieldHutUrl from "../assets/models/viet/viet_field_hut.glb?url";
+import vietNhaRongUrl from "../assets/models/viet/viet_nha_rong.glb?url";
+import vietCayNeuUrl from "../assets/models/viet/viet_cay_neu.glb?url";
+import vietGongRackUrl from "../assets/models/viet/viet_gong_rack.glb?url";
+import vietCoffeeShrubUrl from "../assets/models/viet/viet_coffee_shrub.glb?url";
+import vietWildSunflowerUrl from "../assets/models/viet/viet_wild_sunflower.glb?url";
+import vietWaterWheelUrl from "../assets/models/viet/viet_water_wheel.glb?url";
+import vietHouseRammedUrl from "../assets/models/viet/viet_house_rammed.glb?url";
+import vietBuckwheatUrl from "../assets/models/viet/viet_buckwheat.glb?url";
 
 /**
- * Làng Việt: the Vietnamese village pack (`tools/asset-pipeline/node/viet.mjs`,
+ * Làng Việt: the Vietnamese village pack (`tools/asset-pipeline/node/viet.mjs` and the regions in `viet-regions.mjs`,
  * docs/design/LANG_VIET.md), keyed by model id.
  *
  * Each model is generated to one unit across its largest side, standing on y = 0, so `sizeWorld` is
@@ -65,7 +87,35 @@ export const VILLAGE_MODELS: ReadonlyMap<string, VillageModelEntry> = new Map(
       { id: "viet_tree_areca", url: vietTreeArecaUrl, sizeWorld: 5.0 },
       { id: "viet_tree_banana", url: vietTreeBananaUrl, sizeWorld: 3.2 },
       { id: "viet_tree_mai", url: vietTreeMaiUrl, sizeWorld: 2.3 },
-      { id: "viet_tree_dao", url: vietTreeDaoUrl, sizeWorld: 2.3 }
+      { id: "viet_tree_dao", url: vietTreeDaoUrl, sizeWorld: 2.3 },
+      // Vùng miền (viet-regions.mjs).
+      // Bắc Bộ
+      { id: "viet_dinh", url: vietDinhUrl, sizeWorld: 7.6 },
+      { id: "viet_bell_tower", url: vietBellTowerUrl, sizeWorld: 3.6 },
+      { id: "viet_bridge_tiled", url: vietBridgeTiledUrl, sizeWorld: 5.6 },
+      { id: "viet_tree_gao", url: vietTreeGaoUrl, sizeWorld: 6.0 },
+      // Trung Bộ
+      { id: "viet_house_ruong", url: vietHouseRuongUrl, sizeWorld: 5.2 },
+      { id: "viet_gate_tam_quan", url: vietGateTamQuanUrl, sizeWorld: 5.0 },
+      { id: "viet_cham_tower", url: vietChamTowerUrl, sizeWorld: 6.0 },
+      { id: "viet_basket_boat", url: vietBasketBoatUrl, sizeWorld: 3.0 },
+      { id: "viet_tree_coconut", url: vietTreeCoconutUrl, sizeWorld: 5.4 },
+      // Nam Bộ
+      { id: "viet_house_nipa", url: vietHouseNipaUrl, sizeWorld: 3.4 },
+      { id: "viet_monkey_bridge", url: vietMonkeyBridgeUrl, sizeWorld: 3.9 },
+      { id: "viet_sampan", url: vietSampanUrl, sizeWorld: 3.2 },
+      { id: "viet_nipa_palm", url: vietNipaPalmUrl, sizeWorld: 3.6 },
+      { id: "viet_field_hut", url: vietFieldHutUrl, sizeWorld: 3.5 },
+      // Tây Nguyên
+      { id: "viet_nha_rong", url: vietNhaRongUrl, sizeWorld: 7.2 },
+      { id: "viet_cay_neu", url: vietCayNeuUrl, sizeWorld: 5.6 },
+      { id: "viet_gong_rack", url: vietGongRackUrl, sizeWorld: 3.0 },
+      { id: "viet_coffee_shrub", url: vietCoffeeShrubUrl, sizeWorld: 1.4 },
+      { id: "viet_wild_sunflower", url: vietWildSunflowerUrl, sizeWorld: 1.6 },
+      // Tây Bắc
+      { id: "viet_water_wheel", url: vietWaterWheelUrl, sizeWorld: 3.2 },
+      { id: "viet_house_rammed", url: vietHouseRammedUrl, sizeWorld: 4.3 },
+      { id: "viet_buckwheat", url: vietBuckwheatUrl, sizeWorld: 0.9 }
     ] as const
   ).map((entry) => [entry.id, entry])
 );

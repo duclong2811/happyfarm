@@ -1,4 +1,5 @@
 import type { BuildCatalogEntryDTO } from "@happy-farm/contracts";
+import { DECORATION_COLLECTIONS, type DecorationCollection } from "@happy-farm/game-data";
 import { ROAD_PREVIEW_STYLES, type ThumbnailRequest } from "../render/thumbnail-spec";
 
 /**
@@ -46,9 +47,25 @@ export const SHOP_CATEGORY_ORDER: readonly ShopCategory[] = [
   "MONUMENT"
 ];
 
-/** The categories the catalogue actually fills, in reading order. */
-export function shopCategories(catalog: readonly BuildCatalogEntryDTO[]): readonly ShopCategory[] {
-  return SHOP_CATEGORY_ORDER.filter((category) => catalog.some((entry) => entry.category === category));
+/**
+ * A decoration collection to browse, or everything. A collection is a set of pieces sold together -
+ * Làng Việt, then one per region - and the shop reads it from the entry's tags, in game data's order.
+ */
+export type ShopCollection = "ALL" | DecorationCollection;
+
+/** Whether an entry belongs to the collection being browsed. */
+export function inCollection(entry: BuildCatalogEntryDTO, collection: ShopCollection): boolean {
+  return collection === "ALL" || entry.tags.includes(collection);
+}
+
+/** The collections the catalogue actually fills, in game data's order, after "everything". */
+export function shopCollections(catalog: readonly BuildCatalogEntryDTO[]): readonly ShopCollection[] {
+  return ["ALL", ...DECORATION_COLLECTIONS.filter((collection) => catalog.some((entry) => entry.tags.includes(collection)))];
+}
+
+/** The categories the catalogue - or the collection being browsed - actually fills, in reading order. */
+export function shopCategories(catalog: readonly BuildCatalogEntryDTO[], collection: ShopCollection = "ALL"): readonly ShopCategory[] {
+  return SHOP_CATEGORY_ORDER.filter((category) => catalog.some((entry) => entry.category === category && inCollection(entry, collection)));
 }
 
 /**
@@ -133,11 +150,14 @@ export function visibleEntries(
     readonly filter: AvailabilityFilter;
     readonly playerLevel: number;
     readonly nameOf: (entry: BuildCatalogEntryDTO) => string;
+    /** The collection being browsed; everything when left out. */
+    readonly collection?: ShopCollection;
   }
 ): readonly BuildCatalogEntryDTO[] {
   const needle = normaliseQuery(options.query);
   return catalog.filter((entry) => {
     if (entry.category !== options.category) return false;
+    if (!inCollection(entry, options.collection ?? "ALL")) return false;
     if (needle.length > 0 && !normaliseQuery(options.nameOf(entry)).includes(needle)) return false;
     const availability = entryAvailability(entry, options.playerLevel);
     if (options.filter === "AVAILABLE") return availability === "AVAILABLE";
@@ -185,9 +205,10 @@ export function isRotatable(entry: BuildCatalogEntryDTO): boolean {
  */
 export function resolveCategory(
   catalog: readonly BuildCatalogEntryDTO[],
-  preferred: ShopCategory
+  preferred: ShopCategory,
+  collection: ShopCollection = "ALL"
 ): ShopCategory | null {
-  const categories = shopCategories(catalog);
+  const categories = shopCategories(catalog, collection);
   if (categories.includes(preferred)) return preferred;
   return categories[0] ?? null;
 }

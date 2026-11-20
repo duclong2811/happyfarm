@@ -98,7 +98,30 @@ export const PROVISIONAL_ASSET_PRICES = {
   vietBamboo: 60,
   vietAreca: 50,
   vietBanana: 45,
-  vietTetBlossom: 150
+  vietTetBlossom: 150,
+  // Vùng miền (the regions of Việt Nam): the same magnitudes again.
+  regionDinh: 5200,
+  regionBellTower: 1400,
+  regionTiledBridge: 1600,
+  regionGao: 200,
+  regionRuongHouse: 4200,
+  regionTamQuan: 2600,
+  regionChamTower: 3400,
+  regionBasketBoat: 120,
+  regionCoconut: 60,
+  regionNipaHouse: 1000,
+  regionMonkeyBridge: 300,
+  regionSampan: 140,
+  regionNipaPalm: 50,
+  regionFieldHut: 220,
+  regionNhaRong: 4600,
+  regionCayNeu: 90,
+  regionGongRack: 260,
+  regionCoffee: 45,
+  regionWildSunflower: 40,
+  regionWaterWheel: 360,
+  regionRammedHouse: 2800,
+  regionBuckwheat: 35
 } as const;
 
 /**
@@ -453,6 +476,13 @@ function assetEntries(): PlacementCatalogEntryData[] {
 }
 
 /**
+ * The decoration collections, in the shop's order: sets of pieces sold together and filtered together
+ * (docs/design/LANG_VIET.md). A row joins one by carrying its tag; every piece in one is cosmetic.
+ */
+export const DECORATION_COLLECTIONS = ["lang_viet", "viet_bac", "viet_trung", "viet_nam_bo", "viet_tay_nguyen", "viet_tay_bac"] as const;
+export type DecorationCollection = (typeof DECORATION_COLLECTIONS)[number];
+
+/**
  * Làng Việt: houses, village pieces, fences and trees in the look of the Vietnamese countryside
  * (`tools/asset-pipeline/node/viet.mjs`). Every one is cosmetic - it is bought, placed, moved, stored
  * and taken down like any other piece, and changes nothing but how the island looks. All of them carry
@@ -467,7 +497,9 @@ function villageEntries(): PlacementCatalogEntryData[] {
     priceGold: number,
     requiredLevel: number,
     footprint: { readonly widthCells: number; readonly depthCells: number },
-    tags: readonly string[]
+    tags: readonly string[],
+    allowedTerrain: PlacementCatalogEntryData["allowedTerrain"] = ["LAND"],
+    collection: DecorationCollection = "lang_viet"
   ): PlacementCatalogEntryData => ({
     id: `place_${name}`,
     category,
@@ -478,7 +510,7 @@ function villageEntries(): PlacementCatalogEntryData[] {
     // The entry is named after its model: `place_viet_well` draws `viet_well`.
     modelId: name,
     footprint: { widthCells: footprint.widthCells, depthCells: footprint.depthCells },
-    allowedTerrain: ["LAND"],
+    allowedTerrain: [...allowedTerrain],
     tier: null,
     upgradeTo: null,
     rotatable: true,
@@ -487,11 +519,14 @@ function villageEntries(): PlacementCatalogEntryData[] {
     removable: true,
     removalRefundRate: REMOVAL_REFUND_POLICY[category],
     decorative: true,
-    tags: ["lang_viet", ...tags],
+    tags: [collection, ...tags],
     descriptionKey: `place.${name}.description`,
     unlockCondition: "OWNED_LAND"
   });
   const cells = (widthCells: number, depthCells: number) => ({ widthCells, depthCells });
+  // Most pieces stand on dry land; a boat or a palm of the shore may also stand on the sand.
+  const land: PlacementCatalogEntryData["allowedTerrain"] = ["LAND"];
+  const shore: PlacementCatalogEntryData["allowedTerrain"] = ["LAND", "SHORE"];
   return [
     piece("viet_house_thatch", "BUILDING", price.vietThatchHouse, level.SETTLED, cells(3, 3), ["housing"]),
     piece("viet_house_stilt", "BUILDING", price.vietStiltHouse, level.SETTLED + 1, cells(3, 3), ["housing"]),
@@ -516,7 +551,36 @@ function villageEntries(): PlacementCatalogEntryData[] {
     piece("viet_tree_areca", "VEGETATION", price.vietAreca, level.BASIC, cells(1, 1), ["trees"]),
     piece("viet_tree_banana", "VEGETATION", price.vietBanana, level.BASIC, cells(1, 1), ["trees"]),
     piece("viet_tree_mai", "VEGETATION", price.vietTetBlossom, level.SETTLED, cells(1, 1), ["trees", "flowers"]),
-    piece("viet_tree_dao", "VEGETATION", price.vietTetBlossom, level.SETTLED, cells(1, 1), ["trees", "flowers"])
+    piece("viet_tree_dao", "VEGETATION", price.vietTetBlossom, level.SETTLED, cells(1, 1), ["trees", "flowers"]),
+
+    // ---- Vùng miền: one collection per region (docs/design/LANG_VIET.md, "Regions") ----
+    // Bắc Bộ, the northern delta.
+    piece("viet_dinh", "MONUMENT", price.regionDinh, level.PROSPEROUS, cells(7, 5), ["landmark"], land, "viet_bac"),
+    piece("viet_bell_tower", "MONUMENT", price.regionBellTower, level.ESTABLISHED, cells(2, 2), ["landmark"], land, "viet_bac"),
+    piece("viet_bridge_tiled", "DECORATION", price.regionTiledBridge, level.ESTABLISHED, cells(5, 3), ["water"], land, "viet_bac"),
+    piece("viet_tree_gao", "VEGETATION", price.regionGao, level.SETTLED, cells(2, 2), ["trees"], land, "viet_bac"),
+    // Trung Bộ, the centre.
+    piece("viet_house_ruong", "BUILDING", price.regionRuongHouse, level.ESTABLISHED + 1, cells(5, 4), ["housing"], land, "viet_trung"),
+    piece("viet_gate_tam_quan", "MONUMENT", price.regionTamQuan, level.ESTABLISHED + 1, cells(5, 2), ["landmark"], land, "viet_trung"),
+    piece("viet_cham_tower", "MONUMENT", price.regionChamTower, level.PROSPEROUS, cells(3, 3), ["landmark"], land, "viet_trung"),
+    piece("viet_basket_boat", "DECORATION", price.regionBasketBoat, level.BASIC, cells(3, 2), ["boats"], shore, "viet_trung"),
+    piece("viet_tree_coconut", "VEGETATION", price.regionCoconut, level.BASIC, cells(1, 1), ["trees"], shore, "viet_trung"),
+    // Nam Bộ, the Mekong.
+    piece("viet_house_nipa", "BUILDING", price.regionNipaHouse, level.SETTLED, cells(3, 3), ["housing"], land, "viet_nam_bo"),
+    piece("viet_monkey_bridge", "DECORATION", price.regionMonkeyBridge, level.SETTLED, cells(2, 4), ["water"], land, "viet_nam_bo"),
+    piece("viet_sampan", "DECORATION", price.regionSampan, level.BASIC, cells(3, 1), ["boats"], shore, "viet_nam_bo"),
+    piece("viet_nipa_palm", "VEGETATION", price.regionNipaPalm, level.BASIC, cells(2, 2), ["trees"], shore, "viet_nam_bo"),
+    piece("viet_field_hut", "DECORATION", price.regionFieldHut, level.BASIC, cells(2, 2), ["farm"], land, "viet_nam_bo"),
+    // Tây Nguyên, the highlands.
+    piece("viet_nha_rong", "MONUMENT", price.regionNhaRong, level.PROSPEROUS, cells(4, 4), ["landmark"], land, "viet_tay_nguyen"),
+    piece("viet_cay_neu", "DECORATION", price.regionCayNeu, level.BASIC, cells(1, 1), ["festival"], land, "viet_tay_nguyen"),
+    piece("viet_gong_rack", "DECORATION", price.regionGongRack, level.SETTLED, cells(3, 1), ["festival"], land, "viet_tay_nguyen"),
+    piece("viet_coffee_shrub", "VEGETATION", price.regionCoffee, level.BASIC, cells(1, 1), ["shrubs"], land, "viet_tay_nguyen"),
+    piece("viet_wild_sunflower", "VEGETATION", price.regionWildSunflower, level.BASIC, cells(1, 1), ["flowers"], land, "viet_tay_nguyen"),
+    // Tây Bắc, the north-west.
+    piece("viet_water_wheel", "DECORATION", price.regionWaterWheel, level.SETTLED, cells(3, 2), ["water"], land, "viet_tay_bac"),
+    piece("viet_house_rammed", "BUILDING", price.regionRammedHouse, level.ESTABLISHED, cells(4, 3), ["housing"], land, "viet_tay_bac"),
+    piece("viet_buckwheat", "VEGETATION", price.regionBuckwheat, level.BASIC, cells(1, 1), ["flowers"], land, "viet_tay_bac")
   ];
 }
 
@@ -584,7 +648,30 @@ export const CATALOGUE_MODEL_IDS = [
   "viet_tree_dao",
   "viet_tree_mai",
   "viet_village_gate",
-  "viet_well"
+  "viet_well",
+  // Vùng miền (generated by tools/asset-pipeline/node/viet-regions.mjs).
+  "viet_basket_boat",
+  "viet_bell_tower",
+  "viet_bridge_tiled",
+  "viet_buckwheat",
+  "viet_cay_neu",
+  "viet_cham_tower",
+  "viet_coffee_shrub",
+  "viet_dinh",
+  "viet_field_hut",
+  "viet_gate_tam_quan",
+  "viet_gong_rack",
+  "viet_house_nipa",
+  "viet_house_rammed",
+  "viet_house_ruong",
+  "viet_monkey_bridge",
+  "viet_nha_rong",
+  "viet_nipa_palm",
+  "viet_sampan",
+  "viet_tree_coconut",
+  "viet_tree_gao",
+  "viet_water_wheel",
+  "viet_wild_sunflower"
 ] as const;
 
 /** The full ship list, in a stable order: roads first, then everything a player places. */

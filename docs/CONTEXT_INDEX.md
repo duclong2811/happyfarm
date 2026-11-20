@@ -956,10 +956,12 @@ slot claiming, or the chart API.
 
 Read `docs/design/LANG_VIET.md` before adding a village piece or a decoration set.
 
-- Models: `tools/asset-pipeline/node/viet.mjs` (generated with `--only=viet_`), files in
+- Models: `tools/asset-pipeline/node/viet.mjs` and `viet-regions.mjs` (generated with `--only=viet_`), files in
   `apps/web/src/assets/models/viet`, sizes in `apps/web/src/render/viet-model-urls.ts`.
-- Catalogue rows: `villageEntries()` in `packages/game-data/src/placement/catalog.ts`; gameplay
-  definitions in `placement/gameplay.ts` (all cosmetic).
+- Catalogue rows: `villageEntries()` in `packages/game-data/src/placement/catalog.ts`, with the
+  collection tags in `DECORATION_COLLECTIONS`; gameplay definitions in `placement/gameplay.ts` (all
+  cosmetic). The shop's collection chips: `shopCollections` / `inCollection` in
+  `apps/web/src/build-shop/shop-state.ts`, `renderCollectionBar` in `shop-view.ts`.
 - The island's decorative village: `VILLAGE` in `apps/web/src/render/island-decor.ts`.
 
 ### Ships and voyages (W5)

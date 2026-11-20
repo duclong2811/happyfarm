@@ -32,6 +32,7 @@ import {
   buildShipSloop
 } from "./ships.mjs";
 import { VIET_BUILDERS } from "./viet.mjs";
+import { VIET_REGION_BUILDERS } from "./viet-regions.mjs";
 
 const PALETTE = {
   carrot: 0xe0803c,
@@ -286,7 +287,7 @@ const VILLAGE_BUDGETS = {
  * Làng Việt: unit-fitted, so the client's manifest (`render/viet-model-urls.ts`) states each piece's
  * size in metres, the way the imported props and buildings do.
  */
-const VILLAGE_SPECS = VIET_BUILDERS.map(({ id, build, family }) => ({
+const VILLAGE_SPECS = [...VIET_BUILDERS, ...VIET_REGION_BUILDERS].map(({ id, build, family }) => ({
   id,
   kind: "village",
   directory: "apps/web/src/assets/models/viet",

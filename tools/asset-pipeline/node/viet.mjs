@@ -64,8 +64,8 @@ const C = VIET_PALETTE;
 
 // --- small vector helpers ------------------------------------------------------------------------
 
-const lerp = (a, b, t) => a + (b - a) * t;
-const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+export const lerp = (a, b, t) => a + (b - a) * t;
+export const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 // --- shapes ----------------------------------------------------------------------------------------
 
@@ -76,7 +76,7 @@ const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
  * own inside, so a profile that turns back down (a mortar's bowl, a well's shaft) is lit from the
  * hollow it encloses.
  */
-function lathe(target, profile, { x = 0, z = 0, segments = 10, capBottom = true, capTop = true, phase = 0 } = {}) {
+export function lathe(target, profile, { x = 0, z = 0, segments = 10, capBottom = true, capTop = true, phase = 0 } = {}) {
   const angles = Array.from({ length: segments }, (_, index) => phase + (index / segments) * Math.PI * 2);
   const ring = ([radius, y]) => angles.map((angle) => [x + Math.cos(angle) * radius, y, z + Math.sin(angle) * radius]);
   const rings = profile.map(ring);
@@ -105,7 +105,7 @@ function lathe(target, profile, { x = 0, z = 0, segments = 10, capBottom = true,
 }
 
 /** A flat disc facing +y: water in a well or a pond, a lily pad, a tray. */
-function disc(target, { x = 0, y, z = 0 }, { radiusX, radiusZ = radiusX, segments = 12, phase = 0 }) {
+export function disc(target, { x = 0, y, z = 0 }, { radiusX, radiusZ = radiusX, segments = 12, phase = 0 }) {
   const centre = [x, y, z];
   for (let index = 0; index < segments; index += 1) {
     const a0 = phase + (index / segments) * Math.PI * 2;
@@ -115,7 +115,7 @@ function disc(target, { x = 0, y, z = 0 }, { radiusX, radiusZ = radiusX, segment
 }
 
 /** A disc standing upright, facing +z: a moon ornament, a name board's medallion. */
-function faceDisc(target, { x = 0, y, z }, { radius, segments = 12 }) {
+export function faceDisc(target, { x = 0, y, z }, { radius, segments = 12 }) {
   const centre = [x, y, z];
   for (let index = 0; index < segments; index += 1) {
     const a0 = (index / segments) * Math.PI * 2;
@@ -131,7 +131,7 @@ function faceDisc(target, { x = 0, y, z }, { radius, segments = 12 }) {
  *
  * Returns the points a builder dresses: the ridge's two ends and the four eave corners.
  */
-function hipRoof(roof, { x = 0, y, z = 0, width, depth, height, ridge, sag = 0.08, lift = 0, segments = 4 }) {
+export function hipRoof(roof, { x = 0, y, z = 0, width, depth, height, ridge, sag = 0.08, lift = 0, segments = 4 }) {
   const hw = width / 2;
   const hd = depth / 2;
   const hr = ridge / 2;
@@ -176,7 +176,7 @@ function hipRoof(roof, { x = 0, y, z = 0, width, depth, height, ridge, sag = 0.0
 }
 
 /** The thick edge of a thatch: a band hanging under every eave. */
-function eaveBand(target, roofShape, { thickness, segments = 4 }) {
+export function eaveBand(target, roofShape, { thickness, segments = 4 }) {
   for (let face = 0; face < 4; face += 1) {
     for (let i = 0; i < segments; i += 1) {
       const a = roofShape.eave(face, i / segments);
@@ -187,7 +187,7 @@ function eaveBand(target, roofShape, { thickness, segments = 4 }) {
 }
 
 /** The ridge and its dressing: a beam along the top, ends that curl up, and corner tips. */
-function ridgeDressing(target, roofShape, { thickness, curl, tips = 0, tipOut = 0.25 }) {
+export function ridgeDressing(target, roofShape, { thickness, curl, tips = 0, tipOut = 0.25 }) {
   const { ridgeLeft, ridgeRight, corners } = roofShape;
   beam(target, ridgeLeft, ridgeRight, thickness);
   if (curl > 0) {
@@ -206,7 +206,7 @@ function ridgeDressing(target, roofShape, { thickness, curl, tips = 0, tipOut = 
  * A wall pierced by a round arch, front at z1 and back at z0: the arch springs at `spring` between
  * x0 and x1, and the wall above it reaches `top`.
  */
-function archedSpan(target, { x0, x1, spring, top, z0, z1, segments = 8 }) {
+export function archedSpan(target, { x0, x1, spring, top, z0, z1, segments = 8 }) {
   const cx = (x0 + x1) / 2;
   const radius = (x1 - x0) / 2;
   for (let index = 0; index < segments; index += 1) {
@@ -222,7 +222,7 @@ function archedSpan(target, { x0, x1, spring, top, z0, z1, segments = 8 }) {
 }
 
 /** A Hội An silk lantern: a ribbed gourd with wooden caps and a tassel, hanging from `top`. */
-function lantern(silk, wood, { x, y, z }, { size = 1 }) {
+export function lantern(silk, wood, { x, y, z }, { size = 1 }) {
   const s = size;
   const top = y;
   taperedCylinder(wood, { x, y: top - 0.05 * s, z }, { bottomRadius: 0.07 * s, topRadius: 0.05 * s, height: 0.05 * s, segments: 6 });
@@ -243,7 +243,7 @@ function lantern(silk, wood, { x, y, z }, { size = 1 }) {
 }
 
 /** A cluster of blossoms: tiny faceted flowers round a point, plus a soft mass so it reads at range. */
-function blossom(flowers, { x, y, z }, { radius, count, seed, mass = true }) {
+export function blossom(flowers, { x, y, z }, { radius, count, seed, mass = true }) {
   const random = seededRandom(seed);
   if (mass) {
     // A cloud of three round puffs, so a branch-end reads as blossom rather than as a block.
@@ -274,7 +274,7 @@ function blossom(flowers, { x, y, z }, { radius, count, seed, mass = true }) {
 // wherever a leaf should arch over and hang (banana, areca, bamboo).
 
 /** A branch as a chain of beams through `points`, thinning toward its tip. */
-function branch(target, points, { from, to }) {
+export function branch(target, points, { from, to }) {
   for (let index = 0; index + 1 < points.length; index += 1) {
     const t = index / Math.max(1, points.length - 2);
     beam(target, points[index], points[index + 1], lerp(from, to, t), { caps: false });

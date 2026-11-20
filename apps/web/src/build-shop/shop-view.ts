@@ -5,7 +5,8 @@ import {
   entryAvailability,
   isPreviewOnly,
   type AvailabilityFilter,
-  type ShopCategory
+  type ShopCategory,
+  type ShopCollection
 } from "./shop-state";
 
 /**
@@ -32,6 +33,9 @@ export type CategoryLabelKey =
 export interface ShopViewState {
   readonly category: ShopCategory | null;
   readonly categories: readonly ShopCategory[];
+  /** The collection being browsed, and the ones the catalogue fills ("ALL" first). */
+  readonly collection: ShopCollection;
+  readonly collections: readonly ShopCollection[];
   readonly query: string;
   readonly filter: AvailabilityFilter;
   readonly playerLevel: number;
@@ -48,6 +52,7 @@ export interface ShopViewState {
 
 export interface ShopViewHandlers {
   readonly onCategory: (category: ShopCategory) => void;
+  readonly onCollection: (collection: ShopCollection) => void;
   readonly onSearch: (query: string) => void;
   readonly onFilter: (filter: AvailabilityFilter) => void;
   readonly onSelect: (entry: BuildCatalogEntryDTO) => void;
@@ -56,6 +61,8 @@ export interface ShopViewHandlers {
 
 export interface ShopViewContext {
   readonly t: Translate;
+  /** A collection's name as the player reads it ("Làng Việt", "Bắc Bộ"). */
+  readonly collectionName: (collection: ShopCollection) => string;
   readonly icon: (name: IconName, size: number) => Element;
   readonly categoryLabelKey: (category: ShopCategory) => CategoryLabelKey;
   readonly categoryIcon: (category: ShopCategory) => IconName;
@@ -122,6 +129,36 @@ export function renderCategoryRail(
       handlers.onCategory(category);
     });
     rail.appendChild(button);
+  }
+}
+
+/**
+ * The collection chips: everything, then each set the catalogue fills (Làng Việt, then the regions).
+ * Hidden while the catalogue has no collection at all, so a shop without sets looks as it always did.
+ */
+export function renderCollectionBar(
+  bar: HTMLElement,
+  state: ShopViewState,
+  context: ShopViewContext,
+  handlers: ShopViewHandlers
+): void {
+  bar.replaceChildren();
+  bar.hidden = state.collections.length <= 1;
+  if (bar.hidden) return;
+  bar.setAttribute("role", "group");
+  bar.setAttribute("aria-label", context.t("build.collections"));
+  for (const collection of state.collections) {
+    const button = make("button", "shop-collection");
+    button.type = "button";
+    button.dataset.collection = collection;
+    button.textContent = context.collectionName(collection);
+    const active = collection === state.collection;
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.classList.toggle("is-active", active);
+    button.addEventListener("click", () => {
+      handlers.onCollection(collection);
+    });
+    bar.appendChild(button);
   }
 }
 

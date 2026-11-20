@@ -11,6 +11,7 @@ import {
   resolveCategory,
   rotatedFootprint,
   shopCategories,
+  shopCollections,
   thumbnailRequestFor,
   visibleEntries
 } from "../../apps/web/src/build-shop/shop-state";
@@ -273,5 +274,38 @@ describe("what the thumbnail renderer is asked for", () => {
   it("asks the same question for the card and the inspector", () => {
     const item = entry({ modelId: "farm.barn.t1" });
     expect(thumbnailRequestFor(item)).toEqual(thumbnailRequestFor(item));
+  });
+});
+
+describe("the collections", () => {
+  const catalog = [
+    entry({ entryId: "place_barrel" }),
+    entry({ entryId: "place_viet_jars", tags: ["lang_viet", "storage"] }),
+    entry({ entryId: "place_viet_dinh", category: "MONUMENT", tags: ["viet_bac", "landmark"] }),
+    entry({ entryId: "place_viet_house_nipa", category: "BUILDING", tags: ["viet_nam_bo", "housing"] })
+  ];
+
+  it("offers everything first, then only the collections the catalogue fills, in game data's order", () => {
+    expect(shopCollections(catalog)).toEqual(["ALL", "lang_viet", "viet_bac", "viet_nam_bo"]);
+    expect(shopCollections([entry({ entryId: "place_barrel" })])).toEqual(["ALL"]);
+  });
+
+  it("narrows the rail to the categories a collection fills", () => {
+    expect(shopCategories(catalog, "viet_bac")).toEqual(["MONUMENT"]);
+    expect(shopCategories(catalog, "ALL")).toEqual(["BUILDING", "DECORATION", "MONUMENT"]);
+    expect(resolveCategory(catalog, "DECORATION", "viet_nam_bo")).toBe("BUILDING");
+  });
+
+  it("shows only the collection's pieces in a category", () => {
+    const options = { category: "DECORATION" as const, query: "", filter: "ALL" as const, playerLevel: 10, nameOf };
+    expect(visibleEntries(catalog, { ...options, collection: "lang_viet" }).map((item) => item.entryId)).toEqual(["place_viet_jars"]);
+    expect(visibleEntries(catalog, options).map((item) => item.entryId)).toEqual(["place_barrel", "place_viet_jars"]);
+  });
+
+  it("puts every shipped village and regional piece in exactly one collection", () => {
+    const collections = ["lang_viet", "viet_bac", "viet_trung", "viet_nam_bo", "viet_tay_nguyen", "viet_tay_bac"];
+    for (const row of placementEntries.filter((item) => item.id.startsWith("place_viet_"))) {
+      expect(row.tags.filter((tag) => collections.includes(tag)), row.id).toHaveLength(1);
+    }
   });
 });

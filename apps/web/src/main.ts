@@ -209,12 +209,15 @@ import {
   isProceduralVisual,
   normaliseQuarterTurns,
   quarterTurnYaw,
+  inCollection,
   resolveCategory,
   rotatedFootprint,
   shopCategories,
+  shopCollections,
   visibleEntries,
   type AvailabilityFilter,
-  type ShopCategory
+  type ShopCategory,
+  type ShopCollection
 } from "./build-shop/shop-state";
 import { createShopThumbnails } from "./build-shop/shop-thumbnails";
 import { settleIndependentReads } from "./account-bootstrap";
@@ -237,6 +240,7 @@ import {
 import {
   renderAssetGrid,
   renderCategoryRail,
+  renderCollectionBar,
   renderInspector,
   renderSearchBar,
   renderShopGold,
@@ -4648,6 +4652,8 @@ function openFarmMarketFromStall(): void {
  * nothing outside the shop may read it.
  */
 let buildCategory: ShopCategory = "ROAD";
+/** The decoration collection being browsed ("ALL", or Làng Việt, a region…). */
+let buildCollection: ShopCollection = "ALL";
 let buildQuery = "";
 let buildFilter: AvailabilityFilter = "ALL";
 let buildCatalogStatus: "loading" | "ready" | "error" = "loading";
@@ -4752,8 +4758,10 @@ function buildCategoryIcon(category: ShopCategory): IconName {
  * levels, footprints, tiers and unlock rules are never restated in this file.
  */
 function renderBuildPanel(): void {
-  const categories = shopCategories(state.buildCatalog);
-  buildCategory = resolveCategory(state.buildCatalog, buildCategory) ?? buildCategory;
+  // A collection the catalogue no longer fills falls back to everything.
+  if (!shopCollections(state.buildCatalog).includes(buildCollection)) buildCollection = "ALL";
+  const categories = shopCategories(state.buildCatalog, buildCollection);
+  buildCategory = resolveCategory(state.buildCatalog, buildCategory, buildCollection) ?? buildCategory;
   let view = currentShopView(categories);
   // Open on a complete shop composition. Selection remains inspection-only; this merely gives the
   // detail pane a useful first subject instead of presenting an empty third of the frame.
@@ -4766,6 +4774,7 @@ function renderBuildPanel(): void {
 
   renderShopGold(element<HTMLElement>("build-gold"), view, context);
   renderCategoryRail(element<HTMLElement>("build-rail"), view, context, handlers);
+  renderCollectionBar(element<HTMLElement>("build-collections"), view, context, handlers);
   renderSearchBar(element<HTMLElement>("build-search"), view, context, handlers);
   renderAssetGrid(element<HTMLElement>("build-rows"), view, context, handlers);
   renderInspector(element<HTMLElement>("build-inspector"), view, context, handlers);
@@ -4781,10 +4790,12 @@ function renderBuildPanel(): void {
  */
 function currentShopView(categories: readonly ShopCategory[]): ShopViewState {
   const level = state.progression?.level ?? 1;
-  const inCategory = state.buildCatalog.filter((entry) => entry.category === buildCategory);
+  const inCategory = state.buildCatalog.filter((entry) => entry.category === buildCategory && inCollection(entry, buildCollection));
   return {
     category: buildCategory,
     categories,
+    collection: buildCollection,
+    collections: shopCollections(state.buildCatalog),
     query: buildQuery,
     filter: buildFilter,
     catalogStatus: buildCatalogStatus,
@@ -4795,7 +4806,8 @@ function currentShopView(categories: readonly ShopCategory[]): ShopViewState {
       query: buildQuery,
       filter: buildFilter,
       playerLevel: level,
-      nameOf: buildEntryName
+      nameOf: buildEntryName,
+      collection: buildCollection
     }),
     categorySize: inCategory.length,
     goldText: goldText(),
@@ -4805,7 +4817,7 @@ function currentShopView(categories: readonly ShopCategory[]): ShopViewState {
 
 /** Re-renders the browsing areas and the inspector: what a keystroke in the search box costs. */
 function refreshShopBrowsing(): void {
-  const view = currentShopView(shopCategories(state.buildCatalog));
+  const view = currentShopView(shopCategories(state.buildCatalog, buildCollection));
   const context = shopContext();
   const handlers = shopHandlers();
   renderAssetGrid(element<HTMLElement>("build-rows"), view, context, handlers);
@@ -4817,7 +4829,15 @@ function shopHandlers(): ShopViewHandlers {
   return {
     onCategory: (category) => {
       buildCategory = category;
-      shopSelection = state.buildCatalog.find((entry) => entry.category === category) ?? null;
+      shopSelection = state.buildCatalog.find((entry) => entry.category === category && inCollection(entry, buildCollection)) ?? null;
+      renderBuildPanel();
+    },
+    onCollection: (collection) => {
+      // A collection is browsed from its first category, so choosing "Tây Nguyên" never lands on an
+      // empty grid of roads.
+      buildCollection = collection;
+      buildCategory = shopCategories(state.buildCatalog, collection)[0] ?? buildCategory;
+      shopSelection = state.buildCatalog.find((entry) => entry.category === buildCategory && inCollection(entry, collection)) ?? null;
       renderBuildPanel();
     },
     onSearch: (query) => {
@@ -4848,6 +4868,7 @@ function shopContext(): ShopViewContext {
     t,
     icon: createIcon,
     categoryLabelKey: buildCategoryKey,
+    collectionName: (collection) => t(`build.collection.${collection}` as MessageKey),
     categoryIcon: buildCategoryIcon,
     nameOf: buildEntryName,
     descriptionOf: buildEntryDescription,

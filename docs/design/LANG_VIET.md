@@ -63,6 +63,29 @@ manifest (`apps/web/src/render/viet-model-urls.ts`) states its largest side in m
   ledger record, placement, move, rotate, store and remove are the existing construction use cases.
   No migration, no contract change. Every row carries the tag `lang_viet`.
 
+## Regions (vùng miền, phase 2)
+
+Twenty-two more pieces (`tools/asset-pipeline/node/viet-regions.mjs`), one **collection** per region.
+Every row carries its region's tag, and the shop's collection chips filter by it.
+
+| Collection (tag) | Pieces |
+| --- | --- |
+| Bắc Bộ (`viet_bac`) | đình làng (7 x 5, level 8, 5,200), gác chuông (2 x 2, level 5, 1,400), cầu ngói with its pond (5 x 3, level 5, 1,600), cây gạo (2 x 2, level 3, 200) |
+| Trung Bộ (`viet_trung`) | nhà rường Huế (5 x 4, level 6, 4,200), cổng tam quan (5 x 2, level 6, 2,600), tháp Chăm (3 x 3, level 8, 3,400), thuyền thúng (3 x 2, level 1, 120), cây dừa (1 x 1, level 1, 60) |
+| Nam Bộ (`viet_nam_bo`) | nhà lá (3 x 3, level 3, 1,000), cầu khỉ with its canal (2 x 4, level 3, 300), xuồng ba lá (3 x 1, level 1, 140), dừa nước (2 x 2, level 1, 50), chòi lá (2 x 2, level 1, 220) |
+| Tây Nguyên (`viet_tay_nguyen`) | nhà rông (4 x 4, level 8, 4,600), cây nêu (1 x 1, level 1, 90), giá cồng chiêng (3 x 1, level 3, 260), cây cà phê (1 x 1, level 1, 45), hoa dã quỳ (1 x 1, level 1, 40) |
+| Tây Bắc (`viet_tay_bac`) | cọn nước with its stream (3 x 2, level 3, 360), nhà trình tường (4 x 3, level 5, 2,800), tam giác mạch (1 x 1, level 1, 35) |
+
+- **Water comes with the piece.** The renderer stands every object on the ground under it, so a
+  bridge or a wheel placed over real water would sink to the sea floor. The cầu ngói, the cầu khỉ and
+  the cọn nước therefore carry their own pond, canal or stream, as the ao sen does, and stand on land.
+- **The shore.** The two boats, the coconut and the nipa palm may stand on sand (`SHORE`) as well as
+  on land; everything else is land only. The server checks every footprint cell, as for any piece.
+- **Collections.** `DECORATION_COLLECTIONS` in `placement/catalog.ts` lists the collection tags in
+  the shop's order (Làng Việt, then the regions). The shop shows a chip per collection the catalogue
+  fills, after "Tất cả"; choosing one narrows the category rail and the grid to its pieces. Every
+  piece in a collection is cosmetic by construction (`placement/gameplay.ts` derives it from the tag).
+
 ## The island's own village
 
 Every chosen island draws a decorative village round its camp (`apps/web/src/render/island-decor.ts`).
@@ -83,10 +106,9 @@ turned about). A village piece or a tree: up to 900 triangles, 6 materials, 70 k
 1. **Colour variants** (paint): one model, several palettes (red or green lacquer, white or yellow
    lime). Gives a lot of variety cheaply, but a placed object then carries a variant: a migration and
    a contract change.
-2. **A "Làng Việt" filter in the shop**, so the set reads as a set across categories (the tag is
-   already on every row).
-3. **More sets**: Tết (câu đối, bánh chưng stall, firecracker garlands), the Mekong (xuồng ba lá,
-   nhà lá, cầu khỉ), the highlands (nhà rông, cồng chiêng), Hội An (yellow shop-houses).
+2. ~~A collection filter in the shop~~ (built with the regions).
+3. **More sets**: Trung Hoa, Nhật Bản and Hàn Quốc are next (owner's request, 2026-11-20); then Tết
+   (câu đối, a bánh chưng stall, firecracker garlands) and Hội An (yellow shop-houses).
 4. **An island beauty score**, as Animal Crossing does: placed decorations, trees and fences raise a
    score with rewards at thresholds. This is an economy and progression decision.
 5. **Island templates**: better shores (rocks, reeds, mangroves), paths through the village, and

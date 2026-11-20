@@ -1339,3 +1339,20 @@ html.ui-b.ui-warm .helm-view .helm-leave { background: linear-gradient(var(--w-o
   html.ui-b.ui-warm .helm-view .helm-controls button { min-width: 42px; min-height: 44px; padding: 2px 6px; font-size: .78rem; }
   html.ui-b.ui-warm .helm-view .helm-sail { min-width: 4.5rem; font-size: .74rem; }
 }
+
+/* -------------------------------------------------------------------------------------------
+ * The build shop's collection chips: everything, Làng Việt, then one per region. One scrolling
+ * row above the grid, so a phone keeps its height for the pictures.
+ * ------------------------------------------------------------------------------------------- */
+.module-panel-build .shop-collections[hidden] { display: none; }
+html.ui-b.ui-warm .module-panel-build .shop-collections {
+  display: flex; flex-shrink: 0; gap: 6px; overflow-x: auto; padding: 2px 2px 8px; scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+}
+html.ui-b.ui-warm #build-panel .shop-collection {
+  flex: 0 0 auto; min-height: 0; padding: 5px 12px; border: 2px solid var(--w-wood); border-image: none; border-radius: 99px;
+  background: rgba(255, 248, 230, .9); box-shadow: none; color: var(--w-wood-deep); font: 800 .78rem var(--w-display); cursor: pointer; white-space: nowrap;
+}
+html.ui-b.ui-warm #build-panel .shop-collection.is-active {
+  border-color: var(--w-orange-edge); background: linear-gradient(var(--w-orange-hi), var(--w-orange-lo)); color: #fff;
+  box-shadow: 0 2px 0 var(--w-orange-edge);
+}
