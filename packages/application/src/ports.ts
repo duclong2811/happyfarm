@@ -1629,9 +1629,20 @@ export interface PirateShip {
   readonly battle: ShipBattleNumbers;
 }
 
+/** A fishing ground (docs/design/FLEET.md, F2): how long a trip takes and which boats can work it. */
+export interface FishingGround {
+  readonly id: string;
+  readonly seconds: number;
+  readonly minRank: number;
+}
+
 export interface ShipCatalogue {
   /** Every class; the first is the dock's rowboat, lent to a player with no ship of their own. */
   classes(): readonly ShipClass[];
+  /** The fishing grounds, nearest first. */
+  grounds(): readonly FishingGround[];
+  /** A trip's catch, item id to count, from the ground, the boat's hold and the server's dice. */
+  rollCatch(groundId: string, hold: number, roll: () => number): Readonly<Record<string, number>>;
   /** The dock's tiers in order; the first is the dock every island starts with. */
   docks(): readonly DockTier[];
   /** How long a voyage of `distanceTiles` takes at `speedTilesPerMinute`, in whole seconds. */
@@ -1724,6 +1735,33 @@ export interface DockUpgrade {
   readonly createdAt: string;
 }
 
+/** A fishing boat's trip: out until `returnsAt`, then back with the catch the server rolled when it left. */
+export interface FishingTripRecord {
+  readonly playerId: PlayerId;
+  readonly shipId: ShipId;
+  readonly groundId: string;
+  readonly departedAt: string;
+  readonly returnsAt: string;
+  readonly catch: Readonly<Record<string, number>>;
+  readonly requestId: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Collecting a trip's catch: the fish into the warehouse and the trip gone, in one batch with the
+ * receipt. The additions land only while the trip is still there and back (`now` past its return);
+ * the receipt only if the trip is gone and every stack moved by exactly its addition.
+ */
+export interface TripCollection {
+  readonly playerId: PlayerId;
+  readonly shipId: ShipId;
+  readonly tripRequestId: string;
+  readonly now: string;
+  readonly additions: readonly InventoryAddition[];
+  /** The stacks the additions were sized against, in the same order (null: no row yet). */
+  readonly expectedInventory: readonly (InventoryItem | null)[];
+}
+
 /**
  * A player's one current passage. `UNDERWAY` until it is ended; whether it has *arrived* is read from
  * the clock against `arrivesAt`, never stored.
@@ -1789,6 +1827,16 @@ export interface ShipRepository {
   findDock(playerId: PlayerId): Promise<PlayerDockRecord | null>;
   buildAtomically(build: ShipBuild, idempotency: IdempotencyRecord): Promise<void>;
   upgradeDockAtomically(upgrade: DockUpgrade, idempotency: IdempotencyRecord): Promise<void>;
+  /** The player's fishing trips, out or back with their catch. */
+  listTrips(playerId: PlayerId): Promise<readonly FishingTripRecord[]>;
+  /**
+   * Sends a boat out: true when this call wrote the trip; false when the boat already has one or is
+   * sailing the player's voyage.
+   */
+  startTrip(trip: FishingTripRecord): Promise<boolean>;
+  collectTripAtomically(collection: TripCollection, idempotency: IdempotencyRecord): Promise<void>;
+  /** Calls a boat home early: the trip and its catch are gone. A boat with no trip is left as it is. */
+  recallTrip(playerId: PlayerId, shipId: ShipId): Promise<void>;
   findVoyage(playerId: PlayerId): Promise<VoyageRecord | null>;
   /**
    * Writes `next` only if the stored voyage is still at `expectedVersion` (null: none stored yet).

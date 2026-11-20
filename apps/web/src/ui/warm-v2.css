@@ -1478,6 +1478,44 @@ html.ui-b.ui-warm .fleet-panel .fl-dock-slots { display: flex; flex-wrap: wrap; 
 html.ui-b.ui-warm .fleet-panel .fl-dock-slot { width: 30px; height: 30px; }
 html.ui-b.ui-warm .fleet-panel .fl-dock-slot.is-new { animation: fl-pulse 1.4s ease-in-out infinite; }
 
+/* Fishing trips (F2): the trip's progress, the catch as fish pictures, the grounds as cards. */
+html.ui-b.ui-warm .fleet-panel [data-icon="fish"] { background-image: url("../assets/ui/fleet/role-fishing.svg"); }
+html.ui-b.ui-warm .fleet-panel [data-icon="clock"] { background-image: url("../assets/ui/warm/hourglass.svg"); }
+html.ui-b.ui-warm .fleet-panel .fl-trip {
+  position: relative; height: 20px; margin: 4px 0 2px; border: 2px solid var(--w-wood-deep); border-radius: 99px;
+  background: repeating-linear-gradient(90deg, #5cb2e2 0 14px, #4aa3d6 14px 28px); overflow: visible;
+}
+html.ui-b.ui-warm .fleet-panel .fl-trip-fill { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: linear-gradient(#8fe07a, #3f9a32); }
+html.ui-b.ui-warm .fleet-panel .fl-trip-boat { position: absolute; top: -8px; width: 28px; height: 28px; filter: drop-shadow(0 1px 0 #fff); }
+html.ui-b.ui-warm .fleet-panel .fl-catch { display: flex; flex-wrap: wrap; gap: 6px; }
+html.ui-b.ui-warm .fleet-panel .fl-catch-chip {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px 8px 2px 2px; border: 2px solid var(--w-wood-deep); border-radius: 99px;
+  background: #fff8e6; color: var(--w-wood-deep); font: 900 .9rem var(--w-display);
+}
+html.ui-b.ui-warm .fleet-panel .fl-catch-picture { width: 34px; height: 34px; object-fit: contain; }
+html.ui-b.ui-warm .fleet-panel .fl-catch.is-odds { justify-content: center; }
+html.ui-b.ui-warm .fleet-panel .fl-catch.is-odds .fl-catch-chip { padding-right: 6px; font-size: .74rem; }
+html.ui-b.ui-warm .fleet-panel .fl-catch.is-odds .fl-catch-picture { width: 28px; height: 28px; }
+html.ui-b.ui-warm .fleet-panel .fl-tile-fishing { position: absolute; right: 4px; bottom: 15px; width: 24px; height: 24px; filter: drop-shadow(0 1px 0 #fff); }
+html.ui-b.ui-warm .fleet-panel .fl-tile-fishing.is-back { animation: fl-pulse 1s ease-in-out infinite; filter: drop-shadow(0 0 4px #ffd25a); }
+html.ui-b.ui-warm .fleet-panel .fl-grounds-head { display: flex; align-items: center; gap: 8px; }
+html.ui-b.ui-warm .fleet-panel .fl-grounds-boat { width: 48px; height: 48px; object-fit: contain; }
+html.ui-b.ui-warm .fleet-panel .fl-ground { gap: 6px; padding-bottom: 8px; }
+html.ui-b.ui-warm .fleet-panel .fl-ground-sea {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 10px 10px; color: #fff;
+  text-shadow: var(--w-outline); border-bottom: 3px solid var(--w-wood-deep);
+}
+html.ui-b.ui-warm .fleet-panel .fl-ground-sea .fl-yard-name { color: #fff; }
+html.ui-b.ui-warm .fleet-panel .fl-ground.is-depth-0 .fl-ground-sea { background: linear-gradient(#8fd6f2, #4aa8dc); }
+html.ui-b.ui-warm .fleet-panel .fl-ground.is-depth-1 .fl-ground-sea { background: linear-gradient(#4aa3d6, #24699f); }
+html.ui-b.ui-warm .fleet-panel .fl-ground.is-depth-2 .fl-ground-sea { background: linear-gradient(#24699f, #143d66); }
+html.ui-b.ui-warm .fleet-panel .fl-ground.is-locked .fl-ground-sea { filter: grayscale(.6); }
+html.ui-b.ui-warm .fleet-panel .fl-ground-time { display: inline-flex; align-items: center; gap: 3px; padding: 1px 8px 1px 3px; border-radius: 99px; background: rgba(0, 0, 0, .25); font: 900 .9rem var(--w-display); }
+html.ui-b.ui-warm .fleet-panel .fl-ground-clock { width: 20px; height: 20px; }
+html.ui-b.ui-warm .fleet-panel .fl-ground-expected { display: inline-flex; align-items: center; gap: 4px; color: var(--w-wood-deep); font: 900 .9rem var(--w-display); }
+html.ui-b.ui-warm .fleet-panel .fl-ground-fish { width: 22px; height: 22px; }
+html.ui-b.ui-warm .fleet-panel .fl-ground .fl-button { width: calc(100% - 16px); }
+
 /* Narrow and short screens: the stage above the numbers, smaller tiles. */
 @media (max-width: 560px) {
   html.ui-b.ui-warm .fleet-panel .fl-ship { grid-template-columns: 1fr; }

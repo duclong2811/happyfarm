@@ -41,6 +41,7 @@ export function fleetShip(overrides: Partial<FleetShip> = {}): FleetShip {
     cannons: 2,
     hold: 30,
     away: false,
+    trip: null,
     upgrade: nextShip(),
     ...overrides
   };

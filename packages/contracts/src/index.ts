@@ -2081,6 +2081,8 @@ export const ErrorCodeSchema = z.enum([
   "SHIP_AT_SEA",
   "SHIP_MAX_CLASS",
   "SHIP_LEVEL_REQUIRED",
+  "SHIP_RANK_REQUIRED",
+  "TRIP_NOT_BACK",
   "DOCK_FULL",
   "DOCK_MAX_TIER",
   "DOCK_LEVEL_REQUIRED",
@@ -2298,6 +2300,16 @@ export const FleetNextShipDTOSchema = z
     cost: ShipPriceDTOSchema
   })
   .strict();
+/** A fishing boat's trip (F2): out until `returnsAt`; its catch shown once it is back. */
+export const FleetTripDTOSchema = z
+  .object({
+    groundId: z.string().regex(/^ground_[a-z0-9]+(?:_[a-z0-9]+)*$/),
+    departedAt: z.iso.datetime(),
+    returnsAt: z.iso.datetime(),
+    returned: z.boolean(),
+    catch: z.array(z.object({ itemDefinitionId: z.string().min(1).max(120), quantity: z.number().int().positive() }).strict()).max(16).nullable()
+  })
+  .strict();
 export const FleetShipDTOSchema = z
   .object({
     shipId: ShipIdSchema,
@@ -2315,6 +2327,8 @@ export const FleetShipDTOSchema = z
     hold: z.number().int().nonnegative(),
     /** Out on the player's voyage rather than at its dock. */
     away: z.boolean(),
+    /** Out fishing, or back with a catch to collect; null at the dock. */
+    trip: FleetTripDTOSchema.nullable(),
     upgrade: FleetNextShipDTOSchema.nullable()
   })
   .strict();
@@ -2393,6 +2407,11 @@ export const UpgradeDockRequestSchema = z.object({ requestId: RequestIdSchema })
 /** Without a ship named: the one lying at the place it reached, or the ship in berth 1. */
 export const StartVoyageRequestSchema = z.object({ slotId: WorldSlotIdSchema, requestId: RequestIdSchema, shipId: ShipIdSchema.optional() }).strict();
 export const EndVoyageRequestSchema = z.object({}).strict();
+const FishingGroundIdSchema = z.string().max(60).regex(/^ground_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+/** Send a fishing boat to a ground (F2); the catch is the server's. */
+export const StartTripRequestSchema = z.object({ shipId: ShipIdSchema, groundId: FishingGroundIdSchema, requestId: RequestIdSchema }).strict();
+export const CollectTripRequestSchema = z.object({ shipId: ShipIdSchema, requestId: RequestIdSchema }).strict();
+export const RecallTripRequestSchema = z.object({ shipId: ShipIdSchema }).strict();
 /** Without a ship named: the ship in berth 1. */
 export const RepairShipRequestSchema = z.object({ requestId: RequestIdSchema, shipId: ShipIdSchema.optional() }).strict();
 /**

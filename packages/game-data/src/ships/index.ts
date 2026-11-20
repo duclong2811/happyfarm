@@ -113,3 +113,82 @@ export function voyageSeconds(distanceTiles: number, speedTilesPerMinute: number
   if (!Number.isFinite(speedTilesPerMinute) || speedTilesPerMinute <= 0) throw new Error("A ship's speed must be positive");
   return Math.max(VOYAGE_MIN_SECONDS, Math.ceil((distanceTiles / speedTilesPerMinute) * 60));
 }
+
+/**
+ * Fishing trips (docs/design/FLEET.md, F2): a fishing boat at its dock sails to a ground and comes back
+ * by the server's clock with a catch the server rolled when it left. Inshore is quick and cheap; the
+ * deep sea is slow and dear. The numbers are Claude's balance, at the owner's request (2026-11-20).
+ */
+export interface FishingGroundDefinition {
+  /** Stable id, `ground_<name>`. */
+  readonly id: string;
+  readonly seconds: number;
+  /** The lowest rank of fishing boat that can work it. */
+  readonly minRank: number;
+  /** The catch as a share of the boat's hold, before the trip's own luck. */
+  readonly catchShare: number;
+  /** What comes up, by weight. Items are the shop's own fish. */
+  readonly table: readonly { readonly itemDefinitionId: string; readonly weight: number }[];
+}
+
+export const FISHING_GROUNDS: readonly FishingGroundDefinition[] = [
+  {
+    id: "ground_inshore",
+    seconds: 600,
+    minRank: 1,
+    catchShare: 0.4,
+    table: [
+      { itemDefinitionId: "item_fish_sardine", weight: 55 },
+      { itemDefinitionId: "item_fish_mackerel", weight: 40 },
+      { itemDefinitionId: "item_fish_snapper", weight: 5 }
+    ]
+  },
+  {
+    id: "ground_offshore",
+    seconds: 2_700,
+    minRank: 2,
+    catchShare: 0.7,
+    table: [
+      { itemDefinitionId: "item_fish_mackerel", weight: 30 },
+      { itemDefinitionId: "item_fish_snapper", weight: 50 },
+      { itemDefinitionId: "item_fish_tuna", weight: 20 }
+    ]
+  },
+  {
+    id: "ground_deep_sea",
+    seconds: 10_800,
+    minRank: 3,
+    catchShare: 1,
+    table: [
+      { itemDefinitionId: "item_fish_snapper", weight: 25 },
+      { itemDefinitionId: "item_fish_tuna", weight: 75 }
+    ]
+  }
+];
+
+/** How far a trip's catch may stray from the ground's share, either way. */
+export const FISHING_TRIP_LUCK = 0.15;
+
+export function fishingGround(groundId: string): FishingGroundDefinition | null {
+  return FISHING_GROUNDS.find((entry) => entry.id === groundId) ?? null;
+}
+
+/**
+ * A trip's catch, from the ground, the boat's hold and the server's dice (`roll` returns [0, 1)). The
+ * count is the hold times the ground's share, give or take the trip's luck, never more than the hold
+ * and never none; each fish is drawn from the ground's table by weight.
+ */
+export function rollTripCatch(ground: FishingGroundDefinition, hold: number, roll: () => number): Readonly<Record<string, number>> {
+  if (!Number.isInteger(hold) || hold <= 0) throw new Error("A fishing boat needs a hold");
+  const luck = 1 - FISHING_TRIP_LUCK + roll() * FISHING_TRIP_LUCK * 2;
+  const count = Math.max(1, Math.min(hold, Math.round(hold * ground.catchShare * luck)));
+  const total = ground.table.reduce((sum, entry) => sum + entry.weight, 0);
+  const caught: Record<string, number> = {};
+  for (let index = 0; index < count; index += 1) {
+    let pick = roll() * total;
+    const entry = ground.table.find((candidate) => (pick -= candidate.weight) < 0) ?? ground.table[ground.table.length - 1];
+    if (entry === undefined) continue;
+    caught[entry.itemDefinitionId] = (caught[entry.itemDefinitionId] ?? 0) + 1;
+  }
+  return caught;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DOCK_ROWBOAT_CLASS_ID, DOCK_TIERS, dockTier, nextShipClass, SHIP_CLASSES, SHIP_ROLES, shipClassById, shipLadder, VOYAGE_MIN_SECONDS, voyageSeconds } from "@happy-farm/game-data";
+import { DOCK_ROWBOAT_CLASS_ID, DOCK_TIERS, dockTier, FISHING_GROUNDS, fishingGround, rollTripCatch, nextShipClass, SHIP_CLASSES, SHIP_ROLES, shipClassById, shipLadder, VOYAGE_MIN_SECONDS, voyageSeconds } from "@happy-farm/game-data";
 
 /**
  * The fleet (game data, docs/design/FLEET.md): three ladders that only climb, a dock that only grows,
@@ -83,5 +83,43 @@ describe("voyage time", () => {
     expect(() => voyageSeconds(-1, 40)).toThrow();
     expect(() => voyageSeconds(10, 0)).toThrow();
     expect(() => voyageSeconds(Number.NaN, 40)).toThrow();
+  });
+});
+
+describe("fishing grounds", () => {
+  it("run from quick and cheap inshore to slow and dear in the deep sea", () => {
+    const value: Record<string, number> = { item_fish_sardine: 2, item_fish_mackerel: 3, item_fish_snapper: 5, item_fish_tuna: 15 };
+    const average = (id: string): number => {
+      const ground = fishingGround(id);
+      if (ground === null) throw new Error(id);
+      const total = ground.table.reduce((sum, entry) => sum + entry.weight, 0);
+      return ground.table.reduce((sum, entry) => sum + (value[entry.itemDefinitionId] ?? Number.NaN) * entry.weight, 0) / total;
+    };
+    expect(FISHING_GROUNDS.map((ground) => ground.id)).toEqual(["ground_inshore", "ground_offshore", "ground_deep_sea"]);
+    FISHING_GROUNDS.forEach((ground, index) => {
+      const before = FISHING_GROUNDS[index - 1];
+      if (before === undefined) return;
+      expect(ground.seconds).toBeGreaterThan(before.seconds);
+      expect(ground.minRank).toBeGreaterThanOrEqual(before.minRank);
+      expect(ground.catchShare).toBeGreaterThan(before.catchShare);
+      expect(average(ground.id)).toBeGreaterThan(average(before.id));
+    });
+    // Every fish a ground gives is one the shop buys.
+    for (const ground of FISHING_GROUNDS) for (const entry of ground.table) expect(value[entry.itemDefinitionId], entry.itemDefinitionId).toBeDefined();
+  });
+
+  it("roll a catch that is never empty and never more than the hold", () => {
+    const inshore = fishingGround("ground_inshore");
+    const deep = fishingGround("ground_deep_sea");
+    if (inshore === null || deep === null) throw new Error("no grounds");
+    const count = (caught: Readonly<Record<string, number>>): number => Object.values(caught).reduce((sum, quantity) => sum + quantity, 0);
+    expect(count(rollTripCatch(inshore, 20, () => 0.5))).toBe(8);
+    expect(count(rollTripCatch(inshore, 20, () => 0))).toBe(7);
+    expect(count(rollTripCatch(deep, 140, () => 0.999))).toBe(140);
+    expect(count(rollTripCatch(inshore, 1, () => 0))).toBe(1);
+    // The lowest roll draws the table's first fish; the highest its last.
+    expect(Object.keys(rollTripCatch(inshore, 20, () => 0))).toEqual(["item_fish_sardine"]);
+    expect(Object.keys(rollTripCatch(inshore, 20, () => 0.999))).toEqual(["item_fish_snapper"]);
+    expect(() => rollTripCatch(inshore, 0, () => 0.5)).toThrow();
   });
 });

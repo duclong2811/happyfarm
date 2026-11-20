@@ -36,7 +36,9 @@ import type {
   PayloadFingerprint,
   PlayerDockRecord,
   PlayerShipRecord,
+  FishingTripRecord,
   ProgressionRepository,
+  RandomPort,
   ShipCatalogue,
   ShipClass,
   ShipPrice,
@@ -95,6 +97,8 @@ export interface ShipDependencies {
   readonly warehouse: WarehouseRepository;
   /** The starter capacity for a player with no warehouse row; the database holds such a player to 1000. */
   readonly warehouseTiers?: WarehouseTierRepository;
+  /** The server's dice: a fishing trip's catch. Without it, trips are not offered. */
+  readonly random?: RandomPort;
 }
 
 export interface PriceView {
@@ -134,8 +138,20 @@ export interface ShipView {
   readonly hold: number;
   /** Sailing the player's voyage (at sea, or lying at the place it reached), not at its dock. */
   readonly away: boolean;
+  /** Out fishing, or back with a catch to collect; null at the dock. */
+  readonly trip: TripView | null;
   /** The class it would be upgraded to; null at the top of its ladder. */
   readonly upgrade: NextShipView | null;
+}
+
+export interface TripView {
+  readonly groundId: string;
+  readonly departedAt: string;
+  readonly returnsAt: string;
+  /** Back at the dock (by the server's clock), its catch waiting. */
+  readonly returned: boolean;
+  /** The catch, once the boat is back; null while it is still out. */
+  readonly catch: readonly { readonly itemDefinitionId: string; readonly quantity: number }[] | null;
 }
 
 export interface DockView {
@@ -316,11 +332,29 @@ interface FleetState {
   readonly stored: readonly PlayerShipRecord[];
   readonly dock: PlayerDockRecord | null;
   readonly voyage: VoyageRecord | null;
+  readonly trips: readonly FishingTripRecord[];
 }
 
 async function readFleet(dependencies: ShipDependencies, playerId: PlayerId): Promise<FleetState> {
-  const [stored, dock, voyage] = await Promise.all([dependencies.ships.listShips(playerId), dependencies.ships.findDock(playerId), dependencies.ships.findVoyage(playerId)]);
-  return { playerId, stored, dock, voyage };
+  const [stored, dock, voyage, trips] = await Promise.all([
+    dependencies.ships.listShips(playerId),
+    dependencies.ships.findDock(playerId),
+    dependencies.ships.findVoyage(playerId),
+    dependencies.ships.listTrips(playerId)
+  ]);
+  return { playerId, stored, dock, voyage, trips };
+}
+
+function tripView(trip: FishingTripRecord | undefined, now: string): TripView | null {
+  if (trip === undefined) return null;
+  const returned = Date.parse(trip.returnsAt) <= Date.parse(now);
+  return {
+    groundId: trip.groundId,
+    departedAt: trip.departedAt,
+    returnsAt: trip.returnsAt,
+    returned,
+    catch: returned ? Object.entries(trip.catch).map(([itemDefinitionId, quantity]) => ({ itemDefinitionId, quantity })) : null
+  };
 }
 
 function fleetView(catalogue: ShipCatalogue, state: FleetState, now: string): FleetView {
@@ -344,6 +378,7 @@ function fleetView(catalogue: ShipCatalogue, state: FleetState, now: string): Fl
         cannons: ship.shipClass.cannons,
         hold: ship.shipClass.hold,
         away: ship.shipId === sailing,
+        trip: tripView(state.trips.find((trip) => trip.shipId === ship.shipId), now),
         upgrade: upgrade === null ? null : nextShipView(upgrade)
       };
     }
@@ -399,8 +434,9 @@ function ambushDue(voyage: VoyageRecord | null, now: string): boolean {
   return voyage !== null && voyage.status === "UNDERWAY" && ambush !== null && ambush.status === "PENDING" && Date.parse(ambush.at) <= Date.parse(now);
 }
 
-/** Whether `ship` is out on the player's voyage rather than at its dock. */
+/** Whether `ship` is out on the player's voyage, or on a fishing trip, rather than at its dock. */
 function shipAway(state: FleetState, shipId: ShipId, now: string): boolean {
+  if (state.trips.some((trip) => trip.shipId === shipId)) return true;
   return state.voyage !== null && voyageLocation(state.voyage, now) !== "HOME" && voyageShipId(state.playerId, state.voyage) === shipId;
 }
 
@@ -588,7 +624,7 @@ export class BuildShip {
       const dock = dockTierOf(catalogue, state.dock);
       if (state.stored.length === 0) {
         // The lent rowboat gives up its berth, and must be at the dock to do it.
-        if (voyageLocation(state.voyage, now) !== "HOME") throw new ApplicationError("SHIP_AT_SEA", "The dock's rowboat must be home before a ship takes its berth");
+        if (shipAway(state, shipIdFor(actor.playerId, 1), now)) throw new ApplicationError("SHIP_AT_SEA", "The dock's rowboat must be home before a ship takes its berth");
       } else if (state.stored.length >= dock.berths) {
         throw new ApplicationError("DOCK_FULL", "Every berth at the dock is taken");
       }
@@ -782,6 +818,7 @@ export class StartVoyage {
       if (shipId === undefined) throw new ApplicationError("INTERNAL_ERROR", "A fleet has no ship");
       const ship = ownShip(ships, shipId);
       if (lying !== null && ship.shipId !== lying) throw new ApplicationError("VOYAGE_UNDERWAY", "Another ship is out on a voyage: call it home first");
+      if (state.trips.some((trip) => trip.shipId === ship.shipId)) throw new ApplicationError("SHIP_AT_SEA", "The boat is out fishing");
       if (ship.hull <= 0) throw new ApplicationError("SHIP_DAMAGED", "The ship must be repaired before it sails");
       const fromSlotId = lying !== null && voyage !== null ? voyage.toSlotId : home.slotId;
       if (fromSlotId === target.slotId) throw new ApplicationError("INVALID_INPUT", "The ship is already there");
@@ -1131,5 +1168,127 @@ export class RepairShip {
       if (written !== null) return written;
     }
     throw new ApplicationError("ECONOMY_CONFLICT", "The ship or the economy changed while repairing");
+  }
+}
+
+export const FISHING_TRIP_COLLECT_OPERATION = "FISHING_TRIP_COLLECT";
+
+/**
+ * Sends a fishing boat to a ground (docs/design/FLEET.md, F2). The boat must be the player's own (the
+ * lent rowboat counts), a fishing boat of the ground's rank or better, at its dock and afloat. The
+ * catch is rolled here, by the server's dice, and kept with the trip until the boat is back; the client
+ * names only the boat and the ground. A retried request answers with the trip it started.
+ */
+export class StartFishingTrip {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly shipId: string; readonly groundId: string; readonly requestId: string }): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { catalogue, clock, random } = this.dependencies;
+    if (random === undefined) throw new ApplicationError("RESOURCE_NOT_FOUND", "Fishing trips are not available here");
+    const ground = catalogue.grounds().find((entry) => entry.id === command.groundId);
+    if (ground === undefined) throw new ApplicationError("RESOURCE_NOT_FOUND", "There is no such fishing ground");
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      const now = clock.now();
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const ship = ownShip(fleetShips(catalogue, actor.playerId, state.stored), command.shipId);
+      const current = state.trips.find((trip) => trip.shipId === ship.shipId);
+      // The same request again: the trip it started.
+      if (current !== undefined && current.requestId === command.requestId) {
+        if (current.groundId !== ground.id) throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
+        return fleetView(catalogue, state, now);
+      }
+      if (ship.shipClass.role !== "FISHING") throw new ApplicationError("INVALID_INPUT", "Only a fishing boat goes fishing");
+      if (ship.shipClass.rank < ground.minRank) throw new ApplicationError("SHIP_RANK_REQUIRED", "That ground needs a bigger fishing boat");
+      if (shipAway(state, ship.shipId, now)) throw new ApplicationError("SHIP_AT_SEA", "The boat must be at its dock to go fishing");
+      if (ship.hull <= 0) throw new ApplicationError("SHIP_DAMAGED", "The boat must be repaired before it sails");
+      const trip: FishingTripRecord = {
+        playerId: actor.playerId,
+        shipId: ship.shipId,
+        groundId: ground.id,
+        departedAt: now,
+        returnsAt: new Date(Date.parse(now) + ground.seconds * 1000).toISOString(),
+        catch: catalogue.rollCatch(ground.id, ship.shipClass.hold, () => random.roll()),
+        requestId: command.requestId,
+        createdAt: now
+      };
+      if (await this.dependencies.ships.startTrip(trip)) return fleetView(catalogue, { ...state, trips: [...state.trips, trip] }, now);
+    }
+    throw new ApplicationError("CONFLICT_STALE_STATE", "The fleet changed while setting out");
+  }
+}
+
+/**
+ * Brings a returned boat's catch ashore: every fish into the warehouse through the inventory service,
+ * and the trip gone, in one batch with the receipt. The whole catch must fit; a catch that does not
+ * waits on the boat. A retried request answers from its receipt.
+ */
+export class CollectFishingTrip {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly shipId: string; readonly requestId: string }): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { catalogue, clock } = this.dependencies;
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([FISHING_TRIP_COLLECT_OPERATION, command.shipId]));
+    const existing = await this.dependencies.idempotency.find(actor.playerId, FISHING_TRIP_COLLECT_OPERATION, command.requestId);
+    if (existing !== null) return replay(existing, fingerprint);
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      const now = clock.now();
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const ship = ownShip(fleetShips(catalogue, actor.playerId, state.stored), command.shipId);
+      const trip = state.trips.find((entry) => entry.shipId === ship.shipId);
+      if (trip === undefined) throw new ApplicationError("RESOURCE_NOT_FOUND", "That boat has no catch to bring in");
+      if (Date.parse(trip.returnsAt) > Date.parse(now)) throw new ApplicationError("TRIP_NOT_BACK", "The boat is still out fishing");
+      // Room for the whole catch, counted against the warehouse as it stands; the database checks again.
+      const total = Object.values(trip.catch).reduce((sum, quantity) => sum + quantity, 0);
+      const stored = await this.dependencies.warehouse.find(actor.playerId);
+      const capacity = stored?.capacity ?? this.dependencies.warehouseTiers?.list()[0]?.capacity ?? STARTER_WAREHOUSE_CAPACITY;
+      if ((await this.dependencies.warehouse.usedCapacity(actor.playerId)) + total > capacity) {
+        throw new ApplicationError("WAREHOUSE_FULL", "The warehouse has no room for the whole catch");
+      }
+      const additions = [];
+      const expectedInventory: (InventoryItem | null)[] = [];
+      for (const [itemDefinitionId, quantity] of Object.entries(trip.catch)) {
+        if (quantity <= 0) continue;
+        expectedInventory.push(await this.dependencies.inventory.find(actor.playerId, parseItemDefinitionId(itemDefinitionId)));
+        additions.push(this.dependencies.inventoryService.prepareAddition(actor.playerId, itemDefinitionId, quantity));
+      }
+      const result = fleetView(catalogue, { ...state, trips: state.trips.filter((entry) => entry !== trip) }, now);
+      const receipt: IdempotencyRecord = {
+        actorPlayerId: actor.playerId,
+        operation: FISHING_TRIP_COLLECT_OPERATION,
+        requestId: command.requestId,
+        payloadFingerprint: fingerprint,
+        resourceId: trip.requestId,
+        responseJson: JSON.stringify(result),
+        status: "COMPLETED",
+        createdAt: now
+      };
+      try {
+        await this.dependencies.ships.collectTripAtomically({ playerId: actor.playerId, shipId: ship.shipId, tripRequestId: trip.requestId, now, additions, expectedInventory }, receipt);
+        return result;
+      } catch (error: unknown) {
+        const raced = await this.dependencies.idempotency.find(actor.playerId, FISHING_TRIP_COLLECT_OPERATION, command.requestId);
+        if (raced !== null) return replay(raced, fingerprint);
+        if (error instanceof Error && error.message.includes("warehouse_full")) throw new ApplicationError("WAREHOUSE_FULL", "The warehouse has no room for the whole catch");
+        if (error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT") continue;
+        throw error;
+      }
+    }
+    throw new ApplicationError("CONFLICT_STALE_STATE", "The catch or the warehouse changed while bringing it in");
+  }
+}
+
+/** Calls a fishing boat home early: it is at its dock at once, and its catch is lost. Idempotent. */
+export class RecallFishingTrip {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly shipId: string }): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { catalogue, clock } = this.dependencies;
+    const before = await readFleet(this.dependencies, actor.playerId);
+    const ship = ownShip(fleetShips(catalogue, actor.playerId, before.stored), command.shipId);
+    await this.dependencies.ships.recallTrip(actor.playerId, ship.shipId);
+    return fleetView(catalogue, await readFleet(this.dependencies, actor.playerId), clock.now());
   }
 }

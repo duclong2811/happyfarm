@@ -183,3 +183,51 @@ describe("the berth tiles, the shipyard and the dock", () => {
     expect(top.berths.some((tile) => tile.kind === "LOCKED")).toBe(false);
   });
 });
+
+describe("fishing trips in the fleet panel", () => {
+  const boat = { classId: "ship_class_line_boat", role: "FISHING" as const, rank: 2, tier: 1, hull: 90, hullMax: 90, speedTilesPerMinute: 55, cannons: 0, hold: 40, upgrade: null };
+  const itemName = (id: string): string => `name(${id})`;
+
+  it("leads a fishing boat at its dock with fishing, and offers the grounds its rank reaches", () => {
+    const view = ship(model({ fleet: fleet({ ship: boat }) }));
+    expect(view.actions.map((action) => [action.kind, action.primary])).toEqual([
+      ["FISH", true],
+      ["SAIL", false],
+      ["HELM", false]
+    ]);
+    const grounds = model({ fleet: fleet({ ship: boat }), selected: { kind: "GROUNDS", shipId: SHIP }, itemName });
+    if (grounds.detail.kind !== "GROUNDS") throw new Error("expected the grounds");
+    expect(grounds.berths[0]?.selected).toBe(true);
+    expect(grounds.detail.cards.map((card) => [card.groundId, card.minutes, card.expected, card.action.enabled, card.action.groundId])).toEqual([
+      ["ground_inshore", 10, 16, true, "ground_inshore"],
+      ["ground_offshore", 45, 28, true, "ground_offshore"],
+      ["ground_deep_sea", 180, 40, false, "ground_deep_sea"]
+    ]);
+    expect(grounds.detail.cards[0]?.fish.map((fish) => [fish.modelId, fish.quantity, fish.name])).toEqual([
+      ["fish_sardine", 55, "name(item_fish_sardine)"],
+      ["fish_mackerel", 40, "name(item_fish_mackerel)"],
+      ["fish_snapper", 5, "name(item_fish_snapper)"]
+    ]);
+    // A warship has no grounds to show: the panel stays on the ship.
+    expect(model({ fleet: fleet(), selected: { kind: "GROUNDS", shipId: SHIP } }).detail.kind).toBe("SHIP");
+  });
+
+  it("counts a trip down with a bar and offers calling the boat back, then lands the catch", () => {
+    const out = { groundId: "ground_inshore", departedAt: "2026-11-20T09:55:00.000Z", returnsAt: "2026-11-20T10:05:00.000Z", returned: false, catch: null };
+    const away = ship(model({ fleet: fleet({ ship: { ...boat, trip: out } }) }));
+    expect(away.tripShare).toBe(0.5);
+    expect(away.status).toMatchObject({ icon: "clock", text: 'fleet.status.fishing:{"ground":"fleet.ground.ground_inshore","minutes":5}', tone: "busy" });
+    expect(away.actions.map((action) => action.kind)).toEqual(["RECALL"]);
+    expect(away.upgrade).toBeNull();
+    expect(model({ fleet: fleet({ ship: { ...boat, trip: out } }) }).berths[0]).toMatchObject({ fishing: false });
+
+    const back = { ...out, returned: true, catch: [{ itemDefinitionId: "item_fish_sardine", quantity: 9 }, { itemDefinitionId: "item_fish_mackerel", quantity: 7 }] };
+    const landed = ship(model({ fleet: fleet({ ship: { ...boat, trip: back } }), itemName }));
+    expect(landed.catch.map((fish) => [fish.modelId, fish.quantity])).toEqual([
+      ["fish_sardine", 9],
+      ["fish_mackerel", 7]
+    ]);
+    expect(landed.actions.map((action) => [action.kind, action.primary])).toEqual([["COLLECT", true]]);
+    expect(landed.tripShare).toBeNull();
+  });
+});

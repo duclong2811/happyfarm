@@ -347,6 +347,21 @@ export class ApiClient {
     return this.post("/ships/upgrade", { shipId, requestId }, FleetResponseSchema);
   }
 
+  /** Sends a fishing boat to a ground; the time and the catch are the server's. */
+  startTrip(shipId: string, groundId: string, requestId: string): Promise<FleetResponse> {
+    return this.post("/ships/trips", { shipId, groundId, requestId }, FleetResponseSchema);
+  }
+
+  /** Brings a returned boat's catch into the warehouse. */
+  collectTrip(shipId: string, requestId: string): Promise<FleetResponse> {
+    return this.post("/ships/trips/collect", { shipId, requestId }, FleetResponseSchema);
+  }
+
+  /** Calls a fishing boat home early; its catch is lost. */
+  recallTrip(shipId: string): Promise<FleetResponse> {
+    return this.post("/ships/trips/recall", { shipId }, FleetResponseSchema);
+  }
+
   /** Raises the dock a tier for more berths; the cost is the server's. */
   upgradeDock(requestId: string): Promise<FleetResponse> {
     return this.post("/ships/dock", { requestId }, FleetResponseSchema);

@@ -10,7 +10,7 @@
  * under the player's pointer.
  */
 
-export type ActivityKind = "AREA_PLANT" | "AREA_HARVEST" | "FISHING" | "GATHER" | "MINES" | "VOYAGE";
+export type ActivityKind = "AREA_PLANT" | "AREA_HARVEST" | "FISHING" | "GATHER" | "MINES" | "VOYAGE" | "TRIP";
 export type ActivityTone = "active" | "ready" | "done" | "warn";
 
 export interface ActivityItem {
@@ -61,6 +61,8 @@ export interface ActivityTrayInput {
   readonly mines: MinesActivity | null;
   /** The ship's voyage (W5a): `name` is where it is bound. Optional for older callers. */
   readonly voyage?: TimedActivity | null;
+  /** Fishing boats out on trips (F2): `name` is the ground. Optional for older callers. */
+  readonly trips?: readonly TimedActivity[];
   /** Pirates have struck the voyage and wait to be fought (W5c). */
   readonly ambushDue?: boolean;
 }
@@ -147,6 +149,19 @@ export function activityTrayItems(input: ActivityTrayInput, t: Translate): reado
       detail: sailing ? t("activity.voyageLeft", { time: clockText(secondsLeft) }) : t("activity.voyageVisit"),
       fraction,
       tone: sailing ? "active" : "ready"
+    });
+  }
+  for (const trip of input.trips ?? []) {
+    const { fraction, secondsLeft } = timedFraction(trip, input.nowMs);
+    const out = secondsLeft > 0;
+    items.push({
+      id: trip.id,
+      kind: "TRIP",
+      icon: "🎣",
+      title: t(out ? "activity.trip" : "activity.tripBack", { name: trip.name ?? "" }),
+      detail: out ? t("activity.voyageLeft", { time: clockText(secondsLeft) }) : t("activity.tripCollect"),
+      fraction,
+      tone: out ? "active" : "ready"
     });
   }
   const mines = input.mines;

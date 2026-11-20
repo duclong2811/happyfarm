@@ -21,6 +21,7 @@
   ItemDefinitionId,
   Player,
   PlayerId,
+  ShipId,
   PlayerProgression,
   PlayerStatus,
   TerrainType,
@@ -157,6 +158,8 @@ import type {
   ,PlayerShipRecord
   ,ShipBuild
   ,DockUpgrade
+  ,FishingTripRecord
+  ,TripCollection
   ,PlayerDockRecord
   ,VoyageRecord
   ,AmbushResolution
@@ -1108,6 +1111,32 @@ interface PlayerDockRow {
   readonly updated_at: string;
 }
 
+interface ShipTripRow {
+  readonly ship_id: string;
+  readonly player_id: string;
+  readonly ground_id: string;
+  readonly departed_at: string;
+  readonly returns_at: string;
+  readonly catch_json: string;
+  readonly request_id: string;
+  readonly created_at: string;
+}
+
+/** A stored catch, read back only as whole, positive counts by item id; anything else is no catch. */
+function catchFromJson(json: string): Readonly<Record<string, number>> {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const out: Record<string, number> = {};
+    for (const [itemDefinitionId, quantity] of Object.entries(parsed as Record<string, unknown>)) {
+      if (/^item_[a-z0-9_]+$/.test(itemDefinitionId) && typeof quantity === "number" && Number.isInteger(quantity) && quantity > 0) out[itemDefinitionId] = quantity;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 interface ShipVoyageRow {
   readonly player_id: string;
   /** Null for a voyage stored before the fleet (migration 0051): the ship in berth 1. */
@@ -1207,22 +1236,27 @@ export class D1ShipRepository implements ShipRepository {
   }
 
   async writeVoyage(next: VoyageRecord, expectedVersion: number | null): Promise<boolean> {
+    // A voyage under way never sails a boat that is out fishing; the trip's own write checks the voyage.
+    // Both checks sit in the writing statement itself, so two requests cannot slip between them.
+    const sailing = next.shipId ?? `ship_${next.playerId.slice("player_".length)}`;
+    const notFishing = "(? <> 'UNDERWAY' OR NOT EXISTS (SELECT 1 FROM ship_trips WHERE ship_id = ? AND player_id = ?))";
+    const notFishingValues = [next.status, sailing, next.playerId];
     const ambush = next.ambush ?? null;
     const ambushValues = [ambush?.at ?? null, ambush?.seed ?? null, ambush === null ? null : JSON.stringify(ambush.pirates), ambush?.status ?? null];
     if (expectedVersion === null) {
       const inserted = await this.db
         .prepare(
-          "INSERT OR IGNORE INTO ship_voyages (player_id, ship_id, from_slot_id, to_slot_id, ship_tier, departed_at, arrives_at, status, request_id, version, updated_at, ambush_at, ambush_seed, ambush_pirates, ambush_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          `INSERT OR IGNORE INTO ship_voyages (player_id, ship_id, from_slot_id, to_slot_id, ship_tier, departed_at, arrives_at, status, request_id, version, updated_at, ambush_at, ambush_seed, ambush_pirates, ambush_status) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${notFishing}`
         )
-        .bind(next.playerId, next.shipId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues)
+        .bind(next.playerId, next.shipId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues, ...notFishingValues)
         .run();
       return (inserted.meta.changes ?? 0) === 1;
     }
     const updated = await this.db
       .prepare(
-        "UPDATE ship_voyages SET ship_id = ?, from_slot_id = ?, to_slot_id = ?, ship_tier = ?, departed_at = ?, arrives_at = ?, status = ?, request_id = ?, version = ?, updated_at = ?, ambush_at = ?, ambush_seed = ?, ambush_pirates = ?, ambush_status = ? WHERE player_id = ? AND version = ?"
+        `UPDATE ship_voyages SET ship_id = ?, from_slot_id = ?, to_slot_id = ?, ship_tier = ?, departed_at = ?, arrives_at = ?, status = ?, request_id = ?, version = ?, updated_at = ?, ambush_at = ?, ambush_seed = ?, ambush_pirates = ?, ambush_status = ? WHERE player_id = ? AND version = ? AND ${notFishing}`
       )
-      .bind(next.shipId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues, next.playerId, expectedVersion)
+      .bind(next.shipId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues, next.playerId, expectedVersion, ...notFishingValues)
       .run();
     return (updated.meta.changes ?? 0) === 1;
   }
@@ -1430,14 +1464,14 @@ export class D1ShipRepository implements ShipRepository {
       build.expectedVersion === 0
         ? this.db
             .prepare(
-              "INSERT INTO player_ships (ship_id, player_id, berth, class_id, tier, hull, version, last_change_id, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ? WHERE (SELECT COUNT(*) FROM player_ships WHERE player_id = ?) = ?"
+              "INSERT INTO player_ships (ship_id, player_id, berth, class_id, tier, hull, version, last_change_id, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ? WHERE (SELECT COUNT(*) FROM player_ships WHERE player_id = ?) = ? AND NOT EXISTS (SELECT 1 FROM ship_trips WHERE ship_id = ?)"
             )
-            .bind(build.shipId, build.playerId, build.berth, build.classId, build.tier, build.hull, build.economy.transactionId, build.createdAt, build.createdAt, build.playerId, build.expectedShipCount)
+            .bind(build.shipId, build.playerId, build.berth, build.classId, build.tier, build.hull, build.economy.transactionId, build.createdAt, build.createdAt, build.playerId, build.expectedShipCount, build.shipId)
         : this.db
             .prepare(
-              "UPDATE player_ships SET class_id = ?, tier = ?, hull = ?, version = version + 1, last_change_id = ?, updated_at = ? WHERE ship_id = ? AND player_id = ? AND class_id = ? AND version = ?"
+              "UPDATE player_ships SET class_id = ?, tier = ?, hull = ?, version = version + 1, last_change_id = ?, updated_at = ? WHERE ship_id = ? AND player_id = ? AND class_id = ? AND version = ? AND NOT EXISTS (SELECT 1 FROM ship_trips WHERE ship_id = ?)"
             )
-            .bind(build.classId, build.tier, build.hull, build.economy.transactionId, build.createdAt, build.shipId, build.playerId, build.expectedClassId, build.expectedVersion);
+            .bind(build.classId, build.tier, build.hull, build.economy.transactionId, build.createdAt, build.shipId, build.playerId, build.expectedClassId, build.expectedVersion, build.shipId);
     await this.payAndWrite(
       build,
       shipStatement,
@@ -1475,6 +1509,90 @@ export class D1ShipRepository implements ShipRepository {
       "completed dock upgrade idempotency requires its ledger row",
       "The dock or the economy changed while upgrading"
     );
+  }
+
+  async listTrips(playerId: PlayerId): Promise<readonly FishingTripRecord[]> {
+    const { results } = await this.db.prepare("SELECT * FROM ship_trips WHERE player_id = ? ORDER BY ship_id").bind(playerId).all<ShipTripRow>();
+    return results.map((row) => ({
+      playerId: parsePlayerId(row.player_id),
+      shipId: parseShipId(row.ship_id),
+      groundId: row.ground_id,
+      departedAt: row.departed_at,
+      returnsAt: row.returns_at,
+      catch: catchFromJson(row.catch_json),
+      requestId: row.request_id,
+      createdAt: row.created_at
+    }));
+  }
+
+  async startTrip(trip: FishingTripRecord): Promise<boolean> {
+    // Written only while the boat is not sailing the player's voyage (a voyage stored before the fleet
+    // names no ship, and was sailed by the ship in berth 1); the primary key keeps one trip a boat.
+    const berthOne = `ship_${trip.playerId.slice("player_".length)}`;
+    const inserted = await this.db
+      .prepare(
+        "INSERT OR IGNORE INTO ship_trips (ship_id, player_id, ground_id, departed_at, returns_at, catch_json, request_id, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM ship_voyages WHERE player_id = ? AND status = 'UNDERWAY' AND COALESCE(ship_id, ?) = ?)"
+      )
+      .bind(trip.shipId, trip.playerId, trip.groundId, trip.departedAt, trip.returnsAt, JSON.stringify(trip.catch), trip.requestId, trip.createdAt, trip.playerId, berthOne, trip.shipId)
+      .run();
+    return (inserted.meta.changes ?? 0) === 1;
+  }
+
+  async collectTripAtomically(collection: TripCollection, idempotency: IdempotencyRecord): Promise<void> {
+    if (
+      idempotency.actorPlayerId !== collection.playerId ||
+      idempotency.resourceId !== collection.tripRequestId ||
+      collection.additions.length !== collection.expectedInventory.length ||
+      collection.additions.some((addition) => addition.playerId !== collection.playerId || addition.quantity <= 0)
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Catch ownership does not match");
+    }
+    const tripThere = "EXISTS (SELECT 1 FROM ship_trips WHERE ship_id = ? AND player_id = ? AND request_id = ? AND returns_at <= ?)";
+    const tripValues = [collection.shipId, collection.playerId, collection.tripRequestId, collection.now];
+    const statements: D1PreparedStatementLike[] = [
+      // The fish land only while the trip is there and back: a second collection adds nothing.
+      ...collection.additions.map((addition) =>
+        this.db
+          .prepare(
+            `INSERT INTO inventory_items (player_id, item_definition_id, quantity, updated_at, version) SELECT ?, ?, ?, ?, 1 WHERE ${tripThere} ON CONFLICT(player_id, item_definition_id) DO UPDATE SET quantity = inventory_items.quantity + excluded.quantity, updated_at = excluded.updated_at, version = inventory_items.version + 1`
+          )
+          .bind(addition.playerId, addition.itemDefinitionId, addition.quantity, addition.timestamp, ...tripValues)
+      ),
+      this.db.prepare("DELETE FROM ship_trips WHERE ship_id = ? AND player_id = ? AND request_id = ? AND returns_at <= ?").bind(...tripValues),
+      // The receipt: only once the trip is gone and every stack moved by exactly its share of the catch.
+      this.db
+        .prepare(
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN NOT EXISTS (SELECT 1 FROM ship_trips WHERE ship_id = ? AND request_id = ?)${collection.additions
+            .map(() => " AND COALESCE((SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?), 0) = ?")
+            .join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          collection.shipId,
+          collection.tripRequestId,
+          ...collection.additions.flatMap((addition, index) => [addition.playerId, addition.itemDefinitionId, (collection.expectedInventory[index]?.quantity ?? 0) + addition.quantity]),
+          idempotency.actorPlayerId,
+          idempotency.operation,
+          idempotency.requestId,
+          idempotency.payloadFingerprint,
+          idempotency.status,
+          idempotency.resourceId,
+          idempotency.responseJson,
+          idempotency.createdAt
+        )
+    ];
+    try {
+      const results = await this.db.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) throw new Error("Atomic catch collection failed");
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes("NOT NULL constraint failed: idempotency_keys")) {
+        throw new ApplicationError("ECONOMY_CONFLICT", "The catch or the warehouse changed while bringing it in");
+      }
+      throw error;
+    }
+  }
+
+  async recallTrip(playerId: PlayerId, shipId: ShipId): Promise<void> {
+    await this.db.prepare("DELETE FROM ship_trips WHERE ship_id = ? AND player_id = ?").bind(shipId, playerId).run();
   }
 
   /**

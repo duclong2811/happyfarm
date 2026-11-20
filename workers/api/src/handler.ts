@@ -7,6 +7,9 @@
   BuildShip,
   UpgradeShip,
   UpgradeDock,
+  StartFishingTrip,
+  CollectFishingTrip,
+  RecallFishingTrip,
   StartVoyage,
   EndVoyage,
   FightAmbush,
@@ -186,6 +189,9 @@ import {
   BuildShipRequestSchema,
   UpgradeShipRequestSchema,
   UpgradeDockRequestSchema,
+  StartTripRequestSchema,
+  CollectTripRequestSchema,
+  RecallTripRequestSchema,
   StartVoyageRequestSchema,
   EndVoyageRequestSchema,
   RepairShipRequestSchema,
@@ -454,6 +460,8 @@ export interface HandlerDependencies {
     readonly chart: WorldChartPort;
     /** Ships, voyages and pirates; the game data's own unless a test supplies another. */
     readonly ships?: ShipCatalogue;
+    /** The dice for fishing trips' catches; else gathering's or fishing's own entropy. */
+    readonly random?: RandomPort;
   };
   /** The manual aquaculture definition; omitted hosts use the shipped game-data value. */
   readonly aquaculture?: AquacultureDefinition;
@@ -859,7 +867,11 @@ function toNextShipDTO(view: NextShipView): FleetResponse["builds"][number] {
 }
 
 function toFleetShipDTO(view: ShipView): FleetResponse["ship"] {
-  return { ...view, upgrade: view.upgrade === null ? null : toNextShipDTO(view.upgrade) };
+  return {
+    ...view,
+    trip: view.trip === null ? null : { ...view.trip, catch: view.trip.catch === null ? null : view.trip.catch.map((entry) => ({ ...entry })) },
+    upgrade: view.upgrade === null ? null : toNextShipDTO(view.upgrade)
+  };
 }
 
 function toFleetDTO(view: FleetView): FleetResponse {
@@ -1098,6 +1110,7 @@ function errorStatus(code: ErrorCode): number {
     case "ISLAND_CHOICE_UNAVAILABLE":
     case "WORLD_PLACE_UNCHARTED":
     case "SHIP_LEVEL_REQUIRED":
+    case "SHIP_RANK_REQUIRED":
     case "DOCK_LEVEL_REQUIRED":
     case "CHARACTER_NOT_AVAILABLE":
     case "PLOT_LEVEL_REQUIRED":
@@ -1143,6 +1156,7 @@ function errorStatus(code: ErrorCode): number {
     case "SHIP_AT_SEA":
     case "SHIP_MAX_CLASS":
     case "DOCK_FULL":
+    case "TRIP_NOT_BACK":
     case "DOCK_MAX_TIER":
     case "VOYAGE_UNDERWAY":
     case "VOYAGE_NOT_ARRIVED":
@@ -1737,6 +1751,7 @@ export function createHandler(host: HandlerDependencies) {
           shipRepository
         );
   // Ships and voyages ride on the world map: a voyage goes to a place on the chart (W5a).
+  const shipRandom: RandomPort | undefined = dependencies.world?.random ?? dependencies.resources?.random ?? dependencies.fishing?.random;
   const shipDependencies: ShipDependencies | null =
     worldPlacement === undefined
       ? null
@@ -1757,12 +1772,17 @@ export function createHandler(host: HandlerDependencies) {
           clock: dependencies.clock,
           // A bounty's wood and ore land in the island's warehouse, never past its room.
           warehouse: warehouseRepository,
-          ...(dependencies.warehouse === undefined ? {} : { warehouseTiers: dependencies.warehouse.tiers })
+          ...(dependencies.warehouse === undefined ? {} : { warehouseTiers: dependencies.warehouse.tiers }),
+          // A fishing trip's catch is the server's dice, the same entropy gathering and fishing use.
+          ...(shipRandom === undefined ? {} : { random: shipRandom })
         };
   const getFleet = shipDependencies === null ? null : new GetFleet(shipDependencies);
   const buildShip = shipDependencies === null ? null : new BuildShip(shipDependencies);
   const upgradeShip = shipDependencies === null ? null : new UpgradeShip(shipDependencies);
   const upgradeDock = shipDependencies === null ? null : new UpgradeDock(shipDependencies);
+  const startTrip = shipDependencies?.random === undefined ? null : new StartFishingTrip(shipDependencies);
+  const collectTrip = shipDependencies === null ? null : new CollectFishingTrip(shipDependencies);
+  const recallTrip = shipDependencies === null ? null : new RecallFishingTrip(shipDependencies);
   const startVoyage = shipDependencies === null ? null : new StartVoyage(shipDependencies);
   const endVoyage = shipDependencies === null ? null : new EndVoyage(shipDependencies);
   const fightAmbush = shipDependencies === null ? null : new FightAmbush(shipDependencies);
@@ -2364,6 +2384,27 @@ export function createHandler(host: HandlerDependencies) {
         const parsed = UpgradeShipRequestSchema.safeParse(await parseJson(request));
         if (!parsed.success) return failure("INVALID_INPUT", requestId);
         const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await upgradeShip.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (startTrip !== null && request.method === "POST" && url.pathname === "/ships/trips") {
+        const parsed = StartTripRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await startTrip.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (collectTrip !== null && request.method === "POST" && url.pathname === "/ships/trips/collect") {
+        const parsed = CollectTripRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await collectTrip.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (recallTrip !== null && request.method === "POST" && url.pathname === "/ships/trips/recall") {
+        const parsed = RecallTripRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await recallTrip.execute(actor, parsed.data)) };
         return jsonResponse(body);
       }
 

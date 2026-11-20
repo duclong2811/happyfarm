@@ -147,7 +147,7 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
-import { ambushBounty, chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, DOCK_TIERS, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import { ambushBounty, chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, DOCK_TIERS, FISHING_GROUNDS, fishingGround, rollTripCatch, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
 import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
@@ -843,6 +843,12 @@ export const gameDataShipCatalogue: ShipCatalogue = {
       hold: entry.hold,
       buildCost: shipPrice(entry.buildCost)
     })),
+  grounds: () => FISHING_GROUNDS.map((entry) => ({ id: entry.id, seconds: entry.seconds, minRank: entry.minRank })),
+  rollCatch: (groundId, hold, roll) => {
+    const ground = fishingGround(groundId);
+    if (ground === null) throw new Error("Unknown fishing ground");
+    return rollTripCatch(ground, hold, roll);
+  },
   docks: () =>
     DOCK_TIERS.map((entry) => ({
       tier: entry.tier,

@@ -159,3 +159,22 @@ describe("migration 0051: the fleet, the dock and the ledger rebuild", () => {
     }
   });
 });
+
+describe("migration 0052: fishing trips", () => {
+  it("holds one trip a boat, with a ground, a return no earlier than its start, and a catch", () => {
+    const db = new NodeD1Database(schemaSql());
+    try {
+      seedPlayer(db);
+      const trip = db.sqlite.prepare("INSERT INTO ship_trips (ship_id, player_id, ground_id, departed_at, returns_at, catch_json, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'trip-request-1', ?)");
+      expect(() => trip.run("boat_1", PLAYER_ONE_ID, "ground_inshore", NOW, LATER, "{}", NOW)).toThrow();
+      expect(() => trip.run(SHIP_ID, PLAYER_ONE_ID, "inshore", NOW, LATER, "{}", NOW)).toThrow();
+      expect(() => trip.run(SHIP_ID, PLAYER_ONE_ID, "ground_inshore", LATER, NOW, "{}", NOW)).toThrow();
+      expect(() => trip.run(SHIP_ID, PLAYER_ONE_ID, "ground_inshore", NOW, LATER, "", NOW)).toThrow();
+      trip.run(SHIP_ID, PLAYER_ONE_ID, "ground_inshore", NOW, LATER, '{"item_fish_sardine":8}', NOW);
+      expect(() => trip.run(SHIP_ID, PLAYER_ONE_ID, "ground_offshore", NOW, LATER, "{}", NOW)).toThrow();
+      expect(() => trip.run(`${SHIP_ID}_2`, "player_99999999-9999-4999-8999-999999999999", "ground_inshore", NOW, LATER, "{}", NOW)).toThrow();
+    } finally {
+      db.close();
+    }
+  });
+});

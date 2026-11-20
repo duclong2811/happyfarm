@@ -1788,6 +1788,7 @@ function activityTrayInput(nowMs: number): ActivityTrayInput {
       : null,
     mines,
     voyage: voyageActivity(),
+    trips: tripActivities(),
     ambushDue: ambushDue()
   };
 }
@@ -1809,6 +1810,14 @@ function refreshActivityTray(): void {
 function activateActivity(kind: ActivityKind): void {
   if ((kind === "AREA_PLANT" || kind === "AREA_HARVEST") && areaHarvestSelection.active && areaHarvestSelection.minimized) {
     restoreAreaHarvest();
+    return;
+  }
+  if (kind === "TRIP") {
+    // The fleet's panel, on the first boat that is back (or the first still out).
+    const boats = fleetState?.fleet.ships.filter((ship) => ship.trip !== null) ?? [];
+    const boat = boats.find((ship) => ship.trip?.returned === true) ?? boats[0];
+    if (boat !== undefined) fleetSelection = { kind: "SHIP", shipId: boat.shipId };
+    showShipPanel();
     return;
   }
   if (kind === "VOYAGE" && ambushDue()) {
@@ -7566,7 +7575,7 @@ let fleetState: { readonly fleet: FleetResponse; readonly seenAtMs: number } | n
 function setFleet(fleet: FleetResponse): void {
   fleetState = { fleet, seenAtMs: Date.now() };
   refreshActivityTray();
-  if (fleet.voyage !== null) ensureActivityTicker();
+  if (fleet.voyage !== null || fleet.ships.some((ship) => ship.trip !== null)) ensureActivityTicker();
   // The ship has sailed (from the chart the helm opened) or sunk: the helm ends before it leaves the
   // pier, so the camera flies home from behind the hull rather than cutting.
   if (helm !== null && (fleet.location !== "HOME" || (pierShipOf(fleet)?.hull ?? 0) <= 0)) leaveHelm();
@@ -7582,7 +7591,7 @@ let fleetSelection: FleetSelection | null = null;
  * is. Null while every ship is out.
  */
 function pierShipOf(fleet: FleetResponse): FleetResponse["ship"] | null {
-  const home = fleet.ships.filter((ship) => !ship.away);
+  const home = fleet.ships.filter((ship) => !ship.away && ship.trip === null);
   const picked = fleetSelection?.kind === "SHIP" ? fleetSelection.shipId : null;
   return home.find((ship) => ship.shipId === picked) ?? home[0] ?? null;
 }
@@ -7787,11 +7796,15 @@ function showShipPanel(): void {
             ambushDue: ambushDue(),
             canHelm: helm === null && scene?.dockShipMooring() != null,
             placeName,
+            itemName: (itemDefinitionId) => displayName(state.language, itemDisplayKey(itemDefinitionId) ?? `item.${itemDefinitionId.replace(/^item_/, "")}.name`, itemDefinitionId),
             translate: (key, params) => t(key, params)
           }),
     picture: (modelId, image) => {
       // Ships float on the panel's own painted stage: no card, no disc.
       itemThumbnails.apply({ modelId, roadTierId: null, backdrop: "CLEAR" }, image);
+    },
+    itemPicture: (itemDefinitionId, image) => {
+      itemThumbnails.apply(itemVisualFor(itemDefinitionId, itemVisualCatalogues()).request, image);
     },
     onSelect: (selected) => {
       // The ship picked is the one drawn at the pier: the helm takes it, the chart sails it.
@@ -7853,6 +7866,27 @@ function showShipPanel(): void {
           void refreshAccount();
           return;
         }
+        case "TRIP": {
+          if (action.shipId === undefined || action.groundId === undefined) return;
+          const shipId = action.shipId;
+          setFleet(await client.startTrip(shipId, action.groundId, newRequestId("trip")));
+          // Back to the boat: its trip counts down there.
+          shipPanel?.select({ kind: "SHIP", shipId });
+          setStatus(message("fleet.tripStarted"));
+          return;
+        }
+        case "COLLECT":
+          if (action.shipId === undefined) return;
+          setFleet(await client.collectTrip(action.shipId, newRequestId("catch")));
+          setStatus(message("fleet.caught"));
+          void refreshAccount();
+          return;
+        case "RECALL":
+          if (action.shipId === undefined) return;
+          setFleet(await client.recallTrip(action.shipId));
+          return;
+        case "FISH":
+          return;
         case "DOCK":
           setFleet(await client.upgradeDock(newRequestId("dock")));
           setStatus(message("shipPanel.dockRaised"));
@@ -7945,6 +7979,26 @@ function placeName(slotId: string): string {
   const region = match?.[1]?.toUpperCase();
   if (match === null || (region !== "NORTH" && region !== "EAST" && region !== "SOUTH" && region !== "WEST")) return slotId;
   return t("chart.archipelago", { name: archipelagoName(region, Number(match[2])) });
+}
+
+/** A card per fishing boat out (F2), timed by the server's departure and return. */
+function tripActivities(): TimedActivity[] {
+  if (fleetState === null) return [];
+  const { fleet, seenAtMs } = fleetState;
+  return fleet.ships.flatMap((ship) =>
+    ship.trip === null
+      ? []
+      : [
+          {
+            id: `trip:${ship.shipId}`,
+            startedAt: ship.trip.departedAt,
+            readyAt: ship.trip.returnsAt,
+            secondsUntilReady: Math.max(0, (Date.parse(ship.trip.returnsAt) - Date.parse(fleet.readAt)) / 1000),
+            seenAtMs,
+            name: t(`fleet.ground.${ship.trip.groundId}` as MessageKey)
+          }
+        ]
+  );
 }
 
 /** The voyage card's input: the server's departure and arrival, against the moment this client read them. */

@@ -15,6 +15,8 @@ export type ApplicationErrorCode =
   | "SHIP_AT_SEA"
   | "SHIP_MAX_CLASS"
   | "SHIP_LEVEL_REQUIRED"
+  | "SHIP_RANK_REQUIRED"
+  | "TRIP_NOT_BACK"
   | "DOCK_FULL"
   | "DOCK_MAX_TIER"
   | "DOCK_LEVEL_REQUIRED"

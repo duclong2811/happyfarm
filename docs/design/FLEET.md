@@ -102,7 +102,7 @@ The proposal is three ladders, and more than one ship at a time:
 | --- | --- | --- | --- |
 | F0 (built) | Practice monster off the home island | no | none |
 | F1 (built) | Fleet of several ships, three roles, conversion of today's ship | yes (0051) | ship prices and upgrades |
-| F2 | Fishing trips: grounds, catch tables, the warehouse | yes | fish values |
+| F2 (built) | Fishing trips: grounds, catch tables, the warehouse | yes (0052) | fish values |
 | F3 | Monster hunts with rewards, referee'd by the server (like pirate bounties) | yes | bounties |
 | F4 | Player marketplace, escrow, deliveries by merchant ship | yes | fees, limits, anti-abuse |
 | F5 | Escorts, pirate lairs; the shared realtime sea (S3) | yes | rewards |
@@ -190,10 +190,103 @@ warship needs a second berth, or replaces the lent rowboat as their first build.
 - Or a decoration only monster hunters can place (a serpent skull arch, a pearl shrine).
 - Or a sail or figurehead that changes how a ship looks.
 
+## F2: fishing trips (owner: "balance it yourself"; numbers by Claude, 2026-11-20)
+
+The owner's rule of thumb: close to shore is quick and the fish are cheap; far out is slow and the
+fish are dear. A fishing boat at its dock is sent to a ground and comes back by the server's clock with
+a catch the server rolled when it left; the player collects it into the warehouse.
+
+| Ground | Time | Boat rank | Catch (share of the hold) | Fish (weight) | Average value |
+| --- | --- | --- | --- | --- | --- |
+| Gần bờ (inshore) | 10 min | any | 40% | sardine 55, mackerel 40, snapper 5 | 2.45 gold |
+| Ngư trường xa (offshore) | 45 min | 2+ | 70% | mackerel 30, snapper 50, tuna 20 | 6.4 gold |
+| Biển khơi (deep sea) | 3 h | 3+ | 100% | snapper 25, tuna 75 | 12.5 gold |
+
+- The count varies by ±15% per trip and never exceeds the hold.
+- What it pays, by boat:
+
+  | Boat (hold) | Inshore | Offshore | Deep sea |
+  | --- | --- | --- | --- |
+  | Rowboat (20) | about 20 gold / 10 min | - | - |
+  | Line boat (40) | 39 / 10 min | 179 / 45 min | - |
+  | Net boat (80) | 78 / 10 min | 358 / 45 min | 1,000 / 3 h |
+  | Trawler (140) | 137 / 10 min | 627 / 45 min | 1,750 / 3 h |
+
+- Gold per hour is close across the grounds for a player who keeps re-sending. A far trip is worth
+  far more per visit and per warehouse slot (12.5 gold a slot in the deep sea, 2.45 inshore). That is
+  the trade: attention against storage and patience.
+- A trip gives no experience. Levelling is already fast.
+- A boat on a trip is away: it cannot sail, take the helm, be upgraded or be repaired until it is back.
+- Calling a boat home early loses the catch.
+- Collecting needs room in the warehouse for the whole catch; otherwise the catch waits on the boat.
+- No pirates on fishing trips in F2.
+
+### Built (F2, 2026-11-20)
+
+- Migration `0052_fishing_trips.sql` (`ship_trips`: one trip a boat, the catch rolled at departure).
+- Game data: `FISHING_GROUNDS`, `rollTripCatch` in `packages/game-data/src/ships`.
+- Use cases: `StartFishingTrip`, `CollectFishingTrip`, `RecallFishingTrip` in `ships.ts`. Requests:
+  `POST /ships/trips { shipId, groundId }`, `/ships/trips/collect { shipId }`, `/ships/trips/recall { shipId }`.
+- A voyage and a trip check each other inside their own writing statements, so a boat is never both.
+  A boat out fishing is never rebuilt, upgraded or repaired. A collection lands fish only while the
+  trip is there and back, and its receipt is written only if every stack moved by exactly the catch.
+- Client: the fleet panel's "Đánh cá" opens the grounds (time, fish pictures with their odds, about
+  how many fish); a boat out shows a progress bar and "Gọi về"; a boat back shows its catch and "Thu
+  cá". The activity tray has a card per boat out.
+- Fixed on the way: the model library now loads fish by species id, so the warehouse draws fish
+  instead of its fallback.
+
+## F3: monster hunts (owner's design, 2026-11-20)
+
+> Five kinds of sea monster, each giving its own material; a ship is built only with all five. Monsters
+> come in levels, and ten level-1 materials make one level-2.
+
+### Monsters
+
+| Monster | Fights by | Lv 1 hull, speed | Material |
+| --- | --- | --- | --- |
+| Thuồng luồng (water serpent) | rams, fast and nimble | 100, 8 | Vảy thuồng luồng (scale) |
+| Bạch tuộc khổng lồ (giant octopus) | rams, slow and heavy | 160, 6 | Xúc tu (tentacle) |
+| Cua đá khổng lồ (giant rock crab) | rams, armoured, turns slowly | 200, 5.5 | Mai cua đá (shell) |
+| Kình ngư (leviathan fish) | rams, the fastest | 120, 9.5 | Xương kình ngư (bone) |
+| Sứa lửa (fire jellyfish) | spits fire like a gun, slow | 80, 5, 2 "guns" | Ngọc sứa (pearl) |
+
+- Levels 1 to 3. Level 2 has 2.2x the hull and a little more speed; level 3 has 4x the hull, more
+  speed and more size. Level 2 monsters appear from player level 25, level 3 from 45.
+- A ship that fights must have guns (warship or merchant ship), be at its dock and float.
+- Each won fight pays:
+
+  | Level | Gold | Wood | Ore | XP | Material |
+  | --- | --- | --- | --- | --- | --- |
+  | 1 | 80 | 20 | 10 | 40 | 3 of its kind, level 1 |
+  | 2 | 250 | 60 | 30 | 120 | 2 of its kind, level 2 |
+  | 3 | 700 | 150 | 90 | 300 | 2 of its kind, level 3 |
+
+- A lost fight leaves the hull as the fight did, and the monster stays to be fought again.
+
+### Where they are
+
+- Every 4 hours, three monsters of three different kinds surface in the player's home waters. Their
+  kinds and levels come from the player and the 4-hour window. Each can be beaten once in its window.
+- They are drawn at sea round the island, and the helm offers the fight when the ship is close. The
+  fleet panel lists them as well.
+- The server plans each fight with a fresh seed and replays the player's orders to decide it, as it
+  does for pirates.
+
+### Materials and ships
+
+- 15 materials: five kinds by three levels. Ten of one kind and level merge into one of the next
+  level. Materials are not sold in the shop.
+- Building rank 1 of any ladder needs no materials. Every upgrade needs all five kinds:
+  - rank 2: 2 of each, level 1;
+  - rank 3: 2 of each, level 2;
+  - rank 4: 2 of each, level 3.
+- Gold, wood and ore prices stay as in F1.
+- The practice monster of F0 gives way to these real hunts.
+
 ## Questions still open
 
 - **Market (F4):** the fee (for example 5% of the price, taken from the seller); who pays for the
   delivery (proposed: the seller, because it is the seller's ship); free prices or a band around the
   shop's price (proposed: a band, against laundering gold between alt accounts).
-- **The rare monster item (F3):** which of the ideas above, or something else.
 - **F1 numbers:** the two tables above.

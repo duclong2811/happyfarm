@@ -14,7 +14,7 @@ import {
   type PlayerId,
   type TreeInstanceId
 } from "@happy-farm/domain";
-import { chartedArchipelagos, findSeaSlot, seaChart, shipClassById, voyageSeconds } from "@happy-farm/game-data";
+import { chartedArchipelagos, findSeaSlot, fishingGround, rollTripCatch, seaChart, shipClassById, voyageSeconds } from "@happy-farm/game-data";
 import {
   createSeaBattle,
   cumulativeXpForLevel,
@@ -118,6 +118,9 @@ describe("the world map", () => {
   let ids: WorldIds;
   let handle: (request: Request) => Promise<Response>;
 
+  /** The fishing trips' dice: a fixed sequence, so a test knows each catch before it is rolled. */
+  let dice = 0.5;
+
   function build(world: WorldChartPort | null = gameDataWorldChart, ships?: ShipCatalogue): void {
     handle = createHandler({
       db,
@@ -136,7 +139,7 @@ describe("the world map", () => {
       terrain: gameDataTileTerrain,
       landSale: gameDataLandSale,
       islands: { choiceEnabled: true, builder: gameDataIslandGroundBuilder },
-      ...(world === null ? {} : { world: { chart: world, ...(ships === undefined ? {} : { ships }) } }),
+      ...(world === null ? {} : { world: { chart: world, random: { roll: () => dice }, ...(ships === undefined ? {} : { ships }) } }),
       clock
     });
   }
@@ -648,6 +651,72 @@ describe("the world map", () => {
     // Another player's ship is not one to sail.
     await request("/voyages/end", {});
     expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "fleet-voyage-6", shipId: shipOf(2) }))).toBe("RESOURCE_NOT_FOUND");
+  });
+
+  /** Player `n`'s fish of one kind in the warehouse. */
+  function fishOf(n: number, itemId: string): number {
+    return (db.sqlite.prepare("SELECT quantity FROM inventory_items WHERE player_id = ? AND item_definition_id = ?").get(playerId(n), itemId) as { quantity: number } | undefined)?.quantity ?? 0;
+  }
+
+  it("sends a fishing boat out for the ground's time, rolls its catch on the server, and lands it once", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    const ground = fishingGround("ground_inshore");
+    if (ground === null || rowboat === null) throw new Error("no ground");
+    dice = 0.5;
+    const expected = rollTripCatch(ground, rowboat.hold, () => 0.5);
+    const out = FleetResponseSchema.parse(await dataOf(await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-1" })));
+    expect(out.ship.trip).toMatchObject({ groundId: "ground_inshore", returned: false, catch: null });
+    expect(Date.parse(out.ship.trip?.returnsAt ?? "") - Date.parse(out.ship.trip?.departedAt ?? "")).toBe(ground.seconds * 1000);
+    // The same request again is the same trip; the boat is away for anything else.
+    expect(FleetResponseSchema.parse(await dataOf(await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-1" }))).ship.trip).toEqual(out.ship.trip);
+    expect(await codeOf(await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-2" }))).toBe("SHIP_AT_SEA");
+    expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "trip-voyage-1" }))).toBe("SHIP_AT_SEA");
+    expect(await codeOf(await request("/ships/trips/collect", { shipId: shipOf(1), requestId: "collect-request-1" }))).toBe("TRIP_NOT_BACK");
+    // The lent rowboat out fishing keeps its berth: a first ship of one's own waits for it.
+    equip(1, 10, 5_000, 300, 200);
+    expect(await codeOf(await request("/ships/build", { role: "WAR", requestId: "trip-build-1" }))).toBe("SHIP_AT_SEA");
+
+    advance(ground.seconds);
+    const back = FleetResponseSchema.parse(await dataOf(await request("/ships/fleet")));
+    expect(back.ship.trip?.returned).toBe(true);
+    expect(Object.fromEntries((back.ship.trip?.catch ?? []).map((entry) => [entry.itemDefinitionId, entry.quantity]))).toEqual(expected);
+    const landed = FleetResponseSchema.parse(await dataOf(await request("/ships/trips/collect", { shipId: shipOf(1), requestId: "collect-request-2" })));
+    expect(landed.ship.trip).toBeNull();
+    for (const [itemId, quantity] of Object.entries(expected)) expect(fishOf(1, itemId)).toBe(quantity);
+    // Asked again it answers from its receipt; another request finds no catch. Nothing lands twice.
+    expect((await request("/ships/trips/collect", { shipId: shipOf(1), requestId: "collect-request-2" })).status).toBe(200);
+    expect(await codeOf(await request("/ships/trips/collect", { shipId: shipOf(1), requestId: "collect-request-3" }))).toBe("RESOURCE_NOT_FOUND");
+    for (const [itemId, quantity] of Object.entries(expected)) expect(fishOf(1, itemId)).toBe(quantity);
+  });
+
+  it("keeps each ground to its boats, recalls a boat empty-handed, and keeps a catch the warehouse cannot take", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    expect(await codeOf(await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_offshore", requestId: "trip-request-3" }))).toBe("SHIP_RANK_REQUIRED");
+    expect(await codeOf(await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_nowhere", requestId: "trip-request-4" }))).toBe("RESOURCE_NOT_FOUND");
+    expect(await codeOf(await request("/ships/trips", { shipId: shipOf(2), groundId: "ground_inshore", requestId: "trip-request-5" }))).toBe("RESOURCE_NOT_FOUND");
+    for (const body of [{ shipId: shipOf(1), requestId: "trip-request-6" }, { shipId: shipOf(1), groundId: "inshore", requestId: "trip-request-6" }, { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-6", catch: { item_fish_tuna: 99 } }]) {
+      expect((await request("/ships/trips", body)).status).toBe(400);
+    }
+    // Called home early, the boat is back at once and its catch is gone.
+    expect((await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-7" })).status).toBe(200);
+    const recalled = FleetResponseSchema.parse(await dataOf(await request("/ships/trips/recall", { shipId: shipOf(1) })));
+    expect(recalled.ship.trip).toBeNull();
+    // A warehouse with no room keeps the catch on the boat until there is.
+    expect((await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-8" })).status).toBe(200);
+    advance(600);
+    // 995 of 1000 taken: no room for the 8 fish this catch brings.
+    equip(1, 10, 0, 700, 295);
+    expect(await codeOf(await request("/ships/trips/collect", { shipId: shipOf(1), requestId: "collect-request-4" }))).toBe("WAREHOUSE_FULL");
+    expect(FleetResponseSchema.parse(await dataOf(await request("/ships/fleet"))).ship.trip?.returned).toBe(true);
+    db.sqlite.prepare("UPDATE inventory_items SET quantity = 10, version = version + 1 WHERE player_id = ? AND item_definition_id IN ('item_wood', 'item_ore')").run(playerId(1));
+    expect((await request("/ships/trips/collect", { shipId: shipOf(1), requestId: "collect-request-5" })).status).toBe(200);
+    // A warship does not go fishing.
+    db.sqlite.prepare("DELETE FROM inventory_items WHERE player_id = ?").run(playerId(1));
+    equip(1, 10, 5_000, 300, 200);
+    expect((await request("/ships/build", { role: "WAR", requestId: "trip-build-2" })).status).toBe(200);
+    expect(await codeOf(await request("/ships/trips", { shipId: shipOf(1), groundId: "ground_inshore", requestId: "trip-request-9" }))).toBe("INVALID_INPUT");
   });
 
   it("sails for as long as the distance takes, from wherever the ship lies, and comes home at once", async () => {

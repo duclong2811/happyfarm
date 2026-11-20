@@ -1,5 +1,5 @@
 import type { FleetResponse, ShipRole } from "@happy-farm/contracts";
-import { SHIP_CLASSES, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL } from "@happy-farm/game-data";
+import { FISHING_GROUNDS, SHIP_CLASSES, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL } from "@happy-farm/game-data";
 import type { MessageKey } from "./i18n";
 import { createIcon } from "./icons";
 import { shipModelId, shipModelForTier } from "./render/ship-models";
@@ -20,7 +20,7 @@ import { shipModelId, shipModelForTier } from "./render/ship-models";
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
-export type ShipActionKind = "FIGHT" | "SAIL" | "HELM" | "VISIT" | "COME_HOME" | "REPAIR" | "UPGRADE" | "BUILD" | "DOCK";
+export type ShipActionKind = "FIGHT" | "SAIL" | "HELM" | "VISIT" | "COME_HOME" | "REPAIR" | "UPGRADE" | "BUILD" | "DOCK" | "FISH" | "TRIP" | "COLLECT" | "RECALL";
 
 /** The panel's pictures, drawn by the stylesheet (`assets/ui/fleet`). */
 export type FleetIcon =
@@ -42,7 +42,9 @@ export type FleetIcon =
   | "lock"
   | "plus"
   | "fight"
-  | "visit";
+  | "visit"
+  | "fish"
+  | "clock";
 
 export interface CostChip {
   readonly icon: "gold" | "wood" | "ore";
@@ -69,10 +71,17 @@ export interface ShipActionModel {
   readonly shipId?: string;
   /** The role a new ship would have (build). */
   readonly role?: ShipRole;
+  /** The fishing ground a trip would work (trip). */
+  readonly groundId?: string;
 }
 
 /** What the panel is about: one of the player's ships, the free berth, or the dock itself. */
-export type FleetSelection = { readonly kind: "SHIP"; readonly shipId: string } | { readonly kind: "BERTH" } | { readonly kind: "DOCK" };
+export type FleetSelection =
+  | { readonly kind: "SHIP"; readonly shipId: string }
+  | { readonly kind: "BERTH" }
+  | { readonly kind: "DOCK" }
+  /** The fishing grounds, for one fishing boat at its dock. */
+  | { readonly kind: "GROUNDS"; readonly shipId: string };
 
 export interface BerthTileModel {
   readonly key: string;
@@ -86,6 +95,8 @@ export interface BerthTileModel {
   readonly hull: number | null;
   readonly selected: boolean;
   readonly away: boolean;
+  /** Out fishing (false), or back with a catch (true); null when not on a trip. */
+  readonly fishing: boolean | null;
   readonly lent: boolean;
   /** The tooltip: the class's name, or what the tile offers. */
   readonly title: string;
@@ -115,8 +126,39 @@ export interface ShipDetailModel {
   readonly status: { readonly icon: FleetIcon; readonly text: string; readonly tone: "calm" | "busy" | "alert" };
   /** Why the leading buttons are held back, in a few words; null when nothing is. */
   readonly warning: string | null;
+  /** A fishing trip under way: how far through it is, 0 to 1; null otherwise. */
+  readonly tripShare: number | null;
+  /** A returned trip's catch, fish by fish; empty otherwise. */
+  readonly catch: readonly CatchChip[];
   readonly actions: readonly ShipActionModel[];
   readonly upgrade: { readonly name: string; readonly rank: number; readonly action: ShipActionModel } | null;
+}
+
+export interface CatchChip {
+  readonly itemDefinitionId: string;
+  /** The fish's own model, for its picture. */
+  readonly modelId: string;
+  readonly quantity: number;
+  readonly name: string;
+}
+
+export interface GroundCardModel {
+  readonly groundId: string;
+  readonly name: string;
+  readonly minutes: number;
+  /** The fish it gives, as pictures, most likely first. */
+  readonly fish: readonly CatchChip[];
+  /** About how many fish this boat brings back. */
+  readonly expected: number;
+  readonly action: ShipActionModel;
+}
+
+export interface GroundsModel {
+  readonly kind: "GROUNDS";
+  readonly shipId: string;
+  readonly boatName: string;
+  readonly modelId: string;
+  readonly cards: readonly GroundCardModel[];
 }
 
 export interface ShipyardCardModel {
@@ -147,7 +189,7 @@ export interface ShipPanelModel {
   readonly title: string;
   readonly berths: readonly BerthTileModel[];
   readonly dock: { readonly tier: number; readonly used: number; readonly berths: number; readonly selected: boolean; readonly canGrow: boolean };
-  readonly detail: ShipDetailModel | ShipyardModel | DockDetailModel;
+  readonly detail: ShipDetailModel | ShipyardModel | DockDetailModel | GroundsModel;
 }
 
 export interface Holdings {
@@ -171,6 +213,8 @@ export interface ShipPanelInput {
   /** Whether the ship can be taken by hand round home waters: drawn at the pier, in the 3D view. */
   readonly canHelm: boolean;
   readonly placeName: (slotId: string) => string;
+  /** An item's name, as the warehouse shows it. */
+  readonly itemName?: (itemDefinitionId: string) => string;
   readonly translate: Translate;
 }
 
@@ -217,6 +261,11 @@ export function resolveSelection(fleet: FleetResponse, selected: FleetSelection 
   if (selected?.kind === "SHIP" && fleet.ships.some((ship) => ship.shipId === selected.shipId)) return selected;
   if (selected?.kind === "BERTH" && canBuild(fleet)) return selected;
   if (selected?.kind === "DOCK") return selected;
+  if (selected?.kind === "GROUNDS") {
+    const boat = fleet.ships.find((ship) => ship.shipId === selected.shipId);
+    if (boat !== undefined && boat.role === "FISHING" && boat.trip === null && !boat.away) return selected;
+    if (boat !== undefined) return { kind: "SHIP", shipId: boat.shipId };
+  }
   return { kind: "SHIP", shipId: fleet.ship.shipId };
 }
 
@@ -250,8 +299,9 @@ export function shipPanelModel(input: ShipPanelInput): ShipPanelModel {
     rank: ship.rank,
     maxRank: ladderLength(ship.role),
     hull: ship.hullMax <= 0 ? 0 : Math.max(0, Math.min(1, ship.hull / ship.hullMax)),
-    selected: selection.kind === "SHIP" && selection.shipId === ship.shipId,
+    selected: (selection.kind === "SHIP" || selection.kind === "GROUNDS") && selection.shipId === ship.shipId,
     away: ship.away,
+    fishing: ship.trip === null ? null : ship.trip.returned,
     lent: ship.lent,
     title: className(translate, ship.classId)
   }));
@@ -267,6 +317,7 @@ export function shipPanelModel(input: ShipPanelInput): ShipPanelModel {
       hull: null,
       selected: selection.kind === "BERTH",
       away: false,
+      fishing: null,
       lent: false,
       title: translate("fleet.newShip")
     });
@@ -286,6 +337,7 @@ export function shipPanelModel(input: ShipPanelInput): ShipPanelModel {
         hull: null,
         selected: selection.kind === "DOCK",
         away: false,
+        fishing: null,
         lent: false,
         title: translate("fleet.growDock", { berths: nextDock.berths })
       });
@@ -296,6 +348,10 @@ export function shipPanelModel(input: ShipPanelInput): ShipPanelModel {
 
   if (selection.kind === "DOCK") return { title, berths, dock, detail: dockDetail(input) };
   if (selection.kind === "BERTH") return { title, berths, dock, detail: shipyard(input) };
+  if (selection.kind === "GROUNDS") {
+    const boat = fleet.ships.find((entry) => entry.shipId === selection.shipId);
+    if (boat !== undefined) return { title, berths, dock, detail: groundsDetail(input, boat) };
+  }
   const ship = fleet.ships.find((entry) => entry.shipId === selection.shipId) ?? fleet.ship;
   return { title, berths, dock, detail: shipDetail(input, ship) };
 }
@@ -330,8 +386,25 @@ function shipDetail(input: ShipPanelInput, ship: FleetShip): ShipDetailModel {
   });
   let status: ShipDetailModel["status"];
   let warning: string | null = null;
+  let tripShare: number | null = null;
+  let caught: CatchChip[] = [];
+  const trip = ship.trip;
 
-  if (ship.away && voyage !== null) {
+  if (trip !== null) {
+    if (trip.returned) {
+      // Back with its catch: bringing it ashore is the one thing to do.
+      caught = (trip.catch ?? []).map((entry) => catchChip(input, entry.itemDefinitionId, entry.quantity));
+      status = { icon: "fish", text: translate("fleet.status.tripBack", { ground: groundName(translate, trip.groundId) }), tone: "calm" };
+      actions.push(action("COLLECT", "fish", "fleet.action.collect", translate("fleet.collectHint"), { primary: true }));
+    } else {
+      const start = Date.parse(trip.departedAt);
+      const end = Date.parse(trip.returnsAt);
+      tripShare = end <= start ? 1 : Math.max(0, Math.min(1, (input.serverNowMs - start) / (end - start)));
+      const minutes = Math.max(1, Math.ceil((end - input.serverNowMs) / 60_000));
+      status = { icon: "clock", text: translate("fleet.status.fishing", { ground: groundName(translate, trip.groundId), minutes }), tone: "busy" };
+      actions.push(action("RECALL", "anchor", "fleet.action.recall", translate("fleet.recallHint")));
+    }
+  } else if (ship.away && voyage !== null) {
     if (input.ambushDue) {
       actions.push(action("FIGHT", "fight", "fleet.action.fight", translate("shipPanel.fightDetail"), { primary: true }));
     }
@@ -356,7 +429,9 @@ function shipDetail(input: ShipPanelInput, ship: FleetShip): ShipDetailModel {
     status = { icon: "anchor", text: translate("fleet.status.home"), tone: "calm" };
     if (otherAway) warning = translate("fleet.warn.otherAway");
     else if (sunk) warning = translate("fleet.warn.sunk");
-    actions.push(action("SAIL", "sail", "fleet.action.sail", translate("shipPanel.sailDetail"), { enabled: !otherAway && !sunk, primary: !otherAway && !sunk }));
+    // A fishing boat leads with fishing: its trips need no voyage, so another ship out does not hold it.
+    if (ship.role === "FISHING") actions.push(action("FISH", "fish", "fleet.action.fish", translate("fleet.fishHint"), { enabled: !sunk, primary: !sunk }));
+    actions.push(action("SAIL", "sail", "fleet.action.sail", translate("shipPanel.sailDetail"), { enabled: !otherAway && !sunk, primary: ship.role !== "FISHING" && !otherAway && !sunk }));
     if (input.canHelm && !sunk && !otherAway) actions.push(action("HELM", "helm", "fleet.action.helm", translate("shipPanel.helmDetail")));
     const missing = ship.hullMax - ship.hull;
     if (missing > 0 && !ship.lent) {
@@ -371,7 +446,7 @@ function shipDetail(input: ShipPanelInput, ship: FleetShip): ShipDetailModel {
 
   const next = ship.upgrade;
   const upgrade =
-    next === null || ship.away
+    next === null || ship.away || trip !== null
       ? null
       : {
           name: className(translate, next.classId),
@@ -392,11 +467,56 @@ function shipDetail(input: ShipPanelInput, ship: FleetShip): ShipDetailModel {
     maxRank: ladderLength(ship.role),
     modelId: modelOf(ship.classId, ship.tier),
     lent: ship.lent,
-    stats: stats(ship, translate, ship.away ? null : next),
+    stats: stats(ship, translate, ship.away || trip !== null ? null : next),
     status,
     warning,
+    tripShare,
+    catch: caught,
     actions,
     upgrade
+  };
+}
+
+function groundName(translate: Translate, groundId: string): string {
+  return translate(`fleet.ground.${groundId}` as MessageKey);
+}
+
+function catchChip(input: ShipPanelInput, itemDefinitionId: string, quantity: number): CatchChip {
+  const species = itemDefinitionId.replace(/^item_fish_/, "");
+  return { itemDefinitionId, modelId: `fish_${species}`, quantity, name: input.itemName?.(itemDefinitionId) ?? itemDefinitionId };
+}
+
+/** The grounds a fishing boat could work: how long, what comes up, about how much, and whether its rank reaches. */
+function groundsDetail(input: ShipPanelInput, boat: FleetShip): GroundsModel {
+  const { translate } = input;
+  return {
+    kind: "GROUNDS",
+    shipId: boat.shipId,
+    boatName: className(translate, boat.classId),
+    modelId: modelOf(boat.classId, boat.tier),
+    cards: FISHING_GROUNDS.map((ground) => {
+      const total = ground.table.reduce((sum, entry) => sum + entry.weight, 0);
+      const short = boat.rank < ground.minRank;
+      return {
+        groundId: ground.id,
+        name: groundName(translate, ground.id),
+        minutes: Math.round(ground.seconds / 60),
+        fish: [...ground.table].sort((a, b) => b.weight - a.weight).map((entry) => catchChip(input, entry.itemDefinitionId, Math.round((entry.weight / total) * 100))),
+        expected: Math.max(1, Math.min(boat.hold, Math.round(boat.hold * ground.catchShare))),
+        action: {
+          kind: "TRIP",
+          icon: short ? "lock" : "sail",
+          label: short ? translate("fleet.rankNeeded", { rank: ground.minRank }) : translate("fleet.action.setOut"),
+          hint: groundName(translate, ground.id),
+          enabled: !short,
+          primary: !short,
+          cost: [],
+          lockLevel: null,
+          shipId: boat.shipId,
+          groundId: ground.id
+        }
+      };
+    })
   };
 }
 
@@ -467,6 +587,8 @@ export interface ShipPanelOptions {
   readonly model: (selected: FleetSelection | null) => ShipPanelModel | null;
   /** Fills a ship's picture. */
   readonly picture: (modelId: string, image: HTMLImageElement) => void;
+  /** Fills an item's picture (a fish), as the warehouse draws it; else the item's model is used. */
+  readonly itemPicture?: (itemDefinitionId: string, image: HTMLImageElement) => void;
   /** Runs an action. It resolves once the request is answered; the panel then refreshes itself. */
   readonly act: (action: ShipActionModel) => Promise<void>;
   /** The player picked another berth (the host may draw that ship at the pier). */
@@ -576,6 +698,20 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
     return image;
   }
 
+  /** An item's picture, drawn the warehouse's way when the host can, and kept across redraws. */
+  function itemImage(key: string, entry: CatchChip, className: string): HTMLImageElement {
+    const draw = options.itemPicture;
+    if (draw === undefined) return picture(key, entry.modelId, className);
+    const known = pictures.get(key);
+    if (known !== undefined && known.modelId === entry.itemDefinitionId) return known.image;
+    const image = element("img", className);
+    image.alt = entry.name;
+    image.draggable = false;
+    draw(entry.itemDefinitionId, image);
+    pictures.set(key, { modelId: entry.itemDefinitionId, image });
+    return image;
+  }
+
   function actionButton(action: ShipActionModel, extra = ""): HTMLButtonElement {
     const button = element("button", `fl-button${action.primary ? " is-primary" : ""}${action.lockLevel !== null ? " is-locked" : ""}${extra}`);
     button.type = "button";
@@ -637,6 +773,16 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
       put(upgrade, label, actionButton(model.upgrade.action, " is-upgrade"));
       info.appendChild(upgrade);
     }
+    if (model.tripShare !== null) {
+      const bar = element("div", "fl-trip");
+      const fill = element("span", "fl-trip-fill");
+      fill.style.width = `${String(Math.round(model.tripShare * 100))}%`;
+      bar.appendChild(fill);
+      put(bar, icon("fish", "fl-trip-boat"));
+      bar.lastElementChild?.setAttribute("style", `left: calc(${String(Math.round(model.tripShare * 100))}% - 14px)`);
+      put(info, bar);
+    }
+    if (model.catch.length > 0) put(info, catchRow(model.catch, `catch:${model.key}`));
     if (model.warning !== null) {
       const warning = element("p", "fl-warning");
       put(warning, icon("lock", "fl-warning-icon"), element("span", "", model.warning));
@@ -669,6 +815,36 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
     }
     nodes.push(cards);
     return nodes;
+  }
+
+  /** Fish as pictures with their counts (or, on a ground's card, their share in per cent). */
+  function catchRow(fish: readonly CatchChip[], key: string, percent = false): HTMLDivElement {
+    const row = element("div", `fl-catch${percent ? " is-odds" : ""}`);
+    for (const entry of fish) {
+      const chip = element("span", "fl-catch-chip");
+      chip.title = entry.name;
+      put(chip, itemImage(`${key}:${entry.itemDefinitionId}`, entry, "fl-catch-picture"), element("span", "fl-catch-count", percent ? `${String(entry.quantity)}%` : `×${String(entry.quantity)}`));
+      row.appendChild(chip);
+    }
+    return row;
+  }
+
+  function renderGrounds(model: GroundsModel): HTMLElement[] {
+    const heading = element("div", "fl-grounds-head");
+    put(heading, picture(`grounds:${model.shipId}`, model.modelId, "fl-grounds-boat"), element("h3", "fl-heading", `${translate("fleet.grounds")} · ${model.boatName}`));
+    const cards = element("div", "fl-yard fl-grounds");
+    model.cards.forEach((card, index) => {
+      const node = element("div", `fl-yard-card fl-ground is-depth-${String(index)}${card.action.enabled ? "" : " is-locked"}`);
+      const top = element("div", "fl-ground-sea");
+      const time = element("span", "fl-ground-time");
+      put(time, icon("clock", "fl-ground-clock"), element("span", "", `${String(card.minutes)}′`));
+      put(top, element("span", "fl-yard-name", card.name), time);
+      const expected = element("span", "fl-ground-expected");
+      put(expected, icon("fish", "fl-ground-fish"), element("span", "", translate("fleet.expected", { count: card.expected })));
+      put(node, top, catchRow(card.fish, `ground:${card.groundId}`, true), expected, actionButton(card.action));
+      cards.appendChild(node);
+    });
+    return [heading, cards];
   }
 
   function renderDock(model: DockDetailModel): HTMLElement[] {
@@ -709,7 +885,7 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
     dockBadge.disabled = busy;
     berthRow.replaceChildren(
       ...model.berths.map((berth) => {
-        const tile = element("button", `fl-tile is-${berth.kind.toLowerCase()}${berth.selected ? " is-selected" : ""}${berth.away ? " is-away" : ""}`);
+        const tile = element("button", `fl-tile is-${berth.kind.toLowerCase()}${berth.selected ? " is-selected" : ""}${berth.away || berth.fishing === false ? " is-away" : ""}`);
         tile.type = "button";
         tile.setAttribute("role", "tab");
         tile.setAttribute("aria-selected", berth.selected ? "true" : "false");
@@ -727,6 +903,7 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
             tile.appendChild(bar);
           }
           if (berth.away) tile.appendChild(icon("sail", "fl-tile-away"));
+          if (berth.fishing !== null) tile.appendChild(icon("fish", `fl-tile-fishing${berth.fishing ? " is-back" : ""}`));
           if (berth.lent) tile.appendChild(element("span", "fl-tile-lent", translate("fleet.lent")));
         } else {
           tile.appendChild(icon(berth.kind === "FREE" ? "plus" : "lock", "fl-tile-mark"));
@@ -737,7 +914,14 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
         return tile;
       })
     );
-    const content = model.detail.kind === "SHIP" ? renderShip(model.detail) : model.detail.kind === "SHIPYARD" ? renderShipyard(model.detail) : renderDock(model.detail);
+    const content =
+      model.detail.kind === "SHIP"
+        ? renderShip(model.detail)
+        : model.detail.kind === "SHIPYARD"
+          ? renderShipyard(model.detail)
+          : model.detail.kind === "GROUNDS"
+            ? renderGrounds(model.detail)
+            : renderDock(model.detail);
     detail.className = `fl-detail is-${model.detail.kind.toLowerCase()}`;
     detail.replaceChildren(...content);
   }
@@ -752,6 +936,11 @@ export function openShipPanel(options: ShipPanelOptions): ShipPanel {
 
   async function run(action: ShipActionModel): Promise<void> {
     if (busy || closed) return;
+    // Choosing a ground is the panel's own page, not a request.
+    if (action.kind === "FISH" && action.shipId !== undefined) {
+      select({ kind: "GROUNDS", shipId: action.shipId });
+      return;
+    }
     busy = true;
     status.textContent = translate("shipPanel.working");
     refresh();
