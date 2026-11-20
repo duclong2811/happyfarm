@@ -1315,7 +1315,9 @@ html.ui-b.ui-warm .helm-view .helm-notice {
 }
 html.ui-b.ui-warm .helm-view .helm-notice[hidden],
 html.ui-b.ui-warm .helm-view .helm-chart[hidden],
-html.ui-b.ui-warm .helm-view .helm-sail-to[hidden] { display: none; }
+html.ui-b.ui-warm .helm-view .helm-sail-to[hidden],
+html.ui-b.ui-warm .helm-view .helm-fight[hidden] { display: none; }
+html.ui-b.ui-warm .helm-view .helm-fight { background: linear-gradient(#e2614a, #b33a26) !important; border-color: #7d2417 !important; }
 html.ui-b.ui-warm .helm-view .helm-notice p { margin: 0; color: var(--w-wood-deep); font-weight: 800; font-size: .9rem; }
 html.ui-b.ui-warm .helm-view .helm-controls {
   display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 8px 10px;

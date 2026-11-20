@@ -45,6 +45,27 @@ export const PIRATE_SHIPS: readonly PirateShipDefinition[] = [
   { id: "pirate_corsair", hull: 450, cannons: 10, battle: { speed: 10, turn: 9, radius: 6.5, spread: 60 }, bounty: { gold: 1200, wood: 240, ore: 120, xp: 400 } }
 ];
 
+/**
+ * Sea monsters: beasts with no guns that circle and ram (the battle simulation's "BEAST" behaviour).
+ * The first, the thuồng luồng, lairs off the home island as a practice fight: it pays nothing and
+ * costs nothing, so its numbers are tuned for a good fight, not for the economy. A sloop with two
+ * guns, kept moving and firing, wins it with a third of its hull or less left.
+ */
+export interface SeaMonsterDefinition {
+  /** Stable id, `monster_<name>`. */
+  readonly id: string;
+  readonly hull: number;
+  readonly battle: BattleShipNumbers;
+}
+
+export const SEA_MONSTERS: readonly SeaMonsterDefinition[] = [
+  { id: "monster_thuong_luong", hull: 100, battle: { speed: 8, turn: 15, radius: 6, spread: 0 } }
+];
+
+export function seaMonster(id: string): SeaMonsterDefinition | null {
+  return SEA_MONSTERS.find((entry) => entry.id === id) ?? null;
+}
+
 /** The player's ship classes as fighters, by class id. The rowboat carries no guns and is never ambushed. */
 export const SHIP_BATTLE_NUMBERS: Readonly<Record<string, BattleShipNumbers>> = {
   ship_class_rowboat: { speed: 6, turn: 16, radius: 3, spread: 60 },

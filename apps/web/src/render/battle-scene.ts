@@ -28,7 +28,7 @@ import {
   type Object3D
 } from "three";
 import { SEA_BATTLE_ARENA_RADIUS, SEA_BATTLE_TICK_HZ, type SeaBattleSide, type SeaBattleState } from "@happy-farm/domain";
-import { fitShipModel, SHARED_SHIP_GEOMETRY } from "./ship-models";
+import { draftShareFor, fitShipModel, SHARED_SHIP_GEOMETRY } from "./ship-models";
 
 /**
  * The sea fight, drawn (docs/design/NAVAL.md, W5c).
@@ -154,7 +154,7 @@ export function createBattleScene(canvas: HTMLCanvasElement, state: SeaBattleSta
         if (source === null || disposed) return;
         node.remove(standIn);
         disposeOwned(standIn);
-        node.add(fitShipModel(source, shipLength(ship.spec.radius)));
+        node.add(fitShipModel(source, shipLength(ship.spec.radius), undefined, draftShareFor(modelId)));
       });
     }
     return node;

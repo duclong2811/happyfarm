@@ -1,5 +1,6 @@
 import barnModelUrl from "../assets/models/buildings/building_barn.glb?url";
 import farmerModelUrl from "../assets/models/characters/character_farmer.glb?url";
+import monsterThuongLuongModelUrl from "../assets/models/ships/monster_thuong_luong.glb?url";
 import pirateCorsairModelUrl from "../assets/models/ships/pirate_corsair.glb?url";
 import pirateCutterModelUrl from "../assets/models/ships/pirate_cutter.glb?url";
 import pirateRaiderModelUrl from "../assets/models/ships/pirate_raider.glb?url";
@@ -29,7 +30,8 @@ export const GENERATED_MODEL_URLS = {
   ship_frigate: shipFrigateModelUrl,
   pirate_cutter: pirateCutterModelUrl,
   pirate_raider: pirateRaiderModelUrl,
-  pirate_corsair: pirateCorsairModelUrl
+  pirate_corsair: pirateCorsairModelUrl,
+  monster_thuong_luong: monsterThuongLuongModelUrl
 } as const;
 
 export type GeneratedModelId = keyof typeof GENERATED_MODEL_URLS;

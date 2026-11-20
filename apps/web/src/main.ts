@@ -48,6 +48,7 @@ import { openSeaChart, type SeaChartModal } from "./sea-chart-modal";
 import { archipelagoName } from "./sea-chart-view";
 import { openVisitView, type VisitView } from "./visit-view";
 import { openBattleView, type BattleView } from "./battle-view";
+import { monsterLair, nearMonster, practiceBattleSetup, runPracticeFight, type MonsterLair } from "./sea-monster";
 import { characterNameKey, showCharacterPicker } from "./character-picker";
 import { CHARACTER_PORTRAITS } from "./character-portraits";
 import { DEFAULT_PLAYER_CHARACTER_ID } from "@happy-farm/game-data";
@@ -185,7 +186,7 @@ import { plantedForestryPanelState, resourcePanelState } from "./forestry/panel"
 import { miningPanelState } from "./mining/panel";
 import { minePanelView, mineMilliAt, mineOreAt, mineSecondsUntilFull, MINE_ORE_ITEM_ID, type MinePanelView } from "./mines/model";
 import { activityTrayItems, renderActivityTray, timedFraction, type ActivityKind, type ActivityTrayInput, type TimedActivity } from "./activity-tray";
-import { buildIslandGround, islandCellKindAt, islandFishingSpots, mineFootprintTiles } from "@happy-farm/game-data";
+import { buildIslandGround, islandCellKindAt, islandFishingSpots, mineFootprintTiles, seaMonster } from "@happy-farm/game-data";
 import {
   createAquaculturePondLoader,
   selectedAquaculturePond,
@@ -7575,6 +7576,52 @@ function setFleet(fleet: FleetResponse): void {
 /** The helm while the player sails the ship round home waters; null while it lies at the pier. */
 let helm: HelmView | null = null;
 
+/** The practice monster, and the drawn length it has. Presentation only (sea-monster.ts). */
+const PRACTICE_MONSTER_ID = "monster_thuong_luong";
+const PRACTICE_MONSTER_LENGTH = 14;
+
+/** Where the practice monster lairs off this island, or null on a farm without a chosen island. */
+function practiceLair(): MonsterLair | null {
+  if (state.island === null) return null;
+  const pier = islandDecorPlan(state.island).pier;
+  return monsterLair(state.island, pier === null ? null : { x: pier.x, y: pier.y });
+}
+
+/** The monster as the scene draws it, at its lair. */
+function seaMonsterOf(): { modelId: string; x: number; y: number; heading: number; lengthWorld: number } | null {
+  const lair = practiceLair();
+  return lair === null ? null : { modelId: PRACTICE_MONSTER_ID, x: lair.x, y: lair.y, heading: lair.heading, lengthWorld: PRACTICE_MONSTER_LENGTH };
+}
+
+/**
+ * The practice fight with the monster: the battle simulation run on this screen, with the player's
+ * ship at full hull. Nothing is sent and nothing is paid; the fleet is exactly as it was afterwards.
+ */
+function openPracticeFight(onClosed: () => void): void {
+  const monster = seaMonster(PRACTICE_MONSTER_ID);
+  const ship = fleetState?.fleet.ship ?? null;
+  if (battleView !== null || monster === null || ship === null) {
+    onClosed();
+    return;
+  }
+  const setup = practiceBattleSetup(ship, monster, Math.floor(Math.random() * 0xffffffff));
+  battleView = openBattleView({
+    host: document.body,
+    translate: (key, params) => t(key, params),
+    setup,
+    pirates: [PRACTICE_MONSTER_ID],
+    playerShip: ship.classId,
+    title: t("battle.monsterTitle"),
+    loadModel: (modelId) => sharedModelLibrary().load(modelId),
+    submit: (inputs) => Promise.resolve({ battle: runPracticeFight(setup, inputs), spoils: t("battle.practice") }),
+    describeError: (error) => describe(error)(t, state.language),
+    onClose: () => {
+      battleView = null;
+      onClosed();
+    }
+  });
+}
+
 /**
  * Takes the ship from the pier and sails it by hand (docs/design/NAVAL.md, "Taking the helm").
  *
@@ -7595,6 +7642,9 @@ function takeHelm(): void {
   // through them, and never past the sea that is drawn.
   const sea = scene.helmSea();
   const neighbours = sea?.islands ?? [];
+  // The practice monster lies in the way like a rock: the ship comes alongside, never through it.
+  const lair = practiceLair();
+  const obstacles = lair === null ? neighbours : [...neighbours, { slotId: PRACTICE_MONSTER_ID, x: lair.x, y: lair.y, radius: 4 }];
   const gridHalf = (island.size - 1) / 2;
   const waters = islandHelmWaters({
     size: island.size,
@@ -7605,7 +7655,7 @@ function takeHelm(): void {
       return kind === "DEEP" || kind === "SHALLOW";
     },
     pier: pier === null ? null : { x0: pier.x, y0: pier.y, x1: pier.x + pier.dirX * pier.lengthTiles, y1: pier.y + pier.dirY * pier.lengthTiles },
-    obstacles: neighbours,
+    obstacles,
     ...(sea === null ? {} : { radius: horizonWatersRadius({ centre: { x: island.originX + gridHalf, y: island.originY + gridHalf }, gridHalf, seaRadius: sea.seaRadius, islands: neighbours }) })
   });
   // The helm takes the screen: the selection, its strip and any open panel close with the walk.
@@ -7634,6 +7684,13 @@ function takeHelm(): void {
     },
     onLeave: () => {
       leaveHelm();
+    },
+    monsterAt: (pose) => (lair !== null && nearMonster(pose, lair) ? { name: t("pirate.monster_thuong_luong") } : null),
+    onFight: () => {
+      helm?.setPaused(true);
+      openPracticeFight(() => {
+        helm?.setPaused(false);
+      });
     },
     portAt: (pose) => {
       const port = nearestPort(pose, neighbours);
@@ -7866,6 +7923,8 @@ async function refreshHorizon(): Promise<void> {
     horizonView = null;
   }
   scene?.setHorizon(state.island === null ? null : horizonView);
+  // The island may have arrived after the 3D view opened: the monster follows it (a no-op when unchanged).
+  scene?.setSeaMonster(seaMonsterOf());
 }
 
 /** Opens the sea chart over the farm. It only reads, except to give a placeless island its place. */
@@ -9586,6 +9645,7 @@ function enable3D(): void {
     scene.setBuildingLooks({ STORAGE_SHED: warehouseLookFor(state.warehouse?.tier ?? null) });
     scene.setHorizon(state.island === null ? null : horizonView);
     scene.setDockShip(dockShipOf(fleetState));
+    scene.setSeaMonster(seaMonsterOf());
     mineSceneSignature = "";
     pushMinesToScene();
   }

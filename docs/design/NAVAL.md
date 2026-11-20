@@ -224,6 +224,25 @@ places; this document gives it ships.
   (duels, opt-in flags, or zones).
 - **Rewards.** A won pirate fight pays a bounty (see W5c above).
 
+## A monster off the island (practice, F0)
+
+The first sea monster, the **thuồng luồng**, lairs in the open water about a dozen tiles off every
+chosen island (`monsterLair` in `apps/web/src/sea-monster.ts`). Its place comes from the island's
+seed and is turned away from the pier. The scene draws it lying in the water, three humps and a
+raised head. At the helm, coming within 14 tiles of it offers **"Giao chiến (luyện tập)"**.
+
+- **The fight is the battle simulation's**, with a new behaviour for beasts (`behaviour: "BEAST"`
+  in `SeaBattleShipSpec`). A beast has no guns. It circles its prey at a distance, then, once its
+  strength is back (the oars' rest), charges, leading the ship a little, and rams. A ship spec with
+  no behaviour is a ship, so every setup the server stores plays exactly as before.
+- **Practice only.** The fight runs on the player's screen (`runPracticeFight`) with the ship at
+  full hull. It sends nothing, pays nothing and changes nothing; the end card says so.
+- **Numbers** (`SEA_MONSTERS` in game data): hull 100, speed 8, turn 15, radius 6, no guns. Against
+  the test captain (`gunner()`), a two-gun sloop wins in about 55 seconds with a third of its hull or
+  less left. A captain who gives no orders never wins.
+- **Next:** real monster hunts paid like pirate bounties, which needs a server-planned encounter and
+  the owner's numbers (docs/design/FLEET.md).
+
 ## How ships look
 
 - Every class and every pirate has its own model, in the look of old Vietnamese boats and war junks:

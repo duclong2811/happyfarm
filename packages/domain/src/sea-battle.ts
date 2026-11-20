@@ -120,6 +120,12 @@ export interface SeaBattleShipSpec {
   readonly radius: number;
   /** How wide its broadsides scatter, in heading units either side. */
   readonly spread: number;
+  /**
+   * How it fights: a ship (the default) works its broadsides; a beast - a sea monster - has no guns,
+   * circles its prey and charges in to ram whenever it has the strength. Absent means a ship, so
+   * every setup the server stores reads exactly as before.
+   */
+  readonly behaviour?: "SHIP" | "BEAST";
 }
 
 export interface SeaBattleSetup {
@@ -499,6 +505,52 @@ function steerPirate(state: SeaBattleState, index: number): void {
   fire(state, index, side, aim, power);
 }
 
+/**
+ * A sea monster's choice for this tick. It has no guns: it circles its prey at a distance, coiling round
+ * the side it is on, until its strength is back (the oars' rest), then charges - leading the ship a
+ * little, surging with its burst - and rams. Spent, it falls back to circling. So a captain who keeps
+ * moving and keeps firing can wear it down; one who lies still is rammed again and again.
+ */
+function steerBeast(state: SeaBattleState, index: number): void {
+  const beast = state.ships[index];
+  const player = state.ships[0];
+  if (beast === undefined || player === undefined || !beast.alive) return;
+  const dx = player.x - beast.x;
+  const dz = player.z - beast.z;
+  const distance = Math.sqrt(dx * dx + dz * dz);
+  if (distance <= 0) return;
+  const fx = seaCosine(beast.heading);
+  const fz = seaSine(beast.heading);
+  const cross = fx * dz - fz * dx;
+  const dot = fx * dx + fz * dz;
+  let wantX: number;
+  let wantZ: number;
+  const charging = player.alive && (beast.oars > 0 || (beast.oarRest === 0 && beast.ramRest === 0 && distance < 100));
+  if (charging) {
+    beast.sail = 2;
+    // Lead the ship by the time the charge takes, at most a second and a half.
+    const lead = Math.min(1.5, distance / (beast.spec.speed * OAR_SPEED));
+    const tx = dx + seaCosine(player.heading) * player.speed * lead;
+    const tz = dz + seaSine(player.heading) * player.speed * lead;
+    const size = Math.sqrt(tx * tx + tz * tz);
+    wantX = size > 0 ? tx / size : dx / distance;
+    wantZ = size > 0 ? tz / size : dz / distance;
+    if (dot / distance > 0.9 && distance < 60) row(beast);
+  } else {
+    beast.sail = distance > 110 ? 2 : 1;
+    // Circle: a quarter turn off the bearing, drawing in when far and out when close.
+    const inward = distance > 75 ? 380 : distance < 45 ? -380 : 0;
+    const turn = cross > 0 ? -(QUARTER - inward) : QUARTER - inward;
+    const c = seaCosine(turn);
+    const sn = seaSine(turn);
+    wantX = (dx / distance) * c - (dz / distance) * sn;
+    wantZ = (dx / distance) * sn + (dz / distance) * c;
+  }
+  const steer = fx * wantZ - fz * wantX;
+  const ahead = fx * wantX + fz * wantZ;
+  beast.rudder = ahead > 0.995 ? 0 : steer > 0 ? 1 : steer < 0 ? -1 : 1;
+}
+
 function applyPlayerAction(state: SeaBattleState, action: SeaBattleAction, aim: number | undefined): void {
   const player = state.ships[0];
   if (player === undefined || !player.alive) return;
@@ -611,7 +663,10 @@ export function stepSeaBattle(state: SeaBattleState, actions: readonly (SeaBattl
     if (typeof entry === "string") applyPlayerAction(state, entry, undefined);
     else applyPlayerAction(state, entry.action, entry.aim);
   }
-  for (let index = 1; index < state.ships.length; index += 1) steerPirate(state, index);
+  for (let index = 1; index < state.ships.length; index += 1) {
+    if (state.ships[index]?.spec.behaviour === "BEAST") steerBeast(state, index);
+    else steerPirate(state, index);
+  }
 
   for (const ship of state.ships) {
     if (!ship.alive) continue;

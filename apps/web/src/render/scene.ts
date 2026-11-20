@@ -126,7 +126,7 @@ import {
 } from "./character-camera";
 import { renderQualityPreset, type RenderQualityName } from "./render-quality";
 import { sharedModelLibrary } from "./model-library";
-import { fitShipModel, shipModelForTier } from "./ship-models";
+import { draftShareFor, fitShipModel, shipModelForTier } from "./ship-models";
 
 /** A moored ship's length at the pier, in world metres, by tier (rowboat, sloop, brig, frigate). */
 const DOCK_SHIP_LENGTH_BY_TIER = [2.6, 4.6, 5.8, 7.2] as const;
@@ -569,6 +569,15 @@ export interface DockShipMooring {
   readonly lengthTiles: number;
 }
 
+/** A sea monster lying in the home waters: its model, where it is in island tiles, and its length. */
+export interface SceneSeaMonster {
+  readonly modelId: string;
+  readonly x: number;
+  readonly y: number;
+  readonly heading: number;
+  readonly lengthWorld: number;
+}
+
 /** The sea round the home island as the helm sees it, in island tiles. */
 export interface HelmSea {
   readonly centre: { readonly x: number; readonly y: number };
@@ -722,6 +731,8 @@ export interface FarmSceneHandle {
   setDockShip(ship: { readonly tier: number } | null): void;
   /** Where the moored ship lies, in island tiles, or null while there is none at the pier. */
   dockShipMooring(): DockShipMooring | null;
+  /** Draws a sea monster in the home waters, or none (null). Presentation only. */
+  setSeaMonster(monster: SceneSeaMonster | null): void;
   /**
    * The open water the helm may sail, in island tiles: the horizon's islands as circles (with the
    * place each one is), and the radius of the sea drawn round the home island.
@@ -1384,6 +1395,11 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
   // from the island's little fishing boat.
   const dockShipGroup = new Group();
   dockShipGroup.name = "dock-ship";
+  // The sea monster lairing off the island: drawn where the host says, from the shared model library.
+  const seaMonsterGroup = new Group();
+  seaMonsterGroup.name = "sea-monster";
+  let seaMonsterSignature = "";
+  let seaMonsterToken = 0;
   let dockShip: { readonly tier: number } | null = null;
   let dockShipSignature = "";
   let dockShipToken = 0;
@@ -1637,6 +1653,7 @@ export function createFarmScene(canvas: HTMLCanvasElement, options: FarmSceneOpt
     fishingMarkerGroup,
     islandDecorGroup,
     dockShipGroup,
+    seaMonsterGroup,
     neighborPreviewGroup,
     neighborGroup,
     neighborCollisionDebugGroup,
@@ -5289,7 +5306,7 @@ let interactionGeometry: BufferGeometry | null = null;
       };
       const homeVisible = next === null;
       for (const group of [
-        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup, fishingMarkerGroup, islandDecorGroup, dockShipGroup,
+        worldGroup, detailGroup, tileGroup, cropGroup, treeGroup, resourceGroup, fishingMarkerGroup, islandDecorGroup, dockShipGroup, seaMonsterGroup,
         overlayGroup, overlayDetailGroup, interactionGroup, cellOverlayGroup,
         workAreaGridGroup, workAreaMarkGroup, areaHarvestMarkGroup, previewGroup,
         constructionGroup
@@ -5302,6 +5319,28 @@ let interactionGeometry: BufferGeometry | null = null;
     setHorizon(next: SceneHorizon | null): void {
       horizonInput = next;
       rebuildHorizon();
+    },
+    setSeaMonster(next: SceneSeaMonster | null): void {
+      const signature = next === null ? "" : `${next.modelId}@${next.x.toFixed(2)},${next.y.toFixed(2)},${next.heading.toFixed(3)}:${String(next.lengthWorld)}`;
+      if (signature === seaMonsterSignature || disposed) return;
+      seaMonsterSignature = signature;
+      const token = ++seaMonsterToken;
+      // The model is the library's, shared: taken off the scene, never disposed.
+      seaMonsterGroup.clear();
+      if (next === null) {
+        draw();
+        return;
+      }
+      void library.load(next.modelId).then((source) => {
+        if (disposed || token !== seaMonsterToken || source === null) return;
+        const monster = fitShipModel(source, next.lengthWorld, undefined, draftShareFor(next.modelId));
+        const at = tileToWorld({ x: next.x, y: next.y }, worldFrame(state.layout.pitch));
+        monster.position.set(at.worldX, SEA_SURFACE_Y, at.worldZ);
+        // The model's head is +x once fitted; turn it to the heading.
+        monster.rotation.y = -next.heading;
+        seaMonsterGroup.add(monster);
+        draw();
+      });
     },
     setDockShip(next: { readonly tier: number } | null): void {
       dockShip = next === null ? null : { tier: next.tier };

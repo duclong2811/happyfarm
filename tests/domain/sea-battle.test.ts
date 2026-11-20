@@ -244,3 +244,47 @@ describe("the sea battle", () => {
     expect(me.oars).toBe(0);
   });
 });
+
+describe("a sea monster", () => {
+  const BEAST: SeaBattleShipSpec = { hull: 100, hullMax: 100, cannons: 0, speed: 8, turn: 15, radius: 6, spread: 0, behaviour: "BEAST" };
+
+  it("has no guns, so it rams: a ship that lies still is struck again and again", () => {
+    const state = createSeaBattle(setup(31, [BEAST]));
+    let rams = 0;
+    for (let tick = 0; tick < 60 * 20 && state.outcome === null; tick += 1) {
+      stepSeaBattle(state, []);
+      rams += state.rams.length;
+    }
+    expect(state.balls.length).toBe(0);
+    expect(rams).toBeGreaterThanOrEqual(2);
+    expect(state.ships[0]?.hull ?? 0).toBeLessThan(SLOOP.hull);
+  });
+
+  it("circles between charges rather than pressing in without end", () => {
+    const state = createSeaBattle(setup(32, [BEAST]));
+    let farthestAfterContact = 0;
+    let touched = false;
+    for (let tick = 0; tick < 90 * 20 && state.outcome === null; tick += 1) {
+      stepSeaBattle(state, []);
+      const [player, beast] = state.ships;
+      if (player === undefined || beast === undefined) break;
+      const distance = Math.hypot(beast.x - player.x, beast.z - player.z);
+      if (distance < 15) touched = true;
+      else if (touched) farthestAfterContact = Math.max(farthestAfterContact, distance);
+    }
+    expect(touched).toBe(true);
+    expect(farthestAfterContact).toBeGreaterThan(30);
+  });
+
+  it("can be worn down by a captain who keeps moving and keeps firing", () => {
+    const outcomes = [41, 42, 43].map((seed) => playLive(setup(seed, [BEAST]), gunner()).result.outcome);
+    expect(outcomes).toContain("WON");
+  });
+
+  it("leaves every ship-only fight exactly as it was", () => {
+    // The behaviour field is absent from every setup the server stores; a ship reads as a ship.
+    const plain = playLive(setup(4242, [CUTTER, CUTTER]), gunner());
+    const tagged = playLive(setup(4242, [{ ...CUTTER, behaviour: "SHIP" }, { ...CUTTER, behaviour: "SHIP" }]), gunner());
+    expect(tagged.result).toEqual(plain.result);
+  });
+});

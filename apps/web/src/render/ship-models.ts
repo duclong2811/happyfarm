@@ -23,11 +23,22 @@ const MODEL_BY_CLASS: Readonly<Record<string, string>> = {
 
 const MODEL_BY_TIER = ["ship_rowboat", "ship_sloop", "ship_brig", "ship_frigate"] as const;
 
-const PIRATE_MODELS = new Set(["pirate_cutter", "pirate_raider", "pirate_corsair"]);
+const PIRATE_MODELS = new Set(["pirate_cutter", "pirate_raider", "pirate_corsair", "monster_thuong_luong"]);
 
-/** The model for a ship class id or a pirate id; null for anything without one. */
+/**
+ * How deep a sea monster lies, as a share of its length: deeper than a ship, so the coils between its
+ * humps are under the water and only the humps, the tail and the raised head show.
+ */
+export const MONSTER_DRAFT_SHARE = 0.062;
+
+/** The model for a ship class id, a pirate id or a sea monster id; null for anything without one. */
 export function shipModelId(id: string): string | null {
   return MODEL_BY_CLASS[id] ?? (PIRATE_MODELS.has(id) ? id : null);
+}
+
+/** How deep a model lies in the water, as a share of its length. */
+export function draftShareFor(modelId: string): number {
+  return modelId.startsWith("monster_") ? MONSTER_DRAFT_SHARE : SHIP_DRAFT_SHARE;
 }
 
 /** The model for a ship tier (1 rowboat .. 4 frigate); higher tiers draw as the largest model. */
@@ -48,12 +59,12 @@ function lengthOf(model: Object3D): number {
  * `tint`, when given, replaces each material with an unlit-by-fog copy pulled `amount` of the way to
  * the haze colour, the way the horizon draws distant things. Those materials belong to the caller.
  */
-export function fitShipModel(source: Object3D, length: number, tint?: { readonly haze: number; readonly amount: number }): Group {
+export function fitShipModel(source: Object3D, length: number, tint?: { readonly haze: number; readonly amount: number }, draftShare: number = SHIP_DRAFT_SHARE): Group {
   const model = source.clone(true);
   const scale = length / lengthOf(source);
   model.scale.setScalar(scale);
   model.rotation.y = Math.PI / 2;
-  model.position.y = -SHIP_DRAFT_SHARE * length;
+  model.position.y = -draftShare * length;
   const hazed = new Map<Material, Material>();
   model.traverse((node) => {
     node.userData[SHARED_SHIP_GEOMETRY] = true;

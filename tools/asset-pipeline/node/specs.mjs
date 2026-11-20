@@ -31,6 +31,7 @@ import {
   buildShipRowboat,
   buildShipSloop
 } from "./ships.mjs";
+import { buildThuongLuong } from "./monsters.mjs";
 import { VIET_BUILDERS } from "./viet.mjs";
 import { VIET_REGION_BUILDERS } from "./viet-regions.mjs";
 
@@ -444,6 +445,15 @@ export const MODEL_SPECS = [
     envelope: { height: 12.78, halfFootprint: 8.2 },
     budget: SHIP_BUDGET,
     build: buildPirateCorsair
+  },
+  // Sea monsters (monsters.mjs): built like a ship, head toward +z, sunk deeper by the renderer.
+  {
+    id: "monster_thuong_luong",
+    kind: "ship",
+    directory: "apps/web/src/assets/models/ships",
+    envelope: { height: 5.37, halfFootprint: 7.3 },
+    budget: SHIP_BUDGET,
+    build: buildThuongLuong
   },
   // Làng Việt: houses, village pieces, fences and trees (viet.mjs).
   ...VILLAGE_SPECS

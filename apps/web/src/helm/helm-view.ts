@@ -36,6 +36,10 @@ export interface HelmViewOptions {
   readonly portAt?: (state: HelmState) => { readonly slotId: string; readonly name: string } | null;
   /** The player asked to sail for that neighbour: a real voyage, which the host requests. */
   readonly onSailTo?: (slotId: string) => void;
+  /** A sea monster close by, with its name, or null; asked as the ship moves. */
+  readonly monsterAt?: (state: HelmState) => { readonly name: string } | null;
+  /** The player chose to fight it. */
+  readonly onFight?: () => void;
 }
 
 export interface HelmView {
@@ -84,7 +88,16 @@ export function openHelmView(options: HelmViewOptions): HelmView {
   sailButton.addEventListener("click", () => {
     if (port !== null) options.onSailTo?.(port.slotId);
   });
-  notice.replaceChildren(noticeText, chartButton, sailButton);
+  const fightButton = document.createElement("button");
+  fightButton.type = "button";
+  fightButton.className = "primary helm-fight";
+  fightButton.hidden = true;
+  fightButton.textContent = translate("helm.fight");
+  fightButton.addEventListener("click", () => {
+    options.onFight?.();
+  });
+  let monster: { readonly name: string } | null = null;
+  notice.replaceChildren(noticeText, fightButton, chartButton, sailButton);
 
   const controls = document.createElement("div");
   controls.className = "helm-controls";
@@ -154,21 +167,26 @@ export function openHelmView(options: HelmViewOptions): HelmView {
   function render(): void {
     const resting = helmOarRestShare(state);
     port = options.portAt?.(state) ?? null;
-    const next = `${String(state.sail)}|${state.blocked}|${resting.toFixed(2)}|${String(state.oars > 0)}|${port?.slotId ?? ""}`;
+    monster = options.monsterAt?.(state) ?? null;
+    const next = `${String(state.sail)}|${state.blocked}|${resting.toFixed(2)}|${String(state.oars > 0)}|${port?.slotId ?? ""}|${monster?.name ?? ""}`;
     if (next === signature) return;
     signature = next;
     sailText.textContent = translate(SAIL_KEYS[state.sail] ?? "battle.sailDown");
     oars.style.setProperty("--reload", resting.toFixed(2));
     oars.disabled = state.oars > 0 || state.oarRest > 0;
     oars.classList.toggle("is-rowing", state.oars > 0);
-    // One notice at a time: the edge of home waters, then a neighbour close by, then shoal water.
-    const atEdge = state.blocked === "EDGE";
-    const nearPort = !atEdge && port !== null;
-    notice.hidden = !atEdge && !nearPort && state.blocked === "NONE";
+    // One notice at a time: a monster close by, the edge of home waters, a neighbour, shoal water.
+    const nearMonster = monster !== null;
+    const atEdge = !nearMonster && state.blocked === "EDGE";
+    const nearPort = !nearMonster && !atEdge && port !== null;
+    notice.hidden = !nearMonster && !atEdge && !nearPort && state.blocked === "NONE";
+    fightButton.hidden = !nearMonster;
     chartButton.hidden = !atEdge;
     sailButton.hidden = !nearPort;
     if (nearPort && port !== null) sailButton.textContent = translate("helm.sailTo", { name: port.name });
-    noticeText.textContent = atEdge
+    noticeText.textContent = nearMonster && monster !== null
+      ? translate("helm.monster", { name: monster.name })
+      : atEdge
       ? translate("helm.edge")
       : nearPort && port !== null
         ? translate("helm.nearPort", { name: port.name })

@@ -91,6 +91,8 @@ export interface BattleViewOptions {
   readonly pirates: readonly string[];
   /** The player's ship class id, for its model. */
   readonly playerShip: string;
+  /** The heading over the fight, when it is not pirates (a sea monster). */
+  readonly title?: string;
   /** Loads a ship model (the shared model library); without it the fight draws block ships. */
   readonly loadModel?: (modelId: string) => Promise<Object3D | null>;
   /**
@@ -156,7 +158,7 @@ export function openBattleView(options: BattleViewOptions): BattleView {
   root.className = "battle-view";
   root.setAttribute("role", "dialog");
   root.setAttribute("aria-modal", "true");
-  root.setAttribute("aria-label", translate("battle.title"));
+  root.setAttribute("aria-label", options.title ?? translate("battle.title"));
   const canvas = document.createElement("canvas");
   canvas.className = "bv-canvas";
   canvas.setAttribute("aria-hidden", "true");
@@ -164,7 +166,7 @@ export function openBattleView(options: BattleViewOptions): BattleView {
   const top = document.createElement("div");
   top.className = "bv-top";
   const title = document.createElement("h2");
-  title.textContent = translate("battle.title");
+  title.textContent = options.title ?? translate("battle.title");
   const hulls = document.createElement("div");
   hulls.className = "bv-hulls";
   const bar = (label: string, mine: boolean): { row: HTMLElement; fill: HTMLElement; text: HTMLElement } => {
