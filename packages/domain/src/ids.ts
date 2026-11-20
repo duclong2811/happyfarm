@@ -17,6 +17,7 @@ declare const resourceActionIdBrand: unique symbol;
 declare const warehouseIdBrand: unique symbol;
 declare const mineIdBrand: unique symbol;
 declare const shipIdBrand: unique symbol;
+declare const dockIdBrand: unique symbol;
 declare const workAreaIdBrand: unique symbol;
 declare const actorIdBrand: unique symbol;
 declare const jobIdBrand: unique symbol;
@@ -37,8 +38,13 @@ export type FishingActionId = string & { readonly [fishingActionIdBrand]: true }
 export type ResourceActionId = string & { readonly [resourceActionIdBrand]: true };
 export type WarehouseId = string & { readonly [warehouseIdBrand]: true };
 export type MineId = string & { readonly [mineIdBrand]: true };
-/** A player's ship: one per player, so its id is the player's own uuid under the `ship_` prefix. */
+/**
+ * A player's ship. The ship in berth 1 is the player's own uuid under the `ship_` prefix (the id every
+ * ship had when a player kept only one); a ship in a later berth adds `_<berth>`.
+ */
 export type ShipId = string & { readonly [shipIdBrand]: true };
+/** A player's dock: one per player, the player's own uuid under the `dock_` prefix. */
+export type DockId = string & { readonly [dockIdBrand]: true };
 export type WorkAreaId = string & { readonly [workAreaIdBrand]: true };
 export type ActorId = string & { readonly [actorIdBrand]: true };
 export type JobId = string & { readonly [jobIdBrand]: true };
@@ -59,7 +65,8 @@ const FISHING_ACTION_ID_PATTERN = new RegExp(`^fishact_${UUID_PATTERN}$`, "i");
 const RESOURCE_ACTION_ID_PATTERN = new RegExp(`^resact_${UUID_PATTERN}$`, "i");
 const WAREHOUSE_ID_PATTERN = new RegExp(`^warehouse_${UUID_PATTERN}$`, "i");
 const MINE_ID_PATTERN = new RegExp(`^mine_${UUID_PATTERN}_(?:[0-9]|1[0-5])$`, "i");
-const SHIP_ID_PATTERN = new RegExp(`^ship_${UUID_PATTERN}$`, "i");
+const SHIP_ID_PATTERN = new RegExp(`^ship_${UUID_PATTERN}(?:_[2-8])?$`, "i");
+const DOCK_ID_PATTERN = new RegExp(`^dock_${UUID_PATTERN}$`, "i");
 const WORK_AREA_ID_PATTERN = new RegExp(`^workarea_${UUID_PATTERN}$`, "i");
 const ACTOR_ID_PATTERN = new RegExp(`^actor_${UUID_PATTERN}$`, "i");
 const JOB_ID_PATTERN = new RegExp(`^job_${UUID_PATTERN}$`, "i");
@@ -262,8 +269,22 @@ export function parseShipId(value: string): ShipId {
   return value as ShipId;
 }
 
-export function shipIdFor(playerId: PlayerId): ShipId {
-  return parseShipId(`ship_${playerId.slice("player_".length)}`);
+/** The ship in a player's `berth` (1 to 8): berth 1 keeps the id a player's only ship always had. */
+export function shipIdFor(playerId: PlayerId, berth = 1): ShipId {
+  if (!Number.isInteger(berth) || berth < 1 || berth > 8) throw new DomainError("INVALID_ID", "Invalid ship berth");
+  const uuid = playerId.slice("player_".length);
+  return parseShipId(berth === 1 ? `ship_${uuid}` : `ship_${uuid}_${String(berth)}`);
+}
+
+export function parseDockId(value: string): DockId {
+  if (!DOCK_ID_PATTERN.test(value)) {
+    throw new DomainError("INVALID_ID", "Invalid dock ID");
+  }
+  return value as DockId;
+}
+
+export function dockIdFor(playerId: PlayerId): DockId {
+  return parseDockId(`dock_${playerId.slice("player_".length)}`);
 }
 
 export function mineIdFor(farmId: FarmId, slot: number): MineId {

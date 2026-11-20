@@ -14,7 +14,7 @@ import {
   type PlayerId,
   type TreeInstanceId
 } from "@happy-farm/domain";
-import { chartedArchipelagos, findSeaSlot, seaChart, SHIP_CLASSES, voyageSeconds } from "@happy-farm/game-data";
+import { chartedArchipelagos, findSeaSlot, seaChart, shipClassById, voyageSeconds } from "@happy-farm/game-data";
 import {
   createSeaBattle,
   cumulativeXpForLevel,
@@ -486,73 +486,168 @@ describe("the world map", () => {
     return FleetResponseSchema.parse(await dataOf(await request("/ships/fleet")));
   }
 
-  it("starts every player with the dock's rowboat, and shows the next class and its price", async () => {
+  const sloop = shipClassById("ship_class_sloop");
+  const rowboat = shipClassById("ship_class_rowboat");
+  const lineBoat = shipClassById("ship_class_line_boat");
+
+  /** The id of player `n`'s ship in `berth`. */
+  function shipOf(n: number, berth = 1): string {
+    const uuid = playerId(n).slice("player_".length);
+    return berth === 1 ? `ship_${uuid}` : `ship_${uuid}_${String(berth)}`;
+  }
+
+  it("starts every player with the dock's rowboat, lent, a one-berth dock, and what each role would cost", async () => {
     await settle(1, "NORTH");
     auth.setActor({ playerId: playerId(1) });
     const view = await fleet();
-    const [rowboat, sloop] = SHIP_CLASSES;
+    if (rowboat === null || lineBoat === null || sloop === null) throw new Error("no ships");
     expect(view.location).toBe("HOME");
     expect(view.voyage).toBeNull();
-    expect(view.ship).toEqual({ classId: rowboat?.id, tier: 1, hull: rowboat?.hull, hullMax: rowboat?.hull, speedTilesPerMinute: rowboat?.speedTilesPerMinute, cannons: 0 });
-    expect(view.next).toMatchObject({
-      classId: sloop?.id,
-      tier: 2,
-      requiredPlayerLevel: sloop?.requiredPlayerLevel,
-      cost: {
-        currencyId: "currency_gold",
-        gold: sloop?.buildCost?.gold,
-        materials: [
-          { itemDefinitionId: "item_wood", quantity: sloop?.buildCost?.wood },
-          { itemDefinitionId: "item_ore", quantity: sloop?.buildCost?.ore }
-        ]
-      }
+    expect(view.ships).toHaveLength(1);
+    expect(view.ship).toMatchObject({ shipId: shipOf(1), berth: 1, lent: true, classId: rowboat.id, role: "FISHING", rank: 1, tier: 1, hull: rowboat.hull, hullMax: rowboat.hull, cannons: 0, hold: rowboat.hold, away: false });
+    // The rowboat's own ladder: it becomes a line boat, never a warship.
+    expect(view.next).toMatchObject({ classId: lineBoat.id, role: "FISHING", rank: 2, requiredPlayerLevel: lineBoat.requiredPlayerLevel });
+    expect(view.ship.upgrade).toEqual(view.next);
+    expect(view.builds.map((build) => [build.role, build.classId])).toEqual([
+      ["FISHING", "ship_class_rowboat"],
+      ["MERCHANT", "ship_class_coaster"],
+      ["WAR", "ship_class_sloop"]
+    ]);
+    expect(view.builds.find((build) => build.role === "WAR")?.cost).toEqual({
+      currencyId: "currency_gold",
+      gold: sloop.buildCost.gold,
+      materials: [
+        { itemDefinitionId: "item_wood", quantity: sloop.buildCost.wood },
+        { itemDefinitionId: "item_ore", quantity: sloop.buildCost.ore }
+      ]
     });
+    expect(view.dock).toMatchObject({ tier: 1, berths: 1, freeBerths: 1, next: { tier: 2, berths: 2 } });
   });
 
-  it("builds the next ship for its price, through the ledger, once per request", async () => {
+  it("builds a warship for its price in place of the lent rowboat, through the ledger, once per request", async () => {
     await settle(1, "NORTH");
     auth.setActor({ playerId: playerId(1) });
-    const sloop = SHIP_CLASSES[1];
-    if (sloop?.buildCost == null) throw new Error("no sloop");
+    if (sloop === null) throw new Error("no sloop");
+    const war = (requestId: string) => request("/ships/build", { role: "WAR", requestId });
     // Too low a level, then too little wood, then too little gold: nothing is taken.
     equip(1, sloop.requiredPlayerLevel - 1, 5_000, 300, 200);
-    expect(await codeOf(await request("/ships/build", { requestId: "build-request-1" }))).toBe("SHIP_LEVEL_REQUIRED");
+    expect(await codeOf(await war("build-request-1"))).toBe("SHIP_LEVEL_REQUIRED");
     equip(1, sloop.requiredPlayerLevel, 5_000, sloop.buildCost.wood - 1, 200);
-    expect(await codeOf(await request("/ships/build", { requestId: "build-request-1" }))).toBe("INSUFFICIENT_ITEMS");
+    expect(await codeOf(await war("build-request-1"))).toBe("INSUFFICIENT_ITEMS");
     equip(1, sloop.requiredPlayerLevel, sloop.buildCost.gold - 1, 300, 200);
-    expect(await codeOf(await request("/ships/build", { requestId: "build-request-1" }))).toBe("INSUFFICIENT_FUNDS");
+    expect(await codeOf(await war("build-request-1"))).toBe("INSUFFICIENT_FUNDS");
     expect(holdings(1)).toEqual({ gold: sloop.buildCost.gold - 1, wood: 300, ore: 200, ledger: 0 });
 
     equip(1, sloop.requiredPlayerLevel, 5_000, 300, 200);
-    const built = FleetResponseSchema.parse(await dataOf(await request("/ships/build", { requestId: "build-request-2" })));
-    expect(built.ship).toMatchObject({ classId: sloop.id, tier: 2, hull: sloop.hull });
+    const built = FleetResponseSchema.parse(await dataOf(await war("build-request-2")));
+    expect(built.ships).toHaveLength(1);
+    expect(built.ship).toMatchObject({ shipId: shipOf(1), berth: 1, lent: false, classId: sloop.id, role: "WAR", tier: 2, hull: sloop.hull });
+    expect(built.dock.freeBerths).toBe(0);
     const after = { gold: 5_000 - sloop.buildCost.gold, wood: 300 - sloop.buildCost.wood, ore: 200 - sloop.buildCost.ore, ledger: 1 };
     expect(holdings(1)).toEqual(after);
     const ledger = db.sqlite.prepare("SELECT delta, reason, reference_type, reference_id, request_id FROM economy_ledger WHERE reason = 'SHIP_BUILD'").get() as Record<string, unknown>;
-    expect(ledger).toEqual({ delta: -sloop.buildCost.gold, reason: "SHIP_BUILD", reference_type: "SHIP", reference_id: `ship_${playerId(1).slice("player_".length)}`, request_id: "build-request-2" });
-    // The same request again answers from its receipt and charges nothing.
-    const replayed = FleetResponseSchema.parse(await dataOf(await request("/ships/build", { requestId: "build-request-2" })));
+    expect(ledger).toEqual({ delta: -sloop.buildCost.gold, reason: "SHIP_BUILD", reference_type: "SHIP", reference_id: shipOf(1), request_id: "build-request-2" });
+    // The same request again answers from its receipt and charges nothing; the same id for another role is refused.
+    const replayed = FleetResponseSchema.parse(await dataOf(await war("build-request-2")));
     expect(replayed.ship).toEqual(built.ship);
+    expect(await codeOf(await request("/ships/build", { role: "FISHING", requestId: "build-request-2" }))).toBe("IDEMPOTENCY_CONFLICT");
     expect(holdings(1)).toEqual(after);
-    expect((await fleet()).ship.tier).toBe(2);
+    expect((await fleet()).ship.classId).toBe(sloop.id);
+    // A one-berth dock holds one ship of one's own.
+    expect(await codeOf(await request("/ships/build", { role: "FISHING", requestId: "build-request-3" }))).toBe("DOCK_FULL");
   });
 
-  it("charges one build when two race for the same step", async () => {
+  it("charges one upgrade when two race for the same step, and moves the ship up its own ladder in place", async () => {
     await settle(1, "NORTH");
     auth.setActor({ playerId: playerId(1) });
-    const sloop = SHIP_CLASSES[1];
-    if (sloop?.buildCost == null) throw new Error("no sloop");
-    // Enough of everything for two builds: only the ship itself can decide the race.
-    equip(1, sloop.requiredPlayerLevel, 50_000, 300, 200);
+    if (lineBoat === null) throw new Error("no line boat");
+    // Enough of everything for two upgrades of the lent rowboat: only the ship itself can decide the race.
+    equip(1, lineBoat.requiredPlayerLevel, 50_000, 300, 100);
     const results = await Promise.all([
-      request("/ships/build", { requestId: "race-request-1" }),
-      request("/ships/build", { requestId: "race-request-2" })
+      request("/ships/upgrade", { shipId: shipOf(1), requestId: "race-request-1" }),
+      request("/ships/upgrade", { shipId: shipOf(1), requestId: "race-request-2" })
     ]);
-    const statuses = results.map((response) => response.status).sort();
-    expect(statuses).toContain(200);
+    expect(results.map((response) => response.status)).toContain(200);
     expect(holdings(1).ledger).toBe(1);
-    expect((await fleet()).ship.tier).toBe(2);
-    expect(holdings(1).gold).toBe(50_000 - sloop.buildCost.gold);
+    const view = await fleet();
+    // The rowboat is now the player's own, a line boat in the same berth, still a fishing boat.
+    expect(view.ships).toHaveLength(1);
+    expect(view.ship).toMatchObject({ shipId: shipOf(1), berth: 1, lent: false, classId: lineBoat.id, role: "FISHING", rank: 2, hull: lineBoat.hull });
+    expect(holdings(1)).toEqual({ gold: 50_000 - lineBoat.buildCost.gold, wood: 300 - lineBoat.buildCost.wood, ore: 100 - lineBoat.buildCost.ore, ledger: 1 });
+    // Another player's ship, or a ship id that is not one's own, is not found.
+    expect(await codeOf(await request("/ships/upgrade", { shipId: shipOf(2), requestId: "upgrade-other-1" }))).toBe("RESOURCE_NOT_FOUND");
+    expect(await codeOf(await request("/ships/upgrade", { shipId: shipOf(1, 2), requestId: "upgrade-empty-1" }))).toBe("RESOURCE_NOT_FOUND");
+    for (const body of [{ requestId: "upgrade-bad-1" }, { shipId: "ship_1", requestId: "upgrade-bad-2" }, { shipId: shipOf(1), requestId: "upgrade-bad-3", classId: "ship_class_dragon" }]) {
+      expect((await request("/ships/upgrade", body)).status).toBe(400);
+    }
+  });
+
+  it("raises the dock through the ledger for a second berth, and fills it with a ship of another role", async () => {
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    if (sloop === null || rowboat === null) throw new Error("no ships");
+    const dock = (requestId: string) => request("/ships/dock", { requestId });
+    equip(1, 14, 5_000, 500, 170);
+    expect(await codeOf(await dock("dock-request-1"))).toBe("DOCK_LEVEL_REQUIRED");
+    db.sqlite
+      .prepare("UPDATE player_progression SET level = 15, xp = ?, progression_version = progression_version + 1 WHERE player_id = ?")
+      .run(cumulativeXpForLevel(gameDataProgressionDefinition, 15), playerId(1));
+    expect((await request("/ships/build", { role: "WAR", requestId: "dock-sloop-1" })).status).toBe(200);
+    const before = holdings(1);
+    const raised = FleetResponseSchema.parse(await dataOf(await dock("dock-request-2")));
+    expect(raised.dock).toMatchObject({ tier: 2, berths: 2, freeBerths: 1, next: { tier: 3, berths: 3 } });
+    expect(holdings(1)).toMatchObject({ gold: before.gold - 1_500, wood: before.wood - 300, ore: before.ore - 100 });
+    const ledger = db.sqlite.prepare("SELECT delta, reference_type, reference_id, request_id FROM economy_ledger WHERE reason = 'DOCK_UPGRADE'").all();
+    expect(ledger).toEqual([{ delta: -1_500, reference_type: "DOCK", reference_id: `dock_${playerId(1).slice("player_".length)}`, request_id: "dock-request-2" }]);
+    // The same request again charges nothing.
+    expect(FleetResponseSchema.parse(await dataOf(await dock("dock-request-2"))).dock.tier).toBe(2);
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM economy_ledger WHERE reason = 'DOCK_UPGRADE'").get()).toEqual({ n: 1 });
+    // The next tier wants a higher level still.
+    expect(await codeOf(await dock("dock-request-3"))).toBe("DOCK_LEVEL_REQUIRED");
+
+    // The free berth takes a fishing boat; the sloop keeps berth 1.
+    const built = FleetResponseSchema.parse(await dataOf(await request("/ships/build", { role: "FISHING", requestId: "dock-rowboat-1" })));
+    expect(built.ships.map((ship) => [ship.berth, ship.shipId, ship.classId, ship.lent])).toEqual([
+      [1, shipOf(1), sloop.id, false],
+      [2, shipOf(1, 2), rowboat.id, false]
+    ]);
+    expect(built.dock.freeBerths).toBe(0);
+    expect(db.sqlite.prepare("SELECT reference_id FROM economy_ledger WHERE request_id = 'dock-rowboat-1'").get()).toEqual({ reference_id: shipOf(1, 2) });
+    expect(await codeOf(await request("/ships/build", { role: "FISHING", requestId: "dock-rowboat-2" }))).toBe("DOCK_FULL");
+    expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM player_ships WHERE player_id = ?").get(playerId(1))).toEqual({ n: 2 });
+  });
+
+  it("sails the ship it is told to, keeps the others at the dock, and lets no second ship out until the first is home", async () => {
+    // Pirates on every voyage of any ship: a ship with no guns must still meet none.
+    build(gameDataWorldChart, { ...gameDataShipCatalogue, planAmbush: () => ({ atShare: 0.5, seed: 9, pirates: ["pirate_cutter"] }) });
+    await settle(1, "NORTH");
+    auth.setActor({ playerId: playerId(1) });
+    equip(1, 15, 5_000, 500, 170);
+    expect((await request("/ships/build", { role: "WAR", requestId: "fleet-sloop-1" })).status).toBe(200);
+    expect((await request("/ships/dock", { requestId: "fleet-dock-1" })).status).toBe(200);
+    expect((await request("/ships/build", { role: "FISHING", requestId: "fleet-rowboat-1" })).status).toBe(200);
+
+    const out = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "fleet-voyage-1", shipId: shipOf(1, 2) })));
+    expect(out.voyage).toMatchObject({ shipId: shipOf(1, 2), ambush: null });
+    expect(out.ship).toMatchObject({ shipId: shipOf(1, 2), away: true });
+    expect(out.ships.map((ship) => ship.away)).toEqual([false, true]);
+    expect(db.sqlite.prepare("SELECT ship_id, ship_tier FROM ship_voyages WHERE player_id = ?").get(playerId(1))).toEqual({ ship_id: shipOf(1, 2), ship_tier: 1 });
+    // The sloop stays at the dock: it can be worked on, but cannot sail until the rowboat is home.
+    expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_3", requestId: "fleet-voyage-2", shipId: shipOf(1) }))).toBe("VOYAGE_UNDERWAY");
+    expect(await codeOf(await request("/ships/upgrade", { shipId: shipOf(1, 2), requestId: "fleet-upgrade-1" }))).toBe("SHIP_AT_SEA");
+    advance((Date.parse(out.voyage?.arrivesAt ?? "") - Date.parse(NOW)) / 1000);
+    expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_3", requestId: "fleet-voyage-3", shipId: shipOf(1) }))).toBe("VOYAGE_UNDERWAY");
+    // The rowboat lying there sails on, unnamed.
+    const onward = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_3", requestId: "fleet-voyage-4" })));
+    expect(onward.voyage).toMatchObject({ shipId: shipOf(1, 2), fromSlotId: "slot_north_1_2" });
+    await request("/voyages/end", {});
+    // Home again, the sloop sails, and pirates find it.
+    const sloopOut = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "fleet-voyage-5", shipId: shipOf(1) })));
+    expect(sloopOut.voyage?.shipId).toBe(shipOf(1));
+    expect(sloopOut.voyage?.ambush?.pirates).toEqual(["pirate_cutter"]);
+    // Another player's ship is not one to sail.
+    await request("/voyages/end", {});
+    expect(await codeOf(await request("/voyages", { slotId: "slot_north_1_2", requestId: "fleet-voyage-6", shipId: shipOf(2) }))).toBe("RESOURCE_NOT_FOUND");
   });
 
   it("sails for as long as the distance takes, from wherever the ship lies, and comes home at once", async () => {
@@ -561,8 +656,7 @@ describe("the world map", () => {
     const home = findSeaSlot("slot_north_1_1");
     const first = findSeaSlot("slot_north_1_2");
     const second = findSeaSlot("slot_north_1_4");
-    const rowboat = SHIP_CLASSES[0];
-    if (home === null || first === null || second === null || rowboat === undefined) throw new Error("no chart");
+    if (home === null || first === null || second === null || rowboat === null) throw new Error("no chart");
 
     const out = FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: first.slotId, requestId: "voyage-request-a" })));
     const seconds = voyageSeconds(Math.hypot(first.x - home.x, first.z - home.z), rowboat.speedTilesPerMinute);
@@ -572,7 +666,8 @@ describe("the world map", () => {
     // The same request again is the same voyage; another one waits for this to arrive.
     expect(FleetResponseSchema.parse(await dataOf(await request("/voyages", { slotId: first.slotId, requestId: "voyage-request-a" }))).voyage).toEqual(out.voyage);
     expect(await codeOf(await request("/voyages", { slotId: second.slotId, requestId: "voyage-request-b" }))).toBe("VOYAGE_UNDERWAY");
-    expect(await codeOf(await request("/ships/build", { requestId: "build-at-sea-1" }))).toBe("SHIP_AT_SEA");
+    expect(await codeOf(await request("/ships/build", { role: "WAR", requestId: "build-at-sea-1" }))).toBe("SHIP_AT_SEA");
+    expect(await codeOf(await request("/ships/upgrade", { shipId: shipOf(1), requestId: "build-at-sea-2" }))).toBe("SHIP_AT_SEA");
     expect(await codeOf(await request("/world/visit", { slotId: first.slotId }))).toBe("VOYAGE_NOT_ARRIVED");
 
     advance(seconds);
@@ -604,6 +699,7 @@ describe("the world map", () => {
       expect((await request("/voyages", body)).status).toBe(400);
     }
     expect((await request("/ships/build", { requestId: "build-request-1", tier: 4 })).status).toBe(400);
+    expect((await request("/ships/build", { role: "PIRATE", requestId: "build-request-1" })).status).toBe(400);
     expect((await request("/voyages/end", { slotId: "slot_north_1_1" })).status).toBe(400);
     await sailTo("slot_north_1_2");
     auth.setActor({ playerId: playerId(2) });
@@ -676,12 +772,11 @@ describe("the world map", () => {
     });
   }
 
-  /** Player `n` with a sloop at its dock. */
+  /** Player `n` with a sloop at its dock, in place of the lent rowboat. */
   async function withSloop(n: number): Promise<void> {
-    const sloop = SHIP_CLASSES[1];
-    if (sloop?.buildCost == null) throw new Error("no sloop");
+    if (sloop === null) throw new Error("no sloop");
     equip(n, sloop.requiredPlayerLevel, 50_000, 400, 200);
-    expect((await request("/ships/build", { requestId: `build-sloop-${String(n)}` })).status).toBe(200);
+    expect((await request("/ships/build", { role: "WAR", requestId: `build-sloop-${String(n)}` })).status).toBe(200);
   }
 
   it("plans pirates for a fighting ship, never a rowboat, and gives the device the exact fight", async () => {
@@ -698,7 +793,7 @@ describe("the world map", () => {
     expect(ambush.status).toBe("PENDING");
     expect(ambush.pirates).toEqual(["pirate_cutter"]);
     expect(ambush.setup.seed).toBe(777);
-    expect(ambush.setup.player).toMatchObject({ hull: SHIP_CLASSES[1]?.hull, cannons: SHIP_CLASSES[1]?.cannons });
+    expect(ambush.setup.player).toMatchObject({ hull: sloop?.hull, cannons: sloop?.cannons });
     expect(Date.parse(ambush.at)).toBeGreaterThan(Date.parse(sailing.voyage.departedAt));
     expect(Date.parse(ambush.at)).toBeLessThan(Date.parse(sailing.voyage.arrivesAt));
   });

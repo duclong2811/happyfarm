@@ -21,7 +21,7 @@ describe("ship models", () => {
       const id = shipModelId(shipClass.id);
       expect(id, shipClass.id).not.toBeNull();
       expect(SHIPPED.has(id ?? ""), shipClass.id).toBe(true);
-      expect(shipModelForTier(shipClass.tier), shipClass.id).toBe(id);
+      expect(SHIPPED.has(shipModelForTier(shipClass.tier)), shipClass.id).toBe(true);
     }
     for (const pirate of PIRATE_SHIPS) {
       expect(shipModelId(pirate.id), pirate.id).toBe(pirate.id);

@@ -2,6 +2,7 @@ import type { FleetResponse } from "@happy-farm/contracts";
 import { createSeaBattle, runSeaBattle } from "@happy-farm/domain";
 import { seaMonster } from "@happy-farm/game-data";
 import { describe, expect, it } from "vitest";
+import { fleetShip } from "../support/fleet-fixture";
 import { monsterLair, MONSTER_REACH, nearMonster, practiceBattleSetup, runPracticeFight } from "../../apps/web/src/sea-monster";
 
 /**
@@ -10,7 +11,7 @@ import { monsterLair, MONSTER_REACH, nearMonster, practiceBattleSetup, runPracti
  */
 
 const island = { size: 96, originX: -30, originY: -30, seed: 11 };
-const sloop: FleetResponse["ship"] = { classId: "ship_class_sloop", tier: 2, hull: 54, hullMax: 150, speedTilesPerMinute: 70, cannons: 2 };
+const sloop: FleetResponse["ship"] = fleetShip({ hull: 54 });
 
 describe("the monster's lair", () => {
   it("lies in open water a dozen tiles past the island's grid, the same place every time", () => {

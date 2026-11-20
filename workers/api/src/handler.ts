@@ -5,12 +5,16 @@
   GetWorldChart,
   GetFleet,
   BuildShip,
+  UpgradeShip,
+  UpgradeDock,
   StartVoyage,
   EndVoyage,
   FightAmbush,
   RepairShip,
   type ShipDependencies,
   type FleetView,
+  type NextShipView,
+  type ShipView,
   VisitWorldPlace,
   type PublicIslandView,
   type WorldArchipelagoView,
@@ -180,6 +184,8 @@ import {
   type VisitWorldPlaceResponse,
   type FleetResponse,
   BuildShipRequestSchema,
+  UpgradeShipRequestSchema,
+  UpgradeDockRequestSchema,
   StartVoyageRequestSchema,
   EndVoyageRequestSchema,
   RepairShipRequestSchema,
@@ -848,16 +854,33 @@ function toWorldArchipelagoDTO(archipelago: WorldArchipelagoView): GetWorldChart
 }
 
 /** The fleet view as the contract carries it: copies only, so nothing internal rides along. */
+function toNextShipDTO(view: NextShipView): FleetResponse["builds"][number] {
+  return { ...view, cost: { ...view.cost, materials: view.cost.materials.map((entry) => ({ ...entry })) } };
+}
+
+function toFleetShipDTO(view: ShipView): FleetResponse["ship"] {
+  return { ...view, upgrade: view.upgrade === null ? null : toNextShipDTO(view.upgrade) };
+}
+
 function toFleetDTO(view: FleetView): FleetResponse {
   return {
     readAt: view.readAt,
-    ship: { ...view.ship },
-    next: view.next === null ? null : { ...view.next, cost: { ...view.next.cost, materials: view.next.cost.materials.map((entry) => ({ ...entry })) } },
+    ship: toFleetShipDTO(view.ship),
+    next: view.next === null ? null : toNextShipDTO(view.next),
+    ships: view.ships.map((ship) => toFleetShipDTO(ship)),
+    builds: view.builds.map((build) => toNextShipDTO(build)),
+    dock: {
+      tier: view.dock.tier,
+      berths: view.dock.berths,
+      freeBerths: view.dock.freeBerths,
+      next: view.dock.next === null ? null : { ...view.dock.next, cost: { ...view.dock.next.cost, materials: view.dock.next.cost.materials.map((entry) => ({ ...entry })) } }
+    },
     location: view.location,
     voyage:
       view.voyage === null
         ? null
         : {
+            shipId: view.voyage.shipId,
             fromSlotId: view.voyage.fromSlotId,
             toSlotId: view.voyage.toSlotId,
             departedAt: view.voyage.departedAt,
@@ -1075,6 +1098,7 @@ function errorStatus(code: ErrorCode): number {
     case "ISLAND_CHOICE_UNAVAILABLE":
     case "WORLD_PLACE_UNCHARTED":
     case "SHIP_LEVEL_REQUIRED":
+    case "DOCK_LEVEL_REQUIRED":
     case "CHARACTER_NOT_AVAILABLE":
     case "PLOT_LEVEL_REQUIRED":
     case "LAND_NOT_DEVELOPABLE":
@@ -1118,6 +1142,8 @@ function errorStatus(code: ErrorCode): number {
     case "WORLD_REGION_FULL":
     case "SHIP_AT_SEA":
     case "SHIP_MAX_CLASS":
+    case "DOCK_FULL":
+    case "DOCK_MAX_TIER":
     case "VOYAGE_UNDERWAY":
     case "VOYAGE_NOT_ARRIVED":
     case "SHIP_DAMAGED":
@@ -1735,6 +1761,8 @@ export function createHandler(host: HandlerDependencies) {
         };
   const getFleet = shipDependencies === null ? null : new GetFleet(shipDependencies);
   const buildShip = shipDependencies === null ? null : new BuildShip(shipDependencies);
+  const upgradeShip = shipDependencies === null ? null : new UpgradeShip(shipDependencies);
+  const upgradeDock = shipDependencies === null ? null : new UpgradeDock(shipDependencies);
   const startVoyage = shipDependencies === null ? null : new StartVoyage(shipDependencies);
   const endVoyage = shipDependencies === null ? null : new EndVoyage(shipDependencies);
   const fightAmbush = shipDependencies === null ? null : new FightAmbush(shipDependencies);
@@ -2329,6 +2357,20 @@ export function createHandler(host: HandlerDependencies) {
         const parsed = BuildShipRequestSchema.safeParse(await parseJson(request));
         if (!parsed.success) return failure("INVALID_INPUT", requestId);
         const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await buildShip.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (upgradeShip !== null && request.method === "POST" && url.pathname === "/ships/upgrade") {
+        const parsed = UpgradeShipRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await upgradeShip.execute(actor, parsed.data)) };
+        return jsonResponse(body);
+      }
+
+      if (upgradeDock !== null && request.method === "POST" && url.pathname === "/ships/dock") {
+        const parsed = UpgradeDockRequestSchema.safeParse(await parseJson(request));
+        if (!parsed.success) return failure("INVALID_INPUT", requestId);
+        const body: ApiSuccess<FleetResponse> = { ok: true, data: toFleetDTO(await upgradeDock.execute(actor, parsed.data)) };
         return jsonResponse(body);
       }
 

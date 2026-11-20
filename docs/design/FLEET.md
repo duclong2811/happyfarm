@@ -59,12 +59,28 @@ The proposal is three ladders, and more than one ship at a time:
 - Warships can **escort** a merchant or fishing boat on its trip. An escorted trip that meets
   pirates fights with the warship's guns.
 
+### Built (F1 server, 2026-11-20)
+
+- Migration `0051_fleet_and_docks.sql`: `player_ships` keyed by ship, with a berth (a stored ship moved
+  across into berth 1 with its id); `player_docks`; `ship_voyages.ship_id`; the ledger admits
+  `DOCK_UPGRADE` pointing at `dock_<player uuid>`.
+- Requests: `POST /ships/build { role }` builds rank 1 of a role into the first free berth (or in
+  place of the lent rowboat); `POST /ships/upgrade { shipId }` moves one's own ship up its ladder;
+  `POST /ships/dock` raises the dock; `POST /voyages { slotId, shipId? }` and
+  `POST /ships/repair { shipId? }` name the ship. The fleet read lists every ship, what each role
+  would cost to build, and the dock.
+- A ship's id is the player's uuid (berth 1, as before) or the uuid with `_<berth>`: a ship id from
+  another player's fleet is never found in one's own.
+- New errors: `DOCK_FULL`, `DOCK_MAX_TIER`, `DOCK_LEVEL_REQUIRED`.
+- Ships without guns meet no pirates. A ship lying at a place sails on; no other ship sets out until
+  it is home.
+
 ### Phases
 
 | Phase | Content | Migration | Economy |
 | --- | --- | --- | --- |
 | F0 (built) | Practice monster off the home island | no | none |
-| F1 | Fleet of several ships, three roles, conversion of today's ship | yes | ship prices and upgrades |
+| F1 (server built; client and models next) | Fleet of several ships, three roles, conversion of today's ship | yes (0051) | ship prices and upgrades |
 | F2 | Fishing trips: grounds, catch tables, the warehouse | yes | fish values |
 | F3 | Monster hunts with rewards, referee'd by the server (like pirate bounties) | yes | bounties |
 | F4 | Player marketplace, escrow, deliveries by merchant ship | yes | fees, limits, anti-abuse |

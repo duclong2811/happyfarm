@@ -71,6 +71,7 @@ import {
   parseJobId,
   parseMineId,
   parseShipId,
+  parseDockId,
   MAX_CARGO_CAPACITY,
   NO_AUTO_TRAVEL,
   PLOT_TILE_COUNT,
@@ -155,6 +156,8 @@ import type {
   ,ShipRepository
   ,PlayerShipRecord
   ,ShipBuild
+  ,DockUpgrade
+  ,PlayerDockRecord
   ,VoyageRecord
   ,AmbushResolution
   ,AmbushBountyWrite
@@ -1085,6 +1088,7 @@ interface ClaimedWorldSlotRow extends WorldSlotRow {
 interface PlayerShipRow {
   readonly player_id: string;
   readonly ship_id: string;
+  readonly berth: number;
   readonly class_id: string;
   readonly tier: number;
   readonly hull: number;
@@ -1094,8 +1098,20 @@ interface PlayerShipRow {
   readonly updated_at: string;
 }
 
+interface PlayerDockRow {
+  readonly player_id: string;
+  readonly dock_id: string;
+  readonly tier: number;
+  readonly version: number;
+  readonly last_change_id: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
 interface ShipVoyageRow {
   readonly player_id: string;
+  /** Null for a voyage stored before the fleet (migration 0051): the ship in berth 1. */
+  readonly ship_id: string | null;
   readonly from_slot_id: string;
   readonly to_slot_id: string;
   readonly ship_tier: number;
@@ -1125,6 +1141,7 @@ function voyageFromRow(row: ShipVoyageRow): VoyageRecord {
   }
   return {
     playerId: parsePlayerId(row.player_id),
+    shipId: row.ship_id === null ? null : parseShipId(row.ship_id),
     fromSlotId: row.from_slot_id,
     toSlotId: row.to_slot_id,
     shipTier: row.ship_tier,
@@ -1142,26 +1159,41 @@ function voyageFromRow(row: ShipVoyageRow): VoyageRecord {
 }
 
 /**
- * A player's ship and their one current voyage.
+ * A player's fleet, their dock, and their one current voyage.
  *
- * The build follows the mine upgrade's shape: every statement in one batch, the ship row written only
- * over the tier and version the caller read (or inserted when there was none), and the receipt
- * inserted only if the wallet, the ledger row, every consumed stack and the ship row are exactly where
- * this build left them - otherwise its actor is NULL and the whole batch rolls back.
+ * A build follows the mine upgrade's shape: every statement in one batch, a ship row written only over
+ * the class and version the caller read (or inserted into its berth while the player still has the
+ * number of ships the caller read), and the receipt inserted only if the wallet, the ledger row, every
+ * consumed stack and the ship row are exactly where this build left them - otherwise its actor is NULL
+ * and the whole batch rolls back. The dock is raised the same way.
  */
 export class D1ShipRepository implements ShipRepository {
   constructor(private readonly db: D1DatabaseLike) {}
 
-  async findShip(playerId: PlayerId): Promise<PlayerShipRecord | null> {
-    const row = await this.db.prepare("SELECT * FROM player_ships WHERE player_id = ?").bind(playerId).first<PlayerShipRow>();
+  async listShips(playerId: PlayerId): Promise<readonly PlayerShipRecord[]> {
+    const { results } = await this.db.prepare("SELECT * FROM player_ships WHERE player_id = ? ORDER BY berth").bind(playerId).all<PlayerShipRow>();
+    return results.map((row) => ({
+      playerId: parsePlayerId(row.player_id),
+      shipId: parseShipId(row.ship_id),
+      berth: row.berth,
+      classId: row.class_id,
+      tier: row.tier,
+      hull: row.hull,
+      version: row.version,
+      lastChangeId: row.last_change_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+  }
+
+  async findDock(playerId: PlayerId): Promise<PlayerDockRecord | null> {
+    const row = await this.db.prepare("SELECT * FROM player_docks WHERE player_id = ?").bind(playerId).first<PlayerDockRow>();
     return row === null
       ? null
       : {
           playerId: parsePlayerId(row.player_id),
-          shipId: parseShipId(row.ship_id),
-          classId: row.class_id,
+          dockId: parseDockId(row.dock_id),
           tier: row.tier,
-          hull: row.hull,
           version: row.version,
           lastChangeId: row.last_change_id,
           createdAt: row.created_at,
@@ -1180,17 +1212,17 @@ export class D1ShipRepository implements ShipRepository {
     if (expectedVersion === null) {
       const inserted = await this.db
         .prepare(
-          "INSERT OR IGNORE INTO ship_voyages (player_id, from_slot_id, to_slot_id, ship_tier, departed_at, arrives_at, status, request_id, version, updated_at, ambush_at, ambush_seed, ambush_pirates, ambush_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          "INSERT OR IGNORE INTO ship_voyages (player_id, ship_id, from_slot_id, to_slot_id, ship_tier, departed_at, arrives_at, status, request_id, version, updated_at, ambush_at, ambush_seed, ambush_pirates, ambush_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        .bind(next.playerId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues)
+        .bind(next.playerId, next.shipId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues)
         .run();
       return (inserted.meta.changes ?? 0) === 1;
     }
     const updated = await this.db
       .prepare(
-        "UPDATE ship_voyages SET from_slot_id = ?, to_slot_id = ?, ship_tier = ?, departed_at = ?, arrives_at = ?, status = ?, request_id = ?, version = ?, updated_at = ?, ambush_at = ?, ambush_seed = ?, ambush_pirates = ?, ambush_status = ? WHERE player_id = ? AND version = ?"
+        "UPDATE ship_voyages SET ship_id = ?, from_slot_id = ?, to_slot_id = ?, ship_tier = ?, departed_at = ?, arrives_at = ?, status = ?, request_id = ?, version = ?, updated_at = ?, ambush_at = ?, ambush_seed = ?, ambush_pirates = ?, ambush_status = ? WHERE player_id = ? AND version = ?"
       )
-      .bind(next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues, next.playerId, expectedVersion)
+      .bind(next.shipId, next.fromSlotId, next.toSlotId, next.shipTier, next.departedAt, next.arrivesAt, next.status, next.requestId, next.version, next.updatedAt, ...ambushValues, next.playerId, expectedVersion)
       .run();
     return (updated.meta.changes ?? 0) === 1;
   }
@@ -1201,17 +1233,18 @@ export class D1ShipRepository implements ShipRepository {
     const outcome = [
       this.db
         .prepare(
-          "UPDATE ship_voyages SET ambush_status = ?, status = CASE WHEN ? = 1 THEN 'ENDED' ELSE status END, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND ambush_status = 'PENDING' AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND version = ?)"
+          "UPDATE ship_voyages SET ambush_status = ?, status = CASE WHEN ? = 1 THEN 'ENDED' ELSE status END, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND ambush_status = 'PENDING' AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND ship_id = ? AND version = ?)"
         )
-        .bind(resolution.outcome, resolution.endVoyage ? 1 : 0, resolution.at, resolution.playerId, resolution.expectedVoyageVersion, resolution.playerId, resolution.expectedShipVersion),
+        .bind(resolution.outcome, resolution.endVoyage ? 1 : 0, resolution.at, resolution.playerId, resolution.expectedVoyageVersion, resolution.playerId, resolution.shipId, resolution.expectedShipVersion),
       this.db
         .prepare(
-          "UPDATE player_ships SET hull = ?, version = version + 1, updated_at = ? WHERE player_id = ? AND version = ? AND EXISTS (SELECT 1 FROM ship_voyages WHERE player_id = ? AND version = ? AND ambush_status = ?)"
+          "UPDATE player_ships SET hull = ?, version = version + 1, updated_at = ? WHERE player_id = ? AND ship_id = ? AND version = ? AND EXISTS (SELECT 1 FROM ship_voyages WHERE player_id = ? AND version = ? AND ambush_status = ?)"
         )
         .bind(
           Math.max(0, Math.floor(resolution.hull)),
           resolution.at,
           resolution.playerId,
+          resolution.shipId,
           resolution.expectedShipVersion,
           resolution.playerId,
           resolution.expectedVoyageVersion + 1,
@@ -1239,6 +1272,7 @@ export class D1ShipRepository implements ShipRepository {
       resolution.outcome !== "WON" ||
       economy.playerId !== resolution.playerId ||
       economy.reason !== "PIRATE_BOUNTY" ||
+      economy.referenceId !== resolution.shipId ||
       economy.delta <= 0 ||
       receipt.actorPlayerId !== resolution.playerId ||
       receipt.resourceId !== economy.transactionId ||
@@ -1290,12 +1324,13 @@ export class D1ShipRepository implements ShipRepository {
     statements.push(
       this.db
         .prepare(
-          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM ship_voyages WHERE player_id = ? AND version = ? AND ambush_status = 'WON') AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND version = ?) AND EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND (? = 0 OR EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?))${stackGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM ship_voyages WHERE player_id = ? AND version = ? AND ambush_status = 'WON') AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND ship_id = ? AND version = ?) AND EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND (? = 0 OR EXISTS (SELECT 1 FROM player_progression WHERE player_id = ? AND xp = ? AND progression_version = ?))${stackGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           resolution.playerId,
           resolution.expectedVoyageVersion + 1,
           resolution.playerId,
+          resolution.shipId,
           resolution.expectedShipVersion + 1,
           economy.playerId,
           economy.currencyDefinitionId,
@@ -1388,77 +1423,125 @@ export class D1ShipRepository implements ShipRepository {
     ) {
       throw new ApplicationError("NOT_AUTHORIZED", "Ship build ownership does not match");
     }
-    if (build.expectedInventory.length !== build.removals.length) {
-      throw new ApplicationError("INVALID_INPUT", "Ship build materials do not match");
+    // The ship row: a new ship lands in its berth only while the player still has the ships the caller
+    // read; a stored ship moves only over the class and version the caller read. A row that moved in
+    // between is left alone, and the receipt below then refuses the batch.
+    const shipStatement =
+      build.expectedVersion === 0
+        ? this.db
+            .prepare(
+              "INSERT INTO player_ships (ship_id, player_id, berth, class_id, tier, hull, version, last_change_id, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ? WHERE (SELECT COUNT(*) FROM player_ships WHERE player_id = ?) = ?"
+            )
+            .bind(build.shipId, build.playerId, build.berth, build.classId, build.tier, build.hull, build.economy.transactionId, build.createdAt, build.createdAt, build.playerId, build.expectedShipCount)
+        : this.db
+            .prepare(
+              "UPDATE player_ships SET class_id = ?, tier = ?, hull = ?, version = version + 1, last_change_id = ?, updated_at = ? WHERE ship_id = ? AND player_id = ? AND class_id = ? AND version = ?"
+            )
+            .bind(build.classId, build.tier, build.hull, build.economy.transactionId, build.createdAt, build.shipId, build.playerId, build.expectedClassId, build.expectedVersion);
+    await this.payAndWrite(
+      build,
+      shipStatement,
+      "EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND ship_id = ? AND berth = ? AND class_id = ? AND version = ? AND last_change_id = ?)",
+      [build.playerId, build.shipId, build.berth, build.classId, build.expectedVersion + 1, build.economy.transactionId],
+      idempotency,
+      "completed ship build idempotency requires its ledger row",
+      "The ship or the economy changed while building"
+    );
+  }
+
+  async upgradeDockAtomically(upgrade: DockUpgrade, idempotency: IdempotencyRecord): Promise<void> {
+    if (
+      upgrade.playerId !== idempotency.actorPlayerId ||
+      upgrade.economy.playerId !== upgrade.playerId ||
+      upgrade.economy.reason !== "DOCK_UPGRADE" ||
+      upgrade.economy.referenceId !== upgrade.dockId ||
+      idempotency.resourceId !== upgrade.economy.transactionId
+    ) {
+      throw new ApplicationError("NOT_AUTHORIZED", "Dock upgrade ownership does not match");
     }
-    const inventoryGuards = build.removals.map(() => "EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?)");
-    const inventoryGuardValues = build.removals.flatMap((removal, index) => {
-      const expected = build.expectedInventory[index];
+    // The dock row: inserted when the player had the starting dock, else raised over exactly the tier
+    // and version the caller read.
+    const dockStatement = this.db
+      .prepare(
+        "INSERT INTO player_docks (player_id, dock_id, tier, version, last_change_id, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET tier = excluded.tier, version = player_docks.version + 1, last_change_id = excluded.last_change_id, updated_at = excluded.updated_at WHERE player_docks.tier = ? AND player_docks.version = ?"
+      )
+      .bind(upgrade.playerId, upgrade.dockId, upgrade.toTier, upgrade.economy.transactionId, upgrade.createdAt, upgrade.createdAt, upgrade.expectedTier, upgrade.expectedVersion);
+    await this.payAndWrite(
+      upgrade,
+      dockStatement,
+      "EXISTS (SELECT 1 FROM player_docks WHERE player_id = ? AND dock_id = ? AND tier = ? AND version = ? AND last_change_id = ?)",
+      [upgrade.playerId, upgrade.dockId, upgrade.toTier, upgrade.expectedVersion + 1, upgrade.economy.transactionId],
+      idempotency,
+      "completed dock upgrade idempotency requires its ledger row",
+      "The dock or the economy changed while upgrading"
+    );
+  }
+
+  /**
+   * One purchase at the dock in one batch: the gold's ledger row, every material taken from its stack,
+   * the row the purchase writes, and the receipt - inserted only if the wallet, the ledger row, every
+   * stack and the written row (`rowGuard`) are exactly where this purchase left them. Otherwise the
+   * receipt's actor is NULL and the whole batch rolls back.
+   */
+  private async payAndWrite(
+    purchase: { readonly economy: EconomyMutation; readonly removals: readonly InventoryRemoval[]; readonly expectedInventory: readonly InventoryItem[]; readonly createdAt: string },
+    rowStatement: D1PreparedStatementLike,
+    rowGuard: string,
+    rowGuardValues: readonly unknown[],
+    idempotency: IdempotencyRecord,
+    receiptTrigger: string,
+    conflictMessage: string
+  ): Promise<void> {
+    const { economy } = purchase;
+    if (purchase.expectedInventory.length !== purchase.removals.length || purchase.removals.some((removal) => removal.playerId !== economy.playerId)) {
+      throw new ApplicationError("INVALID_INPUT", "Purchase materials do not match");
+    }
+    const inventoryGuards = purchase.removals.map(() => "EXISTS (SELECT 1 FROM inventory_items WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ?)");
+    const inventoryGuardValues = purchase.removals.flatMap((removal, index) => {
+      const expected = purchase.expectedInventory[index];
       return [removal.playerId, removal.itemDefinitionId, (expected?.quantity ?? -1) - removal.quantity, (expected?.version ?? -2) + 1];
     });
     const statements: D1PreparedStatementLike[] = [
       this.db
         .prepare("INSERT OR IGNORE INTO wallets (player_id, currency_id, balance, version, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)")
-        .bind(build.economy.playerId, build.economy.currencyDefinitionId, build.createdAt, build.createdAt),
+        .bind(economy.playerId, economy.currencyDefinitionId, purchase.createdAt, purchase.createdAt),
       this.db
         .prepare("INSERT INTO economy_ledger (id, player_id, currency_id, delta, balance_before, balance_after, expected_wallet_version, reason, reference_type, reference_id, request_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(
-          build.economy.transactionId,
-          build.economy.playerId,
-          build.economy.currencyDefinitionId,
-          build.economy.delta,
-          build.economy.balanceBefore,
-          build.economy.balanceAfter,
-          build.economy.expectedWalletVersion,
-          build.economy.reason,
-          build.economy.referenceType,
-          build.economy.referenceId,
-          build.economy.requestId,
-          build.economy.createdAt
+          economy.transactionId,
+          economy.playerId,
+          economy.currencyDefinitionId,
+          economy.delta,
+          economy.balanceBefore,
+          economy.balanceAfter,
+          economy.expectedWalletVersion,
+          economy.reason,
+          economy.referenceType,
+          economy.referenceId,
+          economy.requestId,
+          economy.createdAt
         ),
-      ...build.removals.map((removal, index) => {
-        const expected = build.expectedInventory[index];
+      ...purchase.removals.map((removal, index) => {
+        const expected = purchase.expectedInventory[index];
         return this.db
           .prepare(
             "UPDATE inventory_items SET quantity = quantity - ?, version = version + 1, updated_at = ? WHERE player_id = ? AND item_definition_id = ? AND quantity = ? AND version = ? AND quantity >= ?"
           )
           .bind(removal.quantity, removal.timestamp, removal.playerId, removal.itemDefinitionId, expected?.quantity ?? -1, expected?.version ?? -1, removal.quantity);
       }),
-      // The ship row: inserted when the player had only the dock's rowboat, else raised over exactly the
-      // tier and version the caller read. A row that moved in between is left alone, and the receipt
-      // below then refuses the batch.
+      rowStatement,
       this.db
         .prepare(
-          "INSERT INTO player_ships (player_id, ship_id, class_id, tier, hull, version, last_change_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET class_id = excluded.class_id, tier = excluded.tier, hull = excluded.hull, version = player_ships.version + 1, last_change_id = excluded.last_change_id, updated_at = excluded.updated_at WHERE player_ships.tier = ? AND player_ships.version = ?"
+          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND ${rowGuard}${inventoryGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
-          build.playerId,
-          build.shipId,
-          build.classId,
-          build.toTier,
-          build.hull,
-          build.economy.transactionId,
-          build.createdAt,
-          build.createdAt,
-          build.expectedFromTier,
-          build.expectedVersion
-        ),
-      this.db
-        .prepare(
-          `INSERT INTO idempotency_keys (actor_player_id, operation, request_id, payload_fingerprint, status, resource_id, response_json, created_at) VALUES (CASE WHEN EXISTS (SELECT 1 FROM wallets WHERE player_id = ? AND currency_id = ? AND balance = ? AND version = ?) AND EXISTS (SELECT 1 FROM economy_ledger WHERE id = ? AND player_id = ?) AND EXISTS (SELECT 1 FROM player_ships WHERE player_id = ? AND ship_id = ? AND tier = ? AND version = ? AND last_change_id = ?)${inventoryGuards.map((guard) => ` AND ${guard}`).join("")} THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .bind(
-          build.economy.playerId,
-          build.economy.currencyDefinitionId,
-          build.economy.balanceAfter,
-          build.economy.expectedWalletVersion + 1,
-          build.economy.transactionId,
-          build.economy.playerId,
-          build.playerId,
-          build.shipId,
-          build.toTier,
-          build.expectedVersion + 1,
-          build.economy.transactionId,
+          economy.playerId,
+          economy.currencyDefinitionId,
+          economy.balanceAfter,
+          economy.expectedWalletVersion + 1,
+          economy.transactionId,
+          economy.playerId,
+          ...rowGuardValues,
           ...inventoryGuardValues,
           idempotency.actorPlayerId,
           idempotency.operation,
@@ -1473,18 +1556,20 @@ export class D1ShipRepository implements ShipRepository {
     try {
       const results = await this.db.batch(statements);
       if (results.length !== statements.length || results.some((result) => !result.success)) {
-        throw new Error("Atomic ship build failed");
+        throw new Error("Atomic dock purchase failed");
       }
     } catch (error: unknown) {
-      // A wallet that moved, or any guard that failed (the receipt's actor is NULL), means the same
-      // thing: something changed under the build, and nothing was written. The use case looks again.
+      // A wallet that moved, a berth another build took, or any guard that failed (the receipt's actor
+      // is NULL) means the same thing: something changed under the purchase, and nothing was written.
+      // The use case looks again.
       if (
         error instanceof Error &&
         (error.message.includes("economy conflict") ||
           error.message.includes("NOT NULL constraint failed: idempotency_keys") ||
-          error.message.includes("completed ship build idempotency requires its ledger row"))
+          error.message.includes("UNIQUE constraint failed: player_ships") ||
+          error.message.includes(receiptTrigger))
       ) {
-        throw new ApplicationError("ECONOMY_CONFLICT", "The ship or the economy changed while building");
+        throw new ApplicationError("ECONOMY_CONFLICT", conflictMessage);
       }
       throw error;
     }

@@ -1,6 +1,7 @@
 import type { FleetResponse } from "@happy-farm/contracts";
 import { describe, expect, it } from "vitest";
 import { shipPanelModel, type ShipPanelInput } from "../../apps/web/src/ship-panel";
+import { FIXTURE_PLAYER_UUID, fleetResponse } from "../support/fleet-fixture";
 
 /**
  * The ship's panel (ship-panel.ts): which requests it offers from where the ship lies, and how it
@@ -11,23 +12,8 @@ const NOW = Date.parse("2026-11-20T10:00:00.000Z");
 
 const translate: ShipPanelInput["translate"] = (key, params) => (params === undefined ? key : `${key}:${JSON.stringify(params)}`);
 
-function fleet(overrides: Partial<FleetResponse> = {}): FleetResponse {
-  return {
-    readAt: "2026-11-20T10:00:00.000Z",
-    ship: { classId: "ship_class_sloop", tier: 2, hull: 150, hullMax: 150, speedTilesPerMinute: 70, cannons: 2 },
-    next: {
-      classId: "ship_class_brig",
-      tier: 3,
-      requiredPlayerLevel: 25,
-      speedTilesPerMinute: 100,
-      hull: 320,
-      cannons: 6,
-      cost: { currencyId: "currency_gold", gold: 3000, materials: [{ itemDefinitionId: "item_wood", quantity: 500 }, { itemDefinitionId: "item_ore", quantity: 300 }] }
-    },
-    location: "HOME",
-    voyage: null,
-    ...overrides
-  };
+function fleet(overrides: Parameters<typeof fleetResponse>[0] = {}): FleetResponse {
+  return fleetResponse(overrides);
 }
 
 function model(input: Partial<ShipPanelInput> & { fleet: FleetResponse }): ReturnType<typeof shipPanelModel> {
@@ -35,6 +21,7 @@ function model(input: Partial<ShipPanelInput> & { fleet: FleetResponse }): Retur
 }
 
 const voyage = (arrived: boolean, ambush: NonNullable<FleetResponse["voyage"]>["ambush"] = null): NonNullable<FleetResponse["voyage"]> => ({
+  shipId: `ship_${FIXTURE_PLAYER_UUID}`,
   fromSlotId: "slot_north_1_1",
   toSlotId: "slot_north_1_2",
   departedAt: "2026-11-20T09:55:00.000Z",
@@ -59,14 +46,14 @@ describe("the ship's panel", () => {
 
   it("offers the helm only where the ship can be drawn and only while it floats", () => {
     expect(model({ fleet: fleet(), canHelm: false }).actions.map((action) => action.kind)).not.toContain("HELM");
-    const sunk = fleet({ ship: { classId: "ship_class_sloop", tier: 2, hull: 0, hullMax: 150, speedTilesPerMinute: 70, cannons: 2 } });
+    const sunk = fleet({ ship: { hull: 0 } });
     expect(model({ fleet: sunk }).actions.map((action) => action.kind)).not.toContain("HELM");
     // At sea or at a place there is no ship at the pier to take.
     expect(model({ fleet: fleet({ location: "AT_SEA", voyage: voyage(false) }) }).actions.map((action) => action.kind)).not.toContain("HELM");
   });
 
   it("says when the build needs a higher level, and offers repair at its cost when the hull is down", () => {
-    const view = model({ fleet: fleet({ ship: { classId: "ship_class_sloop", tier: 2, hull: 100, hullMax: 150, speedTilesPerMinute: 70, cannons: 2 } }), playerLevel: 12 });
+    const view = model({ fleet: fleet({ ship: { hull: 100 } }), playerLevel: 12 });
     const repair = view.actions.find((action) => action.kind === "REPAIR");
     expect(repair?.detail).toBe('shipPanel.repairCost:{"gold":100,"wood":13}');
     const build = view.actions.find((action) => action.kind === "BUILD");
@@ -74,7 +61,7 @@ describe("the ship's panel", () => {
   });
 
   it("will not sail a sunk ship, and leads with the repair", () => {
-    const view = model({ fleet: fleet({ ship: { classId: "ship_class_sloop", tier: 2, hull: 0, hullMax: 150, speedTilesPerMinute: 70, cannons: 2 } }) });
+    const view = model({ fleet: fleet({ ship: { hull: 0 } }) });
     expect(view.actions.find((action) => action.kind === "SAIL")).toMatchObject({ enabled: false, primary: false, detail: "shipPanel.sunk" });
     expect(view.actions.find((action) => action.kind === "REPAIR")).toMatchObject({ enabled: true, primary: true });
   });

@@ -145,6 +145,7 @@ import type {
   ,GetWorldArchipelagoResponse
   ,VisitWorldPlaceResponse
   ,FleetResponse
+  ,ShipRole
   ,FightAmbushResponse
   ,EnsureWorldSlotResponse
   ,SeaRegionDTO
@@ -336,19 +337,29 @@ export class ApiClient {
     return this.get("/ships/fleet", FleetResponseSchema);
   }
 
-  /** Builds the next class of ship at the dock. Only a request id is sent; class and cost are the server's. */
-  buildShip(requestId: string): Promise<FleetResponse> {
-    return this.post("/ships/build", { requestId }, FleetResponseSchema);
+  /** Builds a new ship of a role in a free berth. Only the role is sent; class and cost are the server's. */
+  buildShip(role: ShipRole, requestId: string): Promise<FleetResponse> {
+    return this.post("/ships/build", { role, requestId }, FleetResponseSchema);
   }
 
-  /** Sets sail for a place on the caller's chart. Only the place is sent; the time is the server's. */
-  startVoyage(slotId: string, requestId: string): Promise<FleetResponse> {
-    return this.post("/voyages", { slotId, requestId }, FleetResponseSchema);
+  /** Upgrades one of the caller's ships one rank up its ladder; the class and cost are the server's. */
+  upgradeShip(shipId: string, requestId: string): Promise<FleetResponse> {
+    return this.post("/ships/upgrade", { shipId, requestId }, FleetResponseSchema);
   }
 
-  /** Mends the ship at its dock. Only a request id is sent; the cost is the server's. */
-  repairShip(requestId: string): Promise<FleetResponse> {
-    return this.post("/ships/repair", { requestId }, FleetResponseSchema);
+  /** Raises the dock a tier for more berths; the cost is the server's. */
+  upgradeDock(requestId: string): Promise<FleetResponse> {
+    return this.post("/ships/dock", { requestId }, FleetResponseSchema);
+  }
+
+  /** Sets sail for a place on the caller's chart, in one of its ships. Only the place and the ship are sent; the time is the server's. */
+  startVoyage(slotId: string, requestId: string, shipId?: string): Promise<FleetResponse> {
+    return this.post("/voyages", shipId === undefined ? { slotId, requestId } : { slotId, requestId, shipId }, FleetResponseSchema);
+  }
+
+  /** Mends one of the caller's ships at its dock. Only the ship is sent; the cost is the server's. */
+  repairShip(requestId: string, shipId?: string): Promise<FleetResponse> {
+    return this.post("/ships/repair", shipId === undefined ? { requestId } : { requestId, shipId }, FleetResponseSchema);
   }
 
   /**

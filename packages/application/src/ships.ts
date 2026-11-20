@@ -2,10 +2,14 @@ import {
   DomainError,
   MAX_TOTAL_XP,
   createXpAward,
+  dockIdFor,
   parseCurrencyDefinitionId,
   parseItemDefinitionId,
   runSeaBattle,
   shipIdFor,
+  type CurrencyDefinition,
+  type EconomyMutation,
+  type EconomyReferenceId,
   type InventoryItem,
   type PlayerId,
   type ProgressionDefinition,
@@ -13,6 +17,7 @@ import {
   type SeaBattleResult,
   type SeaBattleSetup,
   type SeaBattleShipSpec,
+  type ShipId,
   type XpAward
 } from "@happy-farm/domain";
 import type { EconomyService } from "./economy";
@@ -23,16 +28,20 @@ import type {
   AmbushBountyWrite,
   Clock,
   CurrencyDefinitionRepository,
+  DockTier,
   FarmRepository,
   IdempotencyRecord,
   IdempotencyRepository,
   InventoryRepository,
   PayloadFingerprint,
+  PlayerDockRecord,
   PlayerShipRecord,
   ProgressionRepository,
   ShipCatalogue,
   ShipClass,
+  ShipPrice,
   ShipRepository,
+  ShipRole,
   VoyageAmbush,
   VoyageRecord,
   WalletRepository,
@@ -43,19 +52,24 @@ import { emptyProgression, progressionView, storedLevel, type ProgressionView } 
 import type { WorldPlacement } from "./world";
 
 /**
- * Ships and voyages (docs/design/NAVAL.md, W5a; owner decisions 2026-11-19).
+ * Ships and voyages (docs/design/NAVAL.md, W5a; docs/design/FLEET.md, F1).
  *
- * A player has one ship: the dock's rowboat until they build the next class. A voyage takes the ship
- * from where it lies - home, or the place it last reached - to a place on the player's own chart, and
- * takes as long as the chart distance at the ship's speed. Nothing ticks: whether a voyage has arrived
- * is read from server time against its stored arrival. "Home" ends the voyage and brings the ship
- * back to its dock at once; travel time on the way home comes with the sea itself (W5b).
+ * A player keeps a fleet: each ship in a berth at their dock, the dock's tier setting how many there
+ * are. A ship has a role - fishing, merchant, war - and climbs its role's ladder one rank at a time;
+ * it never changes role. A player with no ship of their own has the dock's rowboat, lent, and their
+ * first build takes its berth.
  *
- * The client names a class never and a time never: only "build the next one", or a place to sail to.
+ * The player sails one ship at a time. A voyage takes that ship from where it lies - home, or the place
+ * it last reached - to a place on the player's own chart, and takes as long as the chart distance at
+ * the ship's speed. Nothing ticks: whether a voyage has arrived is read from server time against its
+ * stored arrival. "Home" ends the voyage and brings the ship back to its dock at once.
+ *
+ * The client names a role, a ship of its own, or a place; never a class, a price or a time.
  */
 
 export const SHIP_BUILD_OPERATION = "SHIP_BUILD";
 export const SHIP_REPAIR_OPERATION = "SHIP_REPAIR";
+export const DOCK_UPGRADE_OPERATION = "DOCK_UPGRADE";
 /** One receipt per route and day: what makes a bounty payable once (see `bountyRequest`). */
 export const PIRATE_BOUNTY_OPERATION = "PIRATE_BOUNTY";
 /** A player with no warehouse row is held to this by the database's own guard. */
@@ -83,27 +97,54 @@ export interface ShipDependencies {
   readonly warehouseTiers?: WarehouseTierRepository;
 }
 
-export interface ShipView {
-  readonly classId: string;
-  readonly tier: number;
-  readonly hull: number;
-  readonly hullMax: number;
-  readonly speedTilesPerMinute: number;
-  readonly cannons: number;
+export interface PriceView {
+  readonly currencyId: string;
+  readonly gold: number;
+  readonly materials: readonly { readonly itemDefinitionId: string; readonly quantity: number }[];
 }
 
+/** A class a ship can become: built new (rank 1) or upgraded to (the ranks after). */
 export interface NextShipView {
   readonly classId: string;
+  readonly role: ShipRole;
+  readonly rank: number;
   readonly tier: number;
   readonly requiredPlayerLevel: number;
   readonly speedTilesPerMinute: number;
   readonly hull: number;
   readonly cannons: number;
-  readonly cost: {
-    readonly currencyId: string;
-    readonly gold: number;
-    readonly materials: readonly { readonly itemDefinitionId: string; readonly quantity: number }[];
-  };
+  readonly hold: number;
+  readonly cost: PriceView;
+}
+
+/** One ship of the fleet. */
+export interface ShipView {
+  readonly shipId: string;
+  readonly berth: number;
+  /** The dock's rowboat, lent to a player with no ship of their own; the first build takes its berth. */
+  readonly lent: boolean;
+  readonly classId: string;
+  readonly role: ShipRole;
+  readonly rank: number;
+  readonly tier: number;
+  readonly hull: number;
+  readonly hullMax: number;
+  readonly speedTilesPerMinute: number;
+  readonly cannons: number;
+  readonly hold: number;
+  /** Sailing the player's voyage (at sea, or lying at the place it reached), not at its dock. */
+  readonly away: boolean;
+  /** The class it would be upgraded to; null at the top of its ladder. */
+  readonly upgrade: NextShipView | null;
+}
+
+export interface DockView {
+  readonly tier: number;
+  readonly berths: number;
+  /** Berths a new ship could take now. The lent rowboat holds none: a first build takes its place. */
+  readonly freeBerths: number;
+  /** The next tier and what raising the dock to it costs; null at the top. */
+  readonly next: { readonly tier: number; readonly berths: number; readonly requiredPlayerLevel: number; readonly cost: PriceView } | null;
 }
 
 /** Pirates on a voyage, as the player's device needs them to play the fight the server will replay. */
@@ -117,6 +158,8 @@ export interface AmbushView {
 }
 
 export interface VoyageView {
+  /** The ship sailing it. */
+  readonly shipId: string;
   readonly fromSlotId: string;
   readonly toSlotId: string;
   readonly departedAt: string;
@@ -128,36 +171,126 @@ export interface VoyageView {
 export interface FleetView {
   /** The server time the view was read at; arrival is decided against it, never the client's clock. */
   readonly readAt: string;
+  /** The ship in hand: the one on the voyage, else the ship in berth 1. */
   readonly ship: ShipView;
+  /** What `ship` would be upgraded to (the same as `ship.upgrade`). */
   readonly next: NextShipView | null;
-  /** Where the ship is: at its dock, out at sea, or at the place a voyage reached. */
+  /** Every ship of the fleet, in berth order. */
+  readonly ships: readonly ShipView[];
+  /** The first rank of each role: what a free berth could take. */
+  readonly builds: readonly NextShipView[];
+  readonly dock: DockView;
+  /** Where the voyage leaves its ship: at its dock, out at sea, or at the place it reached. */
   readonly location: "HOME" | "AT_SEA" | "AT_PLACE";
   /** The voyage under way or just completed; null at home. */
   readonly voyage: VoyageView | null;
 }
 
-/** Where a voyage leaves the ship at `now`. */
+/** Where a voyage leaves its ship at `now`. */
 export function voyageLocation(voyage: VoyageRecord | null, now: string): FleetView["location"] {
   if (voyage === null || voyage.status === "ENDED") return "HOME";
   return Date.parse(voyage.arrivesAt) <= Date.parse(now) ? "AT_PLACE" : "AT_SEA";
 }
 
-function classOf(catalogue: ShipCatalogue, ship: PlayerShipRecord | null): ShipClass {
-  const classes = catalogue.classes();
-  const found = ship === null ? classes[0] : classes.find((entry) => entry.tier === ship.tier);
+/** The ship a voyage is sailed by: named on the voyage, or berth 1's for a voyage from before the fleet. */
+function voyageShipId(playerId: PlayerId, voyage: VoyageRecord): ShipId {
+  return voyage.shipId ?? shipIdFor(playerId, 1);
+}
+
+/** The dock's own rowboat: the first class in the catalogue. */
+function rowboatClass(catalogue: ShipCatalogue): ShipClass {
+  const rowboat = catalogue.classes()[0];
+  if (rowboat === undefined) throw new ApplicationError("INTERNAL_ERROR", "The ship catalogue is empty");
+  return rowboat;
+}
+
+function classById(catalogue: ShipCatalogue, classId: string): ShipClass {
+  const found = catalogue.classes().find((entry) => entry.id === classId);
   if (found === undefined) throw new ApplicationError("INTERNAL_ERROR", "A stored ship's class is not in the catalogue");
   return found;
 }
 
-/** The ship as it fights: its class's numbers and its hull as it stands. Null for a class that does not fight. */
-function playerSpec(catalogue: ShipCatalogue, ship: PlayerShipRecord | null): SeaBattleShipSpec | null {
-  const shipClass = classOf(catalogue, ship);
-  const battle = catalogue.battle(shipClass.id);
-  if (battle === null || shipClass.cannons <= 0) return null;
+function nextClass(catalogue: ShipCatalogue, current: ShipClass): ShipClass | null {
+  return catalogue.classes().find((entry) => entry.role === current.role && entry.rank === current.rank + 1) ?? null;
+}
+
+function firstClass(catalogue: ShipCatalogue, role: ShipRole): ShipClass | null {
+  return catalogue.classes().find((entry) => entry.role === role && entry.rank === 1) ?? null;
+}
+
+/**
+ * A player's ships as the rules see them: the stored ones in berth order, or the dock's rowboat (lent,
+ * in berth 1) when none is stored.
+ */
+interface FleetShip {
+  readonly shipId: ShipId;
+  readonly berth: number;
+  readonly shipClass: ShipClass;
+  readonly hull: number;
+  /** Null for the lent rowboat. */
+  readonly record: PlayerShipRecord | null;
+}
+
+function fleetShips(catalogue: ShipCatalogue, playerId: PlayerId, stored: readonly PlayerShipRecord[]): readonly FleetShip[] {
+  if (stored.length === 0) {
+    const rowboat = rowboatClass(catalogue);
+    return [{ shipId: shipIdFor(playerId, 1), berth: 1, shipClass: rowboat, hull: rowboat.hull, record: null }];
+  }
+  return [...stored]
+    .sort((a, b) => a.berth - b.berth)
+    .map((record) => {
+      const shipClass = classById(catalogue, record.classId);
+      return { shipId: record.shipId, berth: record.berth, shipClass, hull: Math.min(shipClass.hull, record.hull), record };
+    });
+}
+
+/** The ship a command names, which must be one of the player's own; an id from anyone else's fleet is not found. */
+function ownShip(ships: readonly FleetShip[], shipId: string): FleetShip {
+  const found = ships.find((ship) => ship.shipId === shipId);
+  if (found === undefined) throw new ApplicationError("RESOURCE_NOT_FOUND", "That ship is not in your fleet");
+  return found;
+}
+
+function dockTierOf(catalogue: ShipCatalogue, dock: PlayerDockRecord | null): DockTier {
+  const tiers = catalogue.docks();
+  const found = dock === null ? tiers[0] : tiers.find((entry) => entry.tier === dock.tier);
+  if (found === undefined) throw new ApplicationError("INTERNAL_ERROR", "A stored dock's tier is not in the catalogue");
+  return found;
+}
+
+function priceView(price: ShipPrice): PriceView {
   return {
-    hull: Math.min(shipClass.hull, ship?.hull ?? shipClass.hull),
-    hullMax: shipClass.hull,
+    currencyId: price.currencyDefinitionId,
+    gold: price.gold,
+    materials: Object.entries(price.materials)
+      .filter(([, quantity]) => quantity > 0)
+      .map(([itemDefinitionId, quantity]) => ({ itemDefinitionId, quantity }))
+  };
+}
+
+function nextShipView(shipClass: ShipClass): NextShipView {
+  return {
+    classId: shipClass.id,
+    role: shipClass.role,
+    rank: shipClass.rank,
+    tier: shipClass.tier,
+    requiredPlayerLevel: shipClass.requiredPlayerLevel,
+    speedTilesPerMinute: shipClass.speedTilesPerMinute,
+    hull: shipClass.hull,
     cannons: shipClass.cannons,
+    hold: shipClass.hold,
+    cost: priceView(shipClass.buildCost)
+  };
+}
+
+/** The ship as it fights: its class's numbers and its hull as it stands. Null for a class that does not fight. */
+function playerSpec(catalogue: ShipCatalogue, ship: FleetShip): SeaBattleShipSpec | null {
+  const battle = catalogue.battle(ship.shipClass.id);
+  if (battle === null || ship.shipClass.cannons <= 0) return null;
+  return {
+    hull: ship.hull,
+    hullMax: ship.shipClass.hull,
+    cannons: ship.shipClass.cannons,
     speed: battle.speed,
     turn: battle.turn,
     radius: battle.radius,
@@ -166,7 +299,7 @@ function playerSpec(catalogue: ShipCatalogue, ship: PlayerShipRecord | null): Se
 }
 
 /** The fight an ambush is: built from game data and the ship's own hull, never from anything a client sent. */
-export function ambushSetup(catalogue: ShipCatalogue, ship: PlayerShipRecord | null, ambush: VoyageAmbush): SeaBattleSetup | null {
+function ambushSetup(catalogue: ShipCatalogue, ship: FleetShip, ambush: VoyageAmbush): SeaBattleSetup | null {
   const player = playerSpec(catalogue, ship);
   if (player === null) return null;
   const pirates: SeaBattleShipSpec[] = [];
@@ -178,54 +311,83 @@ export function ambushSetup(catalogue: ShipCatalogue, ship: PlayerShipRecord | n
   return { seed: ambush.seed, player, pirates };
 }
 
-function fleetView(catalogue: ShipCatalogue, ship: PlayerShipRecord | null, voyage: VoyageRecord | null, now: string): FleetView {
-  const current = classOf(catalogue, ship);
-  const next = catalogue.classes().find((entry) => entry.tier === current.tier + 1) ?? null;
-  const location = voyageLocation(voyage, now);
+interface FleetState {
+  readonly playerId: PlayerId;
+  readonly stored: readonly PlayerShipRecord[];
+  readonly dock: PlayerDockRecord | null;
+  readonly voyage: VoyageRecord | null;
+}
+
+async function readFleet(dependencies: ShipDependencies, playerId: PlayerId): Promise<FleetState> {
+  const [stored, dock, voyage] = await Promise.all([dependencies.ships.listShips(playerId), dependencies.ships.findDock(playerId), dependencies.ships.findVoyage(playerId)]);
+  return { playerId, stored, dock, voyage };
+}
+
+function fleetView(catalogue: ShipCatalogue, state: FleetState, now: string): FleetView {
+  const ships = fleetShips(catalogue, state.playerId, state.stored);
+  const location = voyageLocation(state.voyage, now);
+  const sailing = state.voyage !== null && location !== "HOME" ? voyageShipId(state.playerId, state.voyage) : null;
+  const views = ships.map(
+    (ship): ShipView => {
+      const upgrade = nextClass(catalogue, ship.shipClass);
+      return {
+        shipId: ship.shipId,
+        berth: ship.berth,
+        lent: ship.record === null,
+        classId: ship.shipClass.id,
+        role: ship.shipClass.role,
+        rank: ship.shipClass.rank,
+        tier: ship.shipClass.tier,
+        hull: ship.hull,
+        hullMax: ship.shipClass.hull,
+        speedTilesPerMinute: ship.shipClass.speedTilesPerMinute,
+        cannons: ship.shipClass.cannons,
+        hold: ship.shipClass.hold,
+        away: ship.shipId === sailing,
+        upgrade: upgrade === null ? null : nextShipView(upgrade)
+      };
+    }
+  );
+  const inHand = views.find((view) => view.away) ?? views[0];
+  if (inHand === undefined) throw new ApplicationError("INTERNAL_ERROR", "A fleet has no ship");
+  const dockTier = dockTierOf(catalogue, state.dock);
+  const nextDock = catalogue.docks().find((entry) => entry.tier === dockTier.tier + 1) ?? null;
+  const voyageShip = state.voyage === null ? null : ships.find((ship) => ship.shipId === voyageShipId(state.playerId, state.voyage as VoyageRecord)) ?? null;
   return {
     readAt: now,
-    ship: {
-      classId: current.id,
-      tier: current.tier,
-      hull: Math.min(current.hull, ship?.hull ?? current.hull),
-      hullMax: current.hull,
-      speedTilesPerMinute: current.speedTilesPerMinute,
-      cannons: current.cannons
+    ship: inHand,
+    next: inHand.upgrade,
+    ships: views,
+    builds: (["FISHING", "MERCHANT", "WAR"] as const).flatMap((role) => {
+      const first = firstClass(catalogue, role);
+      return first === null ? [] : [nextShipView(first)];
+    }),
+    dock: {
+      tier: dockTier.tier,
+      berths: dockTier.berths,
+      freeBerths: Math.max(0, dockTier.berths - state.stored.length),
+      next:
+        nextDock === null || nextDock.upgradeCost === null
+          ? null
+          : { tier: nextDock.tier, berths: nextDock.berths, requiredPlayerLevel: nextDock.requiredPlayerLevel, cost: priceView(nextDock.upgradeCost) }
     },
-    next:
-      next?.buildCost == null
-        ? null
-        : {
-            classId: next.id,
-            tier: next.tier,
-            requiredPlayerLevel: next.requiredPlayerLevel,
-            speedTilesPerMinute: next.speedTilesPerMinute,
-            hull: next.hull,
-            cannons: next.cannons,
-            cost: {
-              currencyId: next.buildCost.currencyDefinitionId,
-              gold: next.buildCost.gold,
-              materials: Object.entries(next.buildCost.materials)
-                .filter(([, quantity]) => quantity > 0)
-                .map(([itemDefinitionId, quantity]) => ({ itemDefinitionId, quantity }))
-            }
-          },
     location,
     voyage:
-      voyage === null || location === "HOME"
+      state.voyage === null || location === "HOME"
         ? null
         : {
-            fromSlotId: voyage.fromSlotId,
-            toSlotId: voyage.toSlotId,
-            departedAt: voyage.departedAt,
-            arrivesAt: voyage.arrivesAt,
+            shipId: voyageShipId(state.playerId, state.voyage),
+            fromSlotId: state.voyage.fromSlotId,
+            toSlotId: state.voyage.toSlotId,
+            departedAt: state.voyage.departedAt,
+            arrivesAt: state.voyage.arrivesAt,
             arrived: location === "AT_PLACE",
-            ambush: ambushView(catalogue, ship, voyage.ambush ?? null)
+            ambush: voyageShip === null ? null : ambushView(catalogue, voyageShip, state.voyage.ambush ?? null)
           }
   };
 }
 
-function ambushView(catalogue: ShipCatalogue, ship: PlayerShipRecord | null, ambush: VoyageAmbush | null): AmbushView | null {
+function ambushView(catalogue: ShipCatalogue, ship: FleetShip, ambush: VoyageAmbush | null): AmbushView | null {
   if (ambush === null) return null;
   const setup = ambushSetup(catalogue, ship, ambush);
   return setup === null ? null : { at: ambush.at, status: ambush.status, setup, pirates: ambush.pirates };
@@ -237,140 +399,62 @@ function ambushDue(voyage: VoyageRecord | null, now: string): boolean {
   return voyage !== null && voyage.status === "UNDERWAY" && ambush !== null && ambush.status === "PENDING" && Date.parse(ambush.at) <= Date.parse(now);
 }
 
+/** Whether `ship` is out on the player's voyage rather than at its dock. */
+function shipAway(state: FleetState, shipId: ShipId, now: string): boolean {
+  return state.voyage !== null && voyageLocation(state.voyage, now) !== "HOME" && voyageShipId(state.playerId, state.voyage) === shipId;
+}
+
 async function playerLevel(dependencies: ShipDependencies, playerId: PlayerId): Promise<number> {
   return storedLevel(dependencies.progressionDefinition, await dependencies.progression.find(playerId));
 }
 
-/** The player's ship, the next class they could build, and where the ship is. */
-export class GetFleet {
-  constructor(private readonly dependencies: ShipDependencies) {}
-
-  async execute(actor: ActorContext | null): Promise<FleetView> {
-    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    const [ship, voyage] = await Promise.all([this.dependencies.ships.findShip(actor.playerId), this.dependencies.ships.findVoyage(actor.playerId)]);
-    return fleetView(this.dependencies.catalogue, ship, voyage, this.dependencies.clock.now());
+/**
+ * What a purchase at the dock takes, checked against the player's state as it is now: the currency,
+ * every material stack (which must hold enough), and the wallet. The batch re-checks every one.
+ */
+async function preparePayment(
+  dependencies: ShipDependencies,
+  playerId: PlayerId,
+  price: ShipPrice,
+  now: string,
+  shortOfItems: string
+): Promise<{ readonly currency: CurrencyDefinition; readonly materials: readonly (readonly [string, number])[]; readonly expectedInventory: readonly InventoryItem[]; readonly wallet: Parameters<EconomyService["prepareMutation"]>[1] }> {
+  const currency = dependencies.currencies.findById(parseCurrencyDefinitionId(price.currencyDefinitionId));
+  if (currency === null) throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
+  const materials = Object.entries(price.materials).filter(([, quantity]) => quantity > 0);
+  const expectedInventory: InventoryItem[] = [];
+  for (const [itemDefinitionId, quantity] of materials) {
+    const row = await dependencies.inventory.find(playerId, parseItemDefinitionId(itemDefinitionId));
+    if (row === null || row.quantity < quantity) throw new ApplicationError("INSUFFICIENT_ITEMS", shortOfItems);
+    expectedInventory.push(row);
   }
+  const wallet = (await dependencies.wallets.find(playerId, currency.id)) ?? {
+    playerId,
+    currencyDefinitionId: currency.id,
+    balance: 0,
+    version: 1,
+    updatedAt: now
+  };
+  return { currency, materials, expectedInventory, wallet };
 }
 
-/**
- * Builds the next class of ship at the dock, replacing the one there.
- *
- * Gold goes through the centralized economy service and its ledger, wood and ore through the
- * centralized inventory service, the ship row and the receipt in the same batch. Only a ship at its
- * dock can be rebuilt, and only for a player of the next class's level. A replayed request answers
- * from its receipt; a request that lost a race to another build is refused rather than charged twice.
- */
-export class BuildShip {
-  constructor(private readonly dependencies: ShipDependencies) {}
-
-  async execute(actor: ActorContext | null, command: { readonly requestId: string }): Promise<FleetView> {
-    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    const { catalogue, ships } = this.dependencies;
-    const shipId = shipIdFor(actor.playerId);
-    // The request, not the target class: a replay arrives after the class has already moved on.
-    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([shipId, SHIP_BUILD_OPERATION]));
-    const existing = await this.dependencies.idempotency.find(actor.playerId, SHIP_BUILD_OPERATION, command.requestId);
-    if (existing !== null) return replay(existing, fingerprint);
-
-    const first = await ships.findShip(actor.playerId);
-    const startTier = classOf(catalogue, first).tier;
-    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
-      const ship = attempt === 0 ? first : await ships.findShip(actor.playerId);
-      const current = classOf(catalogue, ship);
-      // The step is decided once, from the class the caller saw; another build moving it makes this
-      // request stale rather than a second purchase.
-      if (current.tier !== startTier) throw new ApplicationError("CONFLICT_STALE_STATE", "The ship changed while building");
-      const next = catalogue.classes().find((entry) => entry.tier === current.tier + 1);
-      const cost = next?.buildCost ?? null;
-      if (next === undefined || cost === null) throw new ApplicationError("SHIP_MAX_CLASS", "The ship is already the finest class");
-      const now = this.dependencies.clock.now();
-      // A ship away from its dock cannot be rebuilt, whatever else would allow it.
-      if (voyageLocation(await ships.findVoyage(actor.playerId), now) !== "HOME") {
-        throw new ApplicationError("SHIP_AT_SEA", "The ship must be at its dock to be rebuilt");
-      }
-      if ((await playerLevel(this.dependencies, actor.playerId)) < next.requiredPlayerLevel) {
-        throw new ApplicationError("SHIP_LEVEL_REQUIRED", `The next ship needs player level ${String(next.requiredPlayerLevel)}`);
-      }
-      const currency = this.dependencies.currencies.findById(parseCurrencyDefinitionId(cost.currencyDefinitionId));
-      if (currency === null) throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
-
-      const materials = Object.entries(cost.materials).filter(([, quantity]) => quantity > 0);
-      const expectedInventory: InventoryItem[] = [];
-      for (const [itemDefinitionId, quantity] of materials) {
-        const row = await this.dependencies.inventory.find(actor.playerId, parseItemDefinitionId(itemDefinitionId));
-        if (row === null || row.quantity < quantity) {
-          throw new ApplicationError("INSUFFICIENT_ITEMS", "The ship needs materials the island does not have");
-        }
-        expectedInventory.push(row);
-      }
-      const wallet = (await this.dependencies.wallets.find(actor.playerId, currency.id)) ?? {
-        playerId: actor.playerId,
-        currencyDefinitionId: currency.id,
-        balance: 0,
-        version: 1,
-        updatedAt: now
-      };
-      let economy;
-      try {
-        economy = this.dependencies.economyService.prepareMutation(actor, wallet, currency, {
-          delta: -cost.gold,
-          reason: "SHIP_BUILD",
-          referenceId: shipId,
-          requestId: command.requestId
-        });
-      } catch (error: unknown) {
-        if (error instanceof ApplicationError) throw error;
-        if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
-        throw error;
-      }
-      const built: PlayerShipRecord = {
-        playerId: actor.playerId,
-        shipId,
-        classId: next.id,
-        tier: next.tier,
-        hull: next.hull,
-        version: (ship?.version ?? 0) + 1,
-        lastChangeId: economy.transactionId,
-        createdAt: ship?.createdAt ?? economy.createdAt,
-        updatedAt: economy.createdAt
-      };
-      const result = fleetView(catalogue, built, null, economy.createdAt);
-      const record: IdempotencyRecord = {
-        actorPlayerId: actor.playerId,
-        operation: SHIP_BUILD_OPERATION,
-        requestId: command.requestId,
-        payloadFingerprint: fingerprint,
-        resourceId: economy.transactionId,
-        responseJson: JSON.stringify(result),
-        status: "COMPLETED",
-        createdAt: economy.createdAt
-      };
-      try {
-        await ships.buildAtomically(
-          {
-            playerId: actor.playerId,
-            shipId,
-            expectedFromTier: current.tier,
-            expectedVersion: ship?.version ?? 0,
-            toTier: next.tier,
-            classId: next.id,
-            hull: next.hull,
-            economy,
-            removals: materials.map(([itemDefinitionId, quantity]) => this.dependencies.inventoryService.prepareRemoval(actor.playerId, itemDefinitionId, quantity)),
-            expectedInventory,
-            createdAt: economy.createdAt
-          },
-          record
-        );
-        return result;
-      } catch (error: unknown) {
-        const raced = await this.dependencies.idempotency.find(actor.playerId, SHIP_BUILD_OPERATION, command.requestId);
-        if (raced !== null) return replay(raced, fingerprint);
-        if (error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT") continue;
-        throw error;
-      }
-    }
-    throw new ApplicationError("ECONOMY_CONFLICT", "The ship or the economy changed while building");
+function prepareCharge(
+  dependencies: ShipDependencies,
+  actor: ActorContext,
+  payment: Awaited<ReturnType<typeof preparePayment>>,
+  input: { readonly gold: number; readonly reason: "SHIP_BUILD" | "SHIP_REPAIR" | "DOCK_UPGRADE"; readonly referenceId: EconomyReferenceId; readonly requestId: string }
+): EconomyMutation {
+  try {
+    return dependencies.economyService.prepareMutation(actor, payment.wallet, payment.currency, {
+      delta: -input.gold,
+      reason: input.reason,
+      referenceId: input.referenceId,
+      requestId: input.requestId
+    });
+  } catch (error: unknown) {
+    if (error instanceof ApplicationError) throw error;
+    if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
+    throw error;
   }
 }
 
@@ -385,20 +469,288 @@ function replay(record: IdempotencyRecord, fingerprint: string): FleetView {
   }
 }
 
+/** The player's fleet and dock, what they could build, and where the ship in hand is. */
+export class GetFleet {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    return fleetView(this.dependencies.catalogue, await readFleet(this.dependencies, actor.playerId), this.dependencies.clock.now());
+  }
+}
+
+/** One write of a ship at the dock, with the receipt that answers its replays. */
+interface ShipWrite {
+  readonly ship: FleetShip | null;
+  readonly shipId: ShipId;
+  readonly berth: number;
+  readonly to: ShipClass;
+  readonly hull: number;
+  readonly price: ShipPrice;
+  readonly reason: "SHIP_BUILD" | "SHIP_REPAIR";
+  readonly operation: string;
+}
+
 /**
- * Sets sail for a place on the player's own chart.
+ * Pays for and writes one ship (new, upgraded or mended) in one batch with its receipt: gold through
+ * the economy service and its ledger, materials through the inventory service. A batch that lost a
+ * race writes nothing; the caller reads again. Returns the view, or null when the caller should retry.
+ */
+async function writeShip(
+  dependencies: ShipDependencies,
+  actor: ActorContext,
+  state: FleetState,
+  write: ShipWrite,
+  command: { readonly requestId: string },
+  fingerprint: string,
+  now: string
+): Promise<FleetView | null> {
+  const payment = await preparePayment(dependencies, actor.playerId, write.price, now, write.reason === "SHIP_REPAIR" ? "The repair needs materials the island does not have" : "The ship needs materials the island does not have");
+  const economy = prepareCharge(dependencies, actor, payment, { gold: write.price.gold, reason: write.reason, referenceId: write.shipId, requestId: command.requestId });
+  const record = write.ship?.record ?? null;
+  const written: PlayerShipRecord = {
+    playerId: actor.playerId,
+    shipId: write.shipId,
+    berth: write.berth,
+    classId: write.to.id,
+    tier: write.to.tier,
+    hull: write.hull,
+    version: (record?.version ?? 0) + 1,
+    lastChangeId: economy.transactionId,
+    createdAt: record?.createdAt ?? economy.createdAt,
+    updatedAt: economy.createdAt
+  };
+  // The fleet as it will stand: the lent rowboat (no row) is replaced by the first ship stored.
+  const stored = state.stored.some((entry) => entry.shipId === write.shipId)
+    ? state.stored.map((entry) => (entry.shipId === write.shipId ? written : entry))
+    : [...state.stored, written];
+  const result = fleetView(dependencies.catalogue, { ...state, stored }, economy.createdAt);
+  const receipt: IdempotencyRecord = {
+    actorPlayerId: actor.playerId,
+    operation: write.operation,
+    requestId: command.requestId,
+    payloadFingerprint: fingerprint,
+    resourceId: economy.transactionId,
+    responseJson: JSON.stringify(result),
+    status: "COMPLETED",
+    createdAt: economy.createdAt
+  };
+  try {
+    await dependencies.ships.buildAtomically(
+      {
+        playerId: actor.playerId,
+        shipId: write.shipId,
+        berth: write.berth,
+        expectedClassId: record?.classId ?? null,
+        expectedVersion: record?.version ?? 0,
+        expectedShipCount: state.stored.length,
+        classId: write.to.id,
+        tier: write.to.tier,
+        hull: write.hull,
+        economy,
+        removals: payment.materials.map(([itemDefinitionId, quantity]) => dependencies.inventoryService.prepareRemoval(actor.playerId, itemDefinitionId, quantity)),
+        expectedInventory: payment.expectedInventory,
+        createdAt: economy.createdAt
+      },
+      receipt
+    );
+    return result;
+  } catch (error: unknown) {
+    const raced = await dependencies.idempotency.find(actor.playerId, write.operation, command.requestId);
+    if (raced !== null) return replay(raced, fingerprint);
+    if (error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT") return null;
+    throw error;
+  }
+}
+
+/**
+ * Builds a new ship of a role: the first rank of its ladder, in a free berth at the dock.
  *
- * The ship leaves from where it lies: its dock, or the place its last voyage reached. The passage takes
- * as long as the chart distance at the ship's speed, decided here from game data; the client names
- * only the place. A ship already at sea must arrive (or be called home) first. A retried request with
+ * The client names only the role. A player with no ship of their own has the dock's rowboat, lent; the
+ * first build takes its berth, and the rowboat must be home for it. Otherwise the dock must have a
+ * free berth. A replayed request answers from its receipt.
+ */
+export class BuildShip {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly role: ShipRole; readonly requestId: string }): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { catalogue } = this.dependencies;
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([SHIP_BUILD_OPERATION, "NEW", command.role]));
+    const existing = await this.dependencies.idempotency.find(actor.playerId, SHIP_BUILD_OPERATION, command.requestId);
+    if (existing !== null) return replay(existing, fingerprint);
+    const shipClass = firstClass(catalogue, command.role);
+    if (shipClass === null) throw new ApplicationError("INVALID_INPUT", "There is no ship of that role");
+
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      const now = this.dependencies.clock.now();
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const dock = dockTierOf(catalogue, state.dock);
+      if (state.stored.length === 0) {
+        // The lent rowboat gives up its berth, and must be at the dock to do it.
+        if (voyageLocation(state.voyage, now) !== "HOME") throw new ApplicationError("SHIP_AT_SEA", "The dock's rowboat must be home before a ship takes its berth");
+      } else if (state.stored.length >= dock.berths) {
+        throw new ApplicationError("DOCK_FULL", "Every berth at the dock is taken");
+      }
+      const taken = new Set(state.stored.map((entry) => entry.berth));
+      let berth = 1;
+      while (taken.has(berth)) berth += 1;
+      if ((await playerLevel(this.dependencies, actor.playerId)) < shipClass.requiredPlayerLevel) {
+        throw new ApplicationError("SHIP_LEVEL_REQUIRED", `That ship needs player level ${String(shipClass.requiredPlayerLevel)}`);
+      }
+      const written = await writeShip(
+        this.dependencies,
+        actor,
+        state,
+        { ship: null, shipId: shipIdFor(actor.playerId, berth), berth, to: shipClass, hull: shipClass.hull, price: shipClass.buildCost, reason: "SHIP_BUILD", operation: SHIP_BUILD_OPERATION },
+        command,
+        fingerprint,
+        now
+      );
+      if (written !== null) return written;
+    }
+    throw new ApplicationError("ECONOMY_CONFLICT", "The fleet or the economy changed while building");
+  }
+}
+
+/**
+ * Upgrades one of the player's ships to the next rank of its own ladder, in place: same ship, same
+ * berth, a new class at full hull. Only a ship at its dock, and only for a player of the next class's
+ * level. A request that lost a race to another upgrade is refused rather than charged twice.
+ */
+export class UpgradeShip {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly shipId: string; readonly requestId: string }): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { catalogue } = this.dependencies;
+    // The request, not the target class: a replay arrives after the class has already moved on.
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([SHIP_BUILD_OPERATION, "UPGRADE", command.shipId]));
+    const existing = await this.dependencies.idempotency.find(actor.playerId, SHIP_BUILD_OPERATION, command.requestId);
+    if (existing !== null) return replay(existing, fingerprint);
+
+    const first = await readFleet(this.dependencies, actor.playerId);
+    const startClass = ownShip(fleetShips(catalogue, actor.playerId, first.stored), command.shipId).shipClass.id;
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      const state = attempt === 0 ? first : await readFleet(this.dependencies, actor.playerId);
+      const ship = ownShip(fleetShips(catalogue, actor.playerId, state.stored), command.shipId);
+      // The step is decided once, from the class the caller saw; another upgrade moving it makes this
+      // request stale rather than a second purchase.
+      if (ship.shipClass.id !== startClass) throw new ApplicationError("CONFLICT_STALE_STATE", "The ship changed while upgrading");
+      const next = nextClass(catalogue, ship.shipClass);
+      if (next === null) throw new ApplicationError("SHIP_MAX_CLASS", "The ship is already the finest of its kind");
+      const now = this.dependencies.clock.now();
+      if (shipAway(state, ship.shipId, now)) throw new ApplicationError("SHIP_AT_SEA", "The ship must be at its dock to be upgraded");
+      if ((await playerLevel(this.dependencies, actor.playerId)) < next.requiredPlayerLevel) {
+        throw new ApplicationError("SHIP_LEVEL_REQUIRED", `The next ship needs player level ${String(next.requiredPlayerLevel)}`);
+      }
+      const written = await writeShip(
+        this.dependencies,
+        actor,
+        state,
+        { ship, shipId: ship.shipId, berth: ship.berth, to: next, hull: next.hull, price: next.buildCost, reason: "SHIP_BUILD", operation: SHIP_BUILD_OPERATION },
+        command,
+        fingerprint,
+        now
+      );
+      if (written !== null) return written;
+    }
+    throw new ApplicationError("ECONOMY_CONFLICT", "The ship or the economy changed while upgrading");
+  }
+}
+
+/**
+ * Raises the dock one tier: more berths. Gold through the ledger (`DOCK_UPGRADE`), wood and ore
+ * through the inventory, the dock row and its receipt in one batch.
+ */
+export class UpgradeDock {
+  constructor(private readonly dependencies: ShipDependencies) {}
+
+  async execute(actor: ActorContext | null, command: { readonly requestId: string }): Promise<FleetView> {
+    if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
+    const { catalogue } = this.dependencies;
+    const dockId = dockIdFor(actor.playerId);
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([dockId, DOCK_UPGRADE_OPERATION]));
+    const existing = await this.dependencies.idempotency.find(actor.playerId, DOCK_UPGRADE_OPERATION, command.requestId);
+    if (existing !== null) return replay(existing, fingerprint);
+
+    const first = await readFleet(this.dependencies, actor.playerId);
+    const startTier = dockTierOf(catalogue, first.dock).tier;
+    for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
+      const state = attempt === 0 ? first : await readFleet(this.dependencies, actor.playerId);
+      const current = dockTierOf(catalogue, state.dock);
+      if (current.tier !== startTier) throw new ApplicationError("CONFLICT_STALE_STATE", "The dock changed while upgrading");
+      const next = catalogue.docks().find((entry) => entry.tier === current.tier + 1);
+      const price = next?.upgradeCost ?? null;
+      if (next === undefined || price === null) throw new ApplicationError("DOCK_MAX_TIER", "The dock is already the largest");
+      if ((await playerLevel(this.dependencies, actor.playerId)) < next.requiredPlayerLevel) {
+        throw new ApplicationError("DOCK_LEVEL_REQUIRED", `The next dock needs player level ${String(next.requiredPlayerLevel)}`);
+      }
+      const now = this.dependencies.clock.now();
+      const payment = await preparePayment(this.dependencies, actor.playerId, price, now, "The dock needs materials the island does not have");
+      const economy = prepareCharge(this.dependencies, actor, payment, { gold: price.gold, reason: "DOCK_UPGRADE", referenceId: dockId, requestId: command.requestId });
+      const raised: PlayerDockRecord = {
+        playerId: actor.playerId,
+        dockId,
+        tier: next.tier,
+        version: (state.dock?.version ?? 0) + 1,
+        lastChangeId: economy.transactionId,
+        createdAt: state.dock?.createdAt ?? economy.createdAt,
+        updatedAt: economy.createdAt
+      };
+      const result = fleetView(catalogue, { ...state, dock: raised }, economy.createdAt);
+      const receipt: IdempotencyRecord = {
+        actorPlayerId: actor.playerId,
+        operation: DOCK_UPGRADE_OPERATION,
+        requestId: command.requestId,
+        payloadFingerprint: fingerprint,
+        resourceId: economy.transactionId,
+        responseJson: JSON.stringify(result),
+        status: "COMPLETED",
+        createdAt: economy.createdAt
+      };
+      try {
+        await this.dependencies.ships.upgradeDockAtomically(
+          {
+            playerId: actor.playerId,
+            dockId,
+            expectedTier: current.tier,
+            expectedVersion: state.dock?.version ?? 0,
+            toTier: next.tier,
+            economy,
+            removals: payment.materials.map(([itemDefinitionId, quantity]) => this.dependencies.inventoryService.prepareRemoval(actor.playerId, itemDefinitionId, quantity)),
+            expectedInventory: payment.expectedInventory,
+            createdAt: economy.createdAt
+          },
+          receipt
+        );
+        return result;
+      } catch (error: unknown) {
+        const raced = await this.dependencies.idempotency.find(actor.playerId, DOCK_UPGRADE_OPERATION, command.requestId);
+        if (raced !== null) return replay(raced, fingerprint);
+        if (error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT") continue;
+        throw error;
+      }
+    }
+    throw new ApplicationError("ECONOMY_CONFLICT", "The dock or the economy changed while upgrading");
+  }
+}
+
+/**
+ * Sets sail for a place on the player's own chart, in one of their ships.
+ *
+ * The ship leaves from where it lies: its dock, or the place the last voyage reached. A ship lying at a
+ * place sails on from there, and while it does no other ship can set out; any ship at the dock can,
+ * once the last voyage is over. The passage takes as long as the chart distance at the ship's speed,
+ * decided here from game data; the client names only the ship and the place. A retried request with
  * the same id answers with the voyage it started rather than starting another.
  */
 export class StartVoyage {
   constructor(private readonly dependencies: ShipDependencies) {}
 
-  async execute(actor: ActorContext | null, command: { readonly slotId: string; readonly requestId: string }): Promise<FleetView> {
+  async execute(actor: ActorContext | null, command: { readonly slotId: string; readonly requestId: string; readonly shipId?: string | undefined }): Promise<FleetView> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    const { world, ships, catalogue, clock } = this.dependencies;
+    const { world, catalogue, clock } = this.dependencies;
     const target = world.chart.findSlot(command.slotId);
     if (target === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "That place is not on the chart");
     const farm = await this.dependencies.farms.findByOwner(actor.playerId);
@@ -411,41 +763,56 @@ export class StartVoyage {
 
     for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
       const now = clock.now();
-      const [ship, voyage] = await Promise.all([ships.findShip(actor.playerId), ships.findVoyage(actor.playerId)]);
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const { voyage } = state;
+      const ships = fleetShips(catalogue, actor.playerId, state.stored);
       // The same request again: the voyage it started, not a second one.
       if (voyage !== null && voyage.requestId === command.requestId) {
-        if (voyage.toSlotId !== target.slotId) throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
-        return fleetView(catalogue, ship, voyage, now);
+        if (voyage.toSlotId !== target.slotId || (command.shipId !== undefined && command.shipId !== voyageShipId(actor.playerId, voyage))) {
+          throw new ApplicationError("IDEMPOTENCY_CONFLICT", "Request ID was used with a different payload");
+        }
+        return fleetView(catalogue, state, now);
       }
       const location = voyageLocation(voyage, now);
       if (location === "AT_SEA") throw new ApplicationError("VOYAGE_UNDERWAY", "The ship is still at sea");
       if (ambushDue(voyage, now)) throw new ApplicationError("AMBUSH_PENDING", "Pirates are waiting: the fight comes first");
-      if (ship !== null && ship.hull <= 0) throw new ApplicationError("SHIP_DAMAGED", "The ship must be repaired before it sails");
-      const fromSlotId = location === "AT_PLACE" && voyage !== null ? voyage.toSlotId : home.slotId;
+      // A ship lying at a place is the one that sails on; otherwise the one named, or the ship in berth 1.
+      const lying = location === "AT_PLACE" && voyage !== null ? voyageShipId(actor.playerId, voyage) : null;
+      const shipId = command.shipId ?? lying ?? ships[0]?.shipId;
+      if (shipId === undefined) throw new ApplicationError("INTERNAL_ERROR", "A fleet has no ship");
+      const ship = ownShip(ships, shipId);
+      if (lying !== null && ship.shipId !== lying) throw new ApplicationError("VOYAGE_UNDERWAY", "Another ship is out on a voyage: call it home first");
+      if (ship.hull <= 0) throw new ApplicationError("SHIP_DAMAGED", "The ship must be repaired before it sails");
+      const fromSlotId = lying !== null && voyage !== null ? voyage.toSlotId : home.slotId;
       if (fromSlotId === target.slotId) throw new ApplicationError("INVALID_INPUT", "The ship is already there");
       const from = world.chart.findSlot(fromSlotId);
       if (from === null) throw new ApplicationError("INTERNAL_ERROR", "The ship's place is not on the chart");
-      const shipClass = classOf(catalogue, ship);
+      const shipClass = ship.shipClass;
       const distance = Math.hypot(target.x - from.x, target.z - from.z);
       const seconds = catalogue.voyageSeconds(distance, shipClass.speedTilesPerMinute);
       // Pirates are planned here, from the route, the day and the player: the same route on the same
-      // day meets the same fate, so calling the ship home and setting out again gains nothing.
-      const plan = catalogue.planAmbush({
-        playerId: actor.playerId,
-        fromSlotId,
-        toSlotId: target.slotId,
-        day: now.slice(0, 10),
-        distanceTiles: distance,
-        shipTier: shipClass.tier
-      });
+      // day meets the same fate, so calling the ship home and setting out again gains nothing. A ship
+      // with no guns is not worth a pirate's while, and could only run.
+      const plan =
+        shipClass.cannons <= 0
+          ? null
+          : catalogue.planAmbush({
+              playerId: actor.playerId,
+              fromSlotId,
+              toSlotId: target.slotId,
+              day: now.slice(0, 10),
+              distanceTiles: distance,
+              shipTier: shipClass.tier
+            });
       const departed = Date.parse(now);
       const next: VoyageRecord = {
         playerId: actor.playerId,
+        shipId: ship.shipId,
         fromSlotId,
         toSlotId: target.slotId,
         shipTier: shipClass.tier,
         departedAt: now,
-        arrivesAt: new Date(Date.parse(now) + seconds * 1000).toISOString(),
+        arrivesAt: new Date(departed + seconds * 1000).toISOString(),
         status: "UNDERWAY",
         requestId: command.requestId,
         version: (voyage?.version ?? 0) + 1,
@@ -455,7 +822,7 @@ export class StartVoyage {
             ? null
             : { at: new Date(departed + Math.round(seconds * plan.atShare) * 1000).toISOString(), seed: plan.seed, pirates: plan.pirates, status: "PENDING" }
       };
-      if (await ships.writeVoyage(next, voyage?.version ?? null)) return fleetView(catalogue, ship, next, now);
+      if (await this.dependencies.ships.writeVoyage(next, voyage?.version ?? null)) return fleetView(catalogue, { ...state, voyage: next }, now);
     }
     throw new ApplicationError("CONFLICT_STALE_STATE", "The voyage changed while setting sail");
   }
@@ -473,17 +840,18 @@ export class EndVoyage {
     const { ships, catalogue, clock } = this.dependencies;
     for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
       const now = clock.now();
-      const [ship, voyage] = await Promise.all([ships.findShip(actor.playerId), ships.findVoyage(actor.playerId)]);
-      if (voyage === null || voyage.status === "ENDED") return fleetView(catalogue, ship, voyage, now);
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const { voyage } = state;
+      if (voyage === null || voyage.status === "ENDED") return fleetView(catalogue, state, now);
       // Pirates that have already struck are not escaped by calling the ship home: the fight is played
       // out with no orders from the captain, and its damage stands.
       if (ambushDue(voyage, now) && voyage.ambush != null) {
-        const decided = await decideAmbush(this.dependencies, actor, ship, voyage, [], now, true);
+        const decided = await decideAmbush(this.dependencies, actor, state, voyage, [], now, true);
         if (decided !== null) return decided.view;
         continue;
       }
       const ended: VoyageRecord = { ...voyage, status: "ENDED", version: voyage.version + 1, updatedAt: now };
-      if (await ships.writeVoyage(ended, voyage.version)) return fleetView(catalogue, ship, ended, now);
+      if (await ships.writeVoyage(ended, voyage.version)) return fleetView(catalogue, { ...state, voyage: ended }, now);
     }
     throw new ApplicationError("CONFLICT_STALE_STATE", "The voyage changed while coming home");
   }
@@ -509,20 +877,23 @@ export interface AmbushOutcomeView {
 
 /**
  * Decides a struck ambush by replaying the fight from its setup and `inputs`, and writes the outcome:
- * the voyage's ambush status, and the ship's hull. A lost fight, or `goHome`, ends the voyage. A won
- * fight pays its bounty in the same batch. Null when anything moved in between (the caller looks again).
+ * the voyage's ambush status, and the hull of the ship that fought. A lost fight, or `goHome`, ends the
+ * voyage. A won fight pays its bounty in the same batch. Null when anything moved in between (the
+ * caller looks again).
  */
 async function decideAmbush(
   dependencies: ShipDependencies,
   actor: ActorContext,
-  ship: PlayerShipRecord | null,
+  state: FleetState,
   voyage: VoyageRecord,
   inputs: readonly SeaBattleInput[],
   now: string,
   goHome: boolean
 ): Promise<{ readonly view: FleetView; readonly battle: SeaBattleResult; readonly bounty: AmbushBountyView | null } | null> {
   const ambush = voyage.ambush;
-  if (ambush == null || ship === null) throw new ApplicationError("INTERNAL_ERROR", "An ambush needs a fighting ship");
+  const shipId = voyageShipId(actor.playerId, voyage);
+  const ship = fleetShips(dependencies.catalogue, actor.playerId, state.stored).find((entry) => entry.shipId === shipId) ?? null;
+  if (ambush == null || ship === null || ship.record === null) throw new ApplicationError("INTERNAL_ERROR", "An ambush needs a fighting ship");
   const setup = ambushSetup(dependencies.catalogue, ship, ambush);
   if (setup === null) throw new ApplicationError("INTERNAL_ERROR", "An ambush's ships are not in the catalogue");
   let battle: SeaBattleResult;
@@ -542,8 +913,9 @@ async function decideAmbush(
   }
   const written = await dependencies.ships.resolveAmbush({
     playerId: actor.playerId,
+    shipId,
     expectedVoyageVersion: voyage.version,
-    expectedShipVersion: ship.version,
+    expectedShipVersion: ship.record.version,
     outcome: battle.outcome,
     hull: battle.playerHull,
     endVoyage,
@@ -551,7 +923,7 @@ async function decideAmbush(
     bounty: prepared?.write ?? null
   });
   if (!written) return null;
-  const nextShip: PlayerShipRecord = { ...ship, hull: battle.playerHull, version: ship.version + 1, updatedAt: now };
+  const fought: PlayerShipRecord = { ...ship.record, hull: battle.playerHull, version: ship.record.version + 1, updatedAt: now };
   const nextVoyage: VoyageRecord = {
     ...voyage,
     status: endVoyage ? "ENDED" : voyage.status,
@@ -559,7 +931,8 @@ async function decideAmbush(
     updatedAt: now,
     ambush: { ...ambush, status: battle.outcome }
   };
-  return { view: fleetView(dependencies.catalogue, nextShip, nextVoyage, now), battle, bounty: prepared?.view ?? null };
+  const nextState: FleetState = { ...state, stored: state.stored.map((entry) => (entry.shipId === shipId ? fought : entry)), voyage: nextVoyage };
+  return { view: fleetView(dependencies.catalogue, nextState, now), battle, bounty: prepared?.view ?? null };
 }
 
 /**
@@ -608,7 +981,7 @@ async function prepareBounty(
     economy = dependencies.economyService.prepareMutation(actor, wallet, currency, {
       delta: bounty.gold,
       reason: "PIRATE_BOUNTY",
-      referenceId: shipIdFor(playerId),
+      referenceId: voyageShipId(playerId, voyage),
       requestId
     });
   } catch (error: unknown) {
@@ -695,20 +1068,21 @@ export class FightAmbush {
 
   async execute(actor: ActorContext | null, command: { readonly inputs: readonly SeaBattleInput[] }): Promise<AmbushOutcomeView> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    const { ships, catalogue, clock } = this.dependencies;
+    const { catalogue, clock } = this.dependencies;
     for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
       const now = clock.now();
-      const [ship, voyage] = await Promise.all([ships.findShip(actor.playerId), ships.findVoyage(actor.playerId)]);
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const { voyage } = state;
       const ambush = voyage?.ambush ?? null;
       if (voyage === null || ambush === null) throw new ApplicationError("RESOURCE_NOT_FOUND", "No pirates are on this voyage");
       // Already decided (a retried request, or the ship was called home): the outcome stands, and no
       // new inputs are taken.
       if (ambush.status !== "PENDING") {
-        return { fleet: fleetView(catalogue, ship, voyage, now), battle: null, bounty: await storedBounty(this.dependencies, actor.playerId, voyage) };
+        return { fleet: fleetView(catalogue, state, now), battle: null, bounty: await storedBounty(this.dependencies, actor.playerId, voyage) };
       }
       if (voyage.status !== "UNDERWAY") throw new ApplicationError("RESOURCE_NOT_FOUND", "No pirates are on this voyage");
       if (Date.parse(ambush.at) > Date.parse(now)) throw new ApplicationError("AMBUSH_NOT_READY", "The pirates have not struck yet");
-      const decided = await decideAmbush(this.dependencies, actor, ship, voyage, command.inputs, now, false);
+      const decided = await decideAmbush(this.dependencies, actor, state, voyage, command.inputs, now, false);
       if (decided !== null) return { fleet: decided.view, battle: decided.battle, bounty: decided.bounty };
     }
     throw new ApplicationError("CONFLICT_STALE_STATE", "The voyage changed while fighting");
@@ -716,93 +1090,45 @@ export class FightAmbush {
 }
 
 /**
- * Mends the ship at its dock: gold through the ledger (`SHIP_REPAIR`), wood through the inventory,
- * the hull back to its class's full, in one batch with its receipt, exactly as a build is.
+ * Mends one of the player's ships at its dock: gold through the ledger (`SHIP_REPAIR`), wood through
+ * the inventory, the hull back to its class's full, in one batch with its receipt, exactly as a build
+ * is. Without a ship named, the ship in berth 1.
  */
 export class RepairShip {
   constructor(private readonly dependencies: ShipDependencies) {}
 
-  async execute(actor: ActorContext | null, command: { readonly requestId: string }): Promise<FleetView> {
+  async execute(actor: ActorContext | null, command: { readonly requestId: string; readonly shipId?: string | undefined }): Promise<FleetView> {
     if (actor === null) throw new ApplicationError("NOT_AUTHENTICATED", "Authentication is required");
-    const { catalogue, ships } = this.dependencies;
-    const shipId = shipIdFor(actor.playerId);
-    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([shipId, SHIP_REPAIR_OPERATION]));
+    const { catalogue } = this.dependencies;
+    const named = command.shipId ?? shipIdFor(actor.playerId, 1);
+    const fingerprint = await this.dependencies.fingerprints.hash(JSON.stringify([named, SHIP_REPAIR_OPERATION]));
     const existing = await this.dependencies.idempotency.find(actor.playerId, SHIP_REPAIR_OPERATION, command.requestId);
     if (existing !== null) return replay(existing, fingerprint);
     for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
       const now = this.dependencies.clock.now();
-      const ship = await ships.findShip(actor.playerId);
-      const current = classOf(catalogue, ship);
-      if (ship === null || ship.hull >= current.hull) throw new ApplicationError("SHIP_NOT_DAMAGED", "The ship needs no repair");
-      if (voyageLocation(await ships.findVoyage(actor.playerId), now) !== "HOME") {
-        throw new ApplicationError("SHIP_AT_SEA", "The ship must be at its dock to be repaired");
-      }
-      const cost = catalogue.repairCost(current.hull - ship.hull);
-      const currency = this.dependencies.currencies.findById(parseCurrencyDefinitionId(cost.currencyDefinitionId));
-      if (currency === null) throw new ApplicationError("CURRENCY_DEFINITION_NOT_FOUND", "Currency definition was not found");
-      const materials = Object.entries(cost.materials).filter(([, quantity]) => quantity > 0);
-      const expectedInventory: InventoryItem[] = [];
-      for (const [itemDefinitionId, quantity] of materials) {
-        const row = await this.dependencies.inventory.find(actor.playerId, parseItemDefinitionId(itemDefinitionId));
-        if (row === null || row.quantity < quantity) throw new ApplicationError("INSUFFICIENT_ITEMS", "The repair needs materials the island does not have");
-        expectedInventory.push(row);
-      }
-      const wallet = (await this.dependencies.wallets.find(actor.playerId, currency.id)) ?? {
-        playerId: actor.playerId,
-        currencyDefinitionId: currency.id,
-        balance: 0,
-        version: 1,
-        updatedAt: now
-      };
-      let economy;
-      try {
-        economy = this.dependencies.economyService.prepareMutation(actor, wallet, currency, {
-          delta: -cost.gold,
+      const state = await readFleet(this.dependencies, actor.playerId);
+      const ship = ownShip(fleetShips(catalogue, actor.playerId, state.stored), named);
+      if (ship.record === null || ship.hull >= ship.shipClass.hull) throw new ApplicationError("SHIP_NOT_DAMAGED", "The ship needs no repair");
+      if (shipAway(state, ship.shipId, now)) throw new ApplicationError("SHIP_AT_SEA", "The ship must be at its dock to be repaired");
+      const written = await writeShip(
+        this.dependencies,
+        actor,
+        state,
+        {
+          ship,
+          shipId: ship.shipId,
+          berth: ship.berth,
+          to: ship.shipClass,
+          hull: ship.shipClass.hull,
+          price: catalogue.repairCost(ship.shipClass.hull - ship.hull),
           reason: "SHIP_REPAIR",
-          referenceId: shipId,
-          requestId: command.requestId
-        });
-      } catch (error: unknown) {
-        if (error instanceof ApplicationError) throw error;
-        if (error instanceof DomainError) throw new ApplicationError("INVALID_INPUT", error.message);
-        throw error;
-      }
-      const mended: PlayerShipRecord = { ...ship, hull: current.hull, version: ship.version + 1, lastChangeId: economy.transactionId, updatedAt: economy.createdAt };
-      const result = fleetView(catalogue, mended, null, economy.createdAt);
-      const record: IdempotencyRecord = {
-        actorPlayerId: actor.playerId,
-        operation: SHIP_REPAIR_OPERATION,
-        requestId: command.requestId,
-        payloadFingerprint: fingerprint,
-        resourceId: economy.transactionId,
-        responseJson: JSON.stringify(result),
-        status: "COMPLETED",
-        createdAt: economy.createdAt
-      };
-      try {
-        await ships.buildAtomically(
-          {
-            playerId: actor.playerId,
-            shipId,
-            expectedFromTier: current.tier,
-            expectedVersion: ship.version,
-            toTier: current.tier,
-            classId: current.id,
-            hull: current.hull,
-            economy,
-            removals: materials.map(([itemDefinitionId, quantity]) => this.dependencies.inventoryService.prepareRemoval(actor.playerId, itemDefinitionId, quantity)),
-            expectedInventory,
-            createdAt: economy.createdAt
-          },
-          record
-        );
-        return result;
-      } catch (error: unknown) {
-        const raced = await this.dependencies.idempotency.find(actor.playerId, SHIP_REPAIR_OPERATION, command.requestId);
-        if (raced !== null) return replay(raced, fingerprint);
-        if (error instanceof ApplicationError && error.code === "ECONOMY_CONFLICT") continue;
-        throw error;
-      }
+          operation: SHIP_REPAIR_OPERATION
+        },
+        command,
+        fingerprint,
+        now
+      );
+      if (written !== null) return written;
     }
     throw new ApplicationError("ECONOMY_CONFLICT", "The ship or the economy changed while repairing");
   }

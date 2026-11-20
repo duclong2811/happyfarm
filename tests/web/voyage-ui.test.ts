@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { FleetResponse, GetWorldChartResponse } from "@happy-farm/contracts";
-import { openArchipelagos, SEA_REGIONS, SHIP_CLASSES } from "@happy-farm/game-data";
+import { openArchipelagos, SEA_REGIONS, shipClassById } from "@happy-farm/game-data";
 import { activityTrayItems, clockText } from "../../apps/web/src/activity-tray";
 import { describeFleet, placeAction } from "../../apps/web/src/sea-chart-modal";
+import { FIXTURE_PLAYER_UUID, fleetResponse, nextShip } from "../support/fleet-fixture";
 
 /**
  * What the chart offers for a tapped place, given where the ship is (display only - the server decides
@@ -40,26 +41,27 @@ function northChart(mySlotId: string): GetWorldChartResponse {
 }
 
 function fleet(location: FleetResponse["location"], toSlotId: string | null): FleetResponse {
-  const rowboat = SHIP_CLASSES[0];
-  const sloop = SHIP_CLASSES[1];
-  return {
+  const rowboat = shipClassById("ship_class_rowboat");
+  const sloop = shipClassById("ship_class_sloop");
+  const upgrade = nextShip({
+    classId: "ship_class_sloop",
+    tier: 2,
+    rank: 1,
+    requiredPlayerLevel: sloop?.requiredPlayerLevel ?? 10,
+    speedTilesPerMinute: sloop?.speedTilesPerMinute ?? 70,
+    hull: sloop?.hull ?? 150,
+    cannons: 2,
+    cost: { currencyId: "currency_gold", gold: 800, materials: [{ itemDefinitionId: "item_wood", quantity: 150 }, { itemDefinitionId: "item_ore", quantity: 60 }] }
+  });
+  return fleetResponse({
     readAt: "2026-11-20T00:00:00.000Z",
-    ship: { classId: "ship_class_rowboat", tier: 1, hull: rowboat?.hull ?? 60, hullMax: rowboat?.hull ?? 60, speedTilesPerMinute: rowboat?.speedTilesPerMinute ?? 40, cannons: 0 },
-    next: {
-      classId: "ship_class_sloop",
-      tier: 2,
-      requiredPlayerLevel: sloop?.requiredPlayerLevel ?? 10,
-      speedTilesPerMinute: sloop?.speedTilesPerMinute ?? 70,
-      hull: sloop?.hull ?? 150,
-      cannons: 2,
-      cost: { currencyId: "currency_gold", gold: 800, materials: [{ itemDefinitionId: "item_wood", quantity: 150 }, { itemDefinitionId: "item_ore", quantity: 60 }] }
-    },
+    ship: { classId: "ship_class_rowboat", role: "FISHING", tier: 1, lent: true, hull: rowboat?.hull ?? 60, hullMax: rowboat?.hull ?? 60, speedTilesPerMinute: rowboat?.speedTilesPerMinute ?? 40, cannons: 0, upgrade },
     location,
     voyage:
       toSlotId === null
         ? null
-        : { fromSlotId: "slot_north_1_1", toSlotId, departedAt: "2026-11-19T23:55:00.000Z", arrivesAt: "2026-11-20T00:05:00.000Z", arrived: location === "AT_PLACE" }
-  };
+        : { shipId: `ship_${FIXTURE_PLAYER_UUID}`, fromSlotId: "slot_north_1_1", toSlotId, departedAt: "2026-11-19T23:55:00.000Z", arrivesAt: "2026-11-20T00:05:00.000Z", arrived: location === "AT_PLACE" }
+  });
 }
 
 describe("the chart's ship actions", () => {

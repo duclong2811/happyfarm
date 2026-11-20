@@ -7,11 +7,12 @@ import type {
   PlayerId,
   MineId,
   ShipId,
+  DockId,
   PlotId,
   ShopEntryId,
   WarehouseId
 } from "./ids";
-import { parseConstructionId, parseMineId, parsePlayerId, parsePlotId, parseShipId, parseShopEntryId, parseWarehouseId } from "./ids";
+import { parseConstructionId, parseDockId, parseMineId, parsePlayerId, parsePlotId, parseShipId, parseShopEntryId, parseWarehouseId } from "./ids";
 
 export const MAX_WALLET_BALANCE = Number.MAX_SAFE_INTEGER;
 export const MAX_SHOP_QUANTITY = 1_000_000;
@@ -76,8 +77,10 @@ export type EconomyReason =
   /** Mending a ship's hull after a fight (W5c): gold out, the hull restored. */
   | "SHIP_REPAIR"
   /** A won pirate fight's bounty (W5c): gold in, decided by the server's replay of the fight. */
-  | "PIRATE_BOUNTY";
-export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION" | "WAREHOUSE" | "MINE" | "SHIP";
+  | "PIRATE_BOUNTY"
+  /** Raising the dock a tier (F1): gold out, more berths for ships from then on. */
+  | "DOCK_UPGRADE";
+export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCTION" | "WAREHOUSE" | "MINE" | "SHIP" | "DOCK";
 
 /**
  * What a ledger row points at: the shop entry that was traded, the land that was bought, or the
@@ -89,7 +92,7 @@ export type EconomyReferenceType = "SHOP_ENTRY" | "PLOT" | "PLAYER" | "CONSTRUCT
  * audit: `reason`, `reference_type`, and `reference_id` agree by construction rather than by
  * convention.
  */
-export type EconomyReferenceId = ShopEntryId | PlotId | PlayerId | ConstructionId | WarehouseId | MineId | ShipId;
+export type EconomyReferenceId = ShopEntryId | PlotId | PlayerId | ConstructionId | WarehouseId | MineId | ShipId | DockId;
 
 const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   SHOP_BUY: "SHOP_ENTRY",
@@ -105,11 +108,13 @@ const REFERENCE_TYPE_BY_REASON: Record<EconomyReason, EconomyReferenceType> = {
   WAREHOUSE_UPGRADE: "WAREHOUSE",
   // The upgrade points at the mine it raised: farm and slot, read straight off the id.
   MINE_UPGRADE: "MINE",
-  // Building and mending both point at the player's one ship.
+  // Building, upgrading and mending point at the ship built or mended.
   SHIP_BUILD: "SHIP",
   SHIP_REPAIR: "SHIP",
   // A bounty points at the ship that won it.
-  PIRATE_BOUNTY: "SHIP"
+  PIRATE_BOUNTY: "SHIP",
+  // A dock upgrade points at the player's dock.
+  DOCK_UPGRADE: "DOCK"
 };
 
 /** The one reference kind a reason may carry. The mapping is total, or the reason is not one. */
@@ -129,7 +134,8 @@ export function parseEconomyReferenceId(value: string): EconomyReferenceId {
   const warehouse = parseOrNull(parseWarehouseId, value);
   const mine = parseOrNull(parseMineId, value);
   const ship = parseOrNull(parseShipId, value);
-  const reference = shopEntry ?? plot ?? construction ?? warehouse ?? mine ?? ship ?? parseOrNull(parsePlayerId, value);
+  const dock = parseOrNull(parseDockId, value);
+  const reference = shopEntry ?? plot ?? construction ?? warehouse ?? mine ?? ship ?? dock ?? parseOrNull(parsePlayerId, value);
   if (reference === null) {
     throw new DomainError("INVALID_ID", "Invalid economy reference ID");
   }
@@ -158,6 +164,7 @@ function assertReferenceMatchesType(referenceType: EconomyReferenceType, referen
     else if (referenceType === "WAREHOUSE") parseWarehouseId(referenceId);
     else if (referenceType === "MINE") parseMineId(referenceId);
     else if (referenceType === "SHIP") parseShipId(referenceId);
+    else if (referenceType === "DOCK") parseDockId(referenceId);
     else parsePlayerId(referenceId);
   } catch {
     throw new DomainError("INVALID_ECONOMY_MUTATION", "Economy reference does not match its reason");

@@ -2081,6 +2081,9 @@ export const ErrorCodeSchema = z.enum([
   "SHIP_AT_SEA",
   "SHIP_MAX_CLASS",
   "SHIP_LEVEL_REQUIRED",
+  "DOCK_FULL",
+  "DOCK_MAX_TIER",
+  "DOCK_LEVEL_REQUIRED",
   "VOYAGE_UNDERWAY",
   "VOYAGE_NOT_ARRIVED",
   "SHIP_DAMAGED",
@@ -2264,36 +2267,66 @@ export const VisitWorldPlaceResponseSchema = z
 export type VisitWorldPlaceResponse = z.infer<typeof VisitWorldPlaceResponseSchema>;
 
 /**
- * Ships and voyages (W5a, docs/design/NAVAL.md). The client asks to build the next class, to sail to
- * a place, or to come home; the class, the cost and the time a voyage takes are the server's.
+ * Ships and voyages (W5a, docs/design/NAVAL.md) and the fleet (F1, docs/design/FLEET.md). The client
+ * asks to build a ship of a role, to upgrade one of its own ships, to raise its dock, to sail one ship
+ * to a place, or to come home; the class, the cost and the time a voyage takes are the server's.
  */
 const ShipClassIdSchema = z.string().regex(/^ship_class_[a-z0-9]+(?:_[a-z0-9]+)*$/);
+/** A ship of the player's own fleet: berth 1 is the player's uuid, a later berth adds `_<berth>`. */
+export const ShipIdSchema = z.string().regex(new RegExp(`^ship_${UUID_PATTERN}(?:_[2-8])?$`, "i"));
+export const ShipRoleSchema = z.enum(["FISHING", "MERCHANT", "WAR"]);
 const WorldSlotIdSchema = z.string().max(40).regex(/^slot_[a-z]+_\d{1,3}_\d{1,3}$/);
-export const FleetShipDTOSchema = z
+const ShipPriceDTOSchema = z
   .object({
-    classId: ShipClassIdSchema,
-    tier: z.number().int().min(1),
-    hull: z.number().int().nonnegative(),
-    hullMax: z.number().int().positive(),
-    speedTilesPerMinute: z.number().positive(),
-    cannons: z.number().int().nonnegative()
+    currencyId: z.string().min(1).max(120),
+    gold: z.number().int().nonnegative(),
+    materials: z.array(z.object({ itemDefinitionId: z.string().min(1).max(120), quantity: z.number().int().positive() }).strict()).max(8)
   })
   .strict();
+/** A class a ship can become: built new (rank 1) or upgraded to. */
 export const FleetNextShipDTOSchema = z
   .object({
     classId: ShipClassIdSchema,
-    tier: z.number().int().min(2),
+    role: ShipRoleSchema,
+    rank: z.number().int().min(1).max(16),
+    tier: z.number().int().min(1).max(16),
     requiredPlayerLevel: z.number().int().min(1),
     speedTilesPerMinute: z.number().positive(),
     hull: z.number().int().positive(),
     cannons: z.number().int().nonnegative(),
-    cost: z
-      .object({
-        currencyId: z.string().min(1).max(120),
-        gold: z.number().int().nonnegative(),
-        materials: z.array(z.object({ itemDefinitionId: z.string().min(1).max(120), quantity: z.number().int().positive() }).strict()).max(8)
-      })
+    hold: z.number().int().nonnegative(),
+    cost: ShipPriceDTOSchema
+  })
+  .strict();
+export const FleetShipDTOSchema = z
+  .object({
+    shipId: ShipIdSchema,
+    berth: z.number().int().min(1).max(8),
+    /** The dock's rowboat, lent to a player with no ship of their own. */
+    lent: z.boolean(),
+    classId: ShipClassIdSchema,
+    role: ShipRoleSchema,
+    rank: z.number().int().min(1).max(16),
+    tier: z.number().int().min(1).max(16),
+    hull: z.number().int().nonnegative(),
+    hullMax: z.number().int().positive(),
+    speedTilesPerMinute: z.number().positive(),
+    cannons: z.number().int().nonnegative(),
+    hold: z.number().int().nonnegative(),
+    /** Out on the player's voyage rather than at its dock. */
+    away: z.boolean(),
+    upgrade: FleetNextShipDTOSchema.nullable()
+  })
+  .strict();
+export const FleetDockDTOSchema = z
+  .object({
+    tier: z.number().int().min(1).max(16),
+    berths: z.number().int().min(1).max(8),
+    freeBerths: z.number().int().min(0).max(8),
+    next: z
+      .object({ tier: z.number().int().min(2).max(16), berths: z.number().int().min(1).max(8), requiredPlayerLevel: z.number().int().min(1), cost: ShipPriceDTOSchema })
       .strict()
+      .nullable()
   })
   .strict();
 /** A ship's fighting numbers, as the sea-battle simulation takes them. */
@@ -2326,6 +2359,8 @@ export const AmbushDTOSchema = z
   .strict();
 export const VoyageDTOSchema = z
   .object({
+    /** The ship sailing it. */
+    shipId: ShipIdSchema,
     fromSlotId: WorldSlotIdSchema,
     toSlotId: WorldSlotIdSchema,
     departedAt: z.iso.datetime(),
@@ -2338,16 +2373,28 @@ export const VoyageDTOSchema = z
 export const FleetResponseSchema = z
   .object({
     readAt: z.iso.datetime(),
+    /** The ship in hand: the one on the voyage, else the ship in berth 1. */
     ship: FleetShipDTOSchema,
+    /** What `ship` would be upgraded to. */
     next: FleetNextShipDTOSchema.nullable(),
+    ships: z.array(FleetShipDTOSchema).min(1).max(8),
+    /** The first rank of each role: what a free berth could take. */
+    builds: z.array(FleetNextShipDTOSchema).max(8),
+    dock: FleetDockDTOSchema,
     location: z.enum(["HOME", "AT_SEA", "AT_PLACE"]),
     voyage: VoyageDTOSchema.nullable()
   })
   .strict();
-export const BuildShipRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
-export const StartVoyageRequestSchema = z.object({ slotId: WorldSlotIdSchema, requestId: RequestIdSchema }).strict();
+/** Build a new ship of a role: the first rank of its ladder, in a free berth. */
+export const BuildShipRequestSchema = z.object({ role: ShipRoleSchema, requestId: RequestIdSchema }).strict();
+/** Upgrade one of the player's own ships one rank up its ladder. */
+export const UpgradeShipRequestSchema = z.object({ shipId: ShipIdSchema, requestId: RequestIdSchema }).strict();
+export const UpgradeDockRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+/** Without a ship named: the one lying at the place it reached, or the ship in berth 1. */
+export const StartVoyageRequestSchema = z.object({ slotId: WorldSlotIdSchema, requestId: RequestIdSchema, shipId: ShipIdSchema.optional() }).strict();
 export const EndVoyageRequestSchema = z.object({}).strict();
-export const RepairShipRequestSchema = z.object({ requestId: RequestIdSchema }).strict();
+/** Without a ship named: the ship in berth 1. */
+export const RepairShipRequestSchema = z.object({ requestId: RequestIdSchema, shipId: ShipIdSchema.optional() }).strict();
 /**
  * The player's orders in a fight, as [tick, action] pairs, or [tick, action, aim] for a broadside: the
  * action is the index of one of the simulation's actions (rudder left, centre, right; sail down, half,
@@ -2376,6 +2423,7 @@ export const SeaBattleResultDTOSchema = z
   })
   .strict();
 export type FleetResponse = z.infer<typeof FleetResponseSchema>;
+export type ShipRole = z.infer<typeof ShipRoleSchema>;
 /**
  * What a won fight paid (W5c), decided and written by the server. Materials the warehouse had no
  * room for are `lost`: they are not owed later.

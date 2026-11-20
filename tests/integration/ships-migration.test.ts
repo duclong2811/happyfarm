@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allMigrationNames, migrationSql, schemaSql } from "../support/migrations";
+import { allMigrationNames, migrationSql } from "../support/migrations";
 import { NodeD1Database } from "../support/node-d1";
 import { NOW, PLAYER_ONE_ID } from "../support/fixtures";
 
@@ -80,7 +80,13 @@ describe("migration 0047: ships, voyages and the ledger rebuild", () => {
   });
 
   it("holds one ship and one voyage per player, with sane values", () => {
-    const db = new NodeD1Database(schemaSql());
+    // The schema as 0047 to 0050 left it: 0051 gives a player a fleet (fleet-migration.test.ts).
+    const db = new NodeD1Database(
+      allMigrationNames()
+        .filter((name) => name < "0051")
+        .map((name) => migrationSql(name))
+        .join("\n")
+    );
     try {
       seedPlayer(db);
       const ship = db.sqlite.prepare(

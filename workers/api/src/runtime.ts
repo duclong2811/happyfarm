@@ -76,6 +76,7 @@ import type {
   WarehouseTierRepository,
   MineCatalogue,
   ShipCatalogue,
+  ShipPrice,
   TileTerrainLookup,
   LandSaleLookup,
   WorkAreaGroundLookup,
@@ -146,7 +147,7 @@ import {
   type TreeDefinitionData
 } from "@happy-farm/game-data";
 import { forestryConstructionDefinition } from "@happy-farm/game-data";
-import { ambushBounty, chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
+import { ambushBounty, chartedArchipelagos, findSeaSlot, findSeaArchipelago, pirateShip, planAmbush, SHIP_BATTLE_NUMBERS, SHIP_REPAIR_GOLD_PER_HULL, SHIP_REPAIR_WOOD_PER_HULL, SHIP_CLASSES, DOCK_TIERS, SHIP_GOLD_CURRENCY_ID, SHIP_ORE_ITEM_ID, SHIP_WOOD_ITEM_ID, voyageSeconds, ISLAND_GENERATOR_VERSION, nextFreeSeaSlot, openArchipelagos, SEA_REGIONS } from "@happy-farm/game-data";
 import type { WorldChartPort } from "@happy-farm/application";
 
 export const gameDataAquacultureDefinition = { ...aquacultureDefinition };
@@ -819,23 +820,35 @@ export const gameDataWorldChart: WorldChartPort = {
   openArchipelagos: (region, isClaimed) => openArchipelagos(region, isClaimed)
 };
 
+/** Game data's gold, wood and ore, as the ledger and the inventory take them. */
+function shipPrice(cost: { readonly gold: number; readonly wood: number; readonly ore: number }): ShipPrice {
+  return {
+    currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
+    gold: cost.gold,
+    materials: { [SHIP_WOOD_ITEM_ID]: cost.wood, [SHIP_ORE_ITEM_ID]: cost.ore }
+  };
+}
+
 export const gameDataShipCatalogue: ShipCatalogue = {
   classes: () =>
     SHIP_CLASSES.map((entry) => ({
       id: entry.id,
+      role: entry.role,
+      rank: entry.rank,
       tier: entry.tier,
       requiredPlayerLevel: entry.requiredPlayerLevel,
       speedTilesPerMinute: entry.speedTilesPerMinute,
       hull: entry.hull,
       cannons: entry.cannons,
-      buildCost:
-        entry.buildCost === null
-          ? null
-          : {
-              currencyDefinitionId: SHIP_GOLD_CURRENCY_ID,
-              gold: entry.buildCost.gold,
-              materials: { [SHIP_WOOD_ITEM_ID]: entry.buildCost.wood, [SHIP_ORE_ITEM_ID]: entry.buildCost.ore }
-            }
+      hold: entry.hold,
+      buildCost: shipPrice(entry.buildCost)
+    })),
+  docks: () =>
+    DOCK_TIERS.map((entry) => ({
+      tier: entry.tier,
+      berths: entry.berths,
+      requiredPlayerLevel: entry.requiredPlayerLevel,
+      upgradeCost: entry.upgradeCost === null ? null : shipPrice(entry.upgradeCost)
     })),
   voyageSeconds: (distanceTiles, speedTilesPerMinute) => voyageSeconds(distanceTiles, speedTilesPerMinute),
   battle: (classId) => SHIP_BATTLE_NUMBERS[classId] ?? null,

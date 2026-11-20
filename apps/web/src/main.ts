@@ -7784,11 +7784,13 @@ function showShipPanel(): void {
           void refreshHorizon();
           return;
         case "REPAIR":
-          setFleet(await client.repairShip(newRequestId("repair")));
+          setFleet(await client.repairShip(newRequestId("repair"), fleetState?.fleet.ship.shipId));
           void refreshAccount();
           return;
         case "BUILD": {
-          const fleet = await client.buildShip(newRequestId("ship"));
+          const inHand = fleetState?.fleet.ship.shipId;
+          if (inHand === undefined) return;
+          const fleet = await client.upgradeShip(inHand, newRequestId("ship"));
           setFleet(fleet);
           setStatus(message("chart.shipBuilt", { name: t(`ship.class.${fleet.ship.classId}` as MessageKey) }));
           void refreshAccount();
@@ -7951,14 +7953,15 @@ function showSeaChart(onClosed?: () => void): void {
       void refreshHorizon();
     },
     buildShip: state.island === null ? null : async () => {
-      const fleet = await client.buildShip(newRequestId("ship"));
+      const inHand = fleetState?.fleet.ship.shipId ?? (await client.getFleet()).ship.shipId;
+      const fleet = await client.upgradeShip(inHand, newRequestId("ship"));
       setFleet(fleet);
       // Gold, wood and ore left the island: the account shows what is left.
       void refreshAccount();
       return fleet;
     },
     repairShip: state.island === null ? null : async () => {
-      const fleet = await client.repairShip(newRequestId("repair"));
+      const fleet = await client.repairShip(newRequestId("repair"), fleetState?.fleet.ship.shipId);
       setFleet(fleet);
       void refreshAccount();
       return fleet;

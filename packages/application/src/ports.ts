@@ -36,6 +36,7 @@ import type {
   ItemDefinitionId,
   MineId,
   ShipId,
+  DockId,
   Player,
   PlayerId,
   PlayerProgression,
@@ -1576,20 +1577,41 @@ export interface ClaimedWorldSlot extends WorldSlotClaim {
   readonly name: string | null;
 }
 
-/** One class of ship, from game data (docs/design/NAVAL.md). */
+/** What a ship's role is (docs/design/FLEET.md): a ship never changes it. */
+export type ShipRole = "FISHING" | "MERCHANT" | "WAR";
+
+/** Gold and materials, as game data prices a ship or a dock. */
+export interface ShipPrice {
+  readonly currencyDefinitionId: string;
+  readonly gold: number;
+  readonly materials: Readonly<Record<string, number>>;
+}
+
+/** One class of ship, from game data (docs/design/NAVAL.md, FLEET.md). */
 export interface ShipClass {
   readonly id: string;
+  readonly role: ShipRole;
+  /** Its place on its role's ladder: 1 is built new, each next one is an upgrade of the one before. */
+  readonly rank: number;
+  /** The ship's size: its model, its handling, and the pirates that come for it. */
   readonly tier: number;
   readonly requiredPlayerLevel: number;
   readonly speedTilesPerMinute: number;
   readonly hull: number;
   readonly cannons: number;
-  /** What building it costs; null for the dock's own rowboat. */
-  readonly buildCost: {
-    readonly currencyDefinitionId: string;
-    readonly gold: number;
-    readonly materials: Readonly<Record<string, number>>;
-  } | null;
+  /** Cargo room, in items. */
+  readonly hold: number;
+  /** For rank 1, what building one costs; for the ranks after, the upgrade from the rank before. */
+  readonly buildCost: ShipPrice;
+}
+
+/** One tier of the dock: how many ships it berths, and what raising it to this tier costs. */
+export interface DockTier {
+  readonly tier: number;
+  readonly berths: number;
+  readonly requiredPlayerLevel: number;
+  /** Null for the dock every island starts with. */
+  readonly upgradeCost: ShipPrice | null;
 }
 
 /** A ship's fighting numbers in the sea-battle simulation. */
@@ -1608,8 +1630,10 @@ export interface PirateShip {
 }
 
 export interface ShipCatalogue {
-  /** Every class in tier order; the first is the dock's rowboat. */
+  /** Every class; the first is the dock's rowboat, lent to a player with no ship of their own. */
   classes(): readonly ShipClass[];
+  /** The dock's tiers in order; the first is the dock every island starts with. */
+  docks(): readonly DockTier[];
   /** How long a voyage of `distanceTiles` takes at `speedTilesPerMinute`, in whole seconds. */
   voyageSeconds(distanceTiles: number, speedTilesPerMinute: number): number;
   /** A class's fighting numbers, or null for a class that does not fight. */
@@ -1625,11 +1649,7 @@ export interface ShipCatalogue {
     readonly shipTier: number;
   }): { readonly atShare: number; readonly seed: number; readonly pirates: readonly string[] } | null;
   /** What mending `missingHull` points costs. */
-  repairCost(missingHull: number): {
-    readonly currencyDefinitionId: string;
-    readonly gold: number;
-    readonly materials: Readonly<Record<string, number>>;
-  };
+  repairCost(missingHull: number): ShipPrice;
   /** What winning a fight against `pirates` pays; asked only for a fight the server's replay won. */
   bounty(pirates: readonly string[]): {
     readonly currencyDefinitionId: string;
@@ -1639,10 +1659,12 @@ export interface ShipCatalogue {
   };
 }
 
-/** A player's ship as stored. No row means the dock's rowboat. */
+/** A ship of a player's fleet, as stored. A player with no row has the dock's rowboat, lent. */
 export interface PlayerShipRecord {
   readonly playerId: PlayerId;
   readonly shipId: ShipId;
+  /** Its berth at the dock, 1 up: one ship a berth. */
+  readonly berth: number;
   readonly classId: string;
   readonly tier: number;
   readonly hull: number;
@@ -1652,16 +1674,50 @@ export interface PlayerShipRecord {
   readonly updatedAt: string;
 }
 
-/** Building the next class: gold, materials, the ship row and the receipt, in one batch. */
+/**
+ * A ship built, upgraded or mended: gold, materials, the ship row and the receipt, in one batch.
+ *
+ * A new ship (`expectedVersion` 0) is inserted into its berth only while the player still has exactly
+ * `expectedShipCount` ships stored; a stored ship is rewritten only over the class and version the
+ * caller read.
+ */
 export interface ShipBuild {
   readonly playerId: PlayerId;
   readonly shipId: ShipId;
-  /** The tier and version the caller read; version 0 means no row was stored (the rowboat). */
-  readonly expectedFromTier: number;
+  readonly berth: number;
+  /** The class and version the caller read; null and 0 when no row was stored (a new ship, or the lent rowboat). */
+  readonly expectedClassId: string | null;
+  readonly expectedVersion: number;
+  /** How many ships the caller read stored: a new ship lands only if that still holds. */
+  readonly expectedShipCount: number;
+  readonly classId: string;
+  readonly tier: number;
+  readonly hull: number;
+  readonly economy: EconomyMutation;
+  readonly removals: readonly InventoryRemoval[];
+  readonly expectedInventory: readonly InventoryItem[];
+  readonly createdAt: string;
+}
+
+/** A player's dock once raised past the starting tier. No row means the starting dock. */
+export interface PlayerDockRecord {
+  readonly playerId: PlayerId;
+  readonly dockId: DockId;
+  readonly tier: number;
+  readonly version: number;
+  readonly lastChangeId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** Raising the dock a tier: gold, materials, the dock row and the receipt, in one batch. */
+export interface DockUpgrade {
+  readonly playerId: PlayerId;
+  readonly dockId: DockId;
+  /** The tier and version the caller read; version 0 means no row was stored (the starting dock). */
+  readonly expectedTier: number;
   readonly expectedVersion: number;
   readonly toTier: number;
-  readonly classId: string;
-  readonly hull: number;
   readonly economy: EconomyMutation;
   readonly removals: readonly InventoryRemoval[];
   readonly expectedInventory: readonly InventoryItem[];
@@ -1684,6 +1740,8 @@ export interface VoyageAmbush {
 
 export interface VoyageRecord {
   readonly playerId: PlayerId;
+  /** The ship sailing it; null for a voyage stored before the fleet, sailed by the ship in berth 1. */
+  readonly shipId: ShipId | null;
   readonly fromSlotId: string;
   readonly toSlotId: string;
   readonly shipTier: number;
@@ -1700,6 +1758,8 @@ export interface VoyageRecord {
 /** Deciding an ambush: the voyage moves on one version with its outcome, the ship's hull with it. */
 export interface AmbushResolution {
   readonly playerId: PlayerId;
+  /** The ship that fought: its hull is what the fight left. */
+  readonly shipId: ShipId;
   readonly expectedVoyageVersion: number;
   readonly expectedShipVersion: number;
   readonly outcome: Exclude<AmbushStatus, "PENDING">;
@@ -1724,8 +1784,11 @@ export interface AmbushBountyWrite {
 }
 
 export interface ShipRepository {
-  findShip(playerId: PlayerId): Promise<PlayerShipRecord | null>;
+  /** The player's stored ships, in berth order. */
+  listShips(playerId: PlayerId): Promise<readonly PlayerShipRecord[]>;
+  findDock(playerId: PlayerId): Promise<PlayerDockRecord | null>;
   buildAtomically(build: ShipBuild, idempotency: IdempotencyRecord): Promise<void>;
+  upgradeDockAtomically(upgrade: DockUpgrade, idempotency: IdempotencyRecord): Promise<void>;
   findVoyage(playerId: PlayerId): Promise<VoyageRecord | null>;
   /**
    * Writes `next` only if the stored voyage is still at `expectedVersion` (null: none stored yet).

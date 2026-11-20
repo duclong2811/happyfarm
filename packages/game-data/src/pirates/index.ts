@@ -71,7 +71,17 @@ export const SHIP_BATTLE_NUMBERS: Readonly<Record<string, BattleShipNumbers>> = 
   ship_class_rowboat: { speed: 6, turn: 16, radius: 3, spread: 60 },
   ship_class_sloop: { speed: 9, turn: 14, radius: 4.5, spread: 40 },
   ship_class_brig: { speed: 10, turn: 12, radius: 5.5, spread: 32 },
-  ship_class_frigate: { speed: 11, turn: 10, radius: 6.5, spread: 26 }
+  ship_class_frigate: { speed: 11, turn: 10, radius: 6.5, spread: 26 },
+  // F1 (docs/design/FLEET.md): fishing boats nimble and gunless, merchant ships broad and slow to
+  // turn, the dragon the heaviest warship afloat.
+  ship_class_line_boat: { speed: 7, turn: 16, radius: 3.2, spread: 60 },
+  ship_class_net_boat: { speed: 7.5, turn: 15, radius: 3.8, spread: 60 },
+  ship_class_trawler: { speed: 8, turn: 13, radius: 4.5, spread: 60 },
+  ship_class_coaster: { speed: 8.5, turn: 12, radius: 5, spread: 50 },
+  ship_class_junk: { speed: 9, turn: 11, radius: 5.5, spread: 46 },
+  ship_class_cargo_junk: { speed: 9.5, turn: 10, radius: 6, spread: 42 },
+  ship_class_great_junk: { speed: 10, turn: 9, radius: 6.8, spread: 38 },
+  ship_class_dragon: { speed: 12, turn: 10, radius: 7, spread: 22 }
 };
 
 /** The chance of an ambush grows with the voyage's length, to this cap. */
