@@ -531,7 +531,7 @@ function villageEntries(): PlacementCatalogEntryData[] {
     piece("viet_house_thatch", "BUILDING", price.vietThatchHouse, level.SETTLED, cells(3, 3), ["housing"]),
     piece("viet_house_stilt", "BUILDING", price.vietStiltHouse, level.SETTLED + 1, cells(3, 3), ["housing"]),
     piece("viet_house_tiled", "BUILDING", price.vietTiledHouse, level.ESTABLISHED, cells(5, 4), ["housing"]),
-    piece("viet_village_gate", "MONUMENT", price.vietGate, level.ESTABLISHED, cells(3, 2), ["landmark"]),
+    piece("viet_village_gate", "MONUMENT", price.vietGate, level.ESTABLISHED, cells(4, 2), ["landmark"]),
     piece("viet_shrine", "MONUMENT", price.vietShrine, level.ESTABLISHED, cells(2, 2), ["landmark"]),
     piece("viet_well", "DECORATION", price.vietWell, level.SETTLED, cells(2, 2), ["water"]),
     piece("viet_jars", "DECORATION", price.vietJars, level.BASIC, cells(1, 1), ["storage"]),

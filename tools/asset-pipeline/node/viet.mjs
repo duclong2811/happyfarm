@@ -25,7 +25,7 @@
  * (`apps/web/src/render/viet-model-urls.ts`) says how many metres that side is drawn at.
  */
 
-import { beam, facingQuad, facingTriangle, leafBlade, lowPolyBlob, part, seededRandom, sheetQuad, softBox, taperedBox, taperedCylinder } from "./glb.mjs";
+import { beam, facingQuad, facingTriangle, leafBlade, lowPolyBlob, part, seededRandom, sheetQuad, sheetTriangle, softBox, taperedBox, taperedCylinder } from "./glb.mjs";
 
 /** Colours, sRGB, from the art bible's warm palette and the village's own materials. */
 export const VIET_PALETTE = {
@@ -56,7 +56,7 @@ export const VIET_PALETTE = {
   lanternRed: 0xd8402e,
   lanternYellow: 0xf2b33a,
   lotus: 0xf29abb,
-  mai: 0xf5c62e,
+  mai: 0xf8d02a,
   dao: 0xf6a2c2,
   ink: 0x3a2a20
 };
@@ -162,6 +162,7 @@ export function hipRoof(roof, { x = 0, y, z = 0, width, depth, height, ridge, sa
     }
   }
   return {
+    centre: [x, y, z],
     ridgeLeft: [x - hr, y + height, z],
     ridgeRight: [x + hr, y + height, z],
     corners: [
@@ -170,9 +171,47 @@ export function hipRoof(roof, { x = 0, y, z = 0, width, depth, height, ridge, sa
       [x + hw, y + lift, z - hd],
       [x - hw, y + lift, z - hd]
     ],
-    /** The eave line of the front, for a fascia: the roof's own points along its lower edge. */
-    eave: (faceIndex, u) => point(faces[faceIndex], u, 0)
+    /** The eave line of a face, for a fascia: the roof's own points along its lower edge. */
+    eave: (faceIndex, u) => point(faces[faceIndex], u, 0),
+    /** Any point of a face: u along the eave, v from eave (0) to ridge (1). Faces 0 and 1 are front and back. */
+    surface: (faceIndex, u, v) => point(faces[faceIndex], u, v)
   };
+}
+
+/**
+ * A curved horn swept from `from`: out along the horizontal direction `out`, rising faster as it goes,
+ * tapering to a point. With `hook` above 1 the tip turns back over its own base, the curl of a ridge
+ * end; below 1 it is the up-swept blade of a roof corner (đầu đao).
+ */
+export function horn(target, from, { out, length, rise, thickness, hook = 0.3, segments = 3 }) {
+  const size = Math.hypot(out[0], out[1]) || 1;
+  const ox = out[0] / size;
+  const oz = out[1] / size;
+  const at = (t) => {
+    const reach = length * (t - hook * t * t * t);
+    return [from[0] + ox * reach, from[1] + rise * t * t, from[2] + oz * reach];
+  };
+  let previous = from;
+  for (let index = 1; index <= segments; index += 1) {
+    const next = at(index / segments);
+    beam(target, previous, next, thickness * lerp(1, 0.35, (index - 1) / segments), { caps: index === segments });
+    previous = next;
+  }
+}
+
+/** Tile courses down the front and back slopes, laid on the roof's own curve rather than across it. */
+export function tileCourses(target, roof, { courses, thickness = 0.045, steps = 2, lift = 0.03 }) {
+  for (let course = 1; course < courses; course += 1) {
+    const u = course / courses;
+    for (const face of [0, 1]) {
+      let previous = add(roof.surface(face, u, 0), [0, lift, 0]);
+      for (let step = 1; step <= steps; step += 1) {
+        const next = add(roof.surface(face, u, step / steps), [0, lift, 0]);
+        beam(target, previous, next, thickness, { caps: false });
+        previous = next;
+      }
+    }
+  }
 }
 
 /** The thick edge of a thatch: a band hanging under every eave. */
@@ -187,17 +226,30 @@ export function eaveBand(target, roofShape, { thickness, segments = 4 }) {
 }
 
 /** The ridge and its dressing: a beam along the top, ends that curl up, and corner tips. */
-export function ridgeDressing(target, roofShape, { thickness, curl, tips = 0, tipOut = 0.25 }) {
-  const { ridgeLeft, ridgeRight, corners } = roofShape;
+export function ridgeDressing(target, roofShape, { thickness, curl, tips = 0, tipOut = 0.25, hips = true }) {
+  const { ridgeLeft, ridgeRight, corners, centre, surface } = roofShape;
+  // The ridge (bờ nóc), and at each end a curl that rises and turns back over it (đầu kìm).
   beam(target, ridgeLeft, ridgeRight, thickness);
   if (curl > 0) {
-    beam(target, ridgeLeft, add(ridgeLeft, [-curl * 0.45, curl, 0]), thickness * 0.85);
-    beam(target, ridgeRight, add(ridgeRight, [curl * 0.45, curl, 0]), thickness * 0.85);
+    horn(target, ridgeLeft, { out: [-1, 0], length: curl * 0.55, rise: curl, thickness: thickness * 0.95, hook: 1.7 });
+    horn(target, ridgeRight, { out: [1, 0], length: curl * 0.55, rise: curl, thickness: thickness * 0.95, hook: 1.7 });
   }
+  // The hip ridges (bờ dải), laid along the roof's own hip lines from the ridge down to each corner.
+  if (hips && surface !== undefined) {
+    for (const [face, u] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
+      let previous = surface(face, u, 1);
+      for (let step = 2; step >= 0; step -= 1) {
+        const next = add(surface(face, u, step / 3), [0, thickness * 0.2, 0]);
+        beam(target, previous, next, thickness * 0.7, { caps: false });
+        previous = next;
+      }
+    }
+  }
+  // The corners sweep up past the eave in a blade (đầu đao), continuing the hip outward.
   if (tips > 0) {
     for (const corner of corners) {
-      const out = [Math.sign(corner[0]) * tipOut, tips, Math.sign(corner[2]) * tipOut];
-      beam(target, corner, add(corner, out), thickness * 0.7);
+      const out = [corner[0] - centre[0], corner[2] - centre[2]];
+      horn(target, corner, { out, length: tipOut + tips * 0.5, rise: tips, thickness: thickness * 0.85, hook: 0.25 });
     }
   }
 }
@@ -281,9 +333,127 @@ export function branch(target, points, { from, to }) {
   }
 }
 
+// --- foliage -----------------------------------------------------------------------------------
+
+const ICO_T = (1 + Math.sqrt(5)) / 2;
+const ICO_VERTICES = [
+  [-1, ICO_T, 0], [1, ICO_T, 0], [-1, -ICO_T, 0], [1, -ICO_T, 0], [0, -1, ICO_T], [0, 1, ICO_T],
+  [0, -1, -ICO_T], [0, 1, -ICO_T], [ICO_T, 0, -1], [ICO_T, 0, 1], [-ICO_T, 0, -1], [-ICO_T, 0, 1]
+].map(([a, b, c]) => {
+  const size = Math.hypot(a, b, c);
+  return [a / size, b / size, c / size];
+});
+const ICO_FACES = [
+  [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+  [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]
+];
+
+/**
+ * A rounded, faceted puff: an icosahedron (once subdivided with `detail: 1`), its points nudged in
+ * and out a little so no two puffs are alike. The chunky flat-shaded clump stylised foliage is made
+ * of - rounder than a ringed blob, so a crown reads as leaves and a blossom as a cloud, not a box.
+ * The nudge is a function of the point itself, so faces that share a point stay joined.
+ */
+export function icoBlob(target, { x = 0, y = 0, z = 0 }, { radiusX, radiusY = radiusX, radiusZ = radiusX, detail = 0, jitter = 0.12, seed = 1 }) {
+  let triangles = ICO_FACES.map(([a, b, c]) => [ICO_VERTICES[a], ICO_VERTICES[b], ICO_VERTICES[c]]);
+  if (detail > 0) {
+    const mid = (p, q) => {
+      const m = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2];
+      const size = Math.hypot(m[0], m[1], m[2]);
+      return [m[0] / size, m[1] / size, m[2] / size];
+    };
+    triangles = triangles.flatMap(([p, q, r]) => {
+      const pq = mid(p, q);
+      const qr = mid(q, r);
+      const rp = mid(r, p);
+      return [[p, pq, rp], [pq, q, qr], [rp, qr, r], [pq, qr, rp]];
+    });
+  }
+  const nudge = (v) => {
+    const h = Math.sin(v[0] * 12.9898 + v[1] * 78.233 + v[2] * 37.719 + seed * 4.1) * 43758.5453;
+    return 1 + ((h - Math.floor(h)) - 0.5) * 2 * jitter;
+  };
+  const place = (v) => {
+    const k = nudge(v);
+    return [x + v[0] * radiusX * k, y + v[1] * radiusY * k, z + v[2] * radiusZ * k];
+  };
+  for (const [p, q, r] of triangles) {
+    const outward = [(p[0] + q[0] + r[0]) * radiusX, (p[1] + q[1] + r[1]) * radiusY, (p[2] + q[2] + r[2]) * radiusZ];
+    facingTriangle(target, place(p), place(q), place(r), outward);
+  }
+}
+
+/** A point along a leaf's midrib: out along `yaw`, rising at `rise` radians, bending down by `droop`. */
+function midrib(base, { yaw, length, rise, droop }, s) {
+  const reach = length * s * Math.cos(rise);
+  return [base[0] + Math.cos(yaw) * reach, base[1] + length * s * Math.sin(rise) - droop * length * s * s, base[2] + Math.sin(yaw) * reach];
+}
+
+/**
+ * A pinnate frond, the leaf of a palm: a curving midrib with leaflets in pairs down both sides,
+ * shortening toward the tip. `rise` is how steeply it leaves the crown, `droop` how far it bends over.
+ */
+export function pinnateFrond(rachis, leaflets, base, { yaw, length, rise, droop, pairs = 8, leafletLength, leafletWidth = 0.06, thickness = 0.04, hang = 0.35 }) {
+  const shape = { yaw, length, rise, droop };
+  const steps = 4;
+  let previous = base;
+  for (let step = 1; step <= steps; step += 1) {
+    const next = midrib(base, shape, step / steps);
+    beam(rachis, previous, next, thickness * lerp(1, 0.4, step / steps), { caps: false });
+    previous = next;
+  }
+  for (let pair = 0; pair < pairs; pair += 1) {
+    const s = 0.12 + (pair / pairs) * 0.86;
+    const at = midrib(base, shape, s);
+    const ahead = midrib(base, shape, Math.min(1, s + 0.02));
+    const tangent = [ahead[0] - at[0], ahead[1] - at[1], ahead[2] - at[2]];
+    const size = Math.hypot(tangent[0], tangent[1], tangent[2]) || 1;
+    const t = [tangent[0] / size, tangent[1] / size, tangent[2] / size];
+    const side = [-t[2], 0, t[0]];
+    const sideSize = Math.hypot(side[0], side[2]) || 1;
+    const length2 = leafletLength * (1 - 0.55 * s);
+    for (const sign of [-1, 1]) {
+      const tip = [
+        at[0] + (side[0] / sideSize) * sign * length2 + t[0] * length2 * 0.45,
+        at[1] - length2 * hang + t[1] * length2 * 0.45,
+        at[2] + (side[2] / sideSize) * sign * length2 + t[2] * length2 * 0.45
+      ];
+      sheetTriangle(leaflets, add(at, [-t[0] * leafletWidth, -t[1] * leafletWidth, -t[2] * leafletWidth]), add(at, [t[0] * leafletWidth, t[1] * leafletWidth, t[2] * leafletWidth]), tip);
+    }
+  }
+}
+
+/**
+ * A broad paddle leaf, the banana's: a stalk, then a long blade either side of a midrib, folded a
+ * little into a shallow V and widest past its middle.
+ */
+export function paddleLeaf(blade, stalk, base, { yaw, length, width, rise, droop, segments = 6, fold = 0.18, stalkShare = 0.14 }) {
+  const shape = { yaw, length, rise, droop };
+  const start = midrib(base, shape, stalkShare);
+  beam(stalk, base, start, 0.07, { caps: false });
+  let previous = null;
+  for (let step = 0; step <= segments; step += 1) {
+    const s = stalkShare + (step / segments) * (1 - stalkShare);
+    const at = midrib(base, shape, s);
+    const ahead = midrib(base, shape, Math.min(1, s + 0.02));
+    const tx = ahead[0] - at[0];
+    const tz = ahead[2] - at[2];
+    const size = Math.hypot(tx, tz) || 1;
+    const side = [-tz / size, 0, tx / size];
+    const w = width * Math.sin(Math.PI * Math.min(1, (step / segments) * 0.92 + 0.08)) ** 0.7;
+    const left = [at[0] + side[0] * w, at[1] - fold * w, at[2] + side[2] * w];
+    const right = [at[0] - side[0] * w, at[1] - fold * w, at[2] - side[2] * w];
+    if (previous !== null) {
+      sheetQuad(blade, previous.left, left, at, previous.at);
+      sheetQuad(blade, previous.at, at, right, previous.right);
+    }
+    previous = { at, left, right };
+  }
+}
+
 // --- houses ----------------------------------------------------------------------------------------
 
-/** Nhà tranh vách đất: earth walls, a plank door, barred windows, a deep thatched hip roof. */
+/** Nhà tranh vách đất: earth walls, a plank door, barred windows, a deep thatch in layers down to low eaves. */
 export function buildThatchCottage() {
   const mud = part("viet_mud", C.mud);
   const straw = part("viet_straw", C.straw);
@@ -292,23 +462,30 @@ export function buildThatchCottage() {
   const bamboo = part("viet_bamboo", C.bamboo);
   const ink = part("viet_ink", C.ink);
   softBox(mud, { y: 0 }, { width: 2.9, depth: 2.4, height: 0.14 });
-  taperedBox(mud, { y: 0.14 }, { width: 2.5, depth: 1.95, height: 1.55, topScale: 0.97 });
+  taperedBox(mud, { y: 0.14 }, { width: 2.5, depth: 1.95, height: 1.3, topScale: 0.97 });
   // The door, in the middle of the front, and two windows barred with bamboo.
-  softBox(timber, { y: 0.14, z: 0.98 }, { width: 0.62, depth: 0.06, height: 1.12 });
-  softBox(ink, { y: 0.2, z: 1.0 }, { width: 0.04, depth: 0.04, height: 1.0 });
+  softBox(timber, { y: 0.14, z: 0.98 }, { width: 0.62, depth: 0.06, height: 1.05 });
+  softBox(ink, { y: 0.2, z: 1.0 }, { width: 0.04, depth: 0.04, height: 0.95 });
   for (const side of [-1, 1]) {
-    softBox(ink, { x: side * 0.82, y: 0.72, z: 0.97 }, { width: 0.5, depth: 0.04, height: 0.42 });
+    softBox(ink, { x: side * 0.82, y: 0.62, z: 0.97 }, { width: 0.5, depth: 0.04, height: 0.4 });
     for (let bar = 0; bar < 4; bar += 1) {
-      softBox(bamboo, { x: side * 0.82 - 0.18 + bar * 0.12, y: 0.72, z: 1.0 }, { width: 0.04, depth: 0.04, height: 0.42 });
+      softBox(bamboo, { x: side * 0.82 - 0.18 + bar * 0.12, y: 0.62, z: 1.0 }, { width: 0.04, depth: 0.04, height: 0.4 });
     }
   }
   // Two bamboo posts under the front eave: a porch to sit out of the rain.
-  for (const side of [-1, 1]) beam(bamboo, [side * 1.2, 0.14, 1.35], [side * 1.2, 1.55, 1.35], 0.1);
-  const roof = hipRoof(straw, { y: 1.55, width: 3.4, depth: 3.0, height: 1.45, ridge: 1.5, sag: 0.05, lift: 0.04 });
-  eaveBand(strawDark, roof, { thickness: 0.2 });
-  ridgeDressing(strawDark, roof, { thickness: 0.22, curl: 0 });
-  // Bundles tied across the ridge.
-  for (const along of [-0.5, 0, 0.5]) beam(strawDark, [along, 2.9, -0.28], [along, 2.9, 0.28], 0.12);
+  for (const side of [-1, 1]) beam(bamboo, [side * 1.2, 0.14, 1.38], [side * 1.2, 1.25, 1.38], 0.1);
+  // The thatch comes down low and thick: a deep eave roll, and the courses of rice straw marked across it.
+  const roof = hipRoof(straw, { y: 1.3, width: 3.5, depth: 3.1, height: 1.55, ridge: 1.4, sag: 0.03, lift: 0.03 });
+  eaveBand(strawDark, roof, { thickness: 0.26 });
+  for (const v of [0.4, 0.72]) {
+    for (let face = 0; face < 4; face += 1) {
+      for (let step = 0; step < 4; step += 1) {
+        beam(strawDark, add(roof.surface(face, step / 4, v), [0, 0.015, 0]), add(roof.surface(face, (step + 1) / 4, v), [0, 0.015, 0]), 0.035, { caps: false });
+      }
+    }
+  }
+  // The ridge capped with a roll of straw.
+  beam(strawDark, add(roof.ridgeLeft, [-0.1, 0.02, 0]), add(roof.ridgeRight, [0.1, 0.02, 0]), 0.17);
   return [mud, straw, strawDark, timber, bamboo, ink];
 }
 
@@ -321,7 +498,6 @@ export function buildTiledHouse() {
   const tile = part("viet_tile", C.tile);
   const tileDark = part("viet_tile_dark", C.tileDark);
   softBox(stone, { y: 0 }, { width: 4.3, depth: 3.1, height: 0.3 });
-  // Three steps up to the middle bay.
   softBox(stone, { y: 0, z: 1.68 }, { width: 1.3, depth: 0.28, height: 0.15 });
   softBox(lime, { y: 0.3, z: -0.25 }, { width: 3.7, depth: 2.05, height: 1.85 });
   // The three bays: a wide panelled door in the middle, lattice doors either side.
@@ -332,22 +508,13 @@ export function buildTiledHouse() {
     for (let bar = 0; bar < 6; bar += 1) softBox(timber, { x: side * 1.22 - 0.36 + bar * 0.145, y: 0.42, z: 0.83 }, { width: 0.05, depth: 0.03, height: 1.2 });
     softBox(timber, { x: side * 1.22, y: 1.02, z: 0.84 }, { width: 0.86, depth: 0.03, height: 0.05 });
   }
-  // The veranda's columns and the beam they carry.
   for (const x of [-1.75, -0.6, 0.6, 1.75]) {
-    taperedCylinder(timberDark, { x, y: 0.3, z: 1.28 }, { bottomRadius: 0.1, topRadius: 0.085, height: 1.75, segments: 8 });
-    taperedCylinder(stone, { x, y: 0.3, z: 1.28 }, { bottomRadius: 0.15, topRadius: 0.13, height: 0.08, segments: 8 });
+    taperedCylinder(timberDark, { x, y: 0.3, z: 1.28 }, { bottomRadius: 0.1, topRadius: 0.085, height: 1.75, segments: 7 });
+    taperedCylinder(stone, { x, y: 0.3, z: 1.28 }, { bottomRadius: 0.15, topRadius: 0.13, height: 0.08, segments: 7 });
   }
   beam(timberDark, [-2.0, 2.06, 1.28], [2.0, 2.06, 1.28], 0.14);
   const roof = hipRoof(tile, { y: 2.08, width: 4.7, depth: 3.5, height: 1.45, ridge: 2.9, sag: 0.12, lift: 0.22 });
-  // Tile courses: dark ribs down the front and back slopes.
-  for (let course = 1; course < 10; course += 1) {
-    const u = course / 10;
-    for (const face of [0, 1]) {
-      const eave = roof.eave(face, u);
-      const ridgeX = lerp(face === 0 ? -1.45 : 1.45, face === 0 ? 1.45 : -1.45, u);
-      beam(tileDark, add(eave, [0, 0.03, 0]), [ridgeX, 3.53, 0], 0.045, { caps: false });
-    }
-  }
+  tileCourses(tileDark, roof, { courses: 11 });
   ridgeDressing(tileDark, roof, { thickness: 0.2, curl: 0.42, tips: 0.32, tipOut: 0.18 });
   return [stone, lime, timber, timberDark, tile, tileDark];
 }
@@ -384,31 +551,49 @@ export function buildStiltHouse() {
 
 // --- village pieces --------------------------------------------------------------------------------
 
-/** Cổng làng: two brick piers, a round arch, a red name board, a small curled tiled roof. */
+/**
+ * Cổng làng, "thượng gia hạ môn": a lime-washed masonry gate, mossy at its foot, a round arch below
+ * and a small tiled house above it with the village's name board; a trụ biểu pillar either side,
+ * taller than the wing walls that join them, each crowned with a lantern cap.
+ */
 export function buildVillageGate() {
-  const brick = part("viet_brick", C.brick);
-  const lime = part("viet_lime", C.lime);
+  const lime = part("viet_lime", 0xe7dcc0);
+  const moss = part("viet_moss", 0x9aa37a);
   const tile = part("viet_tile", C.tile);
   const tileDark = part("viet_tile_dark", C.tileDark);
   const lacquer = part("viet_lacquer", C.lacquer);
   const gold = part("viet_gold", C.gold);
-  const depth = 0.9;
-  softBox(brick, { x: -1.15 }, { width: 0.8, depth, height: 2.3 });
-  softBox(brick, { x: 1.15 }, { width: 0.8, depth, height: 2.3 });
-  archedSpan(lime, { x0: -0.75, x1: 0.75, spring: 1.45, top: 2.3, z0: -depth / 2, z1: depth / 2 });
-  // Pier caps and plinths.
+  const depth = 1.0;
+  // The gate body: two piers and the arch between them, a moss course along the foot.
   for (const side of [-1, 1]) {
-    softBox(lime, { x: side * 1.15, y: 0 }, { width: 0.9, depth: depth + 0.1, height: 0.18 });
-    softBox(lime, { x: side * 1.15, y: 2.3 }, { width: 0.9, depth: depth + 0.1, height: 0.1 });
+    softBox(lime, { x: side * 0.98 }, { width: 0.66, depth, height: 2.25 });
+    softBox(moss, { x: side * 0.98, y: 0 }, { width: 0.7, depth: depth + 0.04, height: 0.32 });
   }
-  softBox(lime, { y: 2.3 }, { width: 1.6, depth: depth, height: 0.62 });
-  // The name board over the arch: red lacquer in a gold frame.
-  softBox(gold, { y: 2.36, z: depth / 2 + 0.01 }, { width: 1.1, depth: 0.05, height: 0.48 });
-  softBox(lacquer, { y: 2.4, z: depth / 2 + 0.04 }, { width: 0.98, depth: 0.04, height: 0.4 });
-  const roof = hipRoof(tile, { y: 2.92, width: 3.3, depth: 1.45, height: 0.75, ridge: 2.2, sag: 0.14, lift: 0.24, segments: 4 });
-  ridgeDressing(tileDark, roof, { thickness: 0.14, curl: 0.34, tips: 0.28, tipOut: 0.14 });
-  faceDisc(gold, { y: 3.82, z: 0.03 }, { radius: 0.13, segments: 10 });
-  return [brick, lime, tile, tileDark, lacquer, gold];
+  archedSpan(lime, { x0: -0.65, x1: 0.65, spring: 1.3, top: 2.25, z0: -depth / 2, z1: depth / 2 });
+  softBox(lime, { y: 2.25 }, { width: 2.7, depth: depth + 0.12, height: 0.12 });
+  // The little house above the arch, its name board on the front.
+  softBox(lime, { y: 2.37 }, { width: 1.9, depth: 0.85, height: 0.62 });
+  softBox(gold, { y: 2.42, z: 0.44 }, { width: 1.1, depth: 0.04, height: 0.44 });
+  softBox(lacquer, { y: 2.46, z: 0.47 }, { width: 0.98, depth: 0.03, height: 0.36 });
+  const roof = hipRoof(tile, { y: 2.95, width: 2.8, depth: 1.6, height: 0.72, ridge: 1.6, sag: 0.14, lift: 0.26 });
+  tileCourses(tileDark, roof, { courses: 8, thickness: 0.04 });
+  ridgeDressing(tileDark, roof, { thickness: 0.13, curl: 0.34, tips: 0.3, tipOut: 0.12 });
+  faceDisc(gold, { y: 3.85, z: 0.02 }, { radius: 0.12, segments: 10 });
+  // Wing walls with a tiled coping, and the trụ biểu at their ends.
+  for (const side of [-1, 1]) {
+    softBox(lime, { x: side * 1.65 }, { width: 0.7, depth: 0.32, height: 1.25 });
+    softBox(moss, { x: side * 1.65 }, { width: 0.72, depth: 0.34, height: 0.25 });
+    taperedBox(tile, { x: side * 1.65, y: 1.25 }, { width: 0.8, depth: 0.46, height: 0.14, topScale: 0.45 });
+    const x = side * 2.15;
+    softBox(moss, { x }, { width: 0.42, depth: 0.42, height: 0.3 });
+    taperedBox(lime, { x, y: 0.3 }, { width: 0.36, depth: 0.36, height: 2.6, topScale: 0.88 });
+    softBox(lime, { x, y: 2.9 }, { width: 0.44, depth: 0.44, height: 0.08 });
+    // The lantern cap: a little open box, a roof, a knob on top.
+    softBox(lacquer, { x, y: 2.98 }, { width: 0.3, depth: 0.3, height: 0.3 });
+    taperedBox(tile, { x, y: 3.28 }, { width: 0.5, depth: 0.5, height: 0.16, topScale: 0.3 });
+    lathe(gold, [[0.06, 3.44], [0.08, 3.5], [0.02, 3.66]], { x, segments: 6 });
+  }
+  return [lime, moss, tile, tileDark, lacquer, gold];
 }
 
 /** Miếu: a stepped stone base, red columns, a roof with swept corners and a moon on the ridge. */
@@ -417,23 +602,24 @@ export function buildShrine() {
   const lime = part("viet_lime", C.lime);
   const lacquer = part("viet_lacquer", C.lacquer);
   const tile = part("viet_tile", C.tile);
+  const tileDark = part("viet_tile_dark", C.tileDark);
   const gold = part("viet_gold", C.gold);
-  const ink = part("viet_ink", C.ink);
   softBox(stone, { y: 0 }, { width: 2.0, depth: 2.0, height: 0.18 });
   softBox(stone, { y: 0.18 }, { width: 1.65, depth: 1.65, height: 0.16 });
   softBox(lime, { y: 0.34, z: -0.12 }, { width: 1.2, depth: 1.0, height: 1.0 });
-  softBox(ink, { y: 0.34, z: 0.39 }, { width: 0.5, depth: 0.04, height: 0.72 });
+  softBox(tileDark, { y: 0.34, z: 0.39 }, { width: 0.5, depth: 0.04, height: 0.72 });
   for (const x of [-0.62, 0.62]) {
-    for (const z of [0.6, -0.6]) taperedCylinder(lacquer, { x, y: 0.34, z }, { bottomRadius: 0.07, topRadius: 0.06, height: 1.08, segments: 8 });
+    for (const z of [0.6, -0.6]) taperedCylinder(lacquer, { x, y: 0.34, z }, { bottomRadius: 0.07, topRadius: 0.06, height: 1.08, segments: 7 });
   }
   softBox(lacquer, { y: 1.34, z: 0.6 }, { width: 1.4, depth: 0.08, height: 0.1 });
-  const roof = hipRoof(tile, { y: 1.42, width: 2.1, depth: 2.0, height: 0.78, ridge: 0.8, sag: 0.18, lift: 0.36 });
-  ridgeDressing(gold, roof, { thickness: 0.09, curl: 0.3, tips: 0.32, tipOut: 0.16 });
+  const roof = hipRoof(tile, { y: 1.42, width: 2.1, depth: 2.0, height: 0.78, ridge: 0.8, sag: 0.18, lift: 0.3 });
+  tileCourses(tileDark, roof, { courses: 7, thickness: 0.035 });
+  ridgeDressing(tileDark, roof, { thickness: 0.1, curl: 0.3, tips: 0.34, tipOut: 0.14 });
   // Lưỡng long chầu nguyệt, simplified: a moon on the ridge between two curls.
-  faceDisc(gold, { y: 2.38, z: 0.02 }, { radius: 0.12, segments: 10 });
+  faceDisc(gold, { y: 2.42, z: 0.02 }, { radius: 0.12, segments: 10 });
   // An incense urn on the step.
   lathe(gold, [[0.06, 0.34], [0.13, 0.4], [0.14, 0.5], [0.11, 0.56], [0.13, 0.6]], { z: 0.68, segments: 8 });
-  return [stone, lime, lacquer, tile, gold, ink];
+  return [stone, lime, lacquer, tile, tileDark, gold];
 }
 
 /** Giếng làng: a round brick well on a stone apron, still water inside, a wooden bucket on the rim. */
@@ -560,83 +746,92 @@ export function buildLanternString() {
   return [wood, red, yellow, pink];
 }
 
-/** Cây cảnh: a blue-and-white glazed pot, a twisted trunk and three cloud-pruned pads. */
+/** Cây cảnh: a round blue-and-white glazed pot on little feet, a twisting trunk, cloud-pruned pads. */
 export function buildBonsai() {
   const porcelain = part("viet_porcelain", C.porcelain);
   const cobalt = part("viet_cobalt", C.cobalt);
   const trunk = part("viet_timber_dark", C.timberDark);
   const leaf = part("viet_leaf", C.leafDeep);
-  taperedBox(porcelain, { y: 0 }, { width: 0.75, depth: 0.5, height: 0.3, topScale: 1.12 });
-  softBox(cobalt, { y: 0.1, z: 0.28 }, { width: 0.66, depth: 0.02, height: 0.1 });
-  softBox(cobalt, { y: 0.1, z: -0.28 }, { width: 0.66, depth: 0.02, height: 0.1 });
-  softBox(cobalt, { y: 0.3 }, { width: 0.86, depth: 0.58, height: 0.04 });
-  branch(trunk, [[0, 0.3, 0], [0.08, 0.5, 0.02], [-0.05, 0.7, 0], [0.04, 0.88, -0.02], [-0.02, 1.02, 0]], { from: 0.11, to: 0.05 });
-  beam(trunk, [-0.05, 0.7, 0], [-0.3, 0.8, 0.05], 0.05);
-  beam(trunk, [0.04, 0.88, -0.02], [0.28, 0.95, -0.04], 0.045);
-  for (const [x, y, z, r] of [[-0.32, 0.82, 0.05, 0.2], [0.3, 0.96, -0.04, 0.18], [-0.02, 1.05, 0, 0.2]]) {
-    lowPolyBlob(leaf, { x, y: y - 0.04, z }, { radiusX: r, radiusY: r * 0.32, radiusZ: r * 0.8, segments: 7, rings: 3 });
+  const leafLight = part("viet_leaf_light", C.leaf);
+  lathe(porcelain, [[0.22, 0.05], [0.3, 0.12], [0.33, 0.24], [0.3, 0.33], [0.34, 0.36]], { segments: 14 });
+  for (const [y0, y1] of [[0.14, 0.18], [0.27, 0.3]]) lathe(cobalt, [[0.315, y0], [0.32, y1]], { segments: 14, capBottom: false, capTop: false });
+  lathe(cobalt, [[0.34, 0.36], [0.35, 0.39], [0.3, 0.39]], { segments: 14, capBottom: false });
+  for (let foot = 0; foot < 3; foot += 1) {
+    const a = (foot / 3) * Math.PI * 2;
+    softBox(cobalt, { x: Math.cos(a) * 0.2, z: Math.sin(a) * 0.2 }, { width: 0.07, depth: 0.07, height: 0.06 });
   }
-  return [porcelain, cobalt, trunk, leaf];
+  branch(trunk, [[0, 0.38, 0], [0.1, 0.55, 0.03], [-0.06, 0.74, 0], [0.05, 0.92, -0.02], [-0.03, 1.06, 0]], { from: 0.12, to: 0.05 });
+  beam(trunk, [-0.06, 0.74, 0], [-0.32, 0.84, 0.06], 0.05, { caps: false });
+  beam(trunk, [0.05, 0.92, -0.02], [0.3, 0.98, -0.05], 0.045, { caps: false });
+  const pads = [[-0.34, 0.86, 0.06, 0.2, leaf], [0.31, 1.0, -0.05, 0.18, leafLight], [-0.03, 1.1, 0, 0.21, leaf], [0.12, 0.72, 0.08, 0.14, leafLight]];
+  pads.forEach(([x, y, z, r, target], index) => {
+    icoBlob(target, { x, y, z }, { radiusX: r, radiusY: r * 0.42, radiusZ: r * 0.85, detail: 1, jitter: 0.1, seed: index + 3 });
+  });
+  return [porcelain, cobalt, trunk, leaf, leafLight];
 }
 
-/** Hòn non bộ: a shallow stone basin of water with a craggy peak, a tiny pagoda and a few plants. */
+/** Hòn non bộ: craggy limestone spires in a basin of water, moss on their ledges, a pagoda and a little bridge. */
 export function buildRockery() {
-  const stone = part("viet_stone", C.slab);
-  const rock = part("viet_rock", C.stone);
+  const basin = part("viet_stone", C.slab);
+  const rock = part("viet_rock", 0x9b9c94);
   const water = part("viet_water", C.water);
-  const leaf = part("viet_leaf", C.leaf);
+  const moss = part("viet_leaf", C.leaf);
   const tile = part("viet_tile", C.tile);
-  lathe(stone, [[0.9, 0], [0.98, 0.32], [0.86, 0.32], [0.84, 0.24]], { segments: 10, phase: 0.31, capTop: false });
-  disc(water, { y: 0.24 }, { radiusX: 0.84, segments: 10, phase: 0.31 });
+  lathe(basin, [[0.9, 0], [0.98, 0.3], [0.88, 0.3], [0.85, 0.22]], { segments: 12, phase: 0.26, capTop: false });
+  disc(water, { y: 0.22 }, { radiusX: 0.86, segments: 12, phase: 0.26 });
   const random = seededRandom(31);
-  // Peaks: stacked, leaning blobs, the tallest off-centre like a mountain seen across a lake.
-  for (const [x, z, h, r] of [[-0.15, -0.1, 1.5, 0.32], [0.25, -0.2, 0.95, 0.26], [-0.45, 0.15, 0.7, 0.22], [0.1, 0.25, 0.45, 0.2]]) {
-    let y = 0.2;
-    let size = r;
-    while (y < h) {
-      lowPolyBlob(rock, { x: x + (random() - 0.5) * 0.12, y, z: z + (random() - 0.5) * 0.1 }, { radiusX: size, radiusY: size * 0.75, radiusZ: size * 0.85, segments: 6, rings: 3 });
-      y += size * 1.1;
-      size *= 0.8;
-    }
+  // Karst spires: tall, narrow and uneven, leaning a little, like the peaks of Hạ Long in miniature.
+  const spires = [[-0.12, -0.12, 1.55, 0.34], [0.3, -0.18, 1.05, 0.26], [-0.45, 0.12, 0.8, 0.22], [0.08, 0.3, 0.55, 0.2], [0.42, 0.22, 0.42, 0.16]];
+  for (const [x, z, height, r] of spires) {
+    const lean = (random() - 0.5) * 0.15;
+    const profile = [[r, 0.18], [r * (0.95 + random() * 0.2), height * 0.25], [r * (0.6 + random() * 0.25), height * 0.5], [r * (0.55 + random() * 0.2), height * 0.7], [r * 0.3, height * 0.88], [0.02, height]];
+    lathe(rock, profile.map(([pr, py]) => [pr, py]), { x: x + lean, z, segments: 6, phase: random() * 3 });
+    icoBlob(moss, { x: x + lean + r * 0.3, y: height * 0.62, z: z + r * 0.2 }, { radiusX: r * 0.42, radiusY: r * 0.22, radiusZ: r * 0.36, jitter: 0.2, seed: Math.floor(random() * 100) });
   }
-  // A pagoda on a ledge, and plants in the cracks.
-  softBox(tile, { x: 0.25, y: 0.95, z: -0.05 }, { width: 0.1, depth: 0.1, height: 0.12 });
-  taperedBox(tile, { x: 0.25, y: 1.07, z: -0.05 }, { width: 0.2, depth: 0.2, height: 0.06, topScale: 0.2 });
-  for (const [x, y, z] of [[-0.3, 0.75, 0.0], [0.05, 1.2, -0.05], [-0.45, 0.62, 0.25], [0.45, 0.55, -0.1]]) {
-    for (let blade = 0; blade < 4; blade += 1) leafBlade(leaf, { x, y, z }, { length: 0.22, width: 0.05, yaw: blade * 1.6, tilt: 0.9, droop: 0.4 });
+  // A pagoda on a ledge: three little roofs stacked.
+  for (let tier = 0; tier < 3; tier += 1) {
+    const s = 1 - tier * 0.22;
+    softBox(tile, { x: 0.3, y: 0.98 + tier * 0.1, z: -0.02 }, { width: 0.07 * s, depth: 0.07 * s, height: 0.05 });
+    taperedBox(tile, { x: 0.3, y: 1.03 + tier * 0.1, z: -0.02 }, { width: 0.16 * s, depth: 0.16 * s, height: 0.04, topScale: 0.3 });
   }
-  return [stone, rock, water, leaf, tile];
+  // A little arched bridge across the water at the foot of the peaks.
+  for (let step = 0; step < 4; step += 1) {
+    const x0 = -0.62 + step * 0.12;
+    const x1 = x0 + 0.12;
+    const y = (x) => 0.25 + 0.08 * Math.sin(((x + 0.62) / 0.48) * Math.PI);
+    facingQuad(tile, [x0, y(x0), 0.58], [x1, y(x1), 0.58], [x1, y(x1), 0.5], [x0, y(x0), 0.5], [0, 1, 0]);
+  }
+  return [basin, rock, water, moss, tile];
 }
 
-/** Ao sen: a stone-rimmed pond with lily pads, open lotus flowers and buds. */
+/** Ao sen: a pond rimmed with rounded stones, broad lily pads, open pink lotus and buds. */
 export function buildLotusPond() {
-  const stone = part("viet_stone", C.slab);
+  const stone = part("viet_stone", 0xb9b3a2);
   const water = part("viet_water", C.water);
   const pad = part("viet_leaf", C.leaf);
   const lotus = part("viet_lotus", C.lotus);
   const gold = part("viet_gold", C.gold);
-  disc(water, { y: 0.06 }, { radiusX: 1.35, radiusZ: 1.15, segments: 16 });
+  disc(water, { y: 0.05 }, { radiusX: 1.35, radiusZ: 1.15, segments: 16 });
   const random = seededRandom(7);
-  for (let index = 0; index < 18; index += 1) {
-    const angle = (index / 18) * Math.PI * 2;
-    const r = 0.06 + random() * 0.05;
-    lowPolyBlob(stone, { x: Math.cos(angle) * 1.42, y: 0, z: Math.sin(angle) * 1.22 }, { radiusX: 0.2 + r, radiusY: 0.1 + r * 0.6, radiusZ: 0.16 + r, segments: 6, rings: 2 });
+  for (let index = 0; index < 16; index += 1) {
+    const angle = (index / 16) * Math.PI * 2 + random() * 0.1;
+    const r = 0.22 + random() * 0.08;
+    icoBlob(stone, { x: Math.cos(angle) * 1.42, y: 0.04, z: Math.sin(angle) * 1.22 }, { radiusX: r, radiusY: r * 0.48, radiusZ: r * 0.8, jitter: 0.18, seed: index });
   }
-  const pads = [[-0.6, 0.3], [0.5, -0.4], [0.1, 0.55], [-0.2, -0.5], [0.75, 0.25], [-0.85, -0.15], [0.3, 0.05]];
-  for (const [x, z] of pads) disc(pad, { x, y: 0.09 }, { radiusX: 0.26 + random() * 0.08, segments: 9, phase: random() * 3 });
-  // Open flowers: two rings of petals round a golden seed head; buds on stems.
-  for (const [x, z] of [[-0.55, 0.25], [0.48, -0.35], [0.3, 0.1]]) {
-    const y = 0.32;
-    beam(pad, [x, 0.06, z], [x, y, z], 0.03);
-    taperedCylinder(gold, { x, y, z }, { bottomRadius: 0.05, topRadius: 0.06, height: 0.05, segments: 6 });
-    for (let petal = 0; petal < 8; petal += 1) {
+  const pads = [[-0.62, 0.3], [0.52, -0.42], [0.12, 0.58], [-0.2, -0.52], [0.78, 0.22], [-0.86, -0.18], [0.32, 0.06], [-0.35, 0.02], [0.62, 0.62]];
+  for (const [x, z] of pads) disc(pad, { x, y: 0.08 }, { radiusX: 0.3 + random() * 0.1, segments: 10, phase: random() * 3 });
+  // Open flowers: an outer and an inner ring of petals round a golden seed head; buds on stems.
+  for (const [x, z, h] of [[-0.5, 0.25, 0.42], [0.45, -0.32, 0.36], [0.28, 0.15, 0.5]]) {
+    beam(pad, [x, 0.06, z], [x, h, z], 0.035, { caps: false });
+    taperedCylinder(gold, { x, y: h, z }, { bottomRadius: 0.05, topRadius: 0.07, height: 0.06, segments: 6 });
+    for (let petal = 0; petal < 10; petal += 1) {
       const outer = petal % 2 === 0;
-      leafBlade(lotus, { x, y, z }, { length: outer ? 0.2 : 0.16, width: 0.07, yaw: (petal / 8) * Math.PI * 2, tilt: outer ? 0.7 : 1.1, droop: 0.15 });
+      leafBlade(lotus, { x, y: h, z }, { length: outer ? 0.3 : 0.22, width: 0.1, yaw: (petal / 10) * Math.PI * 2, tilt: outer ? 0.55 : 1.05, droop: 0.2 });
     }
   }
-  for (const [x, z, h] of [[0.12, 0.6, 0.45], [-0.25, -0.45, 0.38]]) {
-    beam(pad, [x, 0.06, z], [x, h, z], 0.025);
-    lowPolyBlob(lotus, { x, y: h - 0.02, z }, { radiusX: 0.05, radiusY: 0.07, radiusZ: 0.05, segments: 5, rings: 3 });
+  for (const [x, z, h] of [[0.1, 0.62, 0.55], [-0.28, -0.42, 0.48], [0.7, -0.05, 0.4]]) {
+    beam(pad, [x, 0.06, z], [x, h, z], 0.03, { caps: false });
+    icoBlob(lotus, { x, y: h + 0.06, z }, { radiusX: 0.06, radiusY: 0.11, radiusZ: 0.06, jitter: 0.05 });
   }
   return [stone, water, pad, lotus, gold];
 }
@@ -679,18 +874,23 @@ export function buildBambooFence() {
   return [post, slat];
 }
 
-/** Tường rào gạch hoa: a brick base, lime pillars, and a breeze-block lattice under a tiled coping. */
+/** Tường rào gạch hoa: a brick footing, lime pillars with caps, a breeze-block lattice under a tiled coping. */
 export function buildBreezeBlockFence() {
   const brick = part("viet_brick", C.brick);
   const lime = part("viet_lime", C.lime);
   const tile = part("viet_tile", C.tile);
   const half = 0.54;
-  softBox(brick, { y: 0 }, { width: 2 * half, depth: 0.26, height: 0.32 });
-  for (const x of [-half + 0.1, half - 0.1]) softBox(lime, { x, y: 0 }, { width: 0.2, depth: 0.3, height: 1.08 });
-  // The lattice: a frame and a cross in every block, the cheap read of a gạch hoa gió.
+  softBox(brick, { y: 0 }, { width: 2 * half, depth: 0.24, height: 0.3 });
+  softBox(lime, { y: 0.3 }, { width: 2 * half, depth: 0.27, height: 0.04 });
+  for (const x of [-half + 0.1, half - 0.1]) {
+    softBox(lime, { x, y: 0 }, { width: 0.2, depth: 0.28, height: 1.06 });
+    softBox(lime, { x, y: 1.06 }, { width: 0.26, depth: 0.34, height: 0.06 });
+    taperedBox(tile, { x, y: 1.12 }, { width: 0.26, depth: 0.34, height: 0.08, topScale: 0.4 });
+  }
+  // The lattice: a frame, and in every block a diamond inside a square - the read of a gạch hoa gió.
   const x0 = -half + 0.2;
   const x1 = half - 0.2;
-  const y0 = 0.32;
+  const y0 = 0.34;
   const y1 = 0.92;
   const columns = 3;
   const rows = 3;
@@ -701,47 +901,57 @@ export function buildBreezeBlockFence() {
       const a = [lerp(x0, x1, column / columns), lerp(y0, y1, row / rows), 0];
       const b = [lerp(x0, x1, (column + 1) / columns), lerp(y0, y1, (row + 1) / rows), 0];
       const centre = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 0];
-      beam(lime, [centre[0], a[1], 0], [b[0], centre[1], 0], 0.035);
-      beam(lime, [b[0], centre[1], 0], [centre[0], b[1], 0], 0.035);
-      beam(lime, [centre[0], b[1], 0], [a[0], centre[1], 0], 0.035);
-      beam(lime, [a[0], centre[1], 0], [centre[0], a[1], 0], 0.035);
+      beam(lime, [centre[0], a[1], 0], [b[0], centre[1], 0], 0.035, { caps: false });
+      beam(lime, [b[0], centre[1], 0], [centre[0], b[1], 0], 0.035, { caps: false });
+      beam(lime, [centre[0], b[1], 0], [a[0], centre[1], 0], 0.035, { caps: false });
+      beam(lime, [a[0], centre[1], 0], [centre[0], a[1], 0], 0.035, { caps: false });
     }
   }
-  taperedBox(tile, { y: 0.92 }, { width: 2 * half, depth: 0.34, height: 0.12, topScale: 0.55 });
+  softBox(lime, { y: 0.92 }, { width: 2 * half - 0.4, depth: 0.22, height: 0.05 });
+  taperedBox(tile, { y: 0.97 }, { width: 2 * half - 0.36, depth: 0.3, height: 0.09, topScale: 0.45 });
   return [brick, lime, tile];
 }
 
 // --- trees -----------------------------------------------------------------------------------------
 
-/** Cây đa: a buttressed trunk, spreading limbs, a broad flat crown and aerial roots hanging down. */
+/** Cây đa: a thick buttressed trunk of fused stems, spreading limbs, a broad crown, roots hanging to the ground. */
 export function buildBanyan() {
   const bark = part("viet_bark", 0x6e5640);
   const leaf = part("viet_leaf", C.leafDeep);
   const leafLight = part("viet_leaf_light", C.leaf);
-  taperedCylinder(bark, { y: 0 }, { bottomRadius: 0.55, topRadius: 0.32, height: 2.1, segments: 9 });
-  for (let root = 0; root < 5; root += 1) {
-    const angle = (root / 5) * Math.PI * 2 + 0.3;
-    beam(bark, [Math.cos(angle) * 0.95, 0, Math.sin(angle) * 0.95], [Math.cos(angle) * 0.2, 1.0, Math.sin(angle) * 0.2], 0.28);
-  }
-  const limbs = [[1.9, 2.9, 0.4], [-1.7, 3.0, -0.6], [0.3, 3.2, 1.7], [-0.4, 3.1, -1.8], [0.2, 3.6, 0]];
-  for (const [x, y, z] of limbs) beam(bark, [0, 1.9, 0], [x * 0.8, y - 0.2, z * 0.8], 0.22);
   const random = seededRandom(5);
-  // The crown: a broad dome of overlapping masses, lighter on top where the sun catches it.
-  const crown = [
-    [0, 3.75, 0, 1.15], [1.35, 3.35, 0.45, 0.95], [-1.35, 3.4, -0.35, 1.0], [0.35, 3.4, 1.4, 0.95], [-0.3, 3.35, -1.4, 0.9],
-    [1.0, 3.15, -1.1, 0.8], [-1.05, 3.15, 1.05, 0.8], [1.85, 3.0, -0.25, 0.7], [-1.85, 3.05, 0.35, 0.7], [0.6, 4.1, -0.4, 0.75], [-0.55, 4.05, 0.45, 0.75]
-  ];
-  crown.forEach(([x, y, z, r]) => {
-    lowPolyBlob(y > 3.6 ? leafLight : leaf, { x, y: y - r * 0.5, z }, { radiusX: r, radiusY: r * 0.6, radiusZ: r * 0.92, segments: 8, rings: 3 });
+  // Three stems twisted together into one trunk, flaring into buttress roots at the foot.
+  for (const [dx, dz] of [[0.18, 0], [-0.12, 0.15], [-0.08, -0.17]]) {
+    taperedCylinder(bark, { x: dx, y: 0 }, { bottomRadius: 0.36, topRadius: 0.2, height: 2.3, segments: 7, leanX: -dx * 0.6, leanZ: -dz * 0.6 });
+  }
+  for (let root = 0; root < 6; root += 1) {
+    const angle = (root / 6) * Math.PI * 2 + 0.3;
+    beam(bark, [Math.cos(angle) * 1.0, 0, Math.sin(angle) * 1.0], [Math.cos(angle) * 0.25, 0.85, Math.sin(angle) * 0.25], 0.22);
+  }
+  const limbs = [[1.9, 3.0, 0.4], [-1.8, 3.1, -0.5], [0.3, 3.2, 1.8], [-0.4, 3.2, -1.8], [1.2, 3.4, -1.1], [-1.1, 3.3, 1.1]];
+  for (const [x, y, z] of limbs) branch(bark, [[0, 2.0, 0], [x * 0.5, y - 0.4, z * 0.5], [x * 0.85, y - 0.1, z * 0.85]], { from: 0.22, to: 0.12 });
+  // The crown: a broad, low dome of puffs, lighter on top where the sun falls.
+  const crown = [];
+  for (let ring = 0; ring < 3; ring += 1) {
+    const count = [1, 6, 9][ring] ?? 1;
+    const reach = [0, 1.25, 2.1][ring] ?? 0;
+    for (let index = 0; index < count; index += 1) {
+      const a = (index / count) * Math.PI * 2 + ring * 0.4 + random() * 0.3;
+      crown.push([Math.cos(a) * reach, 3.85 - ring * 0.35 + random() * 0.2, Math.sin(a) * reach * 0.92, [1.25, 1.0, 0.85][ring] ?? 0.85]);
+    }
+  }
+  crown.forEach(([x, y, z, r], index) => {
+    // The inner crown is rounder (it is what the eye lands on); the outer ring is simpler.
+    icoBlob(y > 3.6 ? leafLight : leaf, { x, y, z }, { radiusX: r, radiusY: r * 0.62, radiusZ: r, detail: index < 7 ? 1 : 0, jitter: 0.14, seed: index + 11 });
   });
-  // Aerial roots: thin strands from under the crown, a few reaching the ground.
-  for (let strand = 0; strand < 10; strand += 1) {
-    const angle = random() * Math.PI * 2;
-    const r = 0.9 + random() * 1.0;
+  // Aerial roots: strands hanging from the limbs, the longest reaching the ground and thickening there.
+  for (let strand = 0; strand < 12; strand += 1) {
+    const angle = (strand / 12) * Math.PI * 2 + random() * 0.3;
+    const r = 1.0 + random() * 1.0;
     const x = Math.cos(angle) * r;
     const z = Math.sin(angle) * r;
-    const bottom = strand % 3 === 0 ? 0 : 0.8 + random() * 1.0;
-    beam(bark, [x, 2.85, z], [x * 1.04, bottom, z * 1.04], 0.07, { caps: false });
+    const bottom = strand % 3 === 0 ? 0 : 0.6 + random() * 1.2;
+    beam(bark, [x, 3.0, z], [x * 1.03, bottom, z * 1.03], strand % 3 === 0 ? 0.1 : 0.05, { caps: false });
   }
   return [bark, leaf, leafLight];
 }
@@ -783,81 +993,91 @@ export function buildBambooClump() {
   return [culm, node, leaf];
 }
 
-/** Cây cau: a slender ringed trunk and a crown of drooping fronds, a bunch of green nuts below. */
+/** Cây cau: a slender ringed trunk and a crown of arching feather fronds, a bunch of green nuts below it. */
 export function buildArecaPalm() {
   const trunk = part("viet_palm_trunk", 0x9a9278);
   const ring = part("viet_palm_ring", 0x7c745e);
   const frond = part("viet_leaf", C.leaf);
   const nut = part("viet_leaf_deep", C.leafDeep);
-  const height = 4.2;
-  const lean = 0.25;
+  const height = 4.4;
+  const lean = 0.2;
   const top = [lean, height, 0];
-  beam(trunk, [0, 0, 0], top, 0.14, { caps: true });
-  for (let r = 1; r < 9; r += 1) {
-    const t = r / 9;
+  beam(trunk, [0, 0, 0], top, 0.15);
+  for (let r = 1; r < 10; r += 1) {
+    const t = r / 10;
     const at = [lean * t, height * t, 0];
-    beam(ring, at, add(at, [0, 0.03, 0]), 0.165);
+    beam(ring, at, add(at, [0, 0.03, 0]), 0.175, { caps: false });
   }
-  taperedCylinder(nut, { x: lean, y: height - 0.05, z: 0 }, { bottomRadius: 0.1, topRadius: 0.07, height: 0.4, segments: 6 });
-  for (let index = 0; index < 10; index += 1) {
-    const yaw = (index / 10) * Math.PI * 2;
-    leafBlade(frond, { x: lean, y: height + 0.35, z: 0 }, { length: 1.6, width: 0.24, yaw, tilt: index % 2 === 0 ? 0.35 : 0.15, droop: -0.9 });
+  // The crownshaft: the smooth green sheath under the fronds.
+  taperedCylinder(nut, { x: lean, y: height - 0.05, z: 0 }, { bottomRadius: 0.1, topRadius: 0.08, height: 0.6, segments: 7 });
+  for (let index = 0; index < 8; index += 1) {
+    const yaw = (index / 8) * Math.PI * 2 + 0.2;
+    pinnateFrond(frond, frond, [lean, height + 0.55, 0], { yaw, length: 1.7, rise: index % 2 === 0 ? 0.75 : 0.45, droop: 0.95, pairs: 8, leafletLength: 0.5, leafletWidth: 0.05, thickness: 0.05 });
   }
-  for (let index = 0; index < 3; index += 1) {
-    leafBlade(frond, { x: lean, y: height + 0.38, z: 0 }, { length: 0.8, width: 0.14, yaw: index * 2.1 + 0.5, tilt: 1.1, droop: -0.3 });
-  }
+  pinnateFrond(frond, frond, [lean, height + 0.6, 0], { yaw: 0.9, length: 1.1, rise: 1.35, droop: 0.4, pairs: 6, leafletLength: 0.32, thickness: 0.04 });
   for (let bunch = 0; bunch < 7; bunch += 1) {
     const a = bunch * 0.9;
-    lowPolyBlob(nut, { x: lean + 0.14 + Math.cos(a) * 0.08, y: height - 0.35 - (bunch % 3) * 0.07, z: Math.sin(a) * 0.08 }, { radiusX: 0.05, radiusY: 0.05, radiusZ: 0.05, segments: 5, rings: 2 });
+    icoBlob(nut, { x: lean + 0.16 + Math.cos(a) * 0.08, y: height - 0.3 - (bunch % 3) * 0.08, z: Math.sin(a) * 0.08 }, { radiusX: 0.055, jitter: 0.05, seed: bunch });
   }
   return [trunk, ring, frond, nut];
 }
 
-/** Cây chuối: a fleshy stem, broad torn leaves arching out, a purple bud and a hand of bananas. */
+/** Cây chuối: a fleshy stem, broad paddle leaves rising and arching over, a purple bud and a hand of bananas. */
 export function buildBananaPlant() {
   const stem = part("viet_banana_stem", 0x9cbc5a);
   const leaf = part("viet_leaf_light", C.leafLight);
   const bud = part("viet_banana_bud", 0x7a2f4a);
   const fruit = part("viet_banana_fruit", 0xb9cf4e);
-  taperedCylinder(stem, { y: 0 }, { bottomRadius: 0.22, topRadius: 0.14, height: 2.15, segments: 8 });
-  taperedCylinder(stem, { x: 0.35, y: 0, z: 0.2 }, { bottomRadius: 0.1, topRadius: 0.07, height: 0.7, segments: 6 });
+  taperedCylinder(stem, { y: 0 }, { bottomRadius: 0.17, topRadius: 0.11, height: 1.8, segments: 7 });
+  taperedCylinder(stem, { x: 0.42, y: 0, z: 0.25 }, { bottomRadius: 0.11, topRadius: 0.08, height: 0.75, segments: 6 });
+  const top = [0, 1.75, 0];
   for (let index = 0; index < 7; index += 1) {
-    const yaw = (index / 7) * Math.PI * 2 + 0.2;
-    leafBlade(leaf, { x: 0, y: 2.05 + (index % 3) * 0.12, z: 0 }, { length: 1.6, width: 0.48, yaw, tilt: 0.85 - (index % 3) * 0.15, droop: -0.55 });
+    const yaw = (index / 7) * Math.PI * 2 + 0.3;
+    paddleLeaf(leaf, stem, top, { yaw, length: 2.2, width: 0.38, rise: 1.0 - (index % 3) * 0.16, droop: 1.0 - (index % 3) * 0.1, segments: 5 });
   }
-  for (let index = 0; index < 3; index += 1) leafBlade(leaf, { x: 0.35, y: 0.65, z: 0.2 }, { length: 0.6, width: 0.17, yaw: index * 2.1, tilt: 0.7, droop: -0.6 });
-  beam(stem, [0, 2.1, 0], [0.35, 1.8, 0.1], 0.05);
-  lowPolyBlob(bud, { x: 0.38, y: 1.5, z: 0.12 }, { radiusX: 0.08, radiusY: 0.14, radiusZ: 0.08, segments: 6, rings: 3 });
-  for (let hand = 0; hand < 6; hand += 1) {
-    const a = hand * 1.05;
-    beam(fruit, [0.33, 1.8 - (hand % 2) * 0.08, 0.1], [0.33 + Math.cos(a) * 0.14, 1.87 - (hand % 2) * 0.08, 0.1 + Math.sin(a) * 0.14], 0.045);
+  paddleLeaf(leaf, stem, top, { yaw: 2.0, length: 1.4, width: 0.22, rise: 1.4, droop: 0.3, segments: 4 });
+  for (let index = 0; index < 3; index += 1) paddleLeaf(leaf, stem, [0.42, 0.72, 0.25], { yaw: index * 2.1, length: 0.7, width: 0.14, rise: 1.0, droop: 0.6, segments: 3 });
+  // The flower stalk bending out and down, a hand of green bananas and the purple bud at its end.
+  branch(stem, [[0, 1.75, 0], [0.32, 1.65, 0.08], [0.45, 1.35, 0.12]], { from: 0.06, to: 0.045 });
+  for (let hand = 0; hand < 8; hand += 1) {
+    const a = hand * 0.8;
+    beam(fruit, [0.38, 1.6 - (hand % 2) * 0.1, 0.1], [0.38 + Math.cos(a) * 0.15, 1.68 - (hand % 2) * 0.1, 0.1 + Math.sin(a) * 0.15], 0.05);
   }
+  icoBlob(bud, { x: 0.47, y: 1.22, z: 0.13 }, { radiusX: 0.08, radiusY: 0.15, radiusZ: 0.08, jitter: 0.04 });
   return [stem, leaf, bud, fruit];
 }
 
-/** A flowering tree for Tết: a gnarled trunk and branches, blossom thick along them, a few leaves. */
+/**
+ * A flowering tree for Tết: a gnarled trunk, thin branches reaching out and up, and blossom along them
+ * in small clouds - an airy crown of flowers, not a ball - with a few new leaves.
+ */
 function blossomTree(colour, name, seed) {
   const bark = part("viet_bark", 0x5e4634);
   const flowers = part(name, colour);
   const leaf = part("viet_leaf", C.leaf);
   const random = seededRandom(seed);
-  branch(bark, [[0, 0, 0], [0.12, 0.5, 0.04], [-0.06, 0.95, 0], [0.05, 1.3, -0.05]], { from: 0.17, to: 0.1 });
+  branch(bark, [[0, 0, 0], [0.12, 0.45, 0.04], [-0.05, 0.85, 0], [0.05, 1.15, -0.05]], { from: 0.16, to: 0.1 });
   const limbs = [
-    [[0.05, 1.3, -0.05], [0.5, 1.6, 0.1], [0.85, 1.75, 0.2]],
-    [[0.05, 1.3, -0.05], [-0.45, 1.65, -0.1], [-0.8, 1.85, 0.05]],
-    [[-0.06, 0.95, 0], [-0.4, 1.2, 0.35], [-0.6, 1.4, 0.6]],
-    [[0.05, 1.3, -0.05], [0.1, 1.85, -0.4], [0.05, 2.05, -0.55]],
-    [[0.12, 0.5, 0.04], [0.45, 0.95, -0.3], [0.65, 1.2, -0.45]]
+    [[0.05, 1.15, -0.05], [0.45, 1.45, 0.1], [0.85, 1.6, 0.22], [1.05, 1.85, 0.25]],
+    [[0.05, 1.15, -0.05], [-0.4, 1.5, -0.1], [-0.78, 1.7, 0.02], [-0.95, 2.0, 0.08]],
+    [[-0.05, 0.85, 0], [-0.38, 1.1, 0.35], [-0.58, 1.35, 0.62]],
+    [[0.05, 1.15, -0.05], [0.1, 1.7, -0.4], [0.02, 2.1, -0.58]],
+    [[0.12, 0.45, 0.04], [0.45, 0.85, -0.3], [0.7, 1.15, -0.5]],
+    [[0.05, 1.15, -0.05], [0.0, 1.75, 0.25], [0.12, 2.15, 0.38]]
   ];
   for (const limb of limbs) {
-    branch(bark, limb, { from: 0.08, to: 0.04 });
-    const tip = limb[limb.length - 1];
+    branch(bark, limb, { from: 0.07, to: 0.03 });
+    // Blossom clouds along the outer half of each branch, biggest at its tip.
+    for (let index = 1; index < limb.length; index += 1) {
+      const point = limb[index];
+      const size = index === limb.length - 1 ? 0.26 : 0.17;
+      for (let puff = 0; puff < (index === limb.length - 1 ? 3 : 2); puff += 1) {
+        icoBlob(flowers, { x: point[0] + (random() - 0.5) * size * 1.4, y: point[1] + (random() - 0.2) * size, z: point[2] + (random() - 0.5) * size * 1.4 }, { radiusX: size * (0.6 + random() * 0.3), jitter: 0.18, seed: Math.floor(random() * 1000) });
+      }
+    }
     const mid = limb[1];
-    blossom(flowers, { x: tip[0], y: tip[1], z: tip[2] }, { radius: 0.46, count: 2, seed: Math.floor(random() * 1e6) });
-    blossom(flowers, { x: mid[0], y: mid[1] + 0.05, z: mid[2] }, { radius: 0.24, count: 2, seed: Math.floor(random() * 1e6), mass: false });
-    leafBlade(leaf, { x: mid[0], y: mid[1], z: mid[2] }, { length: 0.16, width: 0.05, yaw: random() * 6, tilt: 0.4, droop: 0.3 });
+    leafBlade(leaf, { x: mid[0], y: mid[1], z: mid[2] }, { length: 0.16, width: 0.06, yaw: random() * 6, tilt: 0.4, droop: 0.3 });
   }
-  blossom(flowers, { x: 0.05, y: 2.05, z: -0.1 }, { radius: 0.44, count: 3, seed: seed + 1 });
   return [bark, flowers, leaf];
 }
 
@@ -894,7 +1114,8 @@ export const VIET_BUILDERS = [
   { id: "viet_screen_wall", build: buildScreenWall, family: "piece" },
   { id: "viet_fence_bamboo", build: buildBambooFence, family: "piece" },
   { id: "viet_fence_breeze", build: buildBreezeBlockFence, family: "piece" },
-  { id: "viet_tree_banyan", build: buildBanyan, family: "tree" },
+  // The village banyan is a landmark, budgeted like a house.
+  { id: "viet_tree_banyan", build: buildBanyan, family: "building" },
   { id: "viet_bamboo_clump", build: buildBambooClump, family: "tree" },
   { id: "viet_tree_areca", build: buildArecaPalm, family: "tree" },
   { id: "viet_tree_banana", build: buildBananaPlant, family: "tree" },

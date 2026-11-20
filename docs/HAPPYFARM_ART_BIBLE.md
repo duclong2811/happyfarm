@@ -156,6 +156,10 @@ red lacquered columns, lime-washed walls, brick and breeze-block, bamboo, Hội 
 banyan, bamboo, areca, banana, and the Tết blossoms. Each piece is built in metres, front toward +z,
 and unit-fitted; its manifest gives the largest side in metres.
 
+Roof corners are curved blades that sweep up from the hip (never straight sticks), tile courses lie
+on the roof's curve, foliage is rounded faceted puffs (never ringed boxes), and palms carry feather
+fronds. Judge a piece close up, three-quarter on, under the game's light, against the real thing.
+
 ### Ships
 
 Ships take the look of old Vietnamese boats and war junks (`tools/asset-pipeline/node/ships.mjs`

@@ -29,7 +29,7 @@ manifest (`apps/web/src/render/viet-model-urls.ts`) states its largest side in m
 | Nhà tranh (thatched cottage) | `viet_house_thatch` | BUILDING | 3 x 3 | 3 | 1,200 |
 | Nhà sàn (stilt house) | `viet_house_stilt` | BUILDING | 3 x 3 | 4 | 2,400 |
 | Nhà ba gian (three-bay tiled house) | `viet_house_tiled` | BUILDING | 5 x 4 | 5 | 3,600 |
-| Cổng làng (village gate) | `viet_village_gate` | MONUMENT | 3 x 2 | 5 | 1,800 |
+| Cổng làng (village gate) | `viet_village_gate` | MONUMENT | 4 x 2 | 5 | 1,800 |
 | Miếu làng (shrine) | `viet_shrine` | MONUMENT | 2 x 2 | 5 | 1,500 |
 | Giếng làng (well) | `viet_well` | DECORATION | 2 x 2 | 3 | 450 |
 | Chum vại (jars) | `viet_jars` | DECORATION | 1 x 1 | 1 | 70 |
@@ -85,6 +85,43 @@ Every row carries its region's tag, and the shop's collection chips filter by it
   the shop's order (Làng Việt, then the regions). The shop shows a chip per collection the catalogue
   fills, after "Tất cả"; choosing one narrows the category rail and the grid to its pieces. Every
   piece in a collection is cosmetic by construction (`placement/gameplay.ts` derives it from the tag).
+
+## Quality pass (2026-11-20)
+
+The owner found several pieces ugly or unlike what they are named. Every piece was rendered close up
+from a three-quarter view under the game's lighting and judged against the real thing; about half
+were reworked. What changed, and why:
+
+- **Roof corners.** The đầu đao were straight sticks, which read as antennae. They are now curved
+  blades that continue the hip line and sweep up (`horn` in `viet.mjs`), the ridge ends curl back
+  over the ridge (đầu kìm), and the hip ridges (bờ dải) are laid along the roof. A roof set off its
+  centre (the side roofs of a tam quan) now points its corners the right way.
+- **Tile courses** were straight lines from eave to ridge, so they floated above a sagging roof; they
+  now follow the roof's own curve (`tileCourses`).
+- **Foliage** was ringed blobs that read as boxes or nuggets. Crowns and blossom are now rounded
+  faceted puffs (`icoBlob`): chunky flat-shaded clumps, the stylised-foliage convention. Palms have
+  feather fronds with leaflets (`pinnateFrond`); the banana has broad paddle leaves (`paddleLeaf`).
+- **Rebuilt from references.**
+  - Cổng làng: a lime-washed gate with a moss-dark foot, "thượng gia hạ môn" (a small tiled house
+    over the arch), and a trụ biểu either side. It was a bright red block.
+  - Gác chuông: two tiers of roof, "chồng diêm". The lower roof is carried on columns that stop
+    under it, and the bell hangs in an open storey above it. Before, the columns pierced both roofs.
+  - Nhà rông: a deeper roof, banded thatch, a woven lattice at the gables and horned ridge ends. It
+    read as a flat board.
+  - Cầu ngói: a closed, arched deck on piers, posts carrying the roof and a rail between them.
+  - Cọn nước: twin rims, paddles, tubes lashed at the rim, and log A-frames.
+  - Xuồng ba lá: a proper three-plank hull, with the nón lá on its seat.
+  - Hòn non bộ: karst spires with moss, a pagoda and a little bridge, not a pile of cubes.
+  - Smaller fixes: ao sen (rounded stones, bigger lotus), cây cảnh (a round blue-and-white pot),
+    rào gạch hoa (its coping and pillar caps), cây nêu (thicker, with a khánh and a hoop), dã quỳ,
+    tam giác mạch, cây gạo and cà phê.
+- **Sizes and footprints.** The village gate is now 4 x 2 cells: its trụ biểu make it wider. Drawn
+  sizes were checked against the rebuilt models.
+
+References used: the trụ biểu as four pillars with the middle two taller; the "chồng diêm" tiers of a
+bell tower such as chùa Keo's; the nhà rông's thick thatch "like giant axe blades", up to 20 m tall;
+and the stylised-foliage habit of chunky clumps over single leaves. Sources are listed in the
+session report.
 
 ## The island's own village
 

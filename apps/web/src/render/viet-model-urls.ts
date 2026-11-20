@@ -67,7 +67,7 @@ export const VILLAGE_MODELS: ReadonlyMap<string, VillageModelEntry> = new Map(
       { id: "viet_house_thatch", url: vietHouseThatchUrl, sizeWorld: 3.4 },
       { id: "viet_house_stilt", url: vietHouseStiltUrl, sizeWorld: 4.3 },
       { id: "viet_house_tiled", url: vietHouseTiledUrl, sizeWorld: 5.2 },
-      { id: "viet_village_gate", url: vietVillageGateUrl, sizeWorld: 3.8 },
+      { id: "viet_village_gate", url: vietVillageGateUrl, sizeWorld: 4.4 },
       { id: "viet_shrine", url: vietShrineUrl, sizeWorld: 2.4 },
       { id: "viet_well", url: vietWellUrl, sizeWorld: 2.0 },
       { id: "viet_jars", url: vietJarsUrl, sizeWorld: 1.0 },
@@ -91,7 +91,7 @@ export const VILLAGE_MODELS: ReadonlyMap<string, VillageModelEntry> = new Map(
       // Vùng miền (viet-regions.mjs).
       // Bắc Bộ
       { id: "viet_dinh", url: vietDinhUrl, sizeWorld: 7.6 },
-      { id: "viet_bell_tower", url: vietBellTowerUrl, sizeWorld: 3.6 },
+      { id: "viet_bell_tower", url: vietBellTowerUrl, sizeWorld: 3.9 },
       { id: "viet_bridge_tiled", url: vietBridgeTiledUrl, sizeWorld: 5.6 },
       { id: "viet_tree_gao", url: vietTreeGaoUrl, sizeWorld: 6.0 },
       // Trung Bộ
@@ -107,7 +107,7 @@ export const VILLAGE_MODELS: ReadonlyMap<string, VillageModelEntry> = new Map(
       { id: "viet_nipa_palm", url: vietNipaPalmUrl, sizeWorld: 3.6 },
       { id: "viet_field_hut", url: vietFieldHutUrl, sizeWorld: 3.5 },
       // Tây Nguyên
-      { id: "viet_nha_rong", url: vietNhaRongUrl, sizeWorld: 7.2 },
+      { id: "viet_nha_rong", url: vietNhaRongUrl, sizeWorld: 7.6 },
       { id: "viet_cay_neu", url: vietCayNeuUrl, sizeWorld: 5.6 },
       { id: "viet_gong_rack", url: vietGongRackUrl, sizeWorld: 3.0 },
       { id: "viet_coffee_shrub", url: vietCoffeeShrubUrl, sizeWorld: 1.4 },
